@@ -25,11 +25,11 @@ const router = createRouter({
       name: 'lobby',
       component: () => import('@/views/GameLobbyView.vue'),
     },
-    // 占位路由（后续补充页面时启用）
-    { path: '/recharge', name: 'recharge', component: () => import('@/views/PlaceholderView.vue') },
-    { path: '/flow',     name: 'flow',     component: () => import('@/views/PlaceholderView.vue') },
+    { path: '/recharge', name: 'recharge', component: () => import('@/views/RechargeView.vue') },
+    { path: '/flow',     name: 'flow',     component: () => import('@/views/FlowView.vue') },
     { path: '/cs',       name: 'cs',       component: () => import('@/views/PlaceholderView.vue') },
     { path: '/settings', name: 'settings', component: () => import('@/views/PlaceholderView.vue') },
+    { path: '/game/lucky-wheel', name: 'lucky-wheel', component: () => import('@/views/LuckyWheelView.vue') },
   ],
 })
 

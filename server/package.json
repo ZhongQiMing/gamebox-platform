@@ -14,6 +14,9 @@
     "prisma:seed": "ts-node prisma/seed.ts",
     "test": "jest"
   },
+  "prisma": {
+    "seed": "ts-node prisma/seed.ts"
+  },
   "dependencies": {
     "@gamebox/shared": "workspace:*",
     "@nestjs/common": "^10.3.0",

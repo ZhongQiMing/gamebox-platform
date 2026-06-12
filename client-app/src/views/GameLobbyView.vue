@@ -43,18 +43,52 @@
 
       <!-- 游戏列表 -->
       <div class="games-list">
+        <!-- 后端游戏（实时数据） -->
         <div
-          v-for="game in GAMES"
-          :key="game.key"
+          v-for="game in onlineGames"
+          :key="game.code"
           class="game-card"
-          @click="onGameClick(game)"
+          @click="onApiGameClick(game)"
         >
           <div class="gc-frame">
             <div class="gc-icon">
-              <img v-if="game.iconImg" :src="game.iconImg" :alt="game.name" @error="($event.target as HTMLImageElement).style.display='none'">
+              <img
+                v-if="game.coverUrl"
+                :src="game.coverUrl"
+                :alt="game.name"
+                @error="($event.target as HTMLImageElement).style.display='none'"
+              >
               <svg v-else viewBox="0 0 48 48" class="gc-svg">
-                <g v-html="game.svg"></g>
+                <circle cx="24" cy="24" r="20" fill="rgba(200,160,40,0.15)" stroke="#c8a028" stroke-width="1.5"/>
+                <text x="24" y="30" text-anchor="middle" fill="#e8c032" font-size="14">🎮</text>
               </svg>
+            </div>
+            <div class="gc-info">
+              <div class="gc-name">{{ game.name }}</div>
+              <div class="gc-desc">
+                <template v-if="game.category === 'SLOT'">即 进 即 转 · 随 时 开 玩</template>
+                <template v-else>彩票游戏</template>
+              </div>
+            </div>
+            <div v-if="game.category === 'SLOT'" class="gc-tag">热 门</div>
+          </div>
+        </div>
+
+        <!-- 静态展示游戏（即将上线） -->
+        <div
+          v-for="game in staticGames"
+          :key="game.key"
+          class="game-card"
+          @click="toast(`${game.name}  即将上线，敬请期待！`)"
+        >
+          <div class="gc-frame">
+            <div class="gc-icon">
+              <img
+                v-if="game.iconImg"
+                :src="game.iconImg"
+                :alt="game.name"
+                @error="($event.target as HTMLImageElement).style.display='none'"
+              >
             </div>
             <div class="gc-info">
               <div class="gc-name">{{ game.name }}</div>
@@ -62,7 +96,7 @@
             </div>
             <div v-if="game.tag" class="gc-tag">{{ game.tag }}</div>
             <div v-if="game.type === 'lottery'" class="gc-countdown">
-              <span class="gc-issue">{{ getCountdown(game.key) }}</span>
+              <span class="gc-issue">{{ countdowns[game.key] }}</span>
             </div>
           </div>
         </div>
@@ -84,11 +118,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { useWalletStore } from '@/stores/wallet'
 import { useToast } from '@/composables/useToast'
+import { gamesApi, type GameItem } from '@/api/games'
 import TabBar from '@/components/TabBar.vue'
 import AppModal from '@/components/AppModal.vue'
 import '@/assets/game-lobby.css'
@@ -100,44 +135,62 @@ const { toast } = useToast()
 
 const logoutModal = ref(false)
 
+// 后端实时游戏
+const onlineGames = ref<GameItem[]>([])
+
 const notices = [
   '🏆 恭喜 VIP 会员 王***享 喜获大奖 88,888 积分',
   '🎉 平台持续更新中，更多游戏即将上线！',
   '💰 每日签到可领取积分奖励，快来参与吧！',
 ]
 
-const GAMES = [
-  { key: 'mahjong', name: '麻将胡了', desc: '即 进 即 转 · 随 时 开 玩', tag: '热 门', type: 'instant', iconImg: '/images/games/mahjong.png', svg: '' },
-  { key: 'queen',   name: '赏金女王', desc: '即 进 即 转 · 随 时 开 玩', tag: '热 门', type: 'instant', iconImg: '/images/games/queen.png', svg: '' },
-  { key: 'ssc',     name: '时时彩',   desc: '5 位数字 · 10 分一期',      tag: '',      type: 'lottery', intervalSec: 600, iconImg: '/images/games/ssc.png', svg: '' },
-  { key: 'ffc',     name: '分分彩',   desc: '5 位数字 · 1 分一期',       tag: '',      type: 'lottery', intervalSec: 60,  iconImg: '/images/games/ffc.png', svg: '' },
-  { key: 'speed-racing', name: '极速赛车', desc: '1-10 号 · 1 分一期', tag: '新 品', type: 'lottery', intervalSec: 60, iconImg: '/images/games/speed-racing.png', svg: '' },
-  { key: 'bjsc',    name: '北京赛车', desc: '10 选号 · 5 分一期',        tag: '',      type: 'lottery', intervalSec: 300, iconImg: '/images/games/bjsc.png', svg: '' },
-  { key: 'lhc',     name: '六合彩',   desc: '49 选 7 · 1 分一期',        tag: '',      type: 'lottery', intervalSec: 60,  iconImg: '/images/games/hk-mark6.png', svg: '' },
-  { key: 'kuai3',   name: '极速快三', desc: '3 颗骰子 · 1 分一期',       tag: '',      type: 'lottery', intervalSec: 60,  iconImg: '/images/games/kuai3.png', svg: '' },
+// 静态占位游戏（尚未接入后端）
+const staticGames = [
+  { key: 'ssc',     name: '时时彩',   desc: '5 位数字 · 10 分一期',  tag: '',      type: 'lottery', intervalSec: 600, iconImg: '/images/games/ssc.png' },
+  { key: 'speed-racing', name: '极速赛车', desc: '1-10 号 · 1 分一期', tag: '新 品', type: 'lottery', intervalSec: 60, iconImg: '/images/games/speed-racing.png' },
+  { key: 'bjsc',    name: '北京赛车', desc: '10 选号 · 5 分一期',     tag: '',      type: 'lottery', intervalSec: 300, iconImg: '/images/games/bjsc.png' },
+  { key: 'lhc',     name: '六合彩',   desc: '49 选 7 · 1 分一期',     tag: '',      type: 'lottery', intervalSec: 60,  iconImg: '/images/games/hk-mark6.png' },
+  { key: 'kuai3',   name: '极速快三', desc: '3 颗骰子 · 1 分一期',    tag: '',      type: 'lottery', intervalSec: 60,  iconImg: '/images/games/kuai3.png' },
 ]
 
-// 倒计时（基于系统时间取余）
-function getCountdown(key: string) {
-  const g = GAMES.find(x => x.key === key) as any
-  if (!g?.intervalSec) return ''
-  const rem = g.intervalSec - (Math.floor(Date.now() / 1000) % g.intervalSec)
-  const m = Math.floor(rem / 60).toString().padStart(2, '0')
-  const s = (rem % 60).toString().padStart(2, '0')
-  return `${m}:${s}`
+// 实时倒计时（响应式 reactive 对象）
+const countdowns = reactive<Record<string, string>>({})
+
+function refreshCountdowns() {
+  for (const g of staticGames) {
+    if (g.type !== 'lottery' || !g.intervalSec) continue
+    const rem = g.intervalSec - (Math.floor(Date.now() / 1000) % g.intervalSec)
+    const m = Math.floor(rem / 60).toString().padStart(2, '0')
+    const s = (rem % 60).toString().padStart(2, '0')
+    countdowns[g.key] = `${m}:${s}`
+  }
 }
 
 let timer: ReturnType<typeof setInterval>
 
-onMounted(() => {
+onMounted(async () => {
   walletStore.fetchBalance()
-  timer = setInterval(() => {}, 1000) // 触发响应式刷新倒计时（轻量）
+  refreshCountdowns()
+  timer = setInterval(refreshCountdowns, 1000)
+  try {
+    onlineGames.value = await gamesApi.list()
+  } catch {
+    // 后端不可达时不阻断大厅渲染
+  }
 })
 
 onUnmounted(() => clearInterval(timer))
 
-function onGameClick(game: typeof GAMES[number]) {
-  toast(`${game.name}  即将上线，敬请期待！`)
+function onApiGameClick(game: GameItem) {
+  if (game.code === 'lucky-wheel') {
+    router.push('/game/lucky-wheel')
+    return
+  }
+  if (game.code === 'ffc') {
+    toast(`${game.name}  彩票模块即将上线！`)
+    return
+  }
+  toast(`${game.name}  即将开放，敬请期待！`)
 }
 
 function doLogout() {

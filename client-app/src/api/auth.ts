@@ -23,4 +23,7 @@ export const authApi = {
 
   login: (data: { username: string; password: string }) =>
     http.post<AuthResult, AuthResult>('/auth/login', data),
+
+  /** 用已有 token 恢复 profile（刷新会话时调用） */
+  me: () => http.get<UserProfile, UserProfile>('/users/me'),
 }
