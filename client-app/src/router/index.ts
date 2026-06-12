@@ -33,9 +33,10 @@ const router = createRouter({
   ],
 })
 
-// 全局导航守卫：未登录跳 login
-router.beforeEach((to) => {
+// 全局导航守卫：先等会话恢复（刷新场景），再判断登录态
+router.beforeEach(async (to) => {
   const userStore = useUserStore()
+  await userStore.restoreSession()
   if (!to.meta.public && !userStore.isLoggedIn) {
     return { name: 'login' }
   }
