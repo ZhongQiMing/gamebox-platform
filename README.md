@@ -24,8 +24,8 @@
 ### 第一步：克隆代码
 
 ```bash
-git clone <仓库地址>
-cd bj
+git clone https://github.com/ZhongQiMing/gamebox-platform.git
+cd gamebox-platform
 ```
 
 ---
