@@ -78,6 +78,15 @@
   </div>
 
   <TabBar />
+  
+  <PgLoading v-if="showPgLoading" :progress="pgLoadingProgress" />
+  <MahjongCover v-if="showMahjongCover" @start="enterMahjongGame" />
+  <QueenCover v-if="showQueenCover" @start="enterQueenGame" />
+  <LabaCover v-if="showLabaCover" @start="enterLabaGame" />
+  <SlotsCover v-if="showSlotsCover" @start="enterSlotsGame" />
+  <BcbmCover v-if="showBcbmCover" @start="enterBcbmGame" />
+  <LonghuCover v-if="showLonghuCover" @start="enterLonghuGame" />
+  <WheelCover v-if="showWheelCover" @start="enterWheelGame" />
 </template>
 
 <script setup lang="ts">
@@ -88,6 +97,14 @@ import { useToast } from '@/composables/useToast'
 import { useBodyClass } from '@/composables/useBodyClass'
 import { gamesApi } from '@/api/games'
 import TabBar from '@/components/TabBar.vue'
+import PgLoading from '@/components/PgLoading.vue'
+import MahjongCover from '@/components/MahjongCover.vue'
+import QueenCover from '@/components/QueenCover.vue'
+import LabaCover from '@/components/LabaCover.vue'
+import SlotsCover from '@/components/SlotsCover.vue'
+import BcbmCover from '@/components/BcbmCover.vue'
+import LonghuCover from '@/components/LonghuCover.vue'
+import WheelCover from '@/components/WheelCover.vue'
 import '@/assets/game-lobby.css'
 
 useBodyClass('lobby-bg')
@@ -176,41 +193,22 @@ const GAMES: LobbyGame[] = [
   },
   {
     key: 'bcbm', name: '奔驰宝马', tag: '新 品', type: 'instant',
-    svg: `<rect x="6" y="22" width="36" height="14" rx="4" fill="rgba(244,211,107,0.18)" stroke="currentColor" stroke-width="1.6"/>
-          <rect x="12" y="14" width="16" height="10" rx="3" fill="rgba(244,211,107,0.28)" stroke="currentColor" stroke-width="1.3"/>
-          <circle cx="14" cy="38" r="4" fill="rgba(244,211,107,0.35)" stroke="currentColor" stroke-width="1.2"/>
-          <circle cx="34" cy="38" r="4" fill="rgba(244,211,107,0.35)" stroke="currentColor" stroke-width="1.2"/>
-          <path d="M8 18 H16 M32 18 H40" stroke="currentColor" stroke-width="1.5" opacity="0.7"/>
-          <circle cx="24" cy="10" r="2.2" fill="currentColor" opacity="0.8"/>`,
+    iconImg: '/images/games/bcbm-icon.png',
     route: '/game/arcade/bcbm', backendCode: 'bcbm',
   },
   {
     key: 'laba', name: '经典拉霸', tag: '新 品', type: 'instant',
-    svg: `<rect x="5" y="10" width="38" height="30" rx="4" fill="rgba(244,211,107,0.12)" stroke="currentColor" stroke-width="1.6"/>
-          <rect x="9" y="14" width="9" height="22" rx="2" fill="rgba(244,211,107,0.28)" stroke="currentColor" stroke-width="1.2"/>
-          <rect x="19.5" y="14" width="9" height="22" rx="2" fill="rgba(244,211,107,0.38)" stroke="currentColor" stroke-width="1.2"/>
-          <rect x="30" y="14" width="9" height="22" rx="2" fill="rgba(244,211,107,0.28)" stroke="currentColor" stroke-width="1.2"/>
-          <text x="14" y="28" font-size="10" font-weight="900" fill="currentColor" text-anchor="middle">7</text>
-          <text x="24" y="28" font-size="10" font-weight="900" fill="currentColor" text-anchor="middle">7</text>
-          <text x="34" y="28" font-size="10" font-weight="900" fill="currentColor" text-anchor="middle">7</text>
-          <line x1="5" y1="25" x2="43" y2="25" stroke="currentColor" stroke-width="1.5" opacity="0.6"/>`,
+    iconImg: '/images/games/laba-icon.png',
+    route: '/game/laba', backendCode: 'slots-classic',
   },
   {
     key: 'longhu', name: '龙虎斗', tag: '新 品', type: 'instant',
-    svg: `<path d="M8 28 Q6 14 18 10 Q28 8 30 20 Q32 32 22 36 Q12 38 8 28 Z" fill="rgba(220,60,40,0.35)" stroke="currentColor" stroke-width="1.6"/>
-          <circle cx="16" cy="20" r="1.5" fill="currentColor"/>
-          <path d="M40 28 Q42 14 30 10 Q20 8 18 20 Q16 32 26 36 Q36 38 40 28 Z" fill="rgba(240,170,50,0.30)" stroke="currentColor" stroke-width="1.6"/>
-          <circle cx="32" cy="20" r="1.5" fill="currentColor"/>
-          <line x1="24" y1="12" x2="24" y2="40" stroke="currentColor" stroke-width="1.8" opacity="0.5"/>
-          <rect x="18" y="38" width="12" height="4" rx="1" fill="rgba(244,211,107,0.35)" stroke="currentColor" stroke-width="1.2"/>`,
+    iconImg: '/images/games/longhu-icon.png',
     route: '/game/table/dragon-tiger', backendCode: 'dragon-tiger',
   },
   {
     key: 'lucky-wheel', name: '幸运转盘', type: 'instant',
-    svg: `<circle cx="24" cy="24" r="17" fill="rgba(244,211,107,0.15)" stroke="currentColor" stroke-width="1.6"/>
-          <path d="M24 7 V41 M7 24 H41 M12 12 L36 36 M36 12 L12 36" stroke="currentColor" stroke-width="1.2" opacity="0.7"/>
-          <circle cx="24" cy="24" r="4" fill="rgba(244,211,107,0.4)" stroke="currentColor" stroke-width="1.4"/>
-          <path d="M24 2 L21 8 H27 Z" fill="currentColor"/>`,
+    iconImg: '/images/games/lucky-wheel-icon.png',
     route: '/game/lucky-wheel', backendCode: 'lucky-wheel',
   },
 ]
@@ -300,15 +298,133 @@ function tickAll() {
 /* ===== 后端在线游戏（决定卡片是否可进入） ===== */
 const onlineCodes = ref<Set<string>>(new Set())
 
-function onGameClick(g: LobbyGame) {
-  if (g.route) {
-    // 后端列表加载失败时不拦路，直接按已实现路由跳转
-    if (onlineCodes.value.size === 0 || !g.backendCode || onlineCodes.value.has(g.backendCode)) {
-      router.push(g.route)
-      return
-    }
+const showPgLoading = ref(false)
+const pgLoadingProgress = ref(0)
+const showMahjongCover = ref(false)
+let currentMahjongRoute = ''
+const showQueenCover = ref(false)
+let currentQueenRoute = ''
+const showLabaCover = ref(false)
+let currentLabaRoute = ''
+const showSlotsCover = ref(false)
+let currentSlotsRoute = ''
+const showBcbmCover = ref(false)
+let currentBcbmRoute = ''
+const showLonghuCover = ref(false)
+let currentLonghuRoute = ''
+const showWheelCover = ref(false)
+let currentWheelRoute = ''
+
+function enterMahjongGame() {
+  showMahjongCover.value = false
+  if (currentMahjongRoute) {
+    router.push(currentMahjongRoute)
   }
-  toast(`${g.name.replace(/\s+/g, '')} · 即将上线`)
+}
+
+function enterQueenGame() {
+  showQueenCover.value = false
+  if (currentQueenRoute) {
+    router.push(currentQueenRoute)
+  }
+}
+
+function enterLabaGame() {
+  showLabaCover.value = false
+  if (currentLabaRoute) {
+    router.push(currentLabaRoute)
+  }
+}
+
+function enterSlotsGame() {
+  showSlotsCover.value = false
+  if (currentSlotsRoute) {
+    router.push(currentSlotsRoute)
+  }
+}
+
+function enterBcbmGame() {
+  showBcbmCover.value = false
+  if (currentBcbmRoute) {
+    router.push(currentBcbmRoute)
+  }
+}
+
+function enterLonghuGame() {
+  showLonghuCover.value = false
+  if (currentLonghuRoute) {
+    router.push(currentLonghuRoute)
+  }
+}
+
+function enterWheelGame() {
+  showWheelCover.value = false
+  if (currentWheelRoute) {
+    router.push(currentWheelRoute)
+  }
+}
+
+const pgAnimatedGames = ['mahjong', 'queen', 'slots', 'bcbm', 'laba', 'longhu', 'lucky-wheel']
+
+function onGameClick(g: LobbyGame) {
+  // 检查游戏是否可玩（有路由，且后端在线或后端未加载）
+  const isPlayable = g.route && (onlineCodes.value.size === 0 || !g.backendCode || onlineCodes.value.has(g.backendCode))
+
+  if (!isPlayable) {
+    toast(`${g.name.replace(/\s+/g, '')} · 即将上线`)
+    return
+  }
+
+  // 如果是需要展示 PG 动画的游戏
+  if (pgAnimatedGames.includes(g.key)) {
+    showPgLoading.value = true
+    pgLoadingProgress.value = 0
+    
+    // 模拟加载进度
+    const interval = setInterval(() => {
+      pgLoadingProgress.value += Math.random() * 15
+      if (pgLoadingProgress.value >= 100) {
+        pgLoadingProgress.value = 100
+        clearInterval(interval)
+        
+        // 加载完成后延迟一小段时间
+        setTimeout(() => {
+          showPgLoading.value = false
+          if (g.key === 'mahjong') {
+            // 麻将胡了有专属封面
+            currentMahjongRoute = g.route || ''
+            showMahjongCover.value = true
+          } else if (g.key === 'queen') {
+            // 赏金女王有专属封面
+            currentQueenRoute = g.route || ''
+            showQueenCover.value = true
+          } else if (g.key === 'laba') {
+            currentLabaRoute = g.route || ''
+            showLabaCover.value = true
+          } else if (g.key === 'slots') {
+            currentSlotsRoute = g.route || ''
+            showSlotsCover.value = true
+          } else if (g.key === 'bcbm') {
+            currentBcbmRoute = g.route || ''
+            showBcbmCover.value = true
+          } else if (g.key === 'longhu') {
+            currentLonghuRoute = g.route || ''
+            showLonghuCover.value = true
+          } else if (g.key === 'lucky-wheel') {
+            currentWheelRoute = g.route || ''
+            showWheelCover.value = true
+          } else {
+            // 其他游戏直接跳转
+            router.push(g.route!)
+          }
+        }, 500)
+      }
+    }, 300)
+    return
+  }
+
+  // 其他不需要 PG 动画的游戏（如彩票类）直接跳转
+  router.push(g.route)
 }
 
 let timer: ReturnType<typeof setInterval>

@@ -1,9 +1,0 @@
-:root {
-  --mj-banner-y: 2.708%;
-  --mj-banner-h: 8.750%;
-  --mj-mult-y: 11.875%;
-  --mj-mult-h: 6.875%;
-  --mj-body-y: 19.167%;
-  --mj-foot-y: 82.292%;
-  --mj-foot-h: 17.708%;
-}
