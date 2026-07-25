@@ -10,8 +10,23 @@
  */
 import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import { lhcPayTableSeed } from '../src/modules/lottery/games/lhc-odds';
+import { sscFfcPayTable } from '../src/modules/lottery/games/ffc.game';
+import { kuai3PayTable } from '../src/modules/lottery/games/kuai3.game';
+import { bjscPayTable } from '../src/modules/lottery/games/bjsc.game';
+import { LOTTERY_INTERVALS } from '../src/modules/lottery/lottery-intervals';
+import {
+  getTablePayTable,
+  BCBM_DEFAULT_AWARD_WEIGHTS,
+  FRUIT_DEFAULT_AWARD_WEIGHTS,
+} from '@gamebox/shared';
 
 const prisma = new PrismaClient();
+
+/** 牌桌配置展示与 @gamebox/shared 结算单源同形（真结算仍读 shared） */
+function tablePaySeed(code: string) {
+  return getTablePayTable(code) ?? {};
+}
 
 const AGENT_LEVELS = [
   { code: 'V1', name: '青铜代理', minTeamFlow: 0,      commissionRate: 0.005, accent: '#9c8158' },
@@ -21,18 +36,17 @@ const AGENT_LEVELS = [
   { code: 'V5', name: '钻石代理', minTeamFlow: 500000, commissionRate: 0.020, accent: '#88e8ff' },
 ];
 
+/** 彩票赔率唯一来源：各 games/*.game.ts / lhc-odds.ts；seed 只引用，禁止再内联一份。 */
+const SSC_FFC_PAY = { ...sscFfcPayTable };
+const KUAI3_PAY = { ...kuai3PayTable };
+const BJSC_FAMILY_PAY = { ...bjscPayTable };
+
 const GAMES = [
   {
     code: 'ffc', name: '1分时时彩', category: 'LOTTERY' as const,
-    status: 'ONLINE' as const, sortOrder: 2, drawIntervalSec: 60, minBet: 1, maxBet: 10000,
+    status: 'ONLINE' as const, sortOrder: 2, drawIntervalSec: LOTTERY_INTERVALS.ffc, minBet: 1, maxBet: 10000,
     rtp: 0.95,
-    payTable: {
-      big:   { multiplier: 1.995, desc: '总和 23-45' },
-      small: { multiplier: 1.995, desc: '总和 0-22'  },
-      odd:   { multiplier: 1.995, desc: '总和为奇数' },
-      even:  { multiplier: 1.995, desc: '总和为偶数' },
-      exact: { multiplier: 9.95, desc: '猜中个位数字' },
-    },
+    payTable: SSC_FFC_PAY,
   },
   {
     code: 'slots-mahjong', name: '麻将胡了', category: 'SLOT' as const,
@@ -51,127 +65,80 @@ const GAMES = [
     code: 'fruit-machine', name: '水果机', category: 'ARCADE' as const,
     status: 'ONLINE' as const, sortOrder: 3, minBet: 1, maxBet: 50_000,
     rtp: 0.96,
-    // 盘面/赔率在 @gamebox/shared fruit-machine；此处只配大奖权重
-    payTable: {
-      awardWeights: {
-        normal: 62,
-        luck_send: 8,
-        luck_eat: 4,
-        train: 10,
-        big3: 5,
-        small3: 5,
-        four: 4,
-        slam: 2,
-      },
-    },
+    // 盘面/赔率/大奖权重唯一来源在 @gamebox/shared fruit-machine
+    // 引擎按 { ...默认值, ...本表 } 合并，写死一份会覆盖掉标定好的权重
+    payTable: { awardWeights: { ...FRUIT_DEFAULT_AWARD_WEIGHTS } },
   },
   {
     code: 'bcbm', name: '奔驰宝马', category: 'ARCADE' as const,
     status: 'ONLINE' as const, sortOrder: 8, minBet: 1, maxBet: 50_000,
     rtp: 0.95,
-    // 盘面/赔率在 @gamebox/shared bcbm；此处只配大奖权重
-    payTable: {
-      awardWeights: {
-        normal: 78,
-        free: 6,
-        sanyuan_benz: 2,
-        sanyuan_bmw: 3,
-        sanyuan_audi: 3,
-        sanyuan_vw: 4,
-        sixi_red: 1,
-        sixi_green: 2,
-        sixi_yellow: 2,
-      },
-    },
+    // 盘面/赔率/大奖权重唯一来源在 @gamebox/shared bcbm
+    // 早先这里只列了 9 项，fast/uturn/lightning/drift 被默认值静默补入，
+    // 且 normal 被压到 78/130，大奖占比过高把 RTP 顶到 200%+
+    payTable: { awardWeights: { ...BCBM_DEFAULT_AWARD_WEIGHTS } },
   },
   // ── 棋牌类游戏 ──
   {
     code: 'dragon-tiger', name: '龙虎斗', category: 'TABLE' as const,
     status: 'ONLINE' as const, sortOrder: 10, minBet: 10, maxBet: 100_000,
     rtp: 0.965,
-    payTable: [
-      { label: '龙',    multiplier: 2,  weight: 46 },
-      { label: '虎',    multiplier: 2,  weight: 46 },
-      { label: '和(×9)', multiplier: 9, weight: 8  },
-    ],
+    payTable: tablePaySeed('dragon-tiger'),
+  },
+  {
+    code: 'baccarat', name: '百家乐', category: 'TABLE' as const,
+    status: 'ONLINE' as const, sortOrder: 11, minBet: 1, maxBet: 100_000,
+    rtp: 0.97,
+    payTable: tablePaySeed('baccarat'),
+  },
+  {
+    code: 'zhajinhua', name: '炸金花', category: 'TABLE' as const,
+    status: 'ONLINE' as const, sortOrder: 12, minBet: 1, maxBet: 100_000,
+    rtp: 0.97,
+    payTable: tablePaySeed('zhajinhua'),
+  },
+  {
+    code: 'douniu', name: '斗牛', category: 'TABLE' as const,
+    status: 'ONLINE' as const, sortOrder: 13, minBet: 1, maxBet: 100_000,
+    rtp: 0.97,
+    payTable: tablePaySeed('douniu'),
   },
   // ── 彩票类游戏 ──
   {
     code: 'ssc', name: '快乐时时彩', category: 'LOTTERY' as const,
-    status: 'ONLINE' as const, sortOrder: 4, drawIntervalSec: 90, minBet: 1, maxBet: 10000,
+    status: 'ONLINE' as const, sortOrder: 4, drawIntervalSec: LOTTERY_INTERVALS.ssc, minBet: 1, maxBet: 10000,
     rtp: 0.95,
-    payTable: {
-      big:   { multiplier: 1.995, desc: '总和 23-45' },
-      small: { multiplier: 1.995, desc: '总和 0-22'  },
-      odd:   { multiplier: 1.995, desc: '总和为奇数' },
-      even:  { multiplier: 1.995, desc: '总和为偶数' },
-      exact: { multiplier: 9.95, desc: '猜中个位数字' },
-    },
+    payTable: SSC_FFC_PAY,
   },
   {
     code: 'kuai3', name: '1分快三', category: 'LOTTERY' as const,
-    status: 'ONLINE' as const, sortOrder: 5, drawIntervalSec: 55, minBet: 1, maxBet: 5000,
+    status: 'ONLINE' as const, sortOrder: 5, drawIntervalSec: LOTTERY_INTERVALS.kuai3, minBet: 1, maxBet: 50_000,
     rtp: 0.95,
-    payTable: {
-      big:     { multiplier: 1.98, desc: '总和 11-17（非豹子）' },
-      small:   { multiplier: 1.98, desc: '总和 4-10（非豹子）'  },
-      odd:     { multiplier: 1.98, desc: '总和奇数（非豹子）'   },
-      even:    { multiplier: 1.98, desc: '总和偶数（非豹子）'   },
-      triplet: { multiplier: 24.0, desc: '豹子（全同）'         },
-      sum:     { multiplier: 6.50, desc: '和值兜底（H5 按点数分档）' },
-      dice:    { multiplier: 2.0, desc: '三军出现1次；2次×3、3次×4' },
-    },
+    payTable: KUAI3_PAY,
   },
   {
     code: 'speed-racing', name: '极速赛车', category: 'LOTTERY' as const,
-    status: 'ONLINE' as const, sortOrder: 6, drawIntervalSec: 55, minBet: 1, maxBet: 5000,
+    status: 'ONLINE' as const, sortOrder: 6, drawIntervalSec: LOTTERY_INTERVALS['speed-racing'], minBet: 1, maxBet: 50_000,
     rtp: 0.95,
-    payTable: {
-      champion: { multiplier: 9.8, desc: '猜赛道1/冠军号码（1-10）' },
-      runner:   { multiplier: 9.8, desc: '猜赛道2/亚军号码（1-10）' },
-      top2big:  { multiplier: 1.98, desc: '冠亚和大（12-19）'  },
-      top2small:{ multiplier: 1.98, desc: '冠亚和小（3-11）'   },
-      top2odd:  { multiplier: 1.98, desc: '冠亚和奇'           },
-      top2even: { multiplier: 1.98, desc: '冠亚和偶'           },
-    },
+    payTable: BJSC_FAMILY_PAY,
   },
   {
     code: 'speed-boat', name: '幸运飞艇', category: 'LOTTERY' as const,
-    status: 'ONLINE' as const, sortOrder: 8, drawIntervalSec: 60, minBet: 1, maxBet: 5000,
+    status: 'ONLINE' as const, sortOrder: 8, drawIntervalSec: LOTTERY_INTERVALS['speed-boat'], minBet: 1, maxBet: 50_000,
     rtp: 0.95,
-    payTable: {
-      champion: { multiplier: 9.8, desc: '猜赛道1/冠军号码（1-10）' },
-      runner:   { multiplier: 9.8, desc: '猜赛道2/亚军号码（1-10）' },
-      top2big:  { multiplier: 1.98, desc: '冠亚和大（12-19）'  },
-      top2small:{ multiplier: 1.98, desc: '冠亚和小（3-11）'   },
-      top2odd:  { multiplier: 1.98, desc: '冠亚和奇'           },
-      top2even: { multiplier: 1.98, desc: '冠亚和偶'           },
-    },
+    payTable: BJSC_FAMILY_PAY,
   },
   {
     code: 'bjsc', name: '北京赛车', category: 'LOTTERY' as const,
-    status: 'ONLINE' as const, sortOrder: 7, drawIntervalSec: 60, minBet: 1, maxBet: 5000,
+    status: 'ONLINE' as const, sortOrder: 7, drawIntervalSec: LOTTERY_INTERVALS.bjsc, minBet: 1, maxBet: 50_000,
     rtp: 0.95,
-    payTable: {
-      champion: { multiplier: 9.8, desc: '猜赛道1/冠军号码（1-10）' },
-      runner:   { multiplier: 9.8, desc: '猜赛道2/亚军号码（1-10）' },
-      top2big:  { multiplier: 1.98, desc: '冠亚和大（12-19）'  },
-      top2small:{ multiplier: 1.98, desc: '冠亚和小（3-11）'   },
-      top2odd:  { multiplier: 1.98, desc: '冠亚和奇'           },
-      top2even: { multiplier: 1.98, desc: '冠亚和偶'           },
-    },
+    payTable: BJSC_FAMILY_PAY,
   },
   {
     code: 'lhc', name: '幸运六合彩', category: 'LOTTERY' as const,
-    status: 'ONLINE' as const, sortOrder: 9, drawIntervalSec: 60, minBet: 1, maxBet: 10000,
+    status: 'ONLINE' as const, sortOrder: 9, drawIntervalSec: LOTTERY_INTERVALS.lhc, minBet: 1, maxBet: 10000,
     rtp: 0.95,
-    payTable: {
-      big:     { multiplier: 1.98, desc: '特码大（25-49）' },
-      small:   { multiplier: 1.98, desc: '特码小（1-24）' },
-      odd:     { multiplier: 1.98, desc: '特码单' },
-      even:    { multiplier: 1.98, desc: '特码双' },
-      special: { multiplier: 47.0, desc: '特码号码' },
-    },
+    payTable: lhcPayTableSeed(),
   },
 ];
 
@@ -304,6 +271,29 @@ async function main() {
       create: act,
     });
     console.log(`[seed] 活动: ${act.title} ✔`);
+  }
+
+  // ── 代理房间（房间号 = 推广码，玩家登录后输入进入）──
+  const ROOMS = [
+    { roomNo: '628391', name: '黄金一号厅' },
+    { roomNo: '739402', name: '紫钻贵宾室' },
+    { roomNo: '184056', name: '夜场专属' },
+    { roomNo: '291847', name: '财神殿' },
+    { roomNo: '506318', name: '欢乐颂' },
+  ];
+  for (const r of ROOMS) {
+    await prisma.room.upsert({
+      where: { roomNo: r.roomNo },
+      update: { name: r.name, status: 'OPEN', icon: '/images/rooms/default-room.png' },
+      create: {
+        roomNo: r.roomNo,
+        name: r.name,
+        status: 'OPEN',
+        icon: '/images/rooms/default-room.png',
+        enabledGames: '[]',
+      },
+    });
+    console.log(`[seed] 房间: ${r.name} (${r.roomNo}) ✔`);
   }
 
   console.log('\n[seed] 全部完成 🎉');

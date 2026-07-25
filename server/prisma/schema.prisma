@@ -114,9 +114,9 @@ model User {
   id           String     @id @default(cuid())
   username     String     @unique // 登录账号：8-20 英文+数字（小写存）
   passwordHash String
-  uid          String     @unique // 对外展示 9 位编号
-  nickname     String
-  avatar       String?
+  uid          String     @unique // 对外展示 9 位编号（100000000–999999999）
+  nickname     String     @unique // 展示名：注册时从昵称池分配，4～6 字，全站唯一
+  avatar       String? // /images/avatars/NNN.jpg|png；按轮次不重复分配
   role         UserRole   @default(PLAYER)
   status       UserStatus @default(ACTIVE)
 
@@ -144,12 +144,14 @@ model User {
   commissionsAsBeneficiary CommissionRecord[] @relation("CommissionBeneficiary")
   commissionsAsSource      CommissionRecord[] @relation("CommissionSource")
   rebates        RebateRecord[]
+  dailyRebates   DailyRebateSettlement[]
   activityClaims ActivityClaim[]
   slotFeatureSessions SlotFeatureSession[]
   feedbacks      Feedback[]
   csMessages     CsMessage[]
   ledgerOps      PointsLedger[]  @relation("LedgerOperator")
   adminLogs      AdminLog[]
+  roomMembers    RoomMember[]
 
   @@index([role, status])
   @@index([parentId])
@@ -210,6 +212,45 @@ model Room {
   updatedAt    DateTime   @updatedAt
 
   gameRounds GameRound[]
+  members    RoomMember[]
+  chatMessages RoomChatMessage[]
+}
+
+/// 房间×游戏公共聊天时间线（全员一致；进房只拉历史，不本地造事件）
+model RoomChatMessage {
+  id           String   @id @default(cuid())
+  roomId       String
+  room         Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  gameCode     String
+  kind         String // bet | close | result | bet_verify | win_verify | system
+  issueNo      String?
+  senderId     String?
+  senderName   String
+  senderAvatar String?
+  isRobot      Boolean  @default(false)
+  payload      Json
+  createdAt    DateTime @default(now())
+
+  @@index([roomId, gameCode, createdAt])
+  @@index([roomId, gameCode, id])
+  @@index([roomId, gameCode, kind, issueNo])
+  // 部分唯一索引见 migration：RoomChatMessage_system_once_key
+  // (roomId, gameCode, kind, issueNo) WHERE kind IN (close/result/bet_verify/win_verify)
+}
+
+/// 玩家与代理房间的绑定（输入房间号进房后写入，用于按代理隔离客户）
+model RoomMember {
+  id        String   @id @default(cuid())
+  playerId  String
+  player    User     @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  roomId    String
+  room      Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  status    String   @default("APPROVED") // PENDING | APPROVED | REJECTED
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([playerId, roomId])
+  @@index([playerId, status])
 }
 
 // ======================= 积分账本（变动唯一入口）=======================
@@ -468,6 +509,28 @@ model RebateRecord {
   @@index([playerId, settledAt])
 }
 
+// 每日自助回水（按自然日 + 游戏回水比例）
+// 一个自然日只允许结算一次：并发/重试下靠 (playerId, rebateDate) 唯一约束兜底，
+// 领取后新产生的流水计入次日，避免同日重复领取。
+model DailyRebateSettlement {
+  id         String   @id @default(cuid())
+  playerId   String
+  player     User     @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  rebateDate DateTime @db.Date
+  validFlow  Int
+  rate       Float
+  amount     Int
+  claimType  String   // AUTO | MANUAL
+  ledgerId   String?
+  periodEnd  DateTime @default(now())
+  gameDetail Json?
+  claimedAt  DateTime @default(now())
+
+  @@unique([playerId, rebateDate])
+  @@index([playerId, rebateDate])
+  @@index([playerId, claimedAt])
+}
+
 // ======================= 活动 / 营销 =======================
 
 model Activity {
@@ -572,3 +635,14 @@ model AdminLog {
   @@index([operatorId, createdAt])
   @@index([action, createdAt])
 }
+
+// ======================= 注册身份分配状态 =======================
+
+// 头像按轮次分配：本轮 usedJson 用尽后 round+1 再开一轮随机
+model AvatarAssignState {
+  id        Int      @id @default(1) // 单例行
+  round     Int      @default(1)
+  usedJson  String   @default("[]") // 本轮已占用的头像序号 JSON number[]
+  updatedAt DateTime @updatedAt
+}
+
