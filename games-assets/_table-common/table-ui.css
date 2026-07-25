@@ -1,0 +1,67 @@
+/**
+ * 四桌共享视觉降噪（顶栏 2×2 统计不在此文件改动）
+ * 房间根节点加 .tb-room；下注/路单/人数加 .tb-bet / .tb-roadmap / .tb-players
+ * 换筹码钮加 .tb-chip-more
+ */
+
+/* 下注阶段：路单标题/统计降权，珠子保持清晰 */
+.tb-room.is-live-bet .tb-roadmap [class*='roadmap__title'],
+.tb-room.is-live-bet .tb-roadmap [class*='roadmap__stats'] {
+  opacity: 0.62;
+  filter: saturate(0.85);
+}
+.tb-room.is-live-bet .tb-roadmap {
+  opacity: 0.88;
+}
+
+/* 开奖/派奖：压暗下注与路单，牌面做主戏 */
+.tb-room.is-focus .tb-bet {
+  opacity: 0.36;
+  filter: saturate(0.5) brightness(0.92);
+  pointer-events: none;
+}
+.tb-room.is-focus .tb-roadmap {
+  opacity: 0.26;
+  filter: saturate(0.45);
+}
+.tb-room.is-focus .tb-players {
+  opacity: 0.22;
+}
+.tb-room.is-focus [class*='-actions'] {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+/* 死控件：真账不可撤，隐藏撤销钮 */
+.tb-room [data-action='undo'] {
+  display: none !important;
+}
+
+/* 气氛筹码降噪 */
+.tb-room [data-owner='other'] {
+  opacity: 0.52;
+  filter: saturate(0.7);
+}
+
+/* 人数角标降为 meta */
+.tb-room .tb-players {
+  opacity: 0.72;
+  transform: scale(0.92);
+  transform-origin: center center;
+}
+
+/* 换筹码页：加大触控 */
+.tb-chip-more {
+  width: 5.8% !important;
+  height: 9.2% !important;
+}
+.tb-chip-more [class*='chip-more__dot'] {
+  width: 42% !important;
+}
+
+/* 局号短显略放大（标题下，不碰 2×2） */
+[class*='-head-round'] {
+  font-size: 11px !important;
+  letter-spacing: 0.04em !important;
+  color: rgba(255, 230, 170, 0.88) !important;
+}

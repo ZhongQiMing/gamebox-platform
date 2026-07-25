@@ -58,6 +58,27 @@ html.dn-in-iframe body.dn-body {
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
+  min-width: 0;
+}
+
+.dn-head__titles {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.dn-head-round {
+  font-family: "Orbitron", "DIN Alternate", "Segoe UI", sans-serif;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: rgba(232, 220, 180, 0.78);
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 42vw;
 }
 
 .dn-head-back {
@@ -1998,4 +2019,34 @@ html.dn-in-iframe body.dn-body {
   .dn-rail-ic { width: 40px; height: 40px; }
   .dn-rail { gap: 8px; }
   .dn-rail-lb { font-size: 8px; }
+}
+
+/* 主次：庄闲色差，牛型边注降权 + 短文案适配 */
+.dn-bet-btn--banker .dn-bet-btn__name,
+.dn-bet-btn--banker .dn-bet-btn__odds {
+  color: #ffc0c0;
+  -webkit-text-fill-color: #ffc0c0;
+}
+.dn-bet-btn--player .dn-bet-btn__name,
+.dn-bet-btn--player .dn-bet-btn__odds {
+  color: #b0d0ff;
+  -webkit-text-fill-color: #b0d0ff;
+}
+.dn-bet-btn--banker,
+.dn-bet-btn--player {
+  filter: brightness(1.05);
+  z-index: 3;
+}
+.dn-bet-btn--gold {
+  filter: brightness(0.96) saturate(0.86);
+}
+.dn-bet-btn--gold .dn-bet-btn__name,
+.dn-bet-btn--gold .dn-bet-btn__odds {
+  color: #9a7340;
+  -webkit-text-fill-color: #9a7340;
+  opacity: 0.9;
+}
+.dn-bet-btn--gold .dn-bet-btn__name:not(.is-stack) {
+  font-size: min(26cqh, 36cqw);
+  letter-spacing: 0.04em;
 }

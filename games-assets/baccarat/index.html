@@ -7,7 +7,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;700;900&family=Orbitron:wght@600;700&family=ZCOOL+QingKe+HuangYou&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="./css/bjl-table.css?v=13">
+  <link rel="stylesheet" href="./css/bjl-table.css?v=15">
+  <link rel="stylesheet" href="/games-assets/_table-common/table-ui.css?v=1">
   <script>
     (function () {
       if (window.parent !== window) document.documentElement.classList.add('bjl-in-iframe');
@@ -35,7 +36,10 @@
   <header class="bjl-head">
     <div class="bjl-head__brand">
       <button type="button" class="bjl-head-back" id="backBtn" aria-label="返回"></button>
-      <h1 class="bjl-head-title">百家乐</h1>
+      <div class="bjl-head__titles">
+        <h1 class="bjl-head-title">百家乐</h1>
+        <div class="bjl-head-round" id="roundNoLabel" aria-label="局号">—</div>
+      </div>
     </div>
     <div class="bjl-stats" id="statsBar">
       <div class="bjl-stat"><span class="k">积分</span><span class="v" id="statBalance">0</span></div>
@@ -46,7 +50,7 @@
   </header>
 
   <div class="bjl-stage">
-    <div class="bjl-room">
+    <div class="bjl-room tb-room">
       <div class="bjl-shoe" id="shoeBox" aria-hidden="true">
         <img class="bjl-shoe__body" src="./assets/ui/shoe-dealer-live.png?v=1" alt="" draggable="false">
         <img class="bjl-shoe__cards" src="./assets/ui/shoe-cards-live.png?v=3" alt="" draggable="false">
@@ -103,7 +107,7 @@
 
       <div class="bjl-fly-layer" id="flyLayer" aria-hidden="true"></div>
 
-      <div class="bjl-bet" id="betArea" aria-label="下注区">
+      <div class="bjl-bet tb-bet" id="betArea" aria-label="下注区">
         <button type="button" class="bjl-bet-btn" data-bet="banker">
           <img class="bjl-bet-btn__frame" src="./assets/ui/bet-btns/banker.png?v=1" alt="" draggable="false">
           <span class="bjl-bet-btn__name">庄</span>
@@ -141,7 +145,7 @@
         </button>
       </div>
 
-      <div class="bjl-roadmap" id="roadmap" aria-label="路单">
+      <div class="bjl-roadmap tb-roadmap" id="roadmap" aria-label="路单">
         <div class="bjl-roadmap__inner">
           <header class="bjl-roadmap__head">
             <div class="bjl-roadmap__brand">
@@ -200,7 +204,7 @@
         </button>
       </div>
 
-      <div class="bjl-players" id="playersBox" aria-label="在线人数">
+      <div class="bjl-players tb-players" id="playersBox" aria-label="气氛人数（非实时在线）" title="桌面气氛人数，非实时在线">
         <img class="bjl-players__icon" src="./assets/ui/action-btns/players.png?v=2" alt="" draggable="false">
         <span class="bjl-players__count" id="playersCount">36</span>
       </div>
@@ -230,7 +234,7 @@
           <span class="bjl-chip__glow" aria-hidden="true"></span>
           <img src="./assets/ui/chips/chip-500.png?v=4" alt="500" draggable="false">
         </button>
-        <button type="button" class="bjl-chip-more" id="chipPageBtn" aria-label="切换筹码页" title="切换筹码">
+        <button type="button" class="bjl-chip-more tb-chip-more" id="chipPageBtn" aria-label="切换筹码页" title="切换筹码">
           <span class="bjl-chip-more__dot"></span>
           <span class="bjl-chip-more__dot"></span>
           <span class="bjl-chip-more__dot"></span>
@@ -277,7 +281,8 @@
   </section>
 </div>
 
-<script src="/legacy/js/games-common.js"></script>
-<script src="./js/bjl-table.js?v=13"></script>
+  <script src="/legacy/js/games-common.js?v=28"></script>
+  <script src="/games-assets/_table-common/table-shell.js?v=5"></script>
+  <script src="./js/bjl-table.js?v=23"></script>
 </body>
 </html>

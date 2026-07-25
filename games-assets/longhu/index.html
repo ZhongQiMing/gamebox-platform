@@ -7,7 +7,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;700;900&family=Orbitron:wght@600;700&family=ZCOOL+QingKe+HuangYou&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="./css/lhd-table.css?v=10">
+  <link rel="stylesheet" href="./css/lhd-table.css?v=12">
+  <link rel="stylesheet" href="/games-assets/_table-common/table-ui.css?v=1">
   <script>
     (function () {
       if (window.parent !== window) document.documentElement.classList.add('lhd-in-iframe');
@@ -35,7 +36,10 @@
   <header class="lhd-head">
     <div class="lhd-head__brand">
       <button type="button" class="lhd-head-back" id="backBtn" aria-label="返回"></button>
-      <h1 class="lhd-head-title">龙虎斗</h1>
+      <div class="lhd-head__titles">
+        <h1 class="lhd-head-title">龙虎斗</h1>
+        <div class="lhd-head-round" id="roundNoLabel" aria-label="局号">—</div>
+      </div>
     </div>
     <div class="lhd-stats" id="statsBar">
       <div class="lhd-stat"><span class="k">积分</span><span class="v" id="statBalance">0</span></div>
@@ -46,7 +50,7 @@
   </header>
 
   <div class="lhd-stage">
-    <div class="lhd-room">
+    <div class="lhd-room tb-room">
       <div class="lhd-shoe" id="shoeBox" aria-hidden="true">
         <img class="lhd-shoe__body" src="./assets/ui/shoe-dealer-live.png?v=1" alt="" draggable="false">
         <img class="lhd-shoe__cards" src="./assets/ui/shoe-cards-live.png?v=4" alt="" draggable="false">
@@ -79,31 +83,31 @@
 
       <div class="lhd-fly-layer" id="flyLayer" aria-hidden="true"></div>
 
-      <div class="lhd-bet" id="betArea" aria-label="下注区">
+      <div class="lhd-bet tb-bet" id="betArea" aria-label="下注区">
         <button type="button" class="lhd-bet-btn" data-bet="dragon">
           <img class="lhd-bet-btn__frame" src="./assets/ui/bet-btns/dragon.png?v=4" alt="" draggable="false">
           <span class="lhd-bet-btn__name">龙</span>
-          <span class="lhd-bet-btn__odds">1:1</span>
+          <span class="lhd-bet-btn__odds">1:0.95</span>
           <span class="lhd-bet-btn__chips" aria-hidden="true"></span>
           <span class="lhd-bet-btn__stake" hidden>0</span>
         </button>
         <button type="button" class="lhd-bet-btn" data-bet="tie">
           <img class="lhd-bet-btn__frame" src="./assets/ui/bet-btns/tie.png?v=4" alt="" draggable="false">
           <span class="lhd-bet-btn__name">和</span>
-          <span class="lhd-bet-btn__odds">1:8</span>
+          <span class="lhd-bet-btn__odds">1:15.2</span>
           <span class="lhd-bet-btn__chips" aria-hidden="true"></span>
           <span class="lhd-bet-btn__stake" hidden>0</span>
         </button>
         <button type="button" class="lhd-bet-btn" data-bet="tiger">
           <img class="lhd-bet-btn__frame" src="./assets/ui/bet-btns/tiger.png?v=4" alt="" draggable="false">
           <span class="lhd-bet-btn__name">虎</span>
-          <span class="lhd-bet-btn__odds">1:1</span>
+          <span class="lhd-bet-btn__odds">1:0.95</span>
           <span class="lhd-bet-btn__chips" aria-hidden="true"></span>
           <span class="lhd-bet-btn__stake" hidden>0</span>
         </button>
       </div>
 
-      <div class="lhd-roadmap" id="roadmap" aria-label="路单">
+      <div class="lhd-roadmap tb-roadmap" id="roadmap" aria-label="路单">
         <div class="lhd-roadmap__inner">
           <header class="lhd-roadmap__head">
             <div class="lhd-roadmap__brand">
@@ -162,7 +166,7 @@
         </button>
       </div>
 
-      <div class="lhd-players" id="playersBox" aria-label="在线人数">
+      <div class="lhd-players tb-players" id="playersBox" aria-label="气氛人数（非实时在线）" title="桌面气氛人数，非实时在线">
         <img class="lhd-players__icon" src="./assets/ui/action-btns/players.png?v=2" alt="" draggable="false">
         <span class="lhd-players__count" id="playersCount">36</span>
       </div>
@@ -192,7 +196,7 @@
           <span class="lhd-chip__glow" aria-hidden="true"></span>
           <img src="./assets/ui/chips/chip-500.png?v=4" alt="500" draggable="false">
         </button>
-        <button type="button" class="lhd-chip-more" id="chipPageBtn" aria-label="切换筹码页" title="切换筹码">
+        <button type="button" class="lhd-chip-more tb-chip-more" id="chipPageBtn" aria-label="切换筹码页" title="切换筹码">
           <span class="lhd-chip-more__dot"></span>
           <span class="lhd-chip-more__dot"></span>
           <span class="lhd-chip-more__dot"></span>
@@ -239,7 +243,8 @@
   </section>
 </div>
 
-<script src="/legacy/js/games-common.js"></script>
-<script src="./js/lhd-table.js?v=5"></script>
+<script src="/legacy/js/games-common.js?v=28"></script>
+<script src="/games-assets/_table-common/table-shell.js?v=5"></script>
+<script src="./js/lhd-table.js?v=15"></script>
 </body>
 </html>

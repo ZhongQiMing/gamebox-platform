@@ -57,6 +57,27 @@ html.lhd-in-iframe body.lhd-body {
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
+  min-width: 0;
+}
+
+.lhd-head__titles {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.lhd-head-round {
+  font-family: "Orbitron", "DIN Alternate", "Segoe UI", sans-serif;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: rgba(232, 220, 180, 0.78);
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 42vw;
 }
 
 .lhd-head-back {
@@ -535,16 +556,39 @@ html.lhd-in-iframe body.lhd-body {
 .lhd-bet-btn__stake {
   position: absolute;
   left: 50%;
-  bottom: 8%;
+  bottom: 6%;
   transform: translateX(-50%);
-  z-index: 4;
-  font-size: 12cqh;
+  z-index: 6;
+  min-width: 38%;
+  max-width: 92%;
+  padding: 0.35em 0.7em;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.62);
+  border: 1px solid rgba(255, 214, 120, 0.45);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  color: #ffe9a8;
+  font-family: Orbitron, "DIN Alternate", "Helvetica Neue", sans-serif;
+  font-size: 11cqh;
   font-weight: 700;
-  color: #ffe9a0;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+  line-height: 1.1;
+  letter-spacing: 0.02em;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   pointer-events: none;
+  user-select: none;
+  text-shadow: none;
 }
-
+.lhd-bet-btn__stake.is-long {
+  font-size: 9.5cqh;
+  letter-spacing: 0;
+  padding: 0.35em 0.55em;
+}
+.lhd-bet-btn__stake.is-xl {
+  font-size: 8.2cqh;
+  padding: 0.32em 0.45em;
+}
 .lhd-bet-btn__stake[hidden] { display: none !important; }
 
 .lhd-bet-btn:active,
