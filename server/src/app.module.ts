@@ -22,6 +22,8 @@ import { HealthModule } from './modules/health/health.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 import { RiskModule } from './modules/risk/risk.module';
+import { RoomsModule } from './modules/rooms/rooms.module';
+import { RebateModule } from './modules/rebate/rebate.module';
 
 /**
  * 应用根模块。
@@ -60,6 +62,8 @@ import { RiskModule } from './modules/risk/risk.module';
     TableModule,
     ActivityModule,
     RiskModule,
+    RoomsModule,
+    RebateModule,
     HealthModule,
   ],
   providers: [
