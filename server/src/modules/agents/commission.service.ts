@@ -79,20 +79,14 @@ export class CommissionService {
       if (amount <= 0) continue;
 
       const key = `commission:${scope}:${sourceUser.id}:${beneficiaryUserId}`;
-      // 平台出账 → 代理入账
-      await this.points.creditInTx(tx, 'PLATFORM', PLATFORM_OWNER_ID, -amount, 'COMMISSION', {
-        refType: 'round',
-        refId: refRoundId,
-        idempotencyKey: `${key}:OUT`,
-      });
       const ownerType = this.roleToOwnerType(roleMap.get(beneficiaryUserId));
-      const ledger = await this.points.creditInTx(
+      // 平台出账 → 代理入账（transferInTx 保证平台侧先加锁）
+      const { in: ledger } = await this.points.transferInTx(
         tx,
-        ownerType,
-        beneficiaryUserId,
+        { type: 'PLATFORM', id: PLATFORM_OWNER_ID, idempotencyKey: `${key}:OUT` },
+        { type: ownerType, id: beneficiaryUserId, idempotencyKey: `${key}:IN` },
         amount,
-        'COMMISSION',
-        { refType: 'round', refId: refRoundId, idempotencyKey: `${key}:IN` },
+        { bizType: 'COMMISSION', refType: 'round', refId: refRoundId },
       );
 
       // 幂等命中（重复结算）时账本未新增，对应记录也必须跳过，否则记录与钱不一致
@@ -114,9 +108,10 @@ export class CommissionService {
     }
   }
 
-  private roleToOwnerType(role?: string): 'BRANCH' | 'AGENT' | 'PROXY' {
+  private roleToOwnerType(role?: string): 'BRANCH' | 'AGENT' | 'PROXY' | 'PLAYER' {
     if (role === 'BRANCH') return 'BRANCH';
     if (role === 'PROXY') return 'PROXY';
+    if (role === 'PLAYER') return 'PLAYER';
     return 'AGENT';
   }
 }

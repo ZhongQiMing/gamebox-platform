@@ -1,54 +1,48 @@
-/**
- * 代理端接口（client-app 内的"代理中心"）。
- * 任何玩家都可以发展下线（全民代理模式）：
- *   - 我的推广码（首次访问自动生成）
- *   - 团队概览/直属下级列表
- *   - 佣金明细
- *   - 给直属下级上分（点对点转账）
- */
-import { Controller, Get, Post, Body, Query, BadRequestException } from '@nestjs/common';
-import { IsString, IsInt, Min, Max } from 'class-validator';
-import { Type } from 'class-transformer';
-import * as crypto from 'crypto';
+import {
+  Controller, Get, Post, Query, Body,
+  ForbiddenException, BadRequestException, NotFoundException,
+} from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { IsString, Length } from 'class-validator';
 import { PrismaService } from '../../prisma/prisma.service';
-import { PointsService } from '../points/points.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
-export class AgentTransferDto {
-  /** 下级的 9 位 UID */
-  @IsString() targetUid!: string;
-  @IsInt() @Min(1) @Max(10_000_000) @Type(() => Number) amount!: number;
+class HangDto {
+  @IsString()
+  @Length(6, 16)
+  friendUid!: string;
+
+  @IsString()
+  @Length(6, 16)
+  underUid!: string;
 }
+
+const AGENT_ROLES = new Set(['BRANCH', 'AGENT', 'PROXY']);
 
 @Controller('agent')
 export class AgentController {
   constructor(
     private prisma: PrismaService,
-    private points: PointsService,
+    private cfg: ConfigService,
   ) {}
 
-  /** GET /api/agent/overview — 概览（推广码自动生成） */
+  private isAgentRole(role: string) {
+    return AGENT_ROLES.has(role);
+  }
+
+  private inTeam(callerId: string, user: { id: string; agentPath: string }) {
+    return user.id === callerId || user.agentPath.includes(`/${callerId}/`);
+  }
+
   @Get('overview')
   async overview(@CurrentUser() u: { id: string }) {
-    let user = await this.prisma.user.findUniqueOrThrow({
+    const me = await this.prisma.user.findUniqueOrThrow({
       where: { id: u.id },
-      select: { id: true, promoCode: true },
+      select: {
+        id: true, role: true,
+        parent: { select: { uid: true, nickname: true, role: true } },
+      },
     });
-
-    // 首次访问生成推广码
-    if (!user.promoCode) {
-      for (let i = 0; i < 5; i++) {
-        const code = crypto.randomBytes(4).toString('hex').toUpperCase();
-        try {
-          user = await this.prisma.user.update({
-            where: { id: u.id },
-            data: { promoCode: code },
-            select: { id: true, promoCode: true },
-          });
-          break;
-        } catch { /* 撞码重试 */ }
-      }
-    }
 
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
@@ -67,7 +61,10 @@ export class AgentController {
     ]);
 
     return {
-      promoCode: user.promoCode,
+      canHang: this.isAgentRole(me.role),
+      parent: me.parent
+        ? { uid: me.parent.uid, nickname: me.parent.nickname, role: me.parent.role }
+        : null,
       directCount,
       teamCount,
       totalCommission: totalAgg._sum.amount ?? 0,
@@ -75,7 +72,6 @@ export class AgentController {
     };
   }
 
-  /** GET /api/agent/team — 直属下级列表（含个人流水/贡献佣金） */
   @Get('team')
   async team(
     @CurrentUser() u: { id: string },
@@ -94,7 +90,6 @@ export class AgentController {
       this.prisma.user.count({ where: { parentId: u.id } }),
     ]);
 
-    // 每个下级的累计有效流水 + 给我贡献的佣金
     const enriched = await Promise.all(members.map(async (m) => {
       const [flowAgg, commAgg] = await Promise.all([
         this.prisma.bet.aggregate({
@@ -119,7 +114,6 @@ export class AgentController {
     return { list: enriched, total, page: Number(page) };
   }
 
-  /** GET /api/agent/commissions — 我的佣金明细 */
   @Get('commissions')
   async commissions(
     @CurrentUser() u: { id: string },
@@ -144,24 +138,111 @@ export class AgentController {
     return { list: records, total, page: Number(page) };
   }
 
-  /** POST /api/agent/transfer — 给直属下级上分（从我的余额转出） */
-  @Post('transfer')
-  async transfer(@CurrentUser() u: { id: string }, @Body() dto: AgentTransferDto) {
-    const target = await this.prisma.user.findUnique({
-      where: { uid: dto.targetUid },
-      select: { id: true, uid: true, nickname: true, parentId: true, status: true },
+  @Post('hang')
+  async hang(@CurrentUser() u: { id: string }, @Body() dto: HangDto) {
+    const me = await this.prisma.user.findUniqueOrThrow({
+      where: { id: u.id },
+      select: { id: true, role: true },
     });
-    if (!target) throw new BadRequestException('该 UID 不存在');
-    if (target.parentId !== u.id) throw new BadRequestException('只能给自己的直属下级上分');
-    if (target.status === 'DISABLED') throw new BadRequestException('对方账号已禁用');
+    if (!this.isAgentRole(me.role)) {
+      throw new ForbiddenException('仅代理可操作挂靠，请联系您的代理处理');
+    }
 
-    await this.points.transfer(
-      { type: 'PLAYER', id: u.id },
-      { type: 'PLAYER', id: target.id },
-      dto.amount,
-      { remark: `代理上分给 ${target.uid}` },
-    );
+    const friendUid = dto.friendUid.trim();
+    const underUid = dto.underUid.trim();
+    if (friendUid === underUid) {
+      throw new BadRequestException('好友与推荐人不能相同');
+    }
 
-    return { targetUid: target.uid, nickname: target.nickname, amount: dto.amount };
+    const [friend, under] = await Promise.all([
+      this.prisma.user.findUnique({
+        where: { uid: friendUid },
+        select: { id: true, uid: true, nickname: true, parentId: true, agentPath: true, depth: true, role: true },
+      }),
+      this.prisma.user.findUnique({
+        where: { uid: underUid },
+        select: { id: true, uid: true, nickname: true, parentId: true, agentPath: true, depth: true, role: true },
+      }),
+    ]);
+    if (!friend) throw new NotFoundException('好友 UID 不存在');
+    if (!under) throw new NotFoundException('推荐人 UID 不存在');
+    if (friend.id === me.id) throw new BadRequestException('不能挂靠自己');
+
+    if (!this.inTeam(me.id, under)) {
+      throw new ForbiddenException('推荐人不在您的团队内，无法挂靠');
+    }
+
+    if (friend.parentId && !this.inTeam(me.id, friend)) {
+      throw new ForbiddenException('该好友已挂在其他代理名下，无法操作');
+    }
+
+    if (under.agentPath.includes(`/${friend.id}/`) || under.id === friend.id) {
+      throw new BadRequestException('不能将上级挂到下级名下');
+    }
+
+    if (friend.parentId === under.id) {
+      return { ok: true, message: '已在该推荐人名下，无需重复挂靠', friend: friend.nickname, under: under.nickname };
+    }
+
+    const oldPrefix = `${friend.agentPath}${friend.id}/`;
+    const newAgentPath = `${under.agentPath}${under.id}/`;
+    const newDepth = under.depth + 1;
+    const depthDelta = newDepth - friend.depth;
+    const newPrefix = `${newAgentPath}${friend.id}/`;
+    const playerRate = Number(this.cfg.get('PLAYER_COMMISSION_RATE') ?? 0.01);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: friend.id },
+        data: {
+          parentId: under.id,
+          agentPath: newAgentPath,
+          depth: newDepth,
+        },
+      });
+
+      const descendants = await tx.user.findMany({
+        where: { agentPath: { startsWith: oldPrefix } },
+        select: { id: true, agentPath: true, depth: true },
+      });
+      for (const d of descendants) {
+        await tx.user.update({
+          where: { id: d.id },
+          data: {
+            agentPath: newPrefix + d.agentPath.slice(oldPrefix.length),
+            depth: d.depth + depthDelta,
+          },
+        });
+      }
+
+      if (under.role === 'PLAYER') {
+        const existing = await tx.agent.findUnique({
+          where: { userId: under.id },
+          select: { commissionRate: true },
+        });
+        if (!existing) {
+          await tx.agent.create({
+            data: { userId: under.id, commissionRate: playerRate },
+          });
+        } else if (existing.commissionRate <= 0) {
+          await tx.agent.update({
+            where: { userId: under.id },
+            data: { commissionRate: playerRate },
+          });
+        }
+      }
+    });
+
+    return {
+      ok: true,
+      message: `已将 ${friend.nickname} 挂到 ${under.nickname} 名下`,
+      friend: { uid: friend.uid, nickname: friend.nickname },
+      under: { uid: under.uid, nickname: under.nickname },
+    };
+  }
+
+  @Post('transfer')
+  async transfer() {
+    throw new ForbiddenException('禁止私下转分，请通过官方充值通道上分');
   }
 }

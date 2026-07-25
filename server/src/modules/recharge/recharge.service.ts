@@ -51,7 +51,7 @@ export class RechargeService {
 
   /** 玩家申请上分（RECHARGE） */
   async applyRecharge(playerId: string, amount: number, channel?: string) {
-    if (!Number.isInteger(amount) || amount < 1) throw new BadRequestException('上分金额必须为正整数');
+    if (!Number.isInteger(amount) || amount < 200) throw new BadRequestException('上分最低 200 积分');
     if (amount > 10_000_000) throw new BadRequestException('单笔上分不超过 1000 万');
 
     return this.prisma.rechargeOrder.create({
@@ -66,15 +66,17 @@ export class RechargeService {
     });
   }
 
-  /** 玩家申请下分（WITHDRAW）——冻结余额 */
+  /** 玩家申请下分：立即扣余额 + 建单，客服通过即完成；驳回则退回余额 */
   async applyWithdraw(playerId: string, amount: number) {
-    if (!Number.isInteger(amount) || amount < 1) throw new BadRequestException('下分金额必须为正整数');
+    if (!Number.isInteger(amount) || amount < 500) {
+      throw new BadRequestException('下分最低 500 积分');
+    }
 
     // 检查余额是否足够（乐观检查，结合事务保证）
     const account = await this.prisma.pointsAccount.findUnique({ where: { ownerId: playerId } });
     if (!account || account.balance < amount) throw new BadRequestException('余额不足');
 
-    // 在事务内：先建订单拿到 id，再用 id 做幂等键冻结余额（保证幂等）
+    // 在事务内：建单并立即扣除余额（驳回时再退回）
     return this.prisma.$transaction(async (tx) => {
       const orderNo = genOrderNo();
       const order = await tx.rechargeOrder.create({
@@ -82,14 +84,14 @@ export class RechargeService {
       });
       await this.points.creditInTx(tx, 'PLAYER', playerId, -amount, 'WITHDRAW', {
         refType: 'recharge', refId: order.id,
-        remark: '下分冻结（待审核）',
-        idempotencyKey: `freeze_${order.id}`,
+        remark: '下分扣除（待客服审核）',
+        idempotencyKey: `withdraw_${order.id}`,
       });
       return order;
     });
   }
 
-  /** 代理/管理员：审核通过（UP 加积分 / DOWN 标记完成，余额已在申请时冻结） */
+  /** 代理/管理员：审核通过（UP 加积分 / DOWN 标记完成，余额已在申请时扣除） */
   async approveRecharge(orderId: string, reviewerId: string) {
     return this.prisma.$transaction(async (tx) => {
       const order = await tx.rechargeOrder.findUnique({ where: { id: orderId } });
@@ -164,7 +166,7 @@ export class RechargeService {
             refType: 'recharge',
             refId: order.id,
             operatorId: reviewerId,
-            remark: '下分拒绝退款',
+            remark: '下分未通过，余额返还',
             idempotencyKey: `reject_${order.id}`,
           },
         );

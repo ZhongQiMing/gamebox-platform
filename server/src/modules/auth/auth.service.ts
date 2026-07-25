@@ -29,7 +29,7 @@ export class AuthService {
       data: { lastLoginAt: new Date() },
     }).catch(() => {});
 
-    const profile = this.users.toProfile(u);
+    const profile = await this.users.getProfile(u.id);
     return { user: profile, token: this.sign(profile) };
   }
 
