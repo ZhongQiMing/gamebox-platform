@@ -1,71 +1,37 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import {
-  MAHJONG_BASE_BET,
-  MAHJONG_CASCADE_MULTIPLIERS,
-  MAHJONG_FREE_SPIN_MULTIPLIERS,
-  MAHJONG_PAY_SYMBOLS,
-  MAHJONG_PAYTABLE,
-  mahjongFreeSpinsFromScatters,
-  type MahjongCascadeStepDTO,
-  type MahjongGridPosDTO,
-  type MahjongPaySymbolId,
+  type MahjongActiveSessionDTO,
   type MahjongSpinRequestDTO,
   type MahjongSpinResultDTO,
-  type MahjongSymbolId,
-  type MahjongTileDTO,
 } from '@gamebox/shared';
 import { PrismaService } from '../../prisma/prisma.service';
-import { PointsService, PLATFORM_OWNER_ID } from '../points/points.service';
-import { CommissionService } from '../agents/commission.service';
 import { RiskService } from '../risk/risk.service';
 import { businessNo } from './business-id';
-import { deriveRandom, genServerSeed, weightedPick } from './fairness.util';
+import { deriveRandom, genServerSeed } from './fairness.util';
 import { GameConfigCache } from './game-config.cache';
+import { generateMahjongOutcome, type MahjongConfig } from './mahjong-math';
+import { SettlementKernel } from './settlement-kernel';
 
 const GAME_CODE = 'slots-mahjong';
-const COLS = 5;
-const TOTAL_ROWS = 6;
-const VISIBLE_ROWS = [1, 2, 3, 4] as const;
-const GOLDEN_REELS = new Set([1, 2, 3]);
-const MAX_CASCADES = 20;
-const REBATE_RATE = 0.005;
-
-const DEFAULT_SYMBOL_WEIGHTS: Record<MahjongSymbolId, number> = {
-  '2t': 16, '2s': 16, '5t': 12, '5s': 12,
-  '8w': 9, bai: 7, zhong: 6, fa: 5, wild: 2, hu: 2.5,
-};
-
-interface MahjongConfig {
-  symbolWeights?: Partial<Record<MahjongSymbolId, number>>;
-  goldenChance?: number;
-}
-
-interface EvaluatedWin {
-  totalWin: number;
-  winCells: MahjongGridPosDTO[];
-  scatterCount: number;
-}
+const KEY = 'mahjong';
 
 @Injectable()
 export class MahjongEngine {
   constructor(
     private prisma: PrismaService,
-    private points: PointsService,
-    private commission: CommissionService,
     private configCache: GameConfigCache,
     private risk: RiskService,
+    private settle: SettlementKernel,
   ) {}
 
   async spin(
     playerId: string,
     request: MahjongSpinRequestDTO,
   ): Promise<MahjongSpinResultDTO> {
-    if (!request.clientRequestId || request.clientRequestId.length > 100) {
-      throw new BadRequestException('clientRequestId 无效');
-    }
+    const clientRequestId = this.settle.assertClientRequestId(request.clientRequestId);
 
-    const replay = await this.findReplay(playerId, request.clientRequestId);
+    const replay = await this.findReplay(playerId, clientRequestId);
     if (replay) return replay;
 
     const game = await this.configCache.get(GAME_CODE);
@@ -89,6 +55,21 @@ export class MahjongEngine {
       ) {
         throw new BadRequestException('免费旋转会话无效或已结束');
       }
+    } else {
+      /* 付费局前若仍有未完成免费会话，禁止开新局，避免并存多个 ACTIVE */
+      const activeFree = await this.prisma.slotFeatureSession.findFirst({
+        where: {
+          playerId,
+          gameId: game.id,
+          status: 'ACTIVE',
+          spinsRemaining: { gt: 0 },
+          expiresAt: { gt: new Date() },
+        },
+        select: { id: true },
+      });
+      if (activeFree) {
+        throw new BadRequestException('请先完成免费旋转');
+      }
     }
 
     const amount = isFree ? feature!.lockedBetAmount : request.amount;
@@ -97,7 +78,7 @@ export class MahjongEngine {
     }
 
     const { seed: serverSeed, hash: serverSeedHash } = genServerSeed();
-    const clientSeed = request.clientSeed?.slice(0, 128) || request.clientRequestId;
+    const clientSeed = request.clientSeed?.slice(0, 128) || clientRequestId;
     const generated = this.generateOutcome(
       serverSeed,
       clientSeed,
@@ -146,7 +127,7 @@ export class MahjongEngine {
       const bet = await tx.bet.create({
         data: {
           betNo: businessNo('MJB'),
-          clientRequestId: request.clientRequestId,
+          clientRequestId,
           playerId,
           gameId: game.id,
           roundId: round.id,
@@ -157,58 +138,28 @@ export class MahjongEngine {
       });
 
       if (!isFree) {
-        await this.points.creditInTx(tx, 'PLAYER', playerId, -amount, 'BET', {
-          refType: 'round',
-          refId: round.id,
-          idempotencyKey: `mahjong_bet_player_${bet.id}`,
-        });
-        await this.points.creditInTx(tx, 'PLATFORM', PLATFORM_OWNER_ID, amount, 'BET', {
-          refType: 'round',
-          refId: round.id,
-          idempotencyKey: `mahjong_bet_plat_${bet.id}`,
+        await this.settle.debitBetInTx(tx, {
+          playerId,
+          roundId: round.id,
+          amount,
+          gameName: game.name,
+          keyPrefix: KEY,
         });
       }
 
-      if (generated.totalWin > 0) {
-        await this.points.creditInTx(tx, 'PLATFORM', PLATFORM_OWNER_ID, -generated.totalWin, 'WIN', {
-          refType: 'round',
-          refId: round.id,
-          idempotencyKey: `mahjong_win_plat_${bet.id}`,
-        });
-        await this.points.creditInTx(tx, 'PLAYER', playerId, generated.totalWin, 'WIN', {
-          refType: 'round',
-          refId: round.id,
-          idempotencyKey: `mahjong_win_player_${bet.id}`,
-        });
-      }
+      const { paid: totalWin } = await this.settle.creditWinInTx(tx, {
+        playerId,
+        roundId: round.id,
+        betId: bet.id,
+        amount: generated.totalWin,
+        remark: `${game.name} 派彩`,
+        keyPrefix: KEY,
+        /* 免费局 amount 已是会话锁定注额，封顶线与付费局一致 */
+        stake: amount,
+      });
 
       if (!isFree) {
-        const rebate = Math.floor(amount * REBATE_RATE);
-        if (rebate > 0) {
-          await this.points.creditInTx(tx, 'PLATFORM', PLATFORM_OWNER_ID, -rebate, 'REBATE', {
-            refType: 'round',
-            refId: round.id,
-            idempotencyKey: `mahjong_rebate_plat_${bet.id}`,
-          });
-          const ledger = await this.points.creditInTx(tx, 'PLAYER', playerId, rebate, 'REBATE', {
-            refType: 'round',
-            refId: round.id,
-            idempotencyKey: `mahjong_rebate_player_${bet.id}`,
-          });
-          await tx.rebateRecord.create({
-            data: {
-              playerId,
-              sourceRoundId: round.id,
-              personalFlow: amount,
-              rate: REBATE_RATE,
-              amount: rebate,
-              ledgerId: ledger.id,
-            },
-          });
-        }
-        if (player?.agentPath) {
-          await this.commission.distributeInTx(tx, player, amount, round.id);
-        }
+        await this.settle.applyCommissionInTx(tx, player, amount, round.id);
       }
 
       const freeSpin = await this.updateFeatureSession(
@@ -218,23 +169,24 @@ export class MahjongEngine {
         feature?.id,
         amount,
         generated.spinsAwarded,
-        generated.totalWin,
+        totalWin,
       );
       const spinType = isFree ? 'FREE' as const : 'BASE' as const;
       const outcome = {
         initialGrid: generated.initialGrid,
         cascades: generated.cascades,
-        totalWin: generated.totalWin,
+        totalWin,
         spinType,
+        chargedAmount: amount,
         freeSpin,
       };
       await tx.bet.update({
         where: { id: bet.id },
         data: {
-          status: generated.totalWin > 0 ? 'WON' : 'LOST',
-          payout: generated.totalWin,
-          multiplier: amount > 0 ? generated.totalWin / amount : 0,
-          odds: amount > 0 ? generated.totalWin / amount : 0,
+          status: totalWin > 0 ? 'WON' : 'LOST',
+          payout: totalWin,
+          multiplier: amount > 0 ? totalWin / amount : 0,
+          odds: amount > 0 ? totalWin / amount : 0,
           validFlow: isFree ? 0 : amount,
           settledAt: new Date(),
           payload: { sessionId: feature?.id, spinType: isFree ? 'FREE' : 'BASE' },
@@ -249,59 +201,76 @@ export class MahjongEngine {
           outcome: outcome as unknown as Prisma.InputJsonValue,
         },
       });
-      const account = await tx.pointsAccount.findUnique({
-        where: { ownerId: playerId },
-        select: { balance: true },
-      });
-
       return {
         roundId: round.id,
         betId: bet.id,
-        balance: account?.balance ?? 0,
         ...outcome,
+        chargedAmount: amount,
         serverSeed,
         serverSeedHash,
       };
     });
 
-    if (result.totalWin >= Math.max(amount * 50, 100_000)) {
+    const balance = await this.settle.getBalance(playerId);
+    const full = { ...result, balance };
+
+    if (full.totalWin >= Math.max(amount * 50, 100_000)) {
       await this.risk.record({
         type: 'BIG_WIN',
-        level: result.totalWin >= 1_000_000 ? 'CRITICAL' : 'WARN',
-        targetId: result.roundId,
-        detail: { playerId, gameCode: GAME_CODE, amount, payout: result.totalWin },
+        level: full.totalWin >= 1_000_000 ? 'CRITICAL' : 'WARN',
+        targetId: full.roundId,
+        detail: { playerId, gameCode: GAME_CODE, amount, payout: full.totalWin },
       });
     }
-    return result;
+    return full;
   }
 
   private async findReplay(
     playerId: string,
     clientRequestId: string,
   ): Promise<MahjongSpinResultDTO | null> {
-    const bet = await this.prisma.bet.findUnique({
-      where: { clientRequestId },
-      include: { round: true },
-    });
-    if (!bet) return null;
-    if (bet.playerId !== playerId || !bet.round?.outcome) {
-      throw new BadRequestException('clientRequestId 已被占用');
-    }
-    const account = await this.prisma.pointsAccount.findUnique({
-      where: { ownerId: playerId },
-      select: { balance: true },
-    });
+    const bet = await this.settle.findSettledByClientRequestId(playerId, clientRequestId);
+    if (!bet?.round?.outcome) return null;
     const outcome = bet.round.outcome as unknown as Omit<
       MahjongSpinResultDTO,
       'roundId' | 'betId' | 'balance' | 'serverSeed' | 'serverSeedHash'
     >;
+    const chargedAmount =
+      typeof (outcome as { chargedAmount?: number }).chargedAmount === 'number'
+        ? (outcome as { chargedAmount: number }).chargedAmount
+        : bet.amount;
     return {
       roundId: bet.round.id,
       betId: bet.id,
-      balance: account?.balance ?? 0,
+      balance: await this.settle.getBalance(playerId),
       serverSeed: bet.round.serverSeed ?? '',
       serverSeedHash: bet.round.serverSeedHash ?? '',
       ...outcome,
+      chargedAmount,
+    };
+  }
+
+  /** 恢复未完成的免费旋转会话（刷新续玩） */
+  async getActiveSession(playerId: string): Promise<MahjongActiveSessionDTO | null> {
+    const game = await this.configCache.get(GAME_CODE);
+    if (!game) return null;
+    const session = await this.prisma.slotFeatureSession.findFirst({
+      where: {
+        playerId,
+        gameId: game.id,
+        status: 'ACTIVE',
+        spinsRemaining: { gt: 0 },
+        expiresAt: { gt: new Date() },
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+    if (!session) return null;
+    return {
+      sessionId: session.id,
+      spinsRemaining: session.spinsRemaining,
+      sessionTotalWin: session.totalWin,
+      lockedBetAmount: session.lockedBetAmount,
+      expiresAt: session.expiresAt.toISOString(),
     };
   }
 
@@ -312,148 +281,14 @@ export class MahjongEngine {
     isFree: boolean,
     rawConfig: MahjongConfig,
   ) {
-    const config = (!rawConfig || Array.isArray(rawConfig) ? {} : rawConfig) as MahjongConfig;
-    const weights = { ...DEFAULT_SYMBOL_WEIGHTS, ...(config.symbolWeights ?? {}) };
-    const symbols = Object.keys(weights) as MahjongSymbolId[];
-    const goldenChance = Math.min(1, Math.max(0, config.goldenChance ?? 0.14));
     let nonce = 0;
-    const random = () => deriveRandom(serverSeed, clientSeed, ++nonce);
-    const rollTile = (col: number): MahjongTileDTO => {
-      const symbol = symbols[weightedPick(symbols.map((id) => weights[id] ?? 0), random())];
-      const isGolden = MAHJONG_PAY_SYMBOLS.includes(symbol as MahjongPaySymbolId)
-        && GOLDEN_REELS.has(col)
-        && random() < goldenChance;
-      return { symbol, isGolden };
-    };
-    const rollGrid = () => Array.from(
-      { length: COLS },
-      (_, col) => Array.from({ length: TOTAL_ROWS }, () => rollTile(col)),
-    );
-
-    const initialGrid = rollGrid();
-    const grid = this.cloneGrid(initialGrid);
-    const cascades: MahjongCascadeStepDTO[] = [];
-    let totalWin = 0;
-    let maxScatterCount = this.countScatters(grid);
-
-    for (let index = 0; index < MAX_CASCADES; index++) {
-      const evaluated = this.evaluate(grid, amount, index, isFree);
-      maxScatterCount = Math.max(maxScatterCount, evaluated.scatterCount);
-      if (evaluated.totalWin <= 0 || evaluated.winCells.length === 0) break;
-
-      const goldenToWild = evaluated.winCells.filter(({ col, row }) => {
-        const tile = grid[col]?.[row];
-        return Boolean(tile?.isGolden && MAHJONG_PAY_SYMBOLS.includes(tile.symbol as MahjongPaySymbolId));
-      });
-      const goldenKeys = new Set(goldenToWild.map(({ col, row }) => `${col}:${row}`));
-      const removeCells = evaluated.winCells.filter(
-        ({ col, row }) => !goldenKeys.has(`${col}:${row}`),
-      );
-      for (const { col, row } of goldenToWild) {
-        grid[col][row] = { symbol: 'wild', isGolden: false };
-      }
-      const refillColumns = this.dropAndRefill(grid, removeCells, rollTile);
-      totalWin += evaluated.totalWin;
-      cascades.push({
-        cascadeIndex: index,
-        multiplier: this.multiplier(index, isFree),
-        winCells: evaluated.winCells,
-        goldenToWild,
-        removeCells,
-        refillColumns,
-        gridAfter: this.cloneGrid(grid),
-        stepWin: evaluated.totalWin,
-      });
-    }
-
-    return {
-      initialGrid,
-      cascades,
-      totalWin,
-      spinsAwarded: mahjongFreeSpinsFromScatters(maxScatterCount),
-      nonce,
-    };
-  }
-
-  private evaluate(
-    grid: MahjongTileDTO[][],
-    amount: number,
-    cascadeIndex: number,
-    isFree: boolean,
-  ): EvaluatedWin {
-    const winCells: MahjongGridPosDTO[] = [];
-    let totalWin = 0;
-    for (const symbol of MAHJONG_PAY_SYMBOLS) {
-      const positionsByReel: MahjongGridPosDTO[][] = [];
-      for (let col = 0; col < COLS; col++) {
-        const positions = VISIBLE_ROWS
-          .filter((row) => ['wild', symbol].includes(grid[col]?.[row]?.symbol))
-          .map((row) => ({ col, row }));
-        if (positions.length === 0) break;
-        positionsByReel.push(positions);
-      }
-      if (positionsByReel.length < 3) continue;
-      const ways = positionsByReel.reduce((product, positions) => product * positions.length, 1);
-      const pay = MAHJONG_PAYTABLE[symbol][positionsByReel.length - 3];
-      totalWin += Math.floor(
-        (amount / MAHJONG_BASE_BET) * pay * ways * this.multiplier(cascadeIndex, isFree),
-      );
-      positionsByReel.forEach((positions) => winCells.push(...positions));
-    }
-    return {
-      totalWin,
-      winCells: this.dedupe(winCells),
-      scatterCount: this.countScatters(grid),
-    };
-  }
-
-  private multiplier(index: number, isFree: boolean): number {
-    const ladder = isFree ? MAHJONG_FREE_SPIN_MULTIPLIERS : MAHJONG_CASCADE_MULTIPLIERS;
-    return ladder[Math.min(index, ladder.length - 1)];
-  }
-
-  private countScatters(grid: MahjongTileDTO[][]): number {
-    return grid.reduce(
-      (sum, column) => sum + VISIBLE_ROWS.filter((row) => column[row]?.symbol === 'hu').length,
-      0,
-    );
-  }
-
-  private dedupe(cells: MahjongGridPosDTO[]): MahjongGridPosDTO[] {
-    const seen = new Set<string>();
-    return cells.filter(({ col, row }) => {
-      const key = `${col}:${row}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
+    const outcome = generateMahjongOutcome({
+      amount,
+      isFree,
+      rawConfig,
+      random: () => deriveRandom(serverSeed, clientSeed, ++nonce),
     });
-  }
-
-  private dropAndRefill(
-    grid: MahjongTileDTO[][],
-    removeCells: MahjongGridPosDTO[],
-    rollTile: (col: number) => MahjongTileDTO,
-  ) {
-    const byColumn = new Map<number, Set<number>>();
-    for (const { col, row } of removeCells) {
-      const rows = byColumn.get(col) ?? new Set<number>();
-      rows.add(row);
-      byColumn.set(col, rows);
-    }
-    const refillColumns: Array<{ col: number; tiles: MahjongTileDTO[] }> = [];
-    for (let col = 0; col < COLS; col++) {
-      const rows = byColumn.get(col) ?? new Set<number>();
-      if (rows.size === 0) continue;
-      const kept = grid[col].filter((_, row) => !rows.has(row));
-      const tiles = Array.from({ length: TOTAL_ROWS - kept.length }, () => rollTile(col));
-      grid[col] = [...kept, ...tiles];
-      refillColumns.push({ col, tiles });
-    }
-    return refillColumns;
-  }
-
-  private cloneGrid(grid: MahjongTileDTO[][]): MahjongTileDTO[][] {
-    return grid.map((column) => column.map((tile) => ({ ...tile })));
+    return { ...outcome, nonce };
   }
 
   private async updateFeatureSession(
@@ -467,26 +302,35 @@ export class MahjongEngine {
   ) {
     if (!sessionId && spinsAwarded <= 0) return undefined;
 
-    const session = sessionId
-      ? await tx.slotFeatureSession.update({
-          where: { id: sessionId },
-          data: {
-            spinsRemaining: { increment: spinsAwarded },
-            totalWin: { increment: spinWin },
-            expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-          },
-        })
-      : await tx.slotFeatureSession.create({
-          data: {
-            playerId,
-            gameId,
-            feature: 'FREE_SPIN',
-            lockedBetAmount,
-            spinsRemaining: spinsAwarded,
-            totalWin: 0,
-            expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-          },
-        });
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    let session;
+    if (sessionId) {
+      session = await tx.slotFeatureSession.update({
+        where: { id: sessionId },
+        data: {
+          spinsRemaining: { increment: spinsAwarded },
+          totalWin: { increment: spinWin },
+          expiresAt,
+        },
+      });
+    } else {
+      /* 创建前收口其它 ACTIVE，保证每玩家每游戏最多一个有效免费会话 */
+      await tx.slotFeatureSession.updateMany({
+        where: { playerId, gameId, status: 'ACTIVE' },
+        data: { status: 'COMPLETED' },
+      });
+      session = await tx.slotFeatureSession.create({
+        data: {
+          playerId,
+          gameId,
+          feature: 'FREE_SPIN',
+          lockedBetAmount,
+          spinsRemaining: spinsAwarded,
+          totalWin: 0,
+          expiresAt,
+        },
+      });
+    }
 
     const completed = session.spinsRemaining <= 0
       ? await tx.slotFeatureSession.update({
