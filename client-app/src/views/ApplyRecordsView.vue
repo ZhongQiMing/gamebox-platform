@@ -16,15 +16,17 @@
     <div class="page-body">
       <h1 class="ar-title">申 请 记 录</h1>
 
-      <!-- 6 时间 tab -->
+      <!-- 5 时间 tab -->
       <div class="time-tabs">
         <button
-          v-for="t in RANGES"
+          v-for="t in TIME_RANGES"
           :key="t.key"
+          type="button"
           :class="['tt-item', range === t.key ? 'active' : '']"
           @click="range = t.key"
         >{{ t.label }}</button>
       </div>
+      <div class="time-range-hint">{{ rangeDateText }}</div>
 
       <div class="ar-list">
         <div v-if="loading" class="ar-empty">
@@ -64,6 +66,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { rechargeApi, type RechargeOrder } from '@/api/recharge'
 import { useBodyClass } from '@/composables/useBodyClass'
+import { TIME_RANGES, rangeBounds, formatRangeDateText, type TimeRangeKey } from '@/composables/timeRange'
 import TabBar from '@/components/TabBar.vue'
 import '@/assets/apply-records.css'
 
@@ -71,40 +74,11 @@ useBodyClass('deco-bg')
 
 const router = useRouter()
 
-const RANGES = [
-  { key: 'today',     label: '今 日' },
-  { key: 'yesterday', label: '昨 日' },
-  { key: 'thisweek',  label: '本 周' },
-  { key: 'lastweek',  label: '上 周' },
-  { key: 'thismonth', label: '本 月' },
-  { key: 'lastmonth', label: '上 个 月' },
-] as const
-
-type RangeKey = typeof RANGES[number]['key']
-
-const range = ref<RangeKey>('today')
+const range = ref<TimeRangeKey>('today')
 const orders = ref<RechargeOrder[]>([])
 const loading = ref(false)
 
-function rangeBounds(key: RangeKey): [number, number] {
-  const now = new Date()
-  const dayStart = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
-  const DAY = 86400000
-  const today0 = dayStart(now)
-  // 周一为一周起点
-  const weekday = (now.getDay() + 6) % 7
-  const week0 = today0 - weekday * DAY
-  const month0 = new Date(now.getFullYear(), now.getMonth(), 1).getTime()
-  const lastMonth0 = new Date(now.getFullYear(), now.getMonth() - 1, 1).getTime()
-  switch (key) {
-    case 'today':     return [today0, today0 + DAY]
-    case 'yesterday': return [today0 - DAY, today0]
-    case 'thisweek':  return [week0, week0 + 7 * DAY]
-    case 'lastweek':  return [week0 - 7 * DAY, week0]
-    case 'thismonth': return [month0, Date.now() + DAY]
-    case 'lastmonth': return [lastMonth0, month0]
-  }
-}
+const rangeDateText = computed(() => formatRangeDateText(range.value))
 
 const filtered = computed(() => {
   const [from, to] = rangeBounds(range.value)
@@ -118,7 +92,7 @@ function statusClass(s: RechargeOrder['status']) {
   return { PENDING: 'pending', APPROVED: 'success', REJECTED: 'reject' }[s] ?? 'pending'
 }
 function statusLabel(s: RechargeOrder['status']) {
-  return { PENDING: '审核中', APPROVED: '已通过', REJECTED: '已驳回' }[s] ?? s
+  return { PENDING: '审核中', APPROVED: '已通过', REJECTED: '失败' }[s] ?? s
 }
 function fmtAmount(n: number) {
   return Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })

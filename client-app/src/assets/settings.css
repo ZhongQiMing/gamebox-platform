@@ -1,4 +1,4 @@
-﻿/* ========================================================
+/* ========================================================
    「我的」页（黑金至尊 · 重做版）
    头像名片：referral 同款 CSS 比例，不套 fitStage（避免被放大到满屏）
    下方功能卡：充值 / 明细同款（page-body 左右 16px）
@@ -103,6 +103,25 @@
   pointer-events: none;
   z-index: 2;
   filter: none;
+}
+.settings-page .user-card .avatar-luxe-wrap--btn {
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  display: block;
+}
+.settings-page .user-card .avatar-luxe-wrap--btn:active {
+  transform: scale(0.96);
+}
+.gc-icon--rebate { color: #7ec8e8; }
+.avatar-file-hidden {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 .settings-page .user-card .user-info {
   min-width: 0;
@@ -299,8 +318,8 @@
 /* ============ 卡片 3 & 4：网格菜单（2×3 / 1×4） ============ */
 .grid-card {
   display: grid;
-  gap: 0;
-  padding: 4px 0;
+  gap: 10px;
+  padding: 12px;
   overflow: hidden;
 }
 .grid-3col { grid-template-columns: 1fr 1fr 1fr; }
@@ -311,59 +330,88 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 16px 4px;
-  background: transparent;
-  border: none;
-  border-right: 1px solid rgba(212, 175, 55, 0.12);
-  border-bottom: 1px solid rgba(212, 175, 55, 0.12);
+  gap: 9px;
+  padding: 14px 6px 12px;
+  background:
+    linear-gradient(165deg, rgba(52, 40, 22, 0.55) 0%, rgba(18, 12, 8, 0.92) 100%);
+  border: 1px solid rgba(212, 175, 55, 0.28);
+  border-radius: 14px;
   color: var(--text);
   cursor: pointer;
-  transition: background 0.15s, transform 0.1s;
+  box-shadow:
+    0 1px 0 rgba(244, 211, 107, 0.12) inset,
+    0 4px 12px rgba(0, 0, 0, 0.35);
+  transition: transform 0.12s, border-color 0.15s, box-shadow 0.15s, background 0.15s;
   -webkit-tap-highlight-color: transparent;
 }
-/* 最后一列去掉右边线 */
-.grid-3col .gc-item:nth-child(3n) { border-right: none; }
-.grid-4col .gc-item:nth-child(4n) { border-right: none; }
-/* 最后一行（仅 3col 卡：6 个里最后 3 个；4col 卡：4 个全是最后一行）去掉下边线 */
-.grid-3col .gc-item:nth-last-child(-n+3) { border-bottom: none; }
-.grid-4col .gc-item                       { border-bottom: none; }
-
 .gc-item:active {
-  background: rgba(212, 175, 55, 0.08);
-  transform: scale(0.97);
+  transform: scale(0.96);
+  border-color: rgba(244, 211, 107, 0.55);
+  box-shadow:
+    0 1px 0 rgba(244, 211, 107, 0.22) inset,
+    0 0 14px rgba(212, 175, 55, 0.22);
+  background:
+    linear-gradient(165deg, rgba(70, 52, 24, 0.7) 0%, rgba(22, 14, 8, 0.95) 100%);
 }
+
 .gc-item .gc-icon {
-  width: 38px;
-  height: 38px;
-  border-radius: 50%;
+  width: 44px;
+  height: 44px;
+  border-radius: 13px;
   display: flex;
   align-items: center;
   justify-content: center;
+  position: relative;
+  color: #ffe9a8;
   background:
-    radial-gradient(circle at 35% 30%, rgba(244, 211, 107, 0.18) 0%, rgba(60, 42, 18, 0.6) 70%);
-  border: 1px solid var(--gold-deep);
-  color: var(--gold-bright);
+    radial-gradient(circle at 30% 25%, rgba(255, 245, 200, 0.28) 0%, transparent 45%),
+    linear-gradient(160deg, rgba(90, 68, 28, 0.95) 0%, rgba(36, 26, 12, 0.98) 100%);
+  border: 1px solid rgba(244, 211, 107, 0.45);
   box-shadow:
-    0 1px 0 rgba(244, 211, 107, 0.18) inset,
-    0 0 8px rgba(212, 175, 55, 0.2);
+    0 1px 0 rgba(255, 245, 200, 0.35) inset,
+    0 -1px 0 rgba(0, 0, 0, 0.45) inset,
+    0 3px 10px rgba(0, 0, 0, 0.45),
+    0 0 12px rgba(212, 175, 55, 0.18);
+}
+.gc-item .gc-icon::after {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  border-radius: 10px;
+  border: 1px solid rgba(244, 211, 107, 0.12);
+  pointer-events: none;
 }
 .gc-item .gc-icon svg {
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.6;
+  stroke-width: 1.7;
   stroke-linecap: round;
   stroke-linejoin: round;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45));
+  position: relative;
+  z-index: 1;
 }
 .gc-item .gc-text {
   font-family: 'Noto Serif SC', serif;
   font-size: 12px;
-  letter-spacing: 1px;
-  color: var(--text);
+  letter-spacing: 1.5px;
+  color: #f0e0b0;
   white-space: nowrap;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
 }
+
+.gc-icon--account { color: #ffe08a; }
+.gc-icon--apply { color: #f4d36b; }
+.gc-icon--bets { color: #ffc978; }
+.gc-icon--gift { color: #ffb4b8; }
+.gc-icon--ledger { color: #9fe0c8; }
+.gc-icon--agent { color: #b8d0ff; }
+.gc-icon--rebate { color: #8fd4f0; }
+.gc-icon--update { color: #e8d08a; }
+.gc-icon--intro { color: #d8c4a0; }
+.gc-icon--cs { color: #f0c878; }
 
 /* ============ 卡片 5：退出登录 ============ */
 .logout-card {

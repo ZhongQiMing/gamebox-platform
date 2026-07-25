@@ -1,0 +1,303 @@
+.rb-page .page-body { padding: 8px 16px 0; }
+
+.rb-title {
+  height: 40px;
+  margin: 0 64px 14px;
+  font-family: 'Noto Serif SC', 'Songti SC', serif;
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: 8px;
+  text-align: center;
+  background: linear-gradient(180deg, #fff5c8 0%, #f4d36b 35%, var(--gold) 65%, #8a6f1f 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  line-height: 40px;
+}
+
+/* 已领状态栏：左文案 · 右金额 */
+.rb-status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 52px;
+  margin-bottom: 14px;
+  padding: 12px 16px;
+  background: linear-gradient(180deg, rgba(36, 28, 16, 0.95), rgba(18, 14, 8, 0.98));
+  border: 1px solid rgba(212, 175, 55, 0.35);
+  border-radius: 12px;
+  box-sizing: border-box;
+}
+
+.rb-status-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #f4d36b;
+  letter-spacing: 1px;
+  white-space: nowrap;
+}
+
+.rb-status-amount {
+  flex-shrink: 0;
+  font-size: 20px;
+  font-weight: 700;
+  font-family: ui-monospace, Consolas, monospace;
+  color: #ffe08a;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 待领卡片 */
+.rb-pending {
+  margin-bottom: 14px;
+  padding: 14px;
+  background: linear-gradient(180deg, rgba(36, 28, 16, 0.95), rgba(18, 14, 8, 0.98));
+  border: 1px solid rgba(212, 175, 55, 0.35);
+  border-radius: 12px;
+}
+
+.rb-pending-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.rb-pending-date {
+  font-size: 13px;
+  font-weight: 700;
+  color: #f4d36b;
+  letter-spacing: 1px;
+}
+
+.rb-pending-tag {
+  font-size: 11px;
+  color: var(--text-muted);
+  letter-spacing: 1px;
+}
+
+.rb-kpi-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.rb-today .rb-kpi-row {
+  margin-bottom: 0;
+}
+
+.rb-kpi {
+  text-align: center;
+  padding: 10px 4px;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 8px;
+  min-width: 0;
+}
+
+.rb-kpi-num {
+  display: block;
+  font-size: 16px;
+  font-weight: 700;
+  color: #ffe08a;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rb-kpi-label {
+  display: block;
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--text-muted);
+  letter-spacing: 1px;
+}
+
+.rb-claim-btn {
+  width: 100%;
+  height: 42px;
+  border: none;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 4px;
+  color: #1a1408;
+  background: linear-gradient(180deg, #ffe08a 0%, #d4af37 55%, #a8841f 100%);
+  cursor: pointer;
+}
+
+.rb-claim-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.rb-claim-btn--sm {
+  width: auto;
+  min-width: 80px;
+  height: 34px;
+  padding: 0 14px;
+  letter-spacing: 2px;
+  font-size: 13px;
+}
+
+.rb-today {
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  background: rgba(20, 14, 8, 0.45);
+  border: 1px solid rgba(212, 175, 55, 0.18);
+  border-radius: 10px;
+}
+
+.rb-today-title {
+  font-size: 12px;
+  color: var(--text-muted);
+  letter-spacing: 1px;
+  margin-bottom: 8px;
+}
+
+.rb-section-title {
+  margin: 4px 0 10px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-dim);
+  letter-spacing: 3px;
+}
+
+.rb-claim-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.rb-claim-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  background: rgba(20, 14, 8, 0.55);
+  border: 1px solid rgba(212, 175, 55, 0.22);
+  border-radius: 10px;
+}
+
+.rb-claim-info { flex: 1; min-width: 0; }
+
+.rb-claim-date {
+  font-size: 13px;
+  font-weight: 600;
+  color: #f4d36b;
+}
+
+.rb-claim-meta {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* 时间 tab：5 等分铺满 */
+.time-tabs {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.tt-item {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 0;
+  text-align: center;
+  font-family: 'Noto Serif SC', serif;
+  font-size: 12px;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+  background: rgba(20, 14, 8, 0.6);
+  border: 1px solid rgba(212, 175, 55, 0.3);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.tt-item:active { transform: scale(0.96); }
+.tt-item.active {
+  color: #1a1408;
+  font-weight: 700;
+  background: linear-gradient(180deg, #ffe08a, #d4af37);
+  border-color: transparent;
+}
+.time-range-hint {
+  margin: 0 0 12px;
+  text-align: center;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  letter-spacing: 0.5px;
+  color: #f4d36b;
+}
+
+.rb-list { display: flex; flex-direction: column; gap: 10px; }
+
+.rb-card {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 12px;
+  align-items: center;
+  padding: 12px 14px;
+  background: rgba(20, 14, 8, 0.55);
+  border: 1px solid rgba(212, 175, 55, 0.2);
+  border-radius: 10px;
+}
+
+.rb-card-date {
+  font-size: 13px;
+  font-weight: 600;
+  color: #f4d36b;
+}
+
+.rb-card-meta {
+  grid-column: 1;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.rb-card-amount {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  font-size: 16px;
+  font-weight: 700;
+  color: #7dffb0;
+  font-variant-numeric: tabular-nums;
+}
+
+.rb-empty {
+  padding: 48px 16px;
+  text-align: center;
+  color: var(--text-muted);
+}
+.rb-empty--sm { padding: 28px 16px; }
+
+.rb-empty-icon {
+  font-size: 28px;
+  opacity: 0.35;
+  margin-bottom: 10px;
+}
+
+.rb-empty-text {
+  font-size: 13px;
+  letter-spacing: 3px;
+}
+
+.rb-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 88px;
+  transform: translateX(-50%);
+  z-index: 200;
+  padding: 10px 18px;
+  border-radius: 8px;
+  background: rgba(26, 20, 13, 0.95);
+  border: 1px solid rgba(212, 175, 55, 0.35);
+  color: #f5ecd6;
+  font-size: 14px;
+  pointer-events: none;
+}

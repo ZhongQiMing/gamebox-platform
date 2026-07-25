@@ -1,4 +1,6 @@
 /** 点击音效（Web Audio API，与原型 common.js 逻辑一致） */
+import { isClickSoundOn } from './appSoundPrefs'
+
 let audioCtx: AudioContext | null = null
 let lastTone = 0
 
@@ -21,7 +23,7 @@ function fireClickTone(ctx: AudioContext) {
 
 export function useClickSound() {
   function playClick() {
-    if (localStorage.getItem('sound_off') === '1') return
+    if (!isClickSoundOn()) return
     const now = performance.now()
     if (now - lastTone < 80) return
     lastTone = now

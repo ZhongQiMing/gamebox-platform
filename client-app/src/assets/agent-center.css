@@ -1,0 +1,189 @@
+.ag-page .page-body { padding: 10px 16px 0; }
+
+.ag-hero {
+  margin-bottom: 12px;
+  padding: 16px 14px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(212, 175, 55, 0.35);
+  background:
+    radial-gradient(ellipse at 50% -20%, rgba(244, 211, 107, 0.18), transparent 60%),
+    linear-gradient(165deg, rgba(56, 42, 20, 0.92), rgba(14, 10, 6, 0.98));
+  box-shadow:
+    0 1px 0 rgba(244, 211, 107, 0.12) inset,
+    0 8px 20px rgba(0, 0, 0, 0.35);
+}
+.ag-hero-main {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-around;
+  gap: 8px;
+}
+.ag-hero-item {
+  flex: 1;
+  text-align: center;
+  min-width: 0;
+}
+.ag-hero-split {
+  width: 1px;
+  align-self: stretch;
+  margin: 4px 0;
+  background: linear-gradient(180deg, transparent, rgba(244, 211, 107, 0.35), transparent);
+}
+.ag-hero-lab {
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: var(--text-muted);
+  font-family: 'Noto Serif SC', serif;
+}
+.ag-hero-val {
+  margin-top: 6px;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  background: linear-gradient(180deg, #fff5c8, #f4d36b 55%, #c9a227);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.ag-hero-meta {
+  display: flex;
+  justify-content: center;
+  gap: 18px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(212, 175, 55, 0.16);
+  font-size: 12px;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+}
+
+.ag-tip {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(212, 175, 55, 0.18);
+  background: rgba(20, 14, 8, 0.55);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-muted);
+  letter-spacing: 0.3px;
+}
+
+.ag-seg {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 12px;
+  padding: 4px;
+  border-radius: 12px;
+  background: rgba(10, 8, 4, 0.55);
+  border: 1px solid rgba(212, 175, 55, 0.16);
+}
+.ag-seg--3 { grid-template-columns: 1fr 1fr 1fr; }
+.ag-seg button {
+  padding: 9px 6px;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: 'Noto Serif SC', serif;
+  font-size: 13px;
+  letter-spacing: 3px;
+  cursor: pointer;
+}
+.ag-seg button.is-on {
+  color: #2a1a08;
+  font-weight: 700;
+  background: linear-gradient(180deg, #fff5c8 0%, #f4d36b 48%, #c9a227 100%);
+  box-shadow: 0 2px 8px rgba(212, 175, 55, 0.22);
+}
+
+.ag-panel { min-height: 120px; }
+
+.ag-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ag-form input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(212, 175, 55, 0.28);
+  background: rgba(10, 8, 4, 0.85);
+  color: var(--text);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 15px;
+  letter-spacing: 1px;
+  outline: none;
+}
+.ag-form input:focus {
+  border-color: rgba(244, 211, 107, 0.55);
+}
+.ag-submit {
+  margin-top: 2px;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(244, 211, 107, 0.5);
+  background: linear-gradient(180deg, #fff5c8 0%, #f4d36b 45%, #c9a227 100%);
+  color: #2a1a08;
+  font-family: 'Noto Serif SC', serif;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 4px;
+  cursor: pointer;
+}
+.ag-submit:disabled { opacity: 0.55; cursor: not-allowed; }
+.ag-submit:not(:disabled):active { transform: scale(0.98); }
+
+.ag-empty {
+  text-align: center;
+  padding: 48px 12px;
+  color: var(--text-dim);
+  font-size: 13px;
+  letter-spacing: 2px;
+}
+
+.ag-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-radius: 12px;
+  border: 1px solid rgba(212, 175, 55, 0.18);
+  background: linear-gradient(165deg, rgba(36, 26, 14, 0.7), rgba(12, 8, 4, 0.95));
+  overflow: hidden;
+}
+.ag-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(212, 175, 55, 0.1);
+}
+.ag-row:last-child { border-bottom: none; }
+.ag-row-l { min-width: 0; }
+.ag-row-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ag-row-sub {
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-family: ui-monospace, Consolas, monospace;
+}
+.ag-row-r {
+  flex-shrink: 0;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 15px;
+  font-weight: 700;
+  color: #f4d36b;
+}

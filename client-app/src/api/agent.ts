@@ -1,7 +1,8 @@
 import http from './http'
 
 export interface AgentOverview {
-  promoCode: string
+  canHang: boolean
+  parent: { uid: string; nickname: string; role: string } | null
   directCount: number
   teamCount: number
   totalCommission: number
@@ -27,6 +28,13 @@ export interface CommissionItem {
   sourceUser: { uid: string; nickname: string }
 }
 
+export interface HangResult {
+  ok: boolean
+  message: string
+  friend?: { uid: string; nickname: string } | string
+  under?: { uid: string; nickname: string } | string
+}
+
 interface Paged<T> { list: T[]; total: number; page: number }
 
 export const agentApi = {
@@ -34,6 +42,6 @@ export const agentApi = {
   team: (page = 1) => http.get<Paged<TeamMember>, Paged<TeamMember>>('/agent/team', { params: { page } }),
   commissions: (page = 1) =>
     http.get<Paged<CommissionItem>, Paged<CommissionItem>>('/agent/commissions', { params: { page } }),
-  transfer: (targetUid: string, amount: number) =>
-    http.post('/agent/transfer', { targetUid, amount }),
+  hang: (friendUid: string, underUid: string) =>
+    http.post<HangResult, HangResult>('/agent/hang', { friendUid, underUid }),
 }

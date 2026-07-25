@@ -70,8 +70,8 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useWalletStore } from '@/stores/wallet'
 import { useToast } from '@/composables/useToast'
+import { useGameSpinSession } from '@/composables/useGameSpinSession'
 import { gamesApi } from '@/api/games'
-import http from '@/api/http'
 import TabBar from '@/components/TabBar.vue'
 
 const route = useRoute()
@@ -95,6 +95,7 @@ const spinning = ref(false)
 const lastPrize = ref('')
 const lastResult = ref<{ payout: number; won: boolean } | null>(null)
 const recentHistory = ref<HistoryItem[]>([])
+const spinSession = useGameSpinSession('slot')
 
 async function loadGame() {
   try {
@@ -114,10 +115,9 @@ async function doSpin() {
   if (amount.value < 1) { toastError('请输入有效金额'); return }
   spinning.value = true
   try {
-    const res = await http.post<SpinResult, SpinResult>('/bet/spin', {
-      gameCode: gameCode.value,
-      amount: amount.value,
-    })
+    const clientRequestId = spinSession.currentOrNewClientRequestId()
+    const res = await gamesApi.spin(gameCode.value, amount.value, clientRequestId)
+    spinSession.clearClientRequestId()
     const prize = res.outcome.prize
     lastPrize.value = prize.label
     lastResult.value = { payout: res.bets[0]?.payout ?? 0, won: res.bets[0]?.won ?? false }
@@ -128,7 +128,8 @@ async function doSpin() {
       big: prize.multiplier >= 10,
     })
     if (recentHistory.value.length > 20) recentHistory.value.pop()
-    walletStore.fetchBalance()
+    if (typeof res.balance === 'number') walletStore.balance = res.balance
+    else walletStore.fetchBalance()
   } catch (e: unknown) {
     toastError((e as Error).message)
   } finally {

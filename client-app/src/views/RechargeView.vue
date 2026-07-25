@@ -162,6 +162,7 @@ import { useWalletStore } from '@/stores/wallet'
 import { rechargeApi } from '@/api/recharge'
 import { useToast } from '@/composables/useToast'
 import { useBodyClass } from '@/composables/useBodyClass'
+import { pushCsScoreApply } from '@/composables/csLocalChat'
 import TabBar from '@/components/TabBar.vue'
 import '@/assets/recharge.css'
 
@@ -174,7 +175,9 @@ const { toast } = useToast()
 
 const avatarSrc = computed(() => userStore.profile?.avatar || '/images/avatars/001.jpg')
 
-const QUICK = [100, 500, 1000, 3000, 5000, 10000]
+/** 上分快捷；下分无 200（低于最低额），含 2000 */
+const QUICK_UP = [200, 500, 1000, 2000, 3000, 5000, 10000]
+const QUICK_DOWN = [500, 1000, 2000, 3000, 5000, 10000]
 const PAY_NAMES: Record<string, string> = { wechat: '微信', alipay: '支付宝', unionpay: '银联' }
 
 const curType = ref<'up' | 'down'>('up')
@@ -186,16 +189,21 @@ const loading = ref(false)
 const sheetShow = ref(false)
 const result = ref<{ type: 'up' | 'down'; label: string; time: string } | null>(null)
 
+const QUICK = computed(() => (curType.value === 'up' ? QUICK_UP : QUICK_DOWN))
+
 const amountHint = computed(() =>
   curType.value === 'up'
-    ? '（请输入整数积分，最低 100）'
-    : `（最多可下 ${walletStore.balance.toLocaleString('en-US')} 积分）`
+    ? '（请输入整数积分，最低 200）'
+    : `（最低 500，最多可下 ${walletStore.balance.toLocaleString('en-US')} 积分）`
 )
 
 function switchType(t: 'up' | 'down') {
   if (t === curType.value) return
   curType.value = t
-  quickActive.value = null
+  // 切换类型时清掉不在当前快捷列表里的选中态
+  if (quickActive.value != null && !(t === 'up' ? QUICK_UP : QUICK_DOWN).includes(quickActive.value)) {
+    quickActive.value = null
+  }
 }
 
 function onAmountInput() {
@@ -229,9 +237,9 @@ async function submit() {
   const amount = parseInt(amountStr.value, 10)
   if (!amountStr.value) { toast('请输入金额'); return }
   if (!amount || amount <= 0) { toast('金额格式有误'); return }
-  if (curType.value === 'up' && amount < 100) { toast('上分最低 100 积分'); return }
+  if (curType.value === 'up' && amount < 200) { toast('上分最低 200 积分'); return }
   if (curType.value === 'down') {
-    if (amount < 50) { toast('下分最低 50 积分'); return }
+    if (amount < 500) { toast('下分最低 500 积分'); return }
     if (amount > walletStore.balance) { toast('下分金额不能大于当前积分'); return }
   }
 
@@ -239,9 +247,20 @@ async function submit() {
   try {
     if (curType.value === 'up') {
       await rechargeApi.apply(amount, curPayType.value)
+      pushCsScoreApply({
+        uid: userStore.profile?.uid,
+        kind: 'up',
+        amount,
+        channel: curPayType.value,
+      })
     } else {
       await rechargeApi.withdraw(amount)
       await walletStore.fetchBalance()
+      pushCsScoreApply({
+        uid: userStore.profile?.uid,
+        kind: 'down',
+        amount,
+      })
     }
     const label = buildLabel(amount)
     result.value = { type: curType.value, label, time: formatTime(Date.now()) }

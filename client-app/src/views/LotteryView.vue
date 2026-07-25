@@ -249,7 +249,16 @@ async function doBet() {
       loading.value = false
       return
     }
-    const res = await lotteryApi.bet(gameCode.value, { betType: selected.value, betValue, amount: amount.value })
+    const clientRequestId =
+      typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? `lot_${crypto.randomUUID()}`
+        : `lot_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
+    const res = await lotteryApi.bet(gameCode.value, {
+      betType: selected.value,
+      betValue,
+      amount: amount.value,
+      clientRequestId,
+    })
     toastSuccess(`已投注 ${selected.value}，期号 ${res.issueNo}`)
     walletStore.fetchBalance()
     await reload()

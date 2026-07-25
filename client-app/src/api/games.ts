@@ -2,6 +2,7 @@ import http from './http'
 import type {
   BetHistoryRowDTO,
   GameItemDTO,
+  MahjongActiveSessionDTO,
   MahjongSpinRequestDTO,
   MahjongSpinResultDTO,
 } from '@gamebox/shared'
@@ -39,6 +40,8 @@ export interface FruitGambleResult {
   result: 'win' | 'lose' | 'push'
   amount: number
   payout: number
+  /** 续赌后仍可再赌的金额（输则为 0） */
+  pendingGambleAmount?: number
   balance: number
 }
 
@@ -61,28 +64,52 @@ export interface BcbmSpinResult {
 export const gamesApi = {
   list: () => http.get<GameItem[], GameItem[]>('/games'),
 
-  spin: (gameCode: string, amount: number, clientSeed?: string) =>
-    http.post<SpinResult, SpinResult>('/bet/spin', { gameCode, amount, clientSeed }),
-
-  fruitSpin: (bets: Record<string, number>, clientSeed?: string) =>
-    http.post<FruitSpinResult, FruitSpinResult>('/bet/fruit', {
-      gameCode: 'fruit-machine',
-      bets,
+  spin: (gameCode: string, amount: number, clientRequestId: string, clientSeed?: string) =>
+    http.post<SpinResult, SpinResult>('/bet/spin', {
+      gameCode,
+      amount,
+      clientRequestId,
       clientSeed,
     }),
 
-  fruitGamble: (amount: number, choice: 'big' | 'small') =>
-    http.post<FruitGambleResult, FruitGambleResult>('/bet/fruit/gamble', { amount, choice }),
+  fruitSpin: (
+    bets: Record<string, number>,
+    clientRequestId: string,
+    clientSeed?: string,
+  ) =>
+    http.post<FruitSpinResult, FruitSpinResult>('/bet/fruit', {
+      gameCode: 'fruit-machine',
+      bets,
+      clientRequestId,
+      clientSeed,
+    }),
 
-  bcbmSpin: (bets: Record<string, number>, clientSeed?: string) =>
+  fruitGamble: (amount: number, choice: 'big' | 'small', clientRequestId: string) =>
+    http.post<FruitGambleResult, FruitGambleResult>('/bet/fruit/gamble', {
+      amount,
+      choice,
+      clientRequestId,
+    }),
+
+  bcbmSpin: (
+    bets: Record<string, number>,
+    clientRequestId: string,
+    clientSeed?: string,
+  ) =>
     http.post<BcbmSpinResult, BcbmSpinResult>('/bet/bcbm', {
       gameCode: 'bcbm',
       bets,
+      clientRequestId,
       clientSeed,
     }),
 
   mahjongSpin: (request: MahjongSpinRequestDTO) =>
     http.post<MahjongSpinResultDTO, MahjongSpinResultDTO>('/bet/mahjong/spin', request),
+
+  mahjongActiveSession: () =>
+    http.get<MahjongActiveSessionDTO | null, MahjongActiveSessionDTO | null>(
+      '/bet/mahjong/session',
+    ),
 
   betHistory: () =>
     http.get<BetHistoryRowDTO[], BetHistoryRowDTO[]>('/bet/history'),

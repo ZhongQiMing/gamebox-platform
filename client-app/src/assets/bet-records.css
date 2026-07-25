@@ -16,29 +16,47 @@
   line-height: 40px;
 }
 
-/* 时间 tab（共用样式） */
-.time-tabs {
-  display: flex; gap: 8px; margin-bottom: 14px; overflow-x: auto;
-  scrollbar-width: none; -webkit-overflow-scrolling: touch;
+/* 时间 tab：5 等分铺满 */
+.br-page .time-tabs {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+  margin-bottom: 8px;
+  overflow: visible;
 }
-.time-tabs::-webkit-scrollbar { display: none; }
-.tt-item {
-  flex-shrink: 0; padding: 7px 14px;
-  font-family: 'Noto Serif SC', serif; font-size: 12px; letter-spacing: 2px;
+.br-page .tt-item {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 0;
+  text-align: center;
+  font-family: 'Noto Serif SC', serif;
+  font-size: 12px;
+  letter-spacing: 1px;
   color: var(--text-dim);
   background: rgba(20, 14, 8, 0.6);
-  border: 1px solid rgba(212, 175, 55, 0.3); border-radius: 999px;
-  cursor: pointer; transition: all 0.15s;
+  border: 1px solid rgba(212, 175, 55, 0.3);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.15s;
 }
-.tt-item:active { transform: scale(0.95); }
-.tt-item.active {
-  color: var(--bg-dark); font-weight: 700;
+.br-page .tt-item:active { transform: scale(0.96); }
+.br-page .tt-item.active {
+  color: var(--bg-dark);
+  font-weight: 700;
   background: linear-gradient(180deg, #f4d36b 0%, var(--gold) 50%, #8a6f1f 100%);
   border-color: var(--gold);
   box-shadow:
     0 1px 0 rgba(255, 230, 150, 0.6) inset,
     0 -1px 0 rgba(0, 0, 0, 0.3) inset,
     0 3px 8px rgba(212, 175, 55, 0.3);
+}
+.br-page .time-range-hint {
+  margin: 0 0 12px;
+  text-align: center;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  letter-spacing: 0.5px;
+  color: #f4d36b;
 }
 
 /* ===== 竞猜记录卡：3 行内容 ===== */
@@ -82,11 +100,10 @@
   background-clip: text;
   -webkit-text-fill-color: transparent;
 }
-.br-kpi-label {
-  font-family: 'Noto Serif SC', serif;
-  font-size: 11px;
-  letter-spacing: 2px;
-  color: var(--text-muted);
+.br-kpi-num.neg-num {
+  background: none;
+  -webkit-text-fill-color: #ff6b7a;
+  color: #ff6b7a;
 }
 .br-summary {
   display: flex;
@@ -234,4 +251,71 @@
   padding: 6px 14px 10px;
   font-size: 11px;
   color: var(--text-muted);
+}
+
+/* 竞猜报表 · 单局汇总行（不展开） */
+.br-round {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto;
+  column-gap: 12px;
+  row-gap: 4px;
+  align-items: center;
+  padding: 12px 14px;
+  background: linear-gradient(180deg, var(--bg-card) 0%, var(--bg-card-2) 100%);
+  border: 1px solid rgba(212, 175, 55, 0.22);
+  border-radius: var(--radius-md);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+}
+
+.br-round__main {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.br-round__game {
+  flex-shrink: 0;
+  font-family: 'Noto Serif SC', serif;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--text);
+}
+
+.br-round__issue {
+  min-width: 0;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  color: #f4d36b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.br-round__meta {
+  grid-column: 1;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.br-round__profit {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 15px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.br-round__profit.pos { color: #7dffb0; }
+.br-round__profit.neg { color: #ff6b7a; }
+.br-round__profit.wait {
+  font-family: 'Noto Serif SC', serif;
+  font-weight: 400;
+  font-size: 12px;
+  letter-spacing: 1px;
+  color: var(--gold);
 }

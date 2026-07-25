@@ -148,7 +148,7 @@ async function doLogin() {
       /* ignore */
     }
     toast(`欢迎 ${res.user.nickname}`)
-    setTimeout(() => router.push('/lobby'), 600)
+    setTimeout(() => router.push('/room'), 600)
   } catch (e: unknown) {
     toast(e instanceof Error ? e.message : '登录失败')
   } finally {

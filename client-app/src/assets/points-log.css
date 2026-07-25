@@ -16,26 +16,47 @@
   line-height: 40px;
 }
 
-/* 时间 tab */
-.time-tabs { display: flex; gap: 8px; margin-bottom: 14px; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
-.time-tabs::-webkit-scrollbar { display: none; }
+/* 时间 tab：5 等分铺满 */
+.time-tabs {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+  margin-bottom: 8px;
+  overflow: visible;
+}
 .tt-item {
-  flex-shrink: 0; padding: 7px 14px;
-  font-family: 'Noto Serif SC', serif; font-size: 12px; letter-spacing: 2px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 0;
+  text-align: center;
+  font-family: 'Noto Serif SC', serif;
+  font-size: 12px;
+  letter-spacing: 1px;
   color: var(--text-dim);
   background: rgba(20, 14, 8, 0.6);
-  border: 1px solid rgba(212, 175, 55, 0.3); border-radius: 999px;
-  cursor: pointer; transition: all 0.15s;
+  border: 1px solid rgba(212, 175, 55, 0.3);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.15s;
 }
-.tt-item:active { transform: scale(0.95); }
+.tt-item:active { transform: scale(0.96); }
 .tt-item.active {
-  color: var(--bg-dark); font-weight: 700;
+  color: var(--bg-dark);
+  font-weight: 700;
   background: linear-gradient(180deg, #f4d36b 0%, var(--gold) 50%, #8a6f1f 100%);
   border-color: var(--gold);
   box-shadow:
     0 1px 0 rgba(255, 230, 150, 0.6) inset,
     0 -1px 0 rgba(0, 0, 0, 0.3) inset,
     0 3px 8px rgba(212, 175, 55, 0.3);
+}
+.time-range-hint {
+  margin: 0 0 12px;
+  text-align: center;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  letter-spacing: 0.5px;
+  color: #f4d36b;
 }
 
 /* 全部 + 筛选 */

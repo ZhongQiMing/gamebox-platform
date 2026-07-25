@@ -846,6 +846,24 @@ body.lobby-bg::before { display: none; }
 .game-card .gc-foot--instant {
   justify-content: center;
 }
+/* 百家乐结果偏多：样式与其它游戏一致，仅每个 chip 左右各少 1px */
+.game-card[data-game="baccarat"] .gc-foot-detail {
+  flex-wrap: nowrap;
+  gap: 3px;
+}
+.game-card[data-game="baccarat"] .gc-sep {
+  display: none;
+}
+.game-card[data-game="baccarat"] .gc-chip {
+  padding-left: 5px;
+  padding-right: 5px;
+}
+.game-card[data-game="baccarat"] .gc-chip--side {
+  min-width: 21px;
+}
+.game-card[data-game="baccarat"] .gc-chip--card {
+  min-width: 0;
+}
 .game-card .gc-foot-instant-label {
   font-size: var(--lobby-fs-body);
   letter-spacing: 2px;

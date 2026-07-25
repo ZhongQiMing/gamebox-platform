@@ -1,0 +1,151 @@
+/* 账号管理页 */
+.am-page .page-body { padding: 8px 16px 0; }
+
+.am-title {
+  height: 40px;
+  margin: 0 64px 14px;
+  font-family: 'Noto Serif SC', 'Songti SC', serif;
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: 8px;
+  text-align: center;
+  background: linear-gradient(180deg, #fff5c8 0%, #f4d36b 35%, var(--gold) 65%, #8a6f1f 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  text-shadow: 0 0 16px rgba(212, 175, 55, 0.35);
+  line-height: 40px;
+}
+
+.am-list {
+  background: linear-gradient(180deg, var(--bg-card) 0%, var(--bg-card-2) 100%);
+  border: 1px solid rgba(212, 175, 55, 0.22);
+  border-radius: var(--radius-md);
+  box-shadow:
+    0 1px 0 rgba(244, 211, 107, 0.10) inset,
+    0 -1px 0 rgba(0, 0, 0, 0.3) inset,
+    0 4px 14px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+.am-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 16px 18px;
+  border: none;
+  border-bottom: 1px solid rgba(212, 175, 55, 0.12);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition: background 0.15s;
+  text-align: left;
+  -webkit-tap-highlight-color: transparent;
+}
+.am-row:last-child { border-bottom: none; }
+.am-row--switch { cursor: default; }
+.am-row:not(.am-row--switch):active { background: rgba(212, 175, 55, 0.1); }
+
+.am-label {
+  font-family: 'Noto Serif SC', serif;
+  font-size: 14px;
+  letter-spacing: 2px;
+  color: var(--text);
+}
+.am-value {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.am-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid var(--gold-deep);
+  box-shadow: 0 0 6px rgba(212, 175, 55, 0.3);
+}
+.am-text {
+  color: var(--gold-bright);
+  font-family: 'Noto Serif SC', serif;
+  font-size: 14px;
+  letter-spacing: 1.5px;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.am-text-muted {
+  color: var(--text-muted);
+  font-size: 13px;
+  letter-spacing: 1px;
+}
+.am-arrow {
+  color: var(--gold);
+  font-size: 18px;
+  font-weight: 300;
+  opacity: 0.7;
+}
+
+.am-switch { position: relative; display: inline-block; cursor: pointer; }
+.am-switch input { position: absolute; opacity: 0; pointer-events: none; }
+.am-switch-track {
+  display: block;
+  width: 44px;
+  height: 24px;
+  border-radius: 12px;
+  background: rgba(40, 28, 14, 0.8);
+  border: 1px solid var(--gold-deep);
+  transition: background 0.2s, border-color 0.2s;
+  position: relative;
+}
+.am-switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #f4d36b 0%, var(--gold) 60%, #8a6f1f 100%);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.am-switch input:checked + .am-switch-track {
+  background: linear-gradient(180deg, #5a3d18 0%, #2a1d10 100%);
+  border-color: var(--gold);
+}
+.am-switch input:checked + .am-switch-track .am-switch-thumb {
+  transform: translateX(20px);
+  background: linear-gradient(180deg, #fff5c8 0%, #f4d36b 60%, var(--gold) 100%);
+  box-shadow: 0 0 8px rgba(244, 211, 107, 0.7);
+}
+
+.am-file-hidden {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.am-nick-input {
+  width: 100%;
+  margin-top: 8px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--gold-deep);
+  background: rgba(20, 14, 8, 0.85);
+  color: var(--gold-bright);
+  font-family: 'Noto Serif SC', serif;
+  font-size: 15px;
+  letter-spacing: 2px;
+  outline: none;
+}
+.am-nick-input:focus { border-color: var(--gold); }
+.am-nick-hint {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  letter-spacing: 1px;
+}

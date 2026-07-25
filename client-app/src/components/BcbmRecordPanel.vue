@@ -181,6 +181,7 @@ import { walletApi } from '@/api/wallet'
 import { gamesApi } from '@/api/games'
 import {
   bcbmBetIconUrl,
+  bcbmRingIndexToCarPos,
   type BcbmAwardType,
 } from '@/games/bcbm'
 import {
@@ -342,11 +343,13 @@ function resultFromOutcome(outcome: unknown): {
   const o = outcome as {
     awardType?: string
     stopIndex?: number
+    kind?: string
   }
   const stop = Number(o.stopIndex)
   if (!Number.isFinite(stop)) return { main: null, small: null }
+  const carPos = bcbmRingIndexToCarPos(stop, o.kind)
   const icons = historyPanelIcons({
-    carPos: stop,
+    carPos,
     award: (o.awardType || 'none') as BcbmAwardType,
   })
   return { main: icons.mainUrl, small: icons.smallUrl }

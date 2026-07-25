@@ -709,7 +709,7 @@
 
             <div class="bet-total-pill">
               <span class="bet-total-pill__label">投注总额</span>
-              <span class="bet-total-pill__value">¥{{ betAmount.toFixed(2) }}</span>
+              <span class="bet-total-pill__value">{{ betAmount }} 点</span>
             </div>
 
             <div class="bet-table" :class="{ 'is-disabled': isBetPopupDisabled }">
@@ -1020,6 +1020,8 @@ import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useWalletStore } from '@/stores/wallet'
 import { gamesApi } from '@/api/games'
+import { useToast } from '@/composables/useToast'
+import { useGameSpinSession } from '@/composables/useGameSpinSession'
 import type { MahjongSpinResultDTO } from '@gamebox/shared'
 import MahjongTile from '@/components/MahjongTile.vue'
 import MahjongSymbolInfo, { type TileAnchor } from '@/components/MahjongSymbolInfo.vue'
@@ -1057,6 +1059,8 @@ type PctBox = {
 }
 
 const router = useRouter()
+const { toast } = useToast()
+const spinSession = useGameSpinSession('mj')
 const mahjongSound = useMahjongSound()
 let componentDisposed = false
 const symbolAssetBase = '/images/games/mahjong/pg/symbols'
@@ -1521,8 +1525,8 @@ const checkNextAutoSpin = () => {
   if (autoSpinCount.value > 0) {
     autoSpinCount.value--
     if (autoSpinCount.value > 0 && balance.value >= betAmount.value) {
-      setTimeout(() => {
-        handleSpinClick()
+      spinSession.schedule(() => {
+        void handleSpinClick()
       }, 500)
     } else {
       autoSpinCount.value = 0
@@ -2165,6 +2169,7 @@ const finishRound = () => {
     bet: isActiveFreeSpinSpin.value ? 0 : betAmount.value,
     profit: winAmount.value,
   })
+  if (historyRecords.value.length > 50) historyRecords.value.length = 50
   checkNextAutoSpin()
 }
 
@@ -2281,37 +2286,53 @@ const toggleTurbo = () => {
   isTurbo.value = !isTurbo.value
 }
 
-// 投注逻辑
-const betSizes = [0.01, 0.03, 0.10, 1.00, 5.00]
+// 投注逻辑：只保留「size×mult×BASE_BET」为整数点的组合，UI 与账本一致
+const betSizes = [0.01, 0.03, 0.1, 1.0, 5.0]
 const betMultipliers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 const baseBet = BASE_BET
 
 const validCombinations: Array<{ sizeIdx: number; multIdx: number; total: number }> = []
-for(let s=0; s<betSizes.length; s++) {
-  for(let m=0; m<betMultipliers.length; m++) {
-    validCombinations.push({
-      sizeIdx: s,
-      multIdx: m,
-      total: betSizes[s] * betMultipliers[m] * baseBet
-    })
+for (let s = 0; s < betSizes.length; s++) {
+  for (let m = 0; m < betMultipliers.length; m++) {
+    const raw = betSizes[s]! * betMultipliers[m]! * baseBet
+    const total = Math.round(raw)
+    if (total < 1 || Math.abs(raw - total) > 1e-9) continue
+    validCombinations.push({ sizeIdx: s, multIdx: m, total })
   }
 }
 validCombinations.sort((a, b) => a.total - b.total)
-const validTotals = Array.from(new Set(validCombinations.map(c => c.total))).sort((a,b) => a-b)
+const validTotals = Array.from(new Set(validCombinations.map((c) => c.total))).sort(
+  (a, b) => a - b,
+)
 
-const currentSizeIdx = ref(1) // 默认 0.03
-const currentMultIdx = ref(2) // 默认 3
+/** 默认 0.10 × 1 × 20 = 2 点（整数，与扣款一致） */
+const currentSizeIdx = ref(2)
+const currentMultIdx = ref(0)
 
-const betAmount = computed(() => betSizes[currentSizeIdx.value] * betMultipliers[currentMultIdx.value] * baseBet)
+const betAmount = computed(() => {
+  const raw =
+    betSizes[currentSizeIdx.value]! * betMultipliers[currentMultIdx.value]! * baseBet
+  return Math.round(raw)
+})
 const currentTotalIdx = computed(() => validTotals.indexOf(betAmount.value))
 
 const BET_WHEEL_OFFSETS = [-2, -1, 0, 1, 2] as const
-const betSnapshot = ref({ sizeIdx: 1, multIdx: 2 })
+const betSnapshot = ref({ sizeIdx: 2, multIdx: 0 })
 const isBetPopupDisabled = computed(() => isSpinning.value || isResolving.value || !canAdjustBet.value)
 
 const isWheelIndexValid = (currentIdx: number, offset: number, length: number) => {
   const idx = currentIdx + offset
-  return idx >= 0 && idx < length
+  if (idx < 0 || idx >= length) return false
+  // size / mult 轮盘：隐藏无法凑成整数点的档位
+  if (length === betSizes.length) {
+    const raw = betSizes[idx]! * betMultipliers[currentMultIdx.value]! * baseBet
+    return Math.abs(raw - Math.round(raw)) <= 1e-9 && Math.round(raw) >= 1
+  }
+  if (length === betMultipliers.length) {
+    const raw = betSizes[currentSizeIdx.value]! * betMultipliers[idx]! * baseBet
+    return Math.abs(raw - Math.round(raw)) <= 1e-9 && Math.round(raw) >= 1
+  }
+  return true
 }
 
 const wheelItemClass = (offset: number, currentIdx: number, length: number) => ({
@@ -2322,21 +2343,37 @@ const wheelItemClass = (offset: number, currentIdx: number, length: number) => (
 })
 
 const applyComboByTotal = (total: number) => {
-  const combo = validCombinations.find((c) => Math.abs(c.total - total) < 0.001)
+  const combo = validCombinations.find((c) => c.total === total)
   if (combo) {
     currentSizeIdx.value = combo.sizeIdx
     currentMultIdx.value = combo.multIdx
   }
 }
 
+/** 仅跳到会产生整数点的 size 档 */
 const selectSizeByOffset = (offset: number) => {
-  const next = currentSizeIdx.value + offset
-  if (next >= 0 && next < betSizes.length) currentSizeIdx.value = next
+  let next = currentSizeIdx.value + offset
+  while (next >= 0 && next < betSizes.length) {
+    const raw = betSizes[next]! * betMultipliers[currentMultIdx.value]! * baseBet
+    if (Math.abs(raw - Math.round(raw)) <= 1e-9 && Math.round(raw) >= 1) {
+      currentSizeIdx.value = next
+      return
+    }
+    next += offset > 0 ? 1 : -1
+  }
 }
 
+/** 仅跳到会产生整数点的倍数档 */
 const selectMultByOffset = (offset: number) => {
-  const next = currentMultIdx.value + offset
-  if (next >= 0 && next < betMultipliers.length) currentMultIdx.value = next
+  let next = currentMultIdx.value + offset
+  while (next >= 0 && next < betMultipliers.length) {
+    const raw = betSizes[currentSizeIdx.value]! * betMultipliers[next]! * baseBet
+    if (Math.abs(raw - Math.round(raw)) <= 1e-9 && Math.round(raw) >= 1) {
+      currentMultIdx.value = next
+      return
+    }
+    next += offset > 0 ? 1 : -1
+  }
 }
 
 const selectTotalByOffset = (offset: number) => {
@@ -2347,17 +2384,23 @@ const selectTotalByOffset = (offset: number) => {
 
 const formatSizeWheelLabel = (offset: number) => {
   const idx = currentSizeIdx.value + offset
-  return idx >= 0 && idx < betSizes.length ? `¥${betSizes[idx].toFixed(2)}` : '—'
+  if (idx < 0 || idx >= betSizes.length) return '—'
+  const raw = betSizes[idx]! * betMultipliers[currentMultIdx.value]! * baseBet
+  if (Math.abs(raw - Math.round(raw)) > 1e-9) return '—'
+  return `¥${betSizes[idx]!.toFixed(2)}`
 }
 
 const formatMultWheelLabel = (offset: number) => {
   const idx = currentMultIdx.value + offset
-  return idx >= 0 && idx < betMultipliers.length ? String(betMultipliers[idx]) : '—'
+  if (idx < 0 || idx >= betMultipliers.length) return '—'
+  const raw = betSizes[currentSizeIdx.value]! * betMultipliers[idx]! * baseBet
+  if (Math.abs(raw - Math.round(raw)) > 1e-9) return '—'
+  return String(betMultipliers[idx])
 }
 
 const formatTotalWheelLabel = (offset: number) => {
   const idx = currentTotalIdx.value + offset
-  return idx >= 0 && idx < validTotals.length ? `¥${validTotals[idx].toFixed(2)}` : '—'
+  return idx >= 0 && idx < validTotals.length ? `${validTotals[idx]} 点` : '—'
 }
 
 const setMinBet = () => applyComboByTotal(validTotals[0])
@@ -2380,6 +2423,7 @@ interface GameRecord {
 }
 const historyRecords = ref<GameRecord[]>([])
 const showHistoryModal = ref(false)
+const historyLoading = ref(false)
 
 const winSummary = computed(() => {
   const records = historyRecords.value
@@ -2390,19 +2434,47 @@ const winSummary = computed(() => {
   }
 })
 
-// 生成一些初始的假数据，让列表看起来有内容
-for(let i=0; i<15; i++) {
-  const isWin = Math.random() > 0.6;
-  const dummyWin = isWin ? (Math.random() * 100 + 20) : 0;
-  historyRecords.value.push({
-    id: 'TXN' + Math.floor(Math.random() * 1000000000).toString().padStart(9, '0'),
-    time: new Date(Date.now() - i * 60000).toLocaleTimeString('zh-CN', { hour12: false }),
-    bet: 20.00,
-    profit: dummyWin
-  })
+async function loadMahjongHistory() {
+  historyLoading.value = true
+  try {
+    const list = await gamesApi.betHistory()
+    const rows = (Array.isArray(list) ? list : [])
+      .filter((x) => x.game?.code === 'slots-mahjong')
+      .slice(0, 50)
+      .map((x) => {
+        const bet = Number(x.amount || 0)
+        const payout = Number(x.payout || 0)
+        return {
+          id: String(x.roundNo || x.betNo || x.id),
+          time: new Date(x.createdAt).toLocaleTimeString('zh-CN', { hour12: false }),
+          bet,
+          profit: payout - bet,
+        } satisfies GameRecord
+      })
+    historyRecords.value = rows
+  } catch {
+    /* 保持现有列表 */
+  } finally {
+    historyLoading.value = false
+  }
 }
 
 const currentRecordId = ref('')
+
+async function restoreFreeSpinSession() {
+  try {
+    const session = await gamesApi.mahjongActiveSession()
+    if (!session || session.spinsRemaining <= 0) return
+    freeSpinSessionId.value = session.sessionId
+    freeSpinsRemaining.value = session.spinsRemaining
+    freeSpinSessionWin.value = session.sessionTotalWin
+    freeSpinBetAmount.value = session.lockedBetAmount
+    isFreeSpinMode.value = true
+    applyComboByTotal(session.lockedBetAmount)
+  } catch {
+    /* 无活跃会话 */
+  }
+}
 
 // 底部上拉框状态 (wallet, bet, win)
 const activePopup = ref<string | null>(null)
@@ -2710,6 +2782,8 @@ let spinEndTimer: ReturnType<typeof setTimeout> | null = null
 
 onUnmounted(() => {
   componentDisposed = true
+  stopAutoSpin()
+  spinSession.clearScheduled()
   mahjongSound.stopAll()
   clearFreeSpinChainTimer()
   clearTickerTimers()
@@ -2738,6 +2812,8 @@ onMounted(() => {
   void walletStore.fetchBalance().then(() => {
     balance.value = walletStore.balance
   })
+  void restoreFreeSpinSession()
+  void loadMahjongHistory()
   if (import.meta.env.DEV) {
     window.addEventListener('keydown', onFsPreviewKeydown)
     console.info(
@@ -2796,14 +2872,24 @@ const handleSpinClick = async (opts?: { fromFreeSpinChain?: boolean }) => {
   mahjongSound.playSpinButtonClick(isTurbo.value)
 
   try {
-    const clientRequestId = `mj_${crypto.randomUUID()}`
+    const clientRequestId = spinSession.currentOrNewClientRequestId()
+    const charged = betAmount.value
     const result = await gamesApi.mahjongSpin({
-      // 与平台账本一致：整数点；UI 小数下注额就近取整
-      amount: isFreeSpinSpin ? 0 : Math.max(1, Math.round(betAmount.value)),
+      // 仅发送整数点组合（见 validCombinations）
+      amount: isFreeSpinSpin ? 0 : charged,
       clientRequestId,
       sessionId: isFreeSpinSpin ? freeSpinSessionId.value ?? undefined : undefined,
     })
-    if (componentDisposed) return
+    spinSession.clearClientRequestId()
+    if (componentDisposed || spinSession.disposed.value) return
+
+    if (
+      !isFreeSpinSpin &&
+      typeof result.chargedAmount === 'number' &&
+      result.chargedAmount !== charged
+    ) {
+      applyComboByTotal(result.chargedAmount)
+    }
 
     walletStore.balance = result.balance
     balance.value = result.balance
@@ -2848,6 +2934,8 @@ const handleSpinClick = async (opts?: { fromFreeSpinChain?: boolean }) => {
     } catch {
       /* ignore */
     }
+    const msg = e instanceof Error ? e.message : '开奖失败'
+    toast(msg)
     console.error('[麻将] spin 失败', e)
   }
 }

@@ -272,6 +272,7 @@ import {
 import { gamesApi } from '@/api/games'
 import { useWalletStore } from '@/stores/wallet'
 import { useToast } from '@/composables/useToast'
+import { useGameSpinSession } from '@/composables/useGameSpinSession'
 
 /** 七段数码管单字 */
 const SEG_MAP: Record<string, string[]> = {
@@ -344,6 +345,10 @@ const isDev = import.meta.env.DEV
 const forceAwardOnce = ref<FruitAwardType | null>(null)
 const walletStore = useWalletStore()
 const { toast } = useToast()
+const spinSession = useGameSpinSession('fruit')
+/** 服务端游戏限额（默认与 seed 一致，进页后刷新） */
+const fruitMinBet = ref(1)
+const fruitMaxBet = ref(50_000)
 
 const cabinetBodyUrl = '/images/games/slots/fruit-cabinet-base.png'
 const cabinetAmbientUrl = '/images/games/slots/fruit-cabinet-bg-blur.jpg'
@@ -683,6 +688,11 @@ function restoreLastBets(): boolean {
   const restored = { ...lastBetCounts.value }
   const units = (Object.values(restored) as number[]).reduce((a, b) => a + b, 0)
   const cost = units * selectedMult.value
+  if (cost > fruitMaxBet.value) {
+    playFruitSfx('lose', 0.45)
+    toast(`总押注不能超过 ${fruitMaxBet.value}`)
+    return false
+  }
   // 若盘面已有押分，先退回再重摆
   if (stakedScore.value > 0) {
     totalScore.value += stakedScore.value
@@ -832,8 +842,8 @@ function onFirstInteract() {
 function goBack() {
   stopAutoPlay()
   stopFruitBgm()
-  // 固定回游戏大厅（避免无历史记录时 router.back() 无效）
-  router.push('/lobby')
+  // replace 回大厅，去掉游戏页历史，避免大厅返回再次进入游戏
+  router.replace('/lobby')
 }
 
 function openSettings() {
@@ -973,6 +983,11 @@ function addBet(id: BetId): boolean {
     toast('积分不足')
     return false
   }
+  if (stakedScore.value + cost > fruitMaxBet.value) {
+    playFruitSfx('lose', 0.45)
+    toast(`总押注不能超过 ${fruitMaxBet.value}`)
+    return false
+  }
   if (betCounts.value[id] >= 99) {
     toast('单格已满')
     return false
@@ -992,6 +1007,11 @@ function onMultClick(value: MultValue) {
   const units = (Object.values(betCounts.value) as number[]).reduce((a, b) => a + b, 0)
   if (units > 0) {
     const newStake = units * value
+    if (newStake > fruitMaxBet.value) {
+      playFruitSfx('lose', 0.45)
+      toast(`总押注不能超过 ${fruitMaxBet.value}`)
+      return
+    }
     const delta = newStake - stakedScore.value
     if (delta > 0 && totalScore.value < delta) {
       playFruitSfx('lose', 0.45)
@@ -1018,7 +1038,9 @@ async function doGamble(choice: 'big' | 'small') {
   playFruitSfx(choice === 'big' ? 'big' : 'small')
   const amount = winScore.value
   try {
-    const res = await gamesApi.fruitGamble(amount, choice)
+    const clientRequestId = spinSession.currentOrNewClientRequestId()
+    const res = await gamesApi.fruitGamble(amount, choice, clientRequestId)
+    spinSession.clearClientRequestId()
     walletStore.balance = res.balance
     const result = res.result as 'win' | 'lose' | 'push'
     const roll = res.roll
@@ -1309,6 +1331,11 @@ async function doSpin() {
     playFruitSfx('lose', 0.4)
     return
   }
+  if (cost < fruitMinBet.value || cost > fruitMaxBet.value) {
+    toast(`总押注须在 ${fruitMinBet.value}~${fruitMaxBet.value} 之间`)
+    playFruitSfx('lose', 0.4)
+    return
+  }
 
   // 开跑前记下本局注数，供下次「开始」复用
   lastBetCounts.value = { ...betCounts.value }
@@ -1344,7 +1371,9 @@ async function doSpin() {
       // 演示不触碰真钱包，用本地总分做演出
       totalScore.value = Math.max(0, totalScore.value)
     } else {
-      const res = await gamesApi.fruitSpin(payload)
+      const clientRequestId = spinSession.currentOrNewClientRequestId()
+      const res = await gamesApi.fruitSpin(payload, clientRequestId)
+      spinSession.clearClientRequestId()
       result = res
       if (typeof res.balance === 'number') walletStore.balance = res.balance
     }
@@ -1441,6 +1470,16 @@ onMounted(async () => {
     /* 未登录时总分保持 0，不允许伪造余额 */
   }
   syncScoreFromWallet()
+  try {
+    const games = await gamesApi.list()
+    const cfg = games.find((g) => g.code === 'fruit-machine')
+    if (cfg) {
+      fruitMinBet.value = Math.max(1, Number(cfg.minBet) || 1)
+      fruitMaxBet.value = Math.max(fruitMinBet.value, Number(cfg.maxBet) || 50_000)
+    }
+  } catch {
+    /* 用默认限额 */
+  }
 
   if (isDev && String(route.query.demo || '') === 'train') {
     await sleep(400)

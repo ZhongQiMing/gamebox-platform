@@ -591,10 +591,11 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useWalletStore } from '@/stores/wallet'
 import { useUserStore } from '@/stores/user'
 import { useToast } from '@/composables/useToast'
+import { useGameSpinSession } from '@/composables/useGameSpinSession'
 import { gamesApi } from '@/api/games'
 import BcbmSpinRing from '@/components/BcbmSpinRing.vue'
 import BcbmFxOverlay from '@/components/BcbmFxOverlay.vue'
@@ -610,6 +611,7 @@ import type { BcbmFxKind } from '@/components/BcbmFxOverlay.vue'
 import {
   BCBM_BET_SLOTS,
   BCBM_CHIP_DEFAULT,
+  bcbmRingIndexToCarPos,
   bcbmSpecialSpinUrl,
   type BcbmBetId,
   type BcbmAwardType,
@@ -617,7 +619,6 @@ import {
 import {
   BCBM_PLAYTYPE_META,
   BCBM_WHEEL_PLAYTYPE,
-  carPosCandidatesForPlayType,
 } from '@/games/bcbm/bcbmSpinMath'
 import {
   unlockBcbmAudio,
@@ -665,9 +666,13 @@ import {
 const allBets = [...PANEL_TOP_BETS, ...PANEL_BOTTOM_BETS]
 
 const router = useRouter()
+const route = useRoute()
 const walletStore = useWalletStore()
 const userStore = useUserStore()
 const { error: toastErr } = useToast()
+const spinSession = useGameSpinSession('bcbm')
+const bcbmMinBet = ref(1)
+const bcbmMaxBet = ref(50_000)
 
 const avatarSrc = computed(
   () => userStore.profile?.avatar || '/images/avatars/001.jpg',
@@ -938,6 +943,15 @@ function onFirstInteract() {
 
 function addChip(id: BcbmBetId) {
   if (busy.value) return
+  const nextTotal = totalBet.value + chipValue.value
+  if (nextTotal > bcbmMaxBet.value) {
+    toastErr(`总押注不能超过 ${bcbmMaxBet.value}`)
+    return
+  }
+  if (nextTotal > Number(walletStore.balance || 0)) {
+    toastErr('余额不足')
+    return
+  }
   betHistory.value.push({ ...myBets.value })
   myBets.value = { ...myBets.value, [id]: (myBets.value[id] ?? 0) + chipValue.value }
   playBcbmBet()
@@ -961,13 +975,22 @@ function brandPrefix(opt: BetAllOption): string | null {
 
 function betAll() {
   if (busy.value) return
-  betHistory.value.push({ ...myBets.value })
   const next: Partial<Record<BcbmBetId, number>> = { ...myBets.value }
   const prefix = brandPrefix(betAllOption.value)
   for (const s of BCBM_BET_SLOTS) {
     if (prefix && !s.id.startsWith(prefix)) continue
     next[s.id] = (next[s.id] ?? 0) + chipValue.value
   }
+  const nextTotal = Object.values(next).reduce((s, v) => s + (v ?? 0), 0)
+  if (nextTotal > bcbmMaxBet.value) {
+    toastErr(`总押注不能超过 ${bcbmMaxBet.value}`)
+    return
+  }
+  if (nextTotal > Number(walletStore.balance || 0)) {
+    toastErr('余额不足')
+    return
+  }
+  betHistory.value.push({ ...myBets.value })
   myBets.value = next
   playBcbmBet()
 }
@@ -1003,6 +1026,7 @@ function refreshAutoBtn(left: number) {
 }
 function stopAutoBet(withSfx = false) {
   refreshAutoBtn(-1)
+  spinSession.clearScheduled()
   if (withSfx) playBcbmSfx('bet', 0.35)
 }
 /**
@@ -1074,46 +1098,9 @@ function resolveHitCarPositions(carPos: number, award: string): number[] {
   return [e]
 }
 
+/** 服务端 26 格 stopIndex → YoPlay 24 格 carPos（shared 权威映射） */
 function resolveCarPos(res: { stopIndex: number; winnerKind: string }): number {
-  const stop = ((res.stopIndex % 24) + 24) % 24
-  const kind = String(res.winnerKind || '')
-  let playType = -1
-  for (let pt = 0; pt < 12; pt++) {
-    const m = BCBM_PLAYTYPE_META[pt]
-    if (m.betId === kind || `${m.brand}_${m.color}` === kind) {
-      playType = pt
-      break
-    }
-  }
-  if (playType < 0) {
-    const colorMap: Record<string, string> = { 红: 'red', 绿: 'green', 黄: 'yellow' }
-    const brandMap: Record<string, string> = {
-      奔驰: 'benz',
-      宝马: 'bmw',
-      奥迪: 'audi',
-      大众: 'volkswagen',
-    }
-    for (const [cn, en] of Object.entries(colorMap)) {
-      if (!kind.includes(cn)) continue
-      for (const [bcn, ben] of Object.entries(brandMap)) {
-        if (!kind.includes(bcn)) continue
-        for (let pt = 0; pt < 12; pt++) {
-          const m = BCBM_PLAYTYPE_META[pt]
-          if (m.brand === ben && m.color === en) {
-            playType = pt
-            break
-          }
-        }
-      }
-    }
-  }
-  if (playType >= 0) {
-    const cands = carPosCandidatesForPlayType(playType)
-    // 优先用服务端 stopIndex（同玩法有两个环位）
-    if (cands.includes(stop)) return stop
-    return cands[0] ?? stop
-  }
-  return stop
+  return bcbmRingIndexToCarPos(res.stopIndex, res.winnerKind)
 }
 
 /** 官方 getCarImageResByCarPos(carPos, "l"|"s") */
@@ -1204,6 +1191,18 @@ function clearAnticipTimer() {
 
 async function doSpin() {
   if (busy.value || totalBet.value <= 0) return
+  const betSum = totalBet.value
+  if (betSum < bcbmMinBet.value || betSum > bcbmMaxBet.value) {
+    toastErr(`总押注须在 ${bcbmMinBet.value}~${bcbmMaxBet.value} 之间`)
+    stopAutoBet()
+    return
+  }
+  if (betSum > Number(walletStore.balance || 0)) {
+    toastErr('余额不足')
+    stopAutoBet()
+    return
+  }
+
   busy.value = true
   betAllMenuOpen.value = false
   autoMenuOpen.value = false
@@ -1216,7 +1215,6 @@ async function doSpin() {
   for (const [k, v] of Object.entries(myBets.value)) {
     if (v && v > 0) bets[k] = v
   }
-  const betSum = totalBet.value
 
   // 官方：点开始立刻 Idle→Spin，等 payoutResp 再允许停；不要先等接口
   void transformPanel(false)
@@ -1224,7 +1222,11 @@ async function doSpin() {
   await ringRef.value?.start(-1, { delayMs: 0, deferTarget: true })
 
   try {
-    const res = await gamesApi.bcbmSpin(bets)
+    if (spinSession.disposed.value) return
+    const clientRequestId = spinSession.currentOrNewClientRequestId()
+    const res = await gamesApi.bcbmSpin(bets, clientRequestId)
+    spinSession.clearClientRequestId()
+    if (spinSession.disposed.value) return
     walletStore.balance = res.balance
     const award = res.awardType as BcbmAwardType
     const fxKind = awardToFx(award)
@@ -1247,6 +1249,7 @@ async function doSpin() {
     }
 
     await stopP
+    if (spinSession.disposed.value) return
     clearAnticipTimer()
     stopBcbmAnticipation()
     fxRef.value?.stopSpeed()
@@ -1295,7 +1298,7 @@ async function doSpin() {
 
     // 官方：0 < autoRoundLeft → startNextBet；==0 → stopAutoBet
     if (autoRoundLeft.value > 0) {
-      window.setTimeout(() => {
+      spinSession.schedule(() => {
         if (autoRoundLeft.value > 0 && !busy.value) startNextBet()
       }, 600)
     } else if (autoRoundLeft.value === 0) {
@@ -1327,18 +1330,37 @@ async function doSpin() {
 }
 
 onMounted(() => {
+  const code = String(route.params.gameCode || '').toLowerCase()
+  if (code && code !== 'bcbm') {
+    void router.replace('/lobby')
+    return
+  }
   initBcbmMuteFromStorage()
   unlockBcbmAudio()
   fit()
   window.addEventListener('resize', fit)
   void walletStore.fetchBalance()
+  void gamesApi
+    .list()
+    .then((games) => {
+      const cfg = games.find((g) => g.code === 'bcbm')
+      if (!cfg) return
+      bcbmMinBet.value = Math.max(1, Number(cfg.minBet) || 1)
+      bcbmMaxBet.value = Math.max(bcbmMinBet.value, Number(cfg.maxBet) || 50_000)
+    })
+    .catch(() => {
+      /* 用默认限额 */
+    })
 })
 
 onBeforeUnmount(() => {
+  stopAutoBet()
+  clearAnticipTimer()
   window.removeEventListener('resize', fit)
   fxRef.value?.stop()
   stopBcbmSpinLoop()
   stopBcbmBgm()
+  void walletStore.fetchBalance()
 })
 </script>
 

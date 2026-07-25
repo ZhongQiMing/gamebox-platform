@@ -46,11 +46,6 @@
           <input v-model="password2" type="password" class="field" placeholder="再次输入密码" maxlength="30" autocomplete="new-password">
         </div>
 
-        <div class="field-luxe">
-          <span class="ic" aria-hidden="true">🔗</span>
-          <input v-model="inviteCode" type="text" class="field" placeholder="邀请码（选填）" maxlength="10">
-        </div>
-
         <div class="register-actions">
           <button class="btn btn-primary btn-block" :disabled="loading" @click="doRegister">
             <span class="ruby ruby-l"></span>
@@ -87,7 +82,6 @@ const { toast } = useToast()
 const account = ref('')
 const password = ref('')
 const password2 = ref('')
-const inviteCode = ref('')
 const loading = ref(false)
 
 async function doRegister() {
@@ -103,11 +97,10 @@ async function doRegister() {
     const res = await authApi.register({
       username: acc,
       password: password.value,
-      inviteCode: inviteCode.value.trim() || undefined,
     })
     userStore.setAuth(res.user, res.token)
     toast('注册成功，欢迎加入！')
-    setTimeout(() => router.push('/lobby'), 800)
+    setTimeout(() => router.push('/room'), 800)
   } catch (e: any) {
     toast(e.message ?? '注册失败')
   } finally {

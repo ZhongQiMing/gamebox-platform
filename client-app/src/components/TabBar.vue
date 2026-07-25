@@ -1,5 +1,5 @@
 <template>
-  <nav class="lobby-tabbar">
+  <nav v-if="!fromGame" class="lobby-tabbar">
     <div
       v-for="tab in TABS"
       :key="tab.key"
@@ -14,15 +14,23 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 const route = useRoute()
 const router = useRouter()
 
-// 样式复用原型 common.css 的 .lobby-tabbar；body.has-tabbar 让 .page 自动留底部空间
-onMounted(() => document.body.classList.add('has-tabbar'))
+/** 游戏内打开的子页：全屏铺满，不留底部 Tab */
+const fromGame = computed(() => route.query.from === 'game')
+
+function syncBodyClass() {
+  if (fromGame.value) document.body.classList.remove('has-tabbar')
+  else document.body.classList.add('has-tabbar')
+}
+
+onMounted(syncBodyClass)
 onUnmounted(() => document.body.classList.remove('has-tabbar'))
+watch(fromGame, syncBodyClass)
 
 const TABS = [
   { key: 'home',     name: 'lobby',    icon: '⛨', text: '游 戏' },

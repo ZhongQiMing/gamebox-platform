@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { authApi, type UserProfile } from '@/api/auth'
 import { useWalletStore } from '@/stores/wallet'
+import { useRoomStore } from '@/stores/room'
 
 export const useUserStore = defineStore('user', () => {
   const profile = ref<UserProfile | null>(null)
@@ -14,6 +15,8 @@ export const useUserStore = defineStore('user', () => {
     profile.value = user
     token.value = tk
     localStorage.setItem('token', tk)
+    // 每次登录都重新选房，避免串到别人的代理房间
+    useRoomStore().clearCurrent()
   }
 
   function logout() {
@@ -22,6 +25,7 @@ export const useUserStore = defineStore('user', () => {
     restored.value = false   // 重置，让下次进入应用时重新走 restoreSession
     localStorage.removeItem('token')
     useWalletStore().reset()
+    useRoomStore().clearCurrent()
   }
 
   /** 刷新页面后用已存 token 恢复 profile（只执行一次，由路由守卫等待） */

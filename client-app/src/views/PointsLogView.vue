@@ -9,7 +9,7 @@
   <div class="page pl-page">
     <div class="app-bar">
       <div class="back" @click="goBack">‹</div>
-      <div class="title">积分账变</div>
+      <div class="title">账变明细</div>
       <div class="right"></div>
     </div>
 
@@ -18,12 +18,14 @@
 
       <div class="time-tabs">
         <button
-          v-for="t in RANGES"
+          v-for="t in TIME_RANGES"
           :key="t.key"
+          type="button"
           :class="['tt-item', range === t.key ? 'active' : '']"
           @click="range = t.key"
         >{{ t.label }}</button>
       </div>
+      <div class="time-range-hint">{{ rangeDateText }}</div>
 
       <div class="pl-filter-row">
         <div class="pl-filter-label">{{ FILTERS[filterIdx].label }}</div>
@@ -84,23 +86,13 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { walletApi, type LedgerItem } from '@/api/wallet'
 import { useBodyClass } from '@/composables/useBodyClass'
+import { TIME_RANGES, rangeBounds, formatRangeDateText, type TimeRangeKey } from '@/composables/timeRange'
 import TabBar from '@/components/TabBar.vue'
 import '@/assets/points-log.css'
 
 useBodyClass('deco-bg')
 
 const router = useRouter()
-
-const RANGES = [
-  { key: 'today',     label: '今 日' },
-  { key: 'yesterday', label: '昨 日' },
-  { key: 'thisweek',  label: '本 周' },
-  { key: 'lastweek',  label: '上 周' },
-  { key: 'thismonth', label: '本 月' },
-  { key: 'lastmonth', label: '上 个 月' },
-] as const
-
-type RangeKey = typeof RANGES[number]['key']
 
 /* 后端 bizType → 原型筛选类型映射 */
 const FILTERS: { label: string; types: string[] | null }[] = [
@@ -123,29 +115,13 @@ const KIND_TEXT: Record<string, string> = {
   TRANSFER_IN: '转 入', TRANSFER_OUT: '转 出', ADJUST: '调 整',
 }
 
-const range = ref<RangeKey>('today')
+const range = ref<TimeRangeKey>('today')
 const filterIdx = ref(0)
 const sheetOpen = ref(false)
 const loading = ref(false)
 const list = ref<LedgerItem[]>([])
 
-function rangeBounds(key: RangeKey): [number, number] {
-  const now = new Date()
-  const DAY = 86400000
-  const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
-  const weekday = (now.getDay() + 6) % 7
-  const week0 = today0 - weekday * DAY
-  const month0 = new Date(now.getFullYear(), now.getMonth(), 1).getTime()
-  const lastMonth0 = new Date(now.getFullYear(), now.getMonth() - 1, 1).getTime()
-  switch (key) {
-    case 'today':     return [today0, today0 + DAY]
-    case 'yesterday': return [today0 - DAY, today0]
-    case 'thisweek':  return [week0, week0 + 7 * DAY]
-    case 'lastweek':  return [week0 - 7 * DAY, week0]
-    case 'thismonth': return [month0, Date.now() + DAY]
-    case 'lastmonth': return [lastMonth0, month0]
-  }
-}
+const rangeDateText = computed(() => formatRangeDateText(range.value))
 
 const filtered = computed(() => {
   const [from, to] = rangeBounds(range.value)

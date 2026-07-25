@@ -1522,6 +1522,11 @@ a:hover { color: var(--gold-bright); }
 /* 占位元素：放在页面内容尾部，撑开高度避免被 tabbar 遮挡 */
 .lobby-spacer { height: 72px; }
 
+/* 游戏内全屏子页：无底部 Tab，不必留大块空白 */
+body:not(.has-tabbar) .lobby-spacer {
+  height: max(16px, env(safe-area-inset-bottom, 0px));
+}
+
 .lobby-tabbar {
   position: fixed;
   left: 0; right: 0; bottom: 0;

@@ -3,28 +3,20 @@
 ================================================================
 
 【用途】
-新玩家注册时，系统从这里随机抽一张作为他的头像。
-（对应 common.js 里的 App.genUser() 逻辑）
+新玩家注册时，系统从本目录按「轮次」分配头像：
+  - 第 1 轮：162 张里头随机抽，每张最多用 1 次
+  - 本轮全部用完后进入第 2 轮，再重新从整池随机抽
+  - 以此类推（头像可跨轮重复，同轮内不重复）
+实现：server users.service pickAvatarUnique + AvatarAssignState。
 
-【命名约定】
-文件名建议从 01.png ~ 20.png 编号，方便程序遍历：
-    01.png
-    02.png
-    03.png
-    ...
-    20.png
+【当前文件】
+001.jpg ~ 162.jpg（共 162 张）
+另有少量 PNG 特例：022.png、078.png、086.png
+
+【路径约定】
+对外 URL：/images/avatars/001.jpg … /images/avatars/162.jpg
+H5 与 AssetsGameView 缺省回退：/images/avatars/001.jpg
 
 【推荐尺寸】
-正方形 200×200 像素（JPG / PNG / WebP 均可）
-文件大小建议 < 50KB
-
-【放完图片后怎么用】
-告诉我你放了几张图（例如 1~20），我会去改 common.js 里
-的 AVATAR_POOL 数组，把 emoji 换成本地图片路径，例如：
-    AVATAR_POOL: [
-      '../../assets/images/avatars/01.png',
-      '../../assets/images/avatars/02.png',
-      ...
-    ]
-
-或者你自己改也可以，路径相对于 pages/xxx/xxx.html 来写。
+正方形约 200×200（JPG / PNG）
+单张建议 < 80KB
