@@ -90,34 +90,40 @@ export const BCBM_RING: readonly BcbmRingCell[] = (() => {
       label: s.label,
     };
   };
-  // 权重大致反比于倍率，免费略低
+  /**
+   * 停点权重严格取 round(900 / 倍率)，使 12 个仓位的普通开奖 RTP 全部落在 82%±1%。
+   * 早先的权重只是「大致反比」，红/绿奔驰与红宝马单独就超过 100%，是平台负期望。
+   * 12 仓覆盖全部赔付格时，普通开奖 RTP 的数学上限为 1/Σ(1/倍率) ≈ 83.1%，
+   * 剩余部分由大三元 / 大四喜等大奖补足到目标 RTP（见 BCBM_DEFAULT_AWARD_WEIGHTS）。
+   * 改权重后必须跑 `pnpm audit:rtp arcade`。
+   */
   return [
-    mk('vw_red', 22),
-    mk('vw_green', 26),
-    mk('vw_yellow', 28),
-    mk('free', 8),
-    mk('benz_red', 4),
-    mk('benz_green', 5),
-    mk('benz_yellow', 6),
-    mk('bmw_red', 8),
-    mk('bmw_green', 10),
-    mk('bmw_yellow', 12),
-    mk('audi_red', 14),
-    mk('audi_green', 16),
-    mk('audi_yellow', 20),
-    mk('vw_red', 22),
-    mk('vw_green', 26),
-    mk('vw_yellow', 28),
-    mk('free', 8),
-    mk('benz_red', 4),
-    mk('benz_green', 5),
-    mk('benz_yellow', 6),
-    mk('bmw_red', 8),
-    mk('bmw_green', 10),
-    mk('bmw_yellow', 12),
-    mk('audi_red', 14),
-    mk('audi_green', 16),
-    mk('audi_yellow', 20),
+    mk('vw_red', 129),
+    mk('vw_green', 180),
+    mk('vw_yellow', 225),
+    mk('free', 0) /* 视觉格，不进普通停点池 */,
+    mk('benz_red', 20),
+    mk('benz_green', 24),
+    mk('benz_yellow', 33),
+    mk('bmw_red', 41),
+    mk('bmw_green', 56),
+    mk('bmw_yellow', 69),
+    mk('audi_red', 75),
+    mk('audi_green', 90),
+    mk('audi_yellow', 150),
+    mk('vw_red', 129),
+    mk('vw_green', 180),
+    mk('vw_yellow', 225),
+    mk('free', 0) /* 视觉格，不进普通停点池 */,
+    mk('benz_red', 20),
+    mk('benz_green', 24),
+    mk('benz_yellow', 33),
+    mk('bmw_red', 41),
+    mk('bmw_green', 56),
+    mk('bmw_yellow', 69),
+    mk('audi_red', 75),
+    mk('audi_green', 90),
+    mk('audi_yellow', 150),
   ];
 })();
 
@@ -161,20 +167,28 @@ export const BCBM_AWARD_LABELS: Record<BcbmAwardType, string> = {
   drift: '全民漂移',
 };
 
+/**
+ * 大奖权重（分母 1000）。
+ *
+ * sanyuan / sixi / fast / uturn / drift 是「无条件全额赔付整组仓位」，不受灯环权重约束：
+ * 押满 12 仓时大三元·奔驰一把赔 110 倍、全民漂移一把赔 205 倍，
+ * 因此权重必须是千分位量级，否则单靠大奖就能把 RTP 顶到 200% 以上。
+ * 这里让大奖合计补足约 13 个百分点，与普通开奖的 82% 合成目标 RTP。
+ */
 export const BCBM_DEFAULT_AWARD_WEIGHTS: Record<BcbmAwardType, number> = {
-  normal: 72,
+  normal: 950,
   free: 0,
-  sanyuan_benz: 2,
-  sanyuan_bmw: 3,
-  sanyuan_audi: 3,
-  sanyuan_vw: 4,
+  sanyuan_benz: 1,
+  sanyuan_bmw: 2,
+  sanyuan_audi: 4,
+  sanyuan_vw: 8,
   sixi_red: 1,
   sixi_green: 2,
-  sixi_yellow: 2,
-  fast: 3,
-  uturn: 3,
-  lightning: 3,
-  drift: 2,
+  sixi_yellow: 3,
+  fast: 5,
+  uturn: 8,
+  lightning: 15,
+  drift: 1,
 };
 
 export function bcbmIndexesOfBet(id: BcbmBetId): number[] {
@@ -234,3 +248,69 @@ export const BCBM_RING_XY: ReadonlyArray<readonly [number, number]> = [
 
 /** @deprecated 使用 BCBM_RING_XY；保留别名避免旧引用报错 */
 export const BCBM_SLOT_POS = BCBM_RING_XY;
+
+/**
+ * YoPlay 24 格展示环 playType（0..11）↔ 押注仓位。
+ * 与前端 `BCBM_WHEEL_PLAYTYPE` / `BCBM_PLAYTYPE_META` 一致：
+ * carPos p 的 playType = 11 - (p % 12)。
+ */
+export const BCBM_DISPLAY_PLAYTYPE_BY_BET: Record<BcbmBetId, number> = {
+  vw_yellow: 0,
+  vw_green: 1,
+  vw_red: 2,
+  audi_yellow: 3,
+  audi_green: 4,
+  audi_red: 5,
+  bmw_yellow: 6,
+  bmw_green: 7,
+  bmw_red: 8,
+  benz_yellow: 9,
+  benz_green: 10,
+  benz_red: 11,
+};
+
+/** 某仓位在 24 格展示环上的两个候选 carPos（左右半环各一） */
+export function bcbmCarPosCandidatesForBet(betId: BcbmBetId): readonly [number, number] {
+  const pt = BCBM_DISPLAY_PLAYTYPE_BY_BET[betId];
+  const a = 11 - pt;
+  return [a, a + 12];
+}
+
+/**
+ * 服务端 26 格灯环索引 → YoPlay 24 格展示 carPos。
+ * 免费格无展示图标时，用 winnerKind（须为仓位 id）回退。
+ */
+export function bcbmRingIndexToCarPos(stopIndex: number, winnerKind?: string): number {
+  const idx = ((Math.floor(Number(stopIndex)) % BCBM_RING.length) + BCBM_RING.length) % BCBM_RING.length;
+  const cell = BCBM_RING[idx];
+  let betId: BcbmBetId | null = null;
+  if (cell.kind !== 'free' && isBcbmBetId(cell.kind)) {
+    betId = cell.kind;
+  } else if (winnerKind && isBcbmBetId(winnerKind)) {
+    betId = winnerKind;
+  } else {
+    const prev = BCBM_RING[(idx - 1 + BCBM_RING.length) % BCBM_RING.length];
+    const next = BCBM_RING[(idx + 1) % BCBM_RING.length];
+    const fallback = prev.kind !== 'free' ? prev.kind : next.kind;
+    if (isBcbmBetId(fallback)) betId = fallback;
+  }
+  if (!betId) return 0;
+  const cands = bcbmCarPosCandidatesForBet(betId);
+  const occs = bcbmIndexesOfBet(betId);
+  const occ = occs.indexOf(idx);
+  if (occ >= 0) return cands[Math.min(occ, cands.length - 1)]!;
+  return cands[0]!;
+}
+
+/** 批量映射命中格（去重，保持首次出现顺序） */
+export function bcbmRingIndexesToCarPositions(hitIndexes: readonly number[]): number[] {
+  const out: number[] = [];
+  const seen = new Set<number>();
+  for (const i of hitIndexes) {
+    const carPos = bcbmRingIndexToCarPos(i);
+    if (seen.has(carPos)) continue;
+    seen.add(carPos);
+    out.push(carPos);
+  }
+  return out;
+}

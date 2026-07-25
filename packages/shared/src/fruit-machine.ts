@@ -42,31 +42,41 @@ export interface FruitRingCell {
  * 下7（右→左）：橘子X2 铃铛X2 大77X40 77X2 苹果X2 大芒果X15 芒果X2
  * 左5（下→上）：双星X2 大双星X30 GOOD LUCK 苹果X2 大铃铛X20
  */
+/**
+ * 停点权重按「每个符号的加权期望相等」标定：
+ * 各符号 Σ(权重×倍率) 均为 ≈2000，总权重 2238 → 单符号普通开奖 RTP ≈ 89%，
+ * 余下由大三元 / 大四喜 / 开火车 / 大满贯补足（见 FRUIT_DEFAULT_AWARD_WEIGHTS）。
+ *
+ * 早先的权重让大天门（×100）拿到权重 3/254，单格 RTP 就有 118%，
+ * 天门整体 197%，押天门稳赚。倍率是盘面印刷值不能动，只能改权重。
+ * 改权重后必须跑 `pnpm audit:rtp arcade`。
+ */
 export const FRUIT_RING: FruitRingCell[] = [
-  { kind: 'orange_small', symbol: 'orange', size: 'small', mult: 2, weight: 14, label: '橘子' },
-  { kind: 'bell_small', symbol: 'bell', size: 'small', mult: 2, weight: 13, label: '铃铛' },
-  { kind: 'bar_small', symbol: 'bar', size: 'small', mult: 50, weight: 4, label: '小天门' },
-  { kind: 'bar_big', symbol: 'bar', size: 'big', mult: 100, weight: 3, label: '大天门' },
-  { kind: 'apple_small', symbol: 'apple', size: 'small', mult: 2, weight: 16, label: '苹果' },
-  { kind: 'apple_big', symbol: 'apple', size: 'big', mult: 5, weight: 12, label: '大苹果' },
-  { kind: 'lemon_small', symbol: 'lemon', size: 'small', mult: 2, weight: 14, label: '芒果' },
-  { kind: 'melon_small', symbol: 'melon', size: 'small', mult: 2, weight: 12, label: '西瓜' },
-  { kind: 'melon_big', symbol: 'melon', size: 'big', mult: 20, weight: 8, label: '大西瓜' },
-  { kind: 'luck', symbol: null, size: 'luck', mult: 0, weight: 5, label: 'GOOD LUCK' },
-  { kind: 'apple_small', symbol: 'apple', size: 'small', mult: 2, weight: 16, label: '苹果' },
-  { kind: 'orange_big', symbol: 'orange', size: 'big', mult: 10, weight: 10, label: '大橘子' },
-  { kind: 'orange_small', symbol: 'orange', size: 'small', mult: 2, weight: 14, label: '橘子' },
-  { kind: 'bell_small', symbol: 'bell', size: 'small', mult: 2, weight: 13, label: '铃铛' },
-  { kind: 'seven_big', symbol: 'seven', size: 'big', mult: 40, weight: 5, label: '大77' },
-  { kind: 'seven_small', symbol: 'seven', size: 'small', mult: 2, weight: 10, label: '77' },
-  { kind: 'apple_small', symbol: 'apple', size: 'small', mult: 2, weight: 16, label: '苹果' },
-  { kind: 'lemon_big', symbol: 'lemon', size: 'big', mult: 15, weight: 9, label: '大芒果' },
-  { kind: 'lemon_small', symbol: 'lemon', size: 'small', mult: 2, weight: 14, label: '芒果' },
-  { kind: 'star_small', symbol: 'star', size: 'small', mult: 2, weight: 11, label: '双星' },
-  { kind: 'star_big', symbol: 'star', size: 'big', mult: 30, weight: 6, label: '大双星' },
-  { kind: 'luck', symbol: null, size: 'luck', mult: 0, weight: 5, label: 'GOOD LUCK' },
-  { kind: 'apple_small', symbol: 'apple', size: 'small', mult: 2, weight: 16, label: '苹果' },
-  { kind: 'bell_big', symbol: 'bell', size: 'big', mult: 20, weight: 8, label: '大铃铛' },
+  { kind: 'orange_small', symbol: 'orange', size: 'small', mult: 2, weight: 75, label: '橘子' },
+  { kind: 'bell_small', symbol: 'bell', size: 'small', mult: 2, weight: 75, label: '铃铛' },
+  { kind: 'bar_small', symbol: 'bar', size: 'small', mult: 50, weight: 10, label: '小天门' },
+  { kind: 'bar_big', symbol: 'bar', size: 'big', mult: 100, weight: 15, label: '大天门' },
+  { kind: 'apple_small', symbol: 'apple', size: 'small', mult: 2, weight: 38, label: '苹果' },
+  { kind: 'apple_big', symbol: 'apple', size: 'big', mult: 5, weight: 340, label: '大苹果' },
+  { kind: 'lemon_small', symbol: 'lemon', size: 'small', mult: 2, weight: 75, label: '芒果' },
+  { kind: 'melon_small', symbol: 'melon', size: 'small', mult: 2, weight: 150, label: '西瓜' },
+  { kind: 'melon_big', symbol: 'melon', size: 'big', mult: 20, weight: 85, label: '大西瓜' },
+  { kind: 'luck', symbol: null, size: 'luck', mult: 0, weight: 134, label: 'GOOD LUCK' },
+  { kind: 'apple_small', symbol: 'apple', size: 'small', mult: 2, weight: 38, label: '苹果' },
+  /* 橘子没有专属大奖补偿，普通开奖权重略高于其他符号 */
+  { kind: 'orange_big', symbol: 'orange', size: 'big', mult: 10, weight: 175, label: '大橘子' },
+  { kind: 'orange_small', symbol: 'orange', size: 'small', mult: 2, weight: 75, label: '橘子' },
+  { kind: 'bell_small', symbol: 'bell', size: 'small', mult: 2, weight: 75, label: '铃铛' },
+  { kind: 'seven_big', symbol: 'seven', size: 'big', mult: 40, weight: 43, label: '大77' },
+  { kind: 'seven_small', symbol: 'seven', size: 'small', mult: 2, weight: 150, label: '77' },
+  { kind: 'apple_small', symbol: 'apple', size: 'small', mult: 2, weight: 38, label: '苹果' },
+  { kind: 'lemon_big', symbol: 'lemon', size: 'big', mult: 15, weight: 113, label: '大芒果' },
+  { kind: 'lemon_small', symbol: 'lemon', size: 'small', mult: 2, weight: 75, label: '芒果' },
+  { kind: 'star_small', symbol: 'star', size: 'small', mult: 2, weight: 150, label: '双星' },
+  { kind: 'star_big', symbol: 'star', size: 'big', mult: 30, weight: 57, label: '大双星' },
+  { kind: 'luck', symbol: null, size: 'luck', mult: 0, weight: 134, label: 'GOOD LUCK' },
+  { kind: 'apple_small', symbol: 'apple', size: 'small', mult: 2, weight: 38, label: '苹果' },
+  { kind: 'bell_big', symbol: 'bell', size: 'big', mult: 20, weight: 85, label: '大铃铛' },
 ];
 
 /** 7×7 网格坐标（列, 行），与 FRUIT_RING 下标一一对应 */
@@ -105,15 +115,21 @@ export const FRUIT_AWARD_LABELS: Record<FruitAwardType, string> = {
   slam: '大满贯',
 };
 
-/** 默认大奖权重（可被 DB 配置覆盖） */
+/**
+ * 默认大奖权重（分母 10000，可被 DB 配置覆盖）。
+ *
+ * train / big3 / small3 / four / slam 会无条件点亮整组格子，不受停点权重约束：
+ * 大满贯一次点亮全部 22 个非 LUCK 格，单押天门就是 150 倍，
+ * 因此这些奖型必须是千分位以下量级，否则 RTP 会被顶到数倍。
+ */
 export const FRUIT_DEFAULT_AWARD_WEIGHTS: Record<FruitAwardType, number> = {
-  normal: 62,
-  luck_send: 8,
-  luck_eat: 4,
+  normal: 9600,
+  luck_send: 200,
+  luck_eat: 120,
   train: 10,
-  big3: 5,
-  small3: 5,
-  four: 4,
+  big3: 3,
+  small3: 15,
+  four: 50,
   slam: 2,
 };
 
