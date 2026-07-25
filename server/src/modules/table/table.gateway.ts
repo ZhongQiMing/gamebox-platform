@@ -1,13 +1,9 @@
 /**
- * TableGateway — Socket.IO WebSocket 网关
+ * TableGateway — Socket.IO（已冻结为主路径旁路）
  *
- * 鉴权：客户端在 handshake.auth.token 中携带 JWT，
- *       连接时服务端校验并解出真实 userId，杜绝身份伪造。
- *       未带 token 可以旁观（接收快照），但不能下注。
- *
- * 事件：
- *   客户端 → 服务端：  table:join  table:bet
- *   服务端 → 客户端：  table:snapshot  table:betOk  table:error
+ * 产品主路径：AssetsGameView iframe + HTTP `/api/table/*`
+ * 本网关仅保留给内部推送 / 旧调试；新功能不要往这里加下注入口。
+ * 客户端 `/game/table/:code` 已 redirect 到 AssetsGame 壳。
  */
 import {
   WebSocketGateway,
@@ -24,6 +20,7 @@ import { TableService } from './table.service';
 import type { TableBetPayload, TableSnapshot } from './table.types';
 import type { JwtPayload } from '../auth/jwt.strategy';
 import { PrismaService } from '../../prisma/prisma.service';
+import { normalizeGameCode } from './table-rules';
 
 @WebSocketGateway({
   namespace: '/table',
@@ -66,7 +63,7 @@ export class TableGateway implements OnGatewayInit, OnGatewayConnection {
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { gameCode: string },
   ) {
-    const { gameCode } = data;
+    const gameCode = normalizeGameCode(data.gameCode);
     try {
       const snap = await this.tableService.snapshot(gameCode);
       client.join(`room:${gameCode}`);
@@ -78,30 +75,14 @@ export class TableGateway implements OnGatewayInit, OnGatewayConnection {
     }
   }
 
+  /**
+   * 已关闭：下注只走 HTTP `/api/table/:code/bet`（AssetsGameView 桥接）。
+   * 保留消息以免旧客户端报 unknown event，但一律拒绝。
+   */
   @SubscribeMessage('table:bet')
-  async handleBet(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() payload: TableBetPayload,
-  ) {
-    const playerId: string | undefined = client.data.userId;
-    if (!playerId) {
-      client.emit('table:error', { message: '请先登录' });
-      return;
-    }
-    try {
-      const user = await this.prisma.user.findUnique({
-        where: { id: playerId },
-        select: { status: true },
-      });
-      if (user?.status !== 'ACTIVE') {
-        client.data.userId = undefined;
-        client.emit('table:error', { message: '账号已被禁用' });
-        return;
-      }
-      const result = await this.tableService.placeBet(playerId, payload);
-      client.emit('table:betOk', result);
-    } catch (err: unknown) {
-      client.emit('table:error', { message: (err as Error).message });
-    }
+  async handleBet(@ConnectedSocket() client: Socket, @MessageBody() _payload: TableBetPayload) {
+    client.emit('table:error', {
+      message: '请从大厅进入游戏下注（WebSocket 下注已关闭）',
+    });
   }
 }

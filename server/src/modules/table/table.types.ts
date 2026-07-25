@@ -1,40 +1,56 @@
 /** 棋牌实时桌面共用类型 */
 
-/** 龙虎斗牌面 */
+/** 龙虎斗牌面（旧格式，dragon-tiger.game 内部用） */
 export interface Card {
-  suit: 'S' | 'H' | 'D' | 'C'; // 黑桃 / 红心 / 方块 / 梅花
-  rank: number;                  // 1(A)~13(K)
+  suit: 'S' | 'H' | 'D' | 'C';
+  rank: number;
 }
 
-/** 龙虎斗结果 */
 export interface DragonTigerOutcome {
   dragon: Card;
   tiger: Card;
-  winner: 'DRAGON' | 'TIGER' | 'TIE'; // TIE=和
+  winner: 'DRAGON' | 'TIGER' | 'TIE';
 }
 
-/** 桌面状态 */
 export type TablePhase = 'BETTING' | 'DRAWING' | 'SETTLED' | 'PAUSED';
 
-/** 前端收到的桌面快照 */
+export interface TableHistoryItem {
+  roundNo: string;
+  outcome: Record<string, unknown>;
+  createdAt: string;
+  serverSeedHash?: string;
+  serverSeed?: string;
+  nonce?: number;
+}
+
+/** 前端收到的桌面快照（outcome 按游戏不同） */
 export interface TableSnapshot {
   roomId: string;
   gameCode: string;
   phase: TablePhase;
   roundNo: string;
-  /** 本局剩余秒数（下注倒计时） */
   secondsLeft: number;
-  /** 本局结果（仅 DRAWING/SETTLED 阶段非空） */
-  outcome?: DragonTigerOutcome;
-  /** 本局各位置下注汇总 */
-  betSummary: Record<string, number>; // side → totalAmount
-  /** 最近 10 局历史 */
-  history: Array<{ roundNo: string; outcome: DragonTigerOutcome; createdAt: string }>;
+  outcome?: Record<string, unknown>;
+  betSummary: Record<string, number>;
+  history: TableHistoryItem[];
+  /** 下注期公开承诺；封盘后可对照 serverSeed */
+  serverSeedHash: string;
+  /** 封盘后公开，用于复算 */
+  serverSeed?: string;
+  nonce: number;
+  /** 周期配置（与 @gamebox/shared table-timing 同源），供 H5 校准本地兜底 */
+  timing?: {
+    bettingMs: number;
+    drawMs: number;
+    settleMs: number;
+    cycleMs: number;
+  };
 }
 
-/** 玩家下注 payload */
 export interface TableBetPayload {
   roomId: string;
-  side: 'DRAGON' | 'TIGER' | 'TIE';
+  side: string;
   amount: number;
+  /** 客户端幂等键：短时内重复提交返回同一结果，防连点双扣 */
+  clientKey?: string;
 }

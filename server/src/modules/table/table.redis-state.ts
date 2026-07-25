@@ -1,4 +1,4 @@
-import type { DragonTigerOutcome, TablePhase } from './table.types';
+import type { TableHistoryItem, TablePhase } from './table.types';
 
 /** Redis 持久化的房间相位（权威调度态，非资金真相） */
 export interface RedisRoomState {
@@ -12,13 +12,14 @@ export interface RedisRoomState {
   phase: TablePhase;
   /** 当前相位绝对截止时间（epoch ms） */
   phaseEndsAt: number;
-  outcome: DragonTigerOutcome | null;
+  outcome: Record<string, unknown> | null;
   serverSeed: string;
   serverSeedHash: string;
   nonce: number;
-  /** side → totalAmount，仅展示用 */
   betSummary: Record<string, number>;
-  history: Array<{ roundNo: string; outcome: DragonTigerOutcome; createdAt: string }>;
+  history: TableHistoryItem[];
+  /** 乐观锁版本：每次 CAS 写回 +1 */
+  version: number;
 }
 
 export const TABLE_BROADCAST_CHANNEL = 'table:broadcast';
