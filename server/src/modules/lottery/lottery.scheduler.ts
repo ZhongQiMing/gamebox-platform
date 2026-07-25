@@ -8,17 +8,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LotteryService } from './lottery.service';
-
-/** 各彩票游戏的开奖间隔（秒）——与前端 INTERVAL 对齐 */
-const GAME_INTERVALS: Record<string, number> = {
-  ssc:            90,
-  ffc:            60,
-  'speed-racing': 55,
-  bjsc:           60,
-  'speed-boat':   60,
-  kuai3:          55,
-  lhc:            60,
-};
+import { LOTTERY_INTERVALS, lotteryIntervalSec } from './lottery-intervals';
 
 @Injectable()
 export class LotteryScheduler {
@@ -29,12 +19,13 @@ export class LotteryScheduler {
     private lottery: LotteryService,
   ) {}
 
-  /** 每分钟：预创各游戏待开期号 */
+  /** 每分钟：预创各游戏待开期号（间隔优先读 DB drawIntervalSec） */
   @Cron(CronExpression.EVERY_MINUTE)
   async preCreate() {
-    for (const [code, interval] of Object.entries(GAME_INTERVALS)) {
+    for (const code of Object.keys(LOTTERY_INTERVALS)) {
       const game = await this.prisma.game.findUnique({ where: { code } });
       if (!game || game.status !== 'ONLINE') continue;
+      const interval = lotteryIntervalSec(code, game.drawIntervalSec);
       await this.lottery.preCreateIssues(code, interval, 3).catch(e =>
         this.logger.error(`preCreate[${code}] failed: ${e.message}`)
       );
@@ -79,11 +70,10 @@ export class LotteryScheduler {
         }),
       );
 
-      // 封盘：lockAt 已过但仍 PENDING 的期号
-      await this.prisma.lotteryIssue.updateMany({
-        where: { status: 'PENDING', lockAt: { lte: now }, openAt: { gt: now } },
-        data: { status: 'LOCKED' },
-      });
+      // 封盘：lockAt 已过 → LOCKED，并推房间封盘线/注单核对（勿只改状态）
+      await this.lottery.lockDueIssues().catch((e) =>
+        this.logger.error(`lockDueIssues failed: ${e.message}`),
+      );
     } finally {
       this.settling = false;
     }

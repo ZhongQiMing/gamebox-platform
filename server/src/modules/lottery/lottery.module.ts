@@ -5,9 +5,10 @@ import { LotteryScheduler } from './lottery.scheduler';
 import { LotteryGameRegistry } from './lottery-game.registry';
 import { PointsModule } from '../points/points.module';
 import { AgentsModule } from '../agents/agents.module';
+import { RoomsModule } from '../rooms/rooms.module';
 
 @Module({
-  imports: [PointsModule, AgentsModule],
+  imports: [PointsModule, AgentsModule, RoomsModule],
   providers: [LotteryService, LotteryScheduler, LotteryGameRegistry],
   controllers: [LotteryController],
   exports: [LotteryService, LotteryGameRegistry],
