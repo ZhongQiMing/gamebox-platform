@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 游戏类型: digit5
  *
  * 1分时时彩 · 聊天投注房
@@ -8,20 +8,32 @@
 $(function () {
   const GAME_TYPE = 'digit5';
 
-  // 总周期 60s；准备中 = 开奖动画实测 ≈3.7s → 取 4s；倒计时从 00:56 起
+  // 总周期 60s = 50s 可下注 + 10s 封盘准备（与服务端 lockAt = openAt - 10s 一致）
   const INTERVAL = 60;
-  const PREP_SEC = 4;
+  const PREP_SEC = 10;
   const BET_SEC = INTERVAL - PREP_SEC;
 
   function fixAvatar(url) {
     const fallback = '/images/avatars/001.jpg';
     if (!url) return fallback;
     if (url.startsWith('http://') || url.startsWith('https://')) return url;
+    if (url.startsWith('/legacy/images/avatars/')) {
+      return '/images/avatars/' + url.slice('/legacy/images/avatars/'.length);
+    }
+    if (url.startsWith('../../client-app/assets/images/avatars/')) {
+      return '/images/avatars/' + url.slice('../../client-app/assets/images/avatars/'.length);
+    }
     if (url.startsWith('/')) return url;
     if (url.startsWith('../../assets/') || url.startsWith('../assets/')) {
       return '/images/avatars/001.jpg';
     }
     return url;
+  }
+  /** 头像池：001~162（022/078/086 为 png） */
+  function avatarFromPool(seed) {
+    const n = 1 + (Math.abs(Number(seed) || 0) % 162);
+    const ext = (n === 22 || n === 78 || n === 86) ? 'png' : 'jpg';
+    return `/images/avatars/${String(n).padStart(3, '0')}.${ext}`;
   }
   function avatarHtml(name, seed) {
     const hue = (seed * 41 + (name.charCodeAt(0) || 0) * 17) % 360;
@@ -31,18 +43,105 @@ $(function () {
   const ROBOT = { name: '机器人', avatar: '/images/avatars/001.jpg' };
   const params = new URLSearchParams(location.search);
   const roomNo = (params.get('roomNo') || '').trim();
-  const user = App.getUser();
+  let user = App.getUser();
+  const _setUser = App.setUser;
+  App.setUser = function (u) {
+    _setUser(u);
+    user = App.getUser();
+  };
   const q = roomNo ? '?roomNo=' + encodeURIComponent(roomNo) : '';
+  /** 大脑彩票 gameCode */
+  const SERVER_GAME = 'ffc';
+
+  function mulOf(pt, key, fb) {
+    const row = pt && pt[key];
+    return row && typeof row.multiplier === 'number' ? row.multiplier : fb;
+  }
+  function loadServerPayTable() {
+    if (!App.fetchLotteryPayTable) return;
+    App.fetchLotteryPayTable(SERVER_GAME).then(function (pt) {
+      App._lotteryPayTable = pt || {};
+      if (typeof applyServerPayTable === 'function') applyServerPayTable(App._lotteryPayTable);
+    }).catch(function () { /* keep local fallback */ });
+  }
+  function serverBetProfit(b) {
+    const amount = Number(b.amount) || 0;
+    const payout = Number(b.payout) || 0;
+    if (b.status === 'CANCELLED' || b.status === 'PENDING') return 0;
+    return payout - amount;
+  }
+  function refreshAfterServerSettle() {
+    if (App.refreshBalance) {
+      App.refreshBalance().then(function () { if (typeof refreshStats === 'function') refreshStats(); });
+    } else if (typeof refreshStats === 'function') {
+      refreshStats();
+    }
+  }
+
+
+  const SIDE_TO_SERVER = { '大': 'big', '小': 'small', '单': 'odd', '双': 'even' };
+
+  /** H5 玩法 → 大脑 { betType, betValue? } */
+  function mapPlayToServer(play) {
+    const parsed = parsePlay(play);
+    if (!parsed) return null;
+    switch (parsed.type) {
+      case 'sumSide':
+        return { betType: SIDE_TO_SERVER[parsed.side] };
+      case 'ballSide':
+        return { betType: 'ballSide', betValue: parsed.pos + ':' + SIDE_TO_SERVER[parsed.side] };
+      case 'position':
+        return { betType: 'position', betValue: parsed.pos + ':' + parsed.digit };
+      case 'anyDigit':
+        return { betType: 'anyDigit', betValue: parsed.seg + ':' + parsed.digit };
+      case 'group3':
+        return { betType: 'group3', betValue: parsed.seg + ':' + parsed.a + ',' + parsed.b };
+      case 'group6':
+        return { betType: 'group6', betValue: parsed.seg + ':' + parsed.digits.join(',') };
+      case 'lhh':
+        return { betType: 'lhh', betValue: parsed.pick };
+      case 'niu':
+        return { betType: 'niu', betValue: String(parsed.val) };
+      case 'niuSide':
+        return { betType: 'niuSide', betValue: parsed.side };
+      case 'shape':
+        return { betType: 'shape', betValue: parsed.seg + ':' + parsed.shape };
+      default:
+        return null;
+    }
+  }
+
+  function mapLinesToServerBets(lines) {
+    const bets = [];
+    for (let i = 0; i < lines.length; i++) {
+      const m = mapPlayToServer(lines[i].play);
+      if (!m || !m.betType) return { bets: [], unsupported: [lines[i].play] };
+      const row = { betType: m.betType, amount: lines[i].amount };
+      if (m.betValue !== undefined && m.betValue !== null) row.betValue = m.betValue;
+      bets.push(row);
+    }
+    return { bets: bets, unsupported: [] };
+  }
 
   let historyRows = [];
   let lastDraw = [];
   let lastIssueSeq = 0;
+  let serverCurrent = null;
+  let serverSynced = false;
+  let snapshotBusy = false;
+  const REVEALED_STORAGE_KEY = 'ffc_revealed_v1';
+  const CLOSED_STORAGE_KEY = 'ffc_closed_v1';
+  let revealedIssues = new Set();
+  /** 进房后首次拉到历史头：只对齐顶栏，不往聊天推「进房前已开奖」 */
+  let historyHeadBootstrapped = false;
   let lastBetText = '';
   /** 输入框由「梭哈」填入时，发送再按余额均分多注 */
   let composerAllin = false;
   let drawPanelOpen = false;
-  const closedIssues = new Set();
-  const drawnIssues = new Set();
+  let closedIssues = new Set();
+  /** 封盘后冻结下注，开奖核对展示完再解冻（避免下一期过早冒注） */
+  let roomBetFrozen = false;
+  let sealedIssueNo = '';
   const MOCK_NAMES = [];
   /** 当期注单：issue -> { 玩家名: [{ play, amount }] } */
   const issueBetBook = {};
@@ -55,7 +154,8 @@ $(function () {
     anyDigit: 3.6,    // 不定位
     group3: 260,      // 三星组三
     group6: 125,      // 三星组六
-    dragon: 1.99,     // 龙 / 虎
+    dragon: 1.99,     // 龙
+    tiger: 1.99,      // 虎
     tie: 9,           // 和
     noNiu: 2.02,      // 无牛
     niu: 9.22,        // 牛1~牛9、牛牛
@@ -65,6 +165,25 @@ $(function () {
   const POS = { 万: 0, 千: 1, 百: 2, 十: 3, 个: 4 };
   const SEG = { 前三: [0, 3], 中三: [1, 4], 后三: [2, 5] };
   const SHAPE_ODDS = { 豹子: 75, 顺子: 14.5, 对子: 3.3, 半顺: 2.5, 杂六: 3 };
+
+  function applyServerPayTable(pt) {
+    if (!pt) return;
+    ODDS.sumSide = mulOf(pt, 'big', ODDS.sumSide);
+    ODDS.ballSide = mulOf(pt, 'ballSide', ODDS.ballSide);
+    ODDS.position = mulOf(pt, 'position', ODDS.position);
+    ODDS.anyDigit = mulOf(pt, 'anyDigit', ODDS.anyDigit);
+    ODDS.group3 = mulOf(pt, 'group3', ODDS.group3);
+    ODDS.group6 = mulOf(pt, 'group6', ODDS.group6);
+    ODDS.dragon = mulOf(pt, 'dragon', ODDS.dragon);
+    ODDS.tiger = mulOf(pt, 'tiger', ODDS.tiger);
+    ODDS.tie = mulOf(pt, 'tie', ODDS.tie);
+    ODDS.noNiu = mulOf(pt, 'noNiu', ODDS.noNiu);
+    ODDS.niu = mulOf(pt, 'niu', ODDS.niu);
+    ODDS.niuSide = mulOf(pt, 'niuSide', ODDS.niuSide);
+    ;['豹子', '顺子', '对子', '半顺', '杂六'].forEach(function (k) {
+      SHAPE_ODDS[k] = mulOf(pt, 'shape_' + k, SHAPE_ODDS[k]);
+    });
+  }
 
   /**
    * 解析玩法文本 → { type, ..., odds }；不合法返回 null
@@ -96,19 +215,10 @@ $(function () {
     if ((m = t.match(/^(前三|中三|后三)([0-9])$/))) {
       return { type: 'anyDigit', seg: m[1], digit: +m[2], odds: ODDS.anyDigit };
     }
-    if ((m = t.match(/^([1-4])[vV]([1-5])(龙|虎|和)$/))) {
-      const a = +m[1], b = +m[2];
-      if (a >= b) return null;
-      return { type: 'lhh', a: a - 1, b: b - 1, pick: m[3], odds: m[3] === '和' ? ODDS.tie : ODDS.dragon };
-    }
-    // 简写：1龙=第1对(万vs千) … 10和=第10对(十vs个)
-    if ((m = t.match(/^(10|[1-9])(龙|虎|和)$/))) {
-      const n = +m[1];
-      const pairs = [];
-      for (let a = 1; a <= 4; a++) for (let b = a + 1; b <= 5; b++) pairs.push([a, b]);
-      if (n < 1 || n > pairs.length) return null;
-      const [a, b] = pairs[n - 1];
-      return { type: 'lhh', a: a - 1, b: b - 1, pick: m[2], odds: m[2] === '和' ? ODDS.tie : ODDS.dragon };
+    // 正统龙虎和：仅万位 vs 个位
+    if (t === '龙' || t === '虎' || t === '和') {
+      const odds = t === '和' ? ODDS.tie : (t === '虎' ? ODDS.tiger : ODDS.dragon);
+      return { type: 'lhh', a: 0, b: 4, pick: t, odds };
     }
     if (t === '无牛') return { type: 'niu', val: -1, odds: ODDS.noNiu };
     if (t === '牛牛') return { type: 'niu', val: 10, odds: ODDS.niu };
@@ -220,23 +330,36 @@ $(function () {
         break;
     }
     if (!win) return { winAmount: 0, profit: -amount, hit: '' };
-    const winAmount = Math.round(amount * p.odds);
+    /* 与服务端 lottery.service 派彩一致：向下取整 */
+    const winAmount = Math.floor(amount * p.odds);
     return { winAmount, profit: winAmount - amount, hit: play };
   }
 
   /* ================= 期号 / 时间 ================= */
-  function todayStartMs() {
-    const d = new Date();
-    return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-  }
   function pad(n, w) { return String(n).padStart(w, '0'); }
-  function dateKey() {
-    const d = new Date();
-    return '' + d.getFullYear() + pad(d.getMonth() + 1, 2) + pad(d.getDate(), 2);
+  /** Asia/Shanghai 日历部件（与服务端 genIssueNo 日切一致） */
+  function shanghaiYmdParts(date) {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Shanghai',
+      year: 'numeric', month: '2-digit', day: '2-digit',
+    }).formatToParts(date || new Date());
+    const get = function (t) {
+      const hit = parts.find(function (p) { return p.type === t; });
+      return hit ? hit.value : '01';
+    };
+    return { y: get('year'), m: get('month'), d: get('day') };
   }
-  /** 官方期号格式：20260704-0082 */
+  function todayStartMs() {
+    const p = shanghaiYmdParts(new Date());
+    return Date.parse(p.y + '-' + p.m + '-' + p.d + 'T00:00:00+08:00');
+  }
+  function dateKeyMD() {
+    const p = shanghaiYmdParts(new Date());
+    return '' + p.m + p.d;
+  }
+  /** 与服务端 genIssueNo 一致：MMDD + 6 位当日序号 */
   function fmtIssue(seq) {
-    return dateKey() + '-' + pad(Math.max(1, seq) % 10000, 4);
+    return dateKeyMD() + pad(Math.max(1, seq), 6);
   }
   function setCurIssueDisplay(issue) {
     $('#curIssue').text(issue).attr('title', issue);
@@ -250,17 +373,32 @@ $(function () {
     return INTERVAL - (elapsed % INTERVAL);
   }
   function getCurrentIssue() {
+    if (serverSynced && serverCurrent && serverCurrent.issueNo) return String(serverCurrent.issueNo);
     const elapsed = (Date.now() - todayStartMs()) / 1000;
     return fmtIssue(Math.floor(elapsed / INTERVAL) + 1);
   }
   function isBettingOpen() {
-    return getRoundRemain() > PREP_SEC;
+    if (!serverSynced || !serverCurrent) return false;
+    const open = serverCurrent.status === 'PENDING' && Date.now() < new Date(serverCurrent.lockAt).getTime();
+    if (!open) return false;
+    /* 仅冻结「仍是封盘那一期」；已换新期以服务端 lockAt 为准 */
+    if (roomBetFrozen && sealedIssueNo && String(serverCurrent.issueNo) === String(sealedIssueNo)) return false;
+    return true;
+  }
+  /** 未同步 / 封盘：统一 toast，避免误导 */
+  function toastBetBlocked(kind) {
+    if (!serverSynced) {
+      App.toast('房间同步中，请稍候');
+      return;
+    }
+    App.toast(kind === 'cancel' ? '封盘中，无法取消' : '封盘中，无法下注');
   }
 
   /* ================= 注单 ================= */
   const POS_CHARS = '万千百十个';
   const SIDE_CHARS = '大小单双';
   const SUOHA_WORDS = new Set(['梭哈', '全下', 'allin']);
+  const AMOUNT_RE = '(?:\\d+|梭哈|全下|allin)';
 
   /** 玩法段拆成不重复的位置列表（保持顺序） */
   function splitPositions(posStr) {
@@ -274,14 +412,159 @@ $(function () {
     return out;
   }
 
-  /** 解析玩法段 → 玩法名数组；支持组合：万百十单、十百59、万13 */
+  /** 号码串去重（保序） */
+  function uniqueDigitChars(digitStr) {
+    const out = [];
+    const seen = new Set();
+    for (const c of String(digitStr || '')) {
+      if (!/[0-9]/.test(c) || seen.has(c)) continue;
+      seen.add(c);
+      out.push(c);
+    }
+    return out;
+  }
+
+  /** 选号类：号码与金额之间必须 /（定位胆、牛几、不定位、组三组六） */
+  function requiresSlashPlayPart(playPart) {
+    const t = String(playPart || '');
+    if (/^[万千百十个]+[0-9]+$/.test(t)) return true;
+    if (/^牛[1-9]+$/.test(t)) return true;
+    if (/^(前三|中三|后三)(?:组三|组六)?[0-9]+$/.test(t)) return true;
+    return false;
+  }
+
+  /** 不定位复式：前三0123456 → 前三0…前三6 */
+  function expandAnyDigitDuplex(seg, digitStr) {
+    const digits = uniqueDigitChars(digitStr);
+    if (!digits.length) return null;
+    const plays = [];
+    for (const d of digits) {
+      const play = seg + d;
+      if (!parsePlay(play)) return null;
+      plays.push(play);
+    }
+    return plays;
+  }
+
+  /** 组三复式：选 n 个号 → C(n,2) 注（每注两个不同号，含对子形态） */
+  function expandGroup3Duplex(seg, digitStr) {
+    const digits = uniqueDigitChars(digitStr);
+    if (digits.length < 2) return null;
+    const plays = [];
+    for (let i = 0; i < digits.length; i++) {
+      for (let j = i + 1; j < digits.length; j++) {
+        const play = seg + '组三' + digits[i] + digits[j];
+        if (!parsePlay(play)) return null;
+        plays.push(play);
+      }
+    }
+    return plays.length ? plays : null;
+  }
+
+  /** 组六复式：选 n 个号 → C(n,3) 注 */
+  function expandGroup6Duplex(seg, digitStr) {
+    const digits = uniqueDigitChars(digitStr);
+    if (digits.length < 3) return null;
+    const plays = [];
+    for (let i = 0; i < digits.length; i++) {
+      for (let j = i + 1; j < digits.length; j++) {
+        for (let k = j + 1; k < digits.length; k++) {
+          const play = seg + '组六' + digits[i] + digits[j] + digits[k];
+          if (!parsePlay(play)) return null;
+          plays.push(play);
+        }
+      }
+    }
+    return plays.length ? plays : null;
+  }
+
+  const SHAPE_WORDS = ['豹子', '顺子', '半顺', '对子', '杂六'];
+
+  /**
+   * 形态组合：前三豹子顺子、前三中三豹子顺子杂六
+   * → 每个段 × 每个形态各一注
+   */
+  function expandShapePlayPart(t) {
+    let rest = t;
+    const segs = [];
+    while (/^(前三|中三|后三)/.test(rest)) {
+      const seg = rest.match(/^(前三|中三|后三)/)[1];
+      segs.push(seg);
+      rest = rest.slice(seg.length);
+    }
+    if (!segs.length || !rest) return null;
+    const shapes = [];
+    while (rest) {
+      let hit = null;
+      for (const w of SHAPE_WORDS) {
+        if (rest.startsWith(w)) { hit = w; break; }
+      }
+      if (!hit) return null;
+      shapes.push(hit);
+      rest = rest.slice(hit.length);
+    }
+    if (!shapes.length) return null;
+    const plays = [];
+    for (const seg of segs) {
+      for (const sh of shapes) {
+        const play = seg + sh;
+        if (!parsePlay(play)) return null;
+        plays.push(play);
+      }
+    }
+    return plays;
+  }
+
+  /** 解析玩法段 → 玩法名数组 */
   function expandPlayPart(playPart) {
     const t = String(playPart || '').replace(/\s+/g, '');
     if (!t) return null;
 
-    // 多位置 + 两面：万百十单 → 万单、百单、十单
+    // 多选总和两面：总大总小、大小单双、大单（键盘连点常见）
+    if (/^(?:(?:总和|总)?[大小单双])+$/.test(t) || /^[大小单双]+$/.test(t)) {
+      const compact = t.replace(/总和/g, '').replace(/总/g, '');
+      if (/^[大小单双]+$/.test(compact)) {
+        const plays = [];
+        const seen = new Set();
+        for (const c of compact) {
+          if (seen.has(c)) continue;
+          seen.add(c);
+          if (parsePlay(c)) plays.push(c);
+        }
+        if (plays.length) return plays;
+      }
+    }
+
+    // 多选龙虎和：龙虎、龙虎和
+    if (/^[龙虎和]+$/.test(t)) {
+      const plays = [];
+      const seen = new Set();
+      for (const c of t) {
+        if (seen.has(c)) continue;
+        seen.add(c);
+        if (parsePlay(c)) plays.push(c);
+      }
+      if (plays.length) return plays;
+    }
+
+    // 多选牛两面：牛大牛小
+    if (/^(?:牛[大小单双])+$/.test(t)) {
+      const plays = [];
+      const seen = new Set();
+      const re = /牛([大小单双])/g;
+      let mSide;
+      while ((mSide = re.exec(t))) {
+        const play = '牛' + mSide[1];
+        if (seen.has(play)) continue;
+        seen.add(play);
+        if (parsePlay(play)) plays.push(play);
+      }
+      if (plays.length) return plays;
+    }
+
+    // 多位置 + 两面：万千百十个单 → 五位各买单（任意子集均可）
     let m = t.match(/^([万千百十个]+)([大小单双])$/);
-    if (m && m[1].length >= 2) {
+    if (m) {
       const plays = [];
       for (const p of splitPositions(m[1])) {
         const play = p + m[2];
@@ -291,9 +574,9 @@ $(function () {
       return plays.length ? plays : null;
     }
 
-    // 多位置 + 号码：十百59 → 十5、十9、百5、百9
+    // 多位置 + 号码：十个59 → 十5、十9、个5、个9（号码与金额必须 /）
     m = t.match(/^([万千百十个]+)([0-9]+)$/);
-    if (m && m[1].length >= 2 && m[2].length >= 1) {
+    if (m) {
       const positions = splitPositions(m[1]);
       const plays = [];
       for (const p of positions) {
@@ -306,40 +589,45 @@ $(function () {
       return plays.length ? plays : null;
     }
 
-    // 单位置 + 多号：万13 → 万1、万3
-    m = t.match(/^([万千百十个])([0-9]{2,})$/);
-    if (m) {
-      const pos = m[1];
-      const plays = [];
-      for (const d of m[2]) {
-        const play = pos + d;
-        if (!parsePlay(play)) return null;
-        plays.push(play);
-      }
-      return plays.length ? plays : null;
+    // 形态：前三豹子顺子、前三中三豹子顺子杂六（金额可无 /）
+    if (/^(?:前三|中三|后三)+(?:豹子|顺子|半顺|对子|杂六)+$/.test(t)) {
+      return expandShapePlayPart(t);
     }
 
-    // 不定位多号：前三135
+    // 组三复式：前三组三012345 → C(n,2) 注（号码与金额必须 /）
+    m = t.match(/^(前三|中三|后三)组三([0-9]{2,})$/);
+    if (m) return expandGroup3Duplex(m[1], m[2]);
+
+    // 组六复式：前三组六012345 → C(n,3) 注（号码与金额必须 /）
+    m = t.match(/^(前三|中三|后三)组六([0-9]{3,})$/);
+    if (m) return expandGroup6Duplex(m[1], m[2]);
+
+    // 不定位复式：前三0123456 → 每位号一注（号码与金额必须 /）
     m = t.match(/^(前三|中三|后三)([0-9]{2,})$/);
+    if (m) return expandAnyDigitDuplex(m[1], m[2]);
+
+    // 牛 → 牛牛；牛123456 → 牛1…牛6（牛几与金额必须 /）
+    if (t === '牛') return ['牛牛'];
+    m = t.match(/^牛([1-9]+)$/);
     if (m) {
-      const seg = m[1];
       const plays = [];
-      for (const d of m[2]) {
-        const play = seg + d;
+      for (const d of m[1]) {
+        const play = '牛' + d;
         if (!parsePlay(play)) return null;
         plays.push(play);
       }
-      return plays.length ? plays : null;
+      return plays;
     }
 
-    if (parsePlay(t)) return [t];
-    return null;
+    if (!parsePlay(t)) return null;
+    return [t];
   }
 
   /** 梭哈：单注全下；多注按余额均分 */
   function resolveBetAmounts(plays, amountPart) {
     const key = String(amountPart || '').trim();
-    if (!SUOHA_WORDS.has(key)) {
+    const isAllin = SUOHA_WORDS.has(key) || /^allin$/i.test(key);
+    if (!isAllin) {
       const amount = parseInt(key, 10);
       if (!amount) return null;
       return plays.map(play => ({ play, amount }));
@@ -356,14 +644,54 @@ $(function () {
     }));
   }
 
-  /** 解析一条聊天投注 → [{ play, amount }, ...]；非法返回 null */
-  function parseBetLines(text) {
-    const raw = String(text || '').trim();
-    const m = raw.match(/^(.+?)\/(.+)$/);
-    if (!m) return null;
-    const plays = expandPlayPart(m[1].trim());
+  function finalizeBetLines(plays, amountPart) {
     if (!plays || !plays.length) return null;
-    return resolveBetAmounts(plays, m[2].trim());
+    for (const play of plays) {
+      if (!parsePlay(play)) return null;
+    }
+    return resolveBetAmounts(plays, amountPart);
+  }
+
+  /**
+   * 解析一条聊天投注 → [{ play, amount }, ...]
+   * 规则摘要：
+   * - 两面 / 龙虎和 / 无牛·牛牛·牛两面 / 形态：金额可带 / 或不带 /
+   * - 凡带选号数字（定位胆、不定位、组三组六、牛几）：号码与金额之间必须 /
+   * - 形态可组合：前三豹子顺子、前三中三豹子顺子杂六
+   * - 组三复式 C(n,2)；组六复式 C(n,3)；/金额 = 每注金额
+   */
+  function parseBetLines(text) {
+    const raw = String(text || '').trim().replace(/\s+/g, '');
+    if (!raw) return null;
+
+    // 定位胆多位同号：万千百十个/5/100（位可省略组合）
+    let m = raw.match(new RegExp('^([万千百十个]+)\\/([0-9]+)\\/(' + AMOUNT_RE + ')$', 'i'));
+    if (m) {
+      const plays = [];
+      for (const p of splitPositions(m[1])) {
+        for (const d of m[2]) {
+          const play = p + d;
+          if (!parsePlay(play)) return null;
+          plays.push(play);
+        }
+      }
+      return finalizeBetLines(plays, m[3]);
+    }
+
+    // 玩法/金额
+    m = raw.match(new RegExp('^(.+)\\/(' + AMOUNT_RE + ')$', 'i'));
+    if (m) {
+      const plays = expandPlayPart(m[1]);
+      return finalizeBetLines(plays, m[2]);
+    }
+
+    // 无 /：末尾金额（定位胆、牛几、不定位/组三/组六复式禁止）
+    m = raw.match(/^(.+?)(\d+)$/);
+    if (!m) return null;
+    const playPart = m[1];
+    if (requiresSlashPlayPart(playPart)) return null;
+    const plays = expandPlayPart(playPart);
+    return finalizeBetLines(plays, m[2]);
   }
 
   /** 解析聊天框投注（支持空格分隔多注） */
@@ -384,32 +712,91 @@ $(function () {
     return lines.map(l => `${l.play}/${l.amount}`).join(' ');
   }
 
+
+  /** 梭哈/发送前去掉末尾金额；保留定位胆 万千百十个/5 的选号 / */
+  function stripComposerAmount(part) {
+    const raw = String(part || '').trim();
+    const compact = raw.replace(/\s+/g, '');
+    if (/^[万千百十个]+\/[0-9]+$/.test(compact)) return compact;
+    return raw.replace(/\/(\d+|梭哈|全下|allin)$/i, '').replace(/\/$/, '').trim();
+  }
+
+  /** 玩法与金额之间：没有 / 就补上；已有 / 或 各 则不再加 */
+  function joinPlayAmount(play, amount) {
+    const p = String(play || '').replace(/\s+$/g, '');
+    const a = String(amount);
+    if (!p) return a;
+    const compact = p.replace(/\s+/g, '');
+    if (/^[万千百十个]+\/[0-9]+$/.test(compact)) return p + '/' + a;
+    if (/[\/各]$/.test(p)) return p + a;
+    return p + '/' + a;
+  }
+
+  /** 键盘输入金额数字：玩法后自动补 /；已有 /、各，或连续输数字则不加 */
+  function appendKeyWithSlash(base, key) {
+    const v = String(base || '');
+    const t = (key === 0 || key === '0') ? '0' : String(key == null ? '' : key);
+    if (!t || t === '/' || t === '各' || t === '删除' || t === '空格') return v + t;
+    const isAmt = /^\d+$/.test(t);
+    if (!isAmt) return v + t;
+    if (!v) return t;
+    if (/[\/各]$/.test(v)) return v + t;
+    if (/\d$/.test(v)) return v + t;
+    return v + '/' + t;
+  }
+
   function applyAllinToInput() {
     const $in = $('#chatInput');
-    let v = $in.val().replace(/\s+/g, ' ').trim();
-    if (!v) {
+    const raw = $in.val().replace(/\s+/g, ' ').trim();
+    if (!raw) {
       App.toast('请先输入玩法，再点梭哈');
       return false;
     }
-    v = v.replace(/\/(\d+|梭哈|全下|allin)$/i, '');
-    const plays = expandPlayPart(v);
-    if (!plays || !plays.length) {
-      App.toast('玩法无效，请检查后再点梭哈');
-      return false;
+    const parts = raw.split(/\s+/).filter(Boolean);
+    const allPlays = [];
+    const compactParts = [];
+    for (const part of parts) {
+      let plays = null;
+      const stripped = stripComposerAmount(part);
+      compactParts.push(stripped);
+      let via = parseBetLines(stripped + '/梭哈');
+      if (via && via.length) {
+        plays = via.map(l => l.play);
+      } else {
+        plays = expandPlayPart(stripped);
+      }
+      if ((!plays || !plays.length)) {
+        const existing = parseBetLines(part);
+        if (existing && existing.length) plays = existing.map(l => l.play);
+      }
+      if ((!plays || !plays.length)) {
+        const gm = stripped.match(/^(.+?)(\d+)$/);
+        if (gm && !requiresSlashPlayPart(gm[1])) {
+          plays = expandPlayPart(gm[1]);
+          compactParts[compactParts.length - 1] = gm[1];
+        }
+      }
+      if (!plays || !plays.length) {
+        App.toast('玩法无效，请检查后再点梭哈');
+        return false;
+      }
+      allPlays.push(...plays);
     }
-    const lines = resolveBetAmounts(plays, '梭哈');
+    const lines = resolveBetAmounts(allPlays, '梭哈');
     if (!lines) {
       App.toast('余额不足，无法梭哈');
       return false;
     }
-    const perAmount = plays.length === 1
+    const per = allPlays.length === 1
       ? lines[0].amount
-      : Math.floor(App.getBalance(user.uid) / plays.length);
-    $in.val(`${v}/${perAmount}`);
+      : Math.floor(App.getBalance(user.uid) / allPlays.length);
+    $in.val(compactParts.map(function (c) { return joinPlayAmount(c, per); }).join(' '));
     composerAllin = true;
     updateComposerAction();
+    App.toast('梭哈已均分 · ' + allPlays.length + '注 · 每注约' + per);
     return true;
   }
+
 
   function parseBet(text) {
     const lines = parseBetLines(text);
@@ -417,15 +804,43 @@ $(function () {
     return lines[0];
   }
 
-  function recordBetLine(name, play, amount) {
+  function recordBetLine(name, play, amount, opts) {
     if (!isBettingOpen()) return false;
     if (!parsePlay(play) || !amount) return false;
     const issue = getCurrentIssue();
     if (!issueBetBook[issue]) issueBetBook[issue] = {};
     if (!issueBetBook[issue][name]) issueBetBook[issue][name] = [];
-    issueBetBook[issue][name].push({ play, amount });
-    if (name === user.name) appendUserBetLog(issue, play, amount);
+    const row = { play, amount };
+    if (opts && opts.mock) row.mock = true;
+    issueBetBook[issue][name].push(row);
+    saveBetBook();
+    if (!(opts && opts.mock) && name === user.name) appendUserBetLog(issue, play, amount);
     return true;
+  }
+
+  function betBookStorageKey() {
+    const uid = (user && user.uid) ? user.uid : 'guest';
+    return 'ffc_betbook_v1_' + uid + (roomNo ? '_' + roomNo : '');
+  }
+  function saveBetBook() {
+    try {
+      const keys = Object.keys(issueBetBook);
+      const keep = keys.slice(-8);
+      const slim = {};
+      keep.forEach((k) => { slim[k] = issueBetBook[k]; });
+      keys.forEach((k) => {
+        if (!slim[k]) delete issueBetBook[k];
+      });
+      localStorage.setItem(betBookStorageKey(), JSON.stringify(slim));
+    } catch (e) { /* ignore */ }
+  }
+  function restoreBetBook() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(betBookStorageKey()) || '{}');
+      if (raw && typeof raw === 'object') {
+        Object.keys(raw).forEach((k) => { issueBetBook[k] = raw[k]; });
+      }
+    } catch (e) { /* ignore */ }
   }
 
   /* ================= 注单持久化（供竞猜记录页） ================= */
@@ -472,6 +887,16 @@ $(function () {
     group.totalAmount += amount;
     saveUserBetLog(log);
   }
+  function clearUserPendingBetLog(issue) {
+    const log = loadUserBetLog();
+    const group = log.find(g => g.issue === issue);
+    if (!group || group.settled) return;
+    group.bets = [];
+    group.totalAmount = 0;
+    group.totalProfit = 0;
+    group.cancelled = true;
+    saveUserBetLog(log);
+  }
   function settleUserBetLog(issue, nums, rows) {
     const log = loadUserBetLog();
     const group = log.find(g => g.issue === issue);
@@ -501,23 +926,66 @@ $(function () {
     saveUserBetLog(log);
   }
 
-  function recordBetLines(name, lines) {
+  function recordBetLines(name, lines, opts) {
     if (!lines || !lines.length) return false;
     let ok = false;
     lines.forEach(({ play, amount }) => {
-      if (recordBetLine(name, play, amount)) ok = true;
+      if (recordBetLine(name, play, amount, opts)) ok = true;
     });
     return ok;
   }
 
-  function recordBet(name, text) {
+  function recordBet(name, text, opts) {
     const lines = parseBetInput(text);
     if (!lines) return false;
-    return recordBetLines(name, lines);
+    return recordBetLines(name, lines, opts);
   }
   function fmtProfit(n) {
     return (n >= 0 ? '+' : '') + n;
   }
+  function buildBetListVerifyFromServer(issue, list) {
+    const scoped = App.filterLotteryBetsByIssue ? App.filterLotteryBetsByIssue(list, issue) : (Array.isArray(list) ? list : []);
+    const bets = scoped.filter(function (b) { return b && b.status !== 'CANCELLED'; });
+    const empty = '<div class="ffc-bot-empty">本期暂无下注</div>';
+    if (!bets.length) {
+      return '<div class="ffc-bot-card ffc-bot-card--bets"><div class="ffc-bot-card__head"><span class="ffc-bot-card__title">注单核对</span><span class="ffc-bot-card__issue">' + issue + '</span></div>' + empty + '</div>';
+    }
+    const total = bets.reduce(function (s, b) { return s + (Number(b.amount) || 0); }, 0);
+    const groups = App.groupLotteryBetsByType(bets);
+    const tags = groups.map(function (g) {
+      return '<span class="ffc-bot-tag">' + g.label + '×' + g.count + '/' + g.amount + '</span>';
+    }).join('');
+    let detail = '';
+    if (bets.length <= 8) {
+      detail = '<div class="ffc-bot-user__tags" style="margin-top:6px">' + bets.map(function (b) {
+        return '<span class="ffc-bot-tag">' + App.labelLotteryBet(b) + '/' + b.amount + '</span>';
+      }).join('') + '</div>';
+    }
+    const userBlock = '<div class="ffc-bot-user is-me"><div class="ffc-bot-user__head"><span class="ffc-bot-user__name">我</span><span class="ffc-bot-user__sum">' + total + '</span></div><div class="ffc-bot-user__tags">' + tags + '</div>' + detail + '</div>';
+    return '<div class="ffc-bot-card ffc-bot-card--bets"><div class="ffc-bot-card__head"><span class="ffc-bot-card__title">注单核对</span><span class="ffc-bot-card__issue">' + issue + '</span></div><div class="ffc-bot-card__body is-full">' + userBlock + '</div></div>';
+  }
+  /** 用服务端账本生成「您本期」行（氛围卡主体仍用本地 settled） */
+  function buildMineLineHtmlFromServer(issue, list) {
+    const scoped = App.filterLotteryBetsByIssue ? App.filterLotteryBetsByIssue(list, issue) : (Array.isArray(list) ? list : []);
+    const bets = scoped.filter(function (b) { return b && b.status !== 'CANCELLED' && b.status !== 'PENDING'; });
+    if (!bets.length) return '';
+    const myProfit = bets.reduce(function (sum, b) { return sum + serverBetProfit(b); }, 0);
+    const myWin = bets.reduce(function (sum, b) { return sum + (Number(b.payout) || 0); }, 0);
+    const profitCls = myProfit >= 0 ? 'pos' : 'neg';
+    const winText = myWin > 0 ? ('中奖 +' + myWin) : '未中奖';
+    return '<div class="ffc-bot-mine-line ' + profitCls + '">' +
+      '<span class="ffc-bot-mine-line__label">您本期</span>' +
+      '<span class="ffc-bot-mine-line__win">' + winText + '</span>' +
+      '<span class="ffc-bot-mine-line__profit">输赢 ' + fmtProfit(myProfit) + '</span>' +
+      '</div>';
+  }
+  function applyMineLineToWinHtml(html, mineHtml) {
+    if (!mineHtml) return html;
+    const re = /<div class="ffc-bot-mine-line[\s\S]*?<\/div>/;
+    if (re.test(html)) return html.replace(re, mineHtml);
+    return html.replace(/<\/div>\s*$/, mineHtml + '</div>');
+  }
+
   function buildBetListVerifyHtml(issue) {
     const book = issueBetBook[issue];
     if (!book || !Object.keys(book).length) {
@@ -527,8 +995,6 @@ $(function () {
       </div>`;
     }
     const names = Object.keys(book);
-    const totalAmt = names.reduce((s, n) => s + book[n].reduce((a, b) => a + b.amount, 0), 0);
-    const totalCnt = names.reduce((s, n) => s + book[n].length, 0);
     const users = names.map(name => {
       const bets = book[name];
       const total = bets.reduce((s, b) => s + b.amount, 0);
@@ -541,8 +1007,7 @@ $(function () {
     }).join('');
     return `<div class="ffc-bot-card ffc-bot-card--bets">
       <div class="ffc-bot-card__head"><span class="ffc-bot-card__title">注单核对</span><span class="ffc-bot-card__issue">${issue}</span></div>
-      <div class="ffc-bot-card__stat">${names.length} 人 · ${totalCnt} 注 · ${totalAmt}</div>
-      <div class="ffc-bot-card__body is-full">${users}</div>
+<div class="ffc-bot-card__body is-full">${users}</div>
     </div>`;
   }
 
@@ -613,7 +1078,8 @@ $(function () {
   function resultRevealDurationMs() {
     const n = 5;
     const lastBallDone = (n - 1) * 180 + 480 + (n - 1) * 70;
-    const lastChipDone = (1.15 + n * 0.22 + 0.28) * 1000 + 400;
+    /* 4 个 chip：和值/双面/龙虎/斗牛 */
+    const lastChipDone = (1.15 + n * 0.22 + 0.42) * 1000 + 400;
     return Math.ceil(Math.max(lastBallDone, lastChipDone) + 150);
   }
 
@@ -628,33 +1094,47 @@ $(function () {
     </div>`;
   }
 
-  function buildBetListVerifyText(issue) {
-    const book = issueBetBook[issue];
-    if (!book || !Object.keys(book).length) {
-      return `${issue}期已封盘\n竞猜列表核对\n——————————\n暂无下注数据`;
-    }
-    const blocks = Object.keys(book).map(name => {
-      const bets = book[name];
-      const total = bets.reduce((s, b) => s + b.amount, 0);
-      const lines = bets.map(b => `${b.play}/${b.amount}`).join('\n');
-      return `（${name}）下注总金额：${total}\n${lines}`;
-    });
-    return `${issue}期已封盘\n竞猜列表核对\n——————————\n${blocks.join('\n\n')}`;
-  }
-
   /* ================= 开奖 ================= */
+  const ROBOT_COUNT = 10;
   const PLAY_ITEMS = [
     '大', '小', '单', '双',
     '万大', '千小', '百单', '十双', '个大',
     '万5', '个0', '千8',
     '前三3', '中三6', '后三9',
-    '1v2龙', '2v4虎', '1v5和', '3v5龙',
+    '龙', '虎', '和',
     '无牛', '牛牛', '牛5', '牛大', '牛小', '牛单', '牛双',
     '前三豹子', '中三顺子', '后三对子', '前三半顺', '后三杂六',
     '前三组三13', '后三组六258'
   ];
-  function randomDraw() {
-    return Array.from({ length: 5 }, () => Math.floor(Math.random() * 10));
+  const MOCK_AMTS = [20, 30, 50, 80, 100, 150, 200, 300, 500];
+  const MOCK_SUM_SIDES = ['大', '小', '单', '双'];
+  const MOCK_BALL_SIDES = Object.keys(POS).flatMap(p => ['大', '小', '单', '双'].map(s => p + s));
+  const MOCK_LHH = ['龙', '虎', '和'];
+  const MOCK_NIU = ['无牛', '牛1', '牛3', '牛5', '牛7', '牛牛', '牛大', '牛小', '牛单', '牛双'];
+  const MOCK_DIGITS = Object.keys(POS).flatMap(p => [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(d => p + d));
+  const MOCK_SHAPES = ['前三豹子', '中三顺子', '后三对子', '前三半顺', '后三杂六'];
+  function pickOne(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+  function pickAmt() { return pickOne(MOCK_AMTS); }
+  /** 机器人下注：定位/总和/龙虎/斗牛等，不对冲全买 */
+  function randomMockBetText() {
+    const amt = pickAmt();
+    const roll = Math.random();
+    if (roll < 0.22) return `${pickOne(MOCK_SUM_SIDES)}/${amt}`;
+    if (roll < 0.42) return `${pickOne(MOCK_BALL_SIDES)}/${amt}`;
+    if (roll < 0.52) return `${pickOne(MOCK_DIGITS)}/${amt}`;
+    if (roll < 0.62) return `${pickOne(MOCK_LHH)}/${amt}`;
+    if (roll < 0.74) return `${pickOne(MOCK_NIU)}/${amt}`;
+    if (roll < 0.84) return `${pickOne(MOCK_SHAPES)}/${amt}`;
+    if (roll < 0.92) {
+      const seg = pickOne(['前三', '中三', '后三']);
+      const d1 = Math.floor(Math.random() * 10);
+      let d2 = Math.floor(Math.random() * 10);
+      while (d2 === d1) d2 = Math.floor(Math.random() * 10);
+      return `${seg}组三${d1}${d2}/${pickAmt()}`;
+    }
+    const a = `${pickOne(MOCK_BALL_SIDES)}/${pickAmt()}`;
+    const b = `${pickOne(MOCK_SUM_SIDES)}/${pickAmt()}`;
+    return `${a}<br>${b}`;
   }
   function ballHtml(n, cls) {
     const c = cls ? ' ' + cls : '';
@@ -664,13 +1144,21 @@ $(function () {
     const s = sumOf(nums);
     return { text: `${s} ${s >= 23 ? '大' : '小'} ${s % 2 ? '单' : '双'}`, sum: s };
   }
+  /** 斗牛文案（历史列沿用 lh 字段名） */
   function lhRow(nums) {
     return niuLabel(niuValue(nums));
   }
+  /** 万位 vs 个位 · 龙虎和 */
+  function dragonTigerOf(nums) {
+    const wan = nums[0];
+    const ge = nums[4];
+    return wan > ge ? '龙' : wan < ge ? '虎' : '和';
+  }
   function barSummaryHtml(row) {
     const gy = row.gy || gyMeta(row.nums).text;
+    const dt = row.dt || dragonTigerOf(row.nums);
     const lh = row.lh || lhRow(row.nums);
-    return `${gy}<span class="sep">·</span>${lh}`;
+    return `${gy}<span class="sep">·</span>${dt}<span class="sep">·</span>${lh}`;
   }
   function renderDrawBar(row) {
     if (!row) return;
@@ -682,7 +1170,9 @@ $(function () {
     $('#drawTableBody').html(historyRows.slice(0, HISTORY_SHOW).map(r => `
       <tr><td class="ffc-draw-table__issue">${r.issue}</td>
       ${r.nums.map(n => `<td>${ballHtml(n, 'tbl')}</td>`).join('')}
-      <td class="cell-gy">${r.gy.replace(/\s+/g, '')}</td><td class="cell-lh">${r.lh}</td></tr>`).join(''));
+      <td class="cell-gy">${r.gy.replace(/\s+/g, '')}</td>
+      <td class="cell-dt">${r.dt || dragonTigerOf(r.nums)}</td>
+      <td class="cell-lh">${r.lh}</td></tr>`).join(''));
   }
   function resultCardHtml(nums, issue) {
     return FfcResultCard.build(nums, issue);
@@ -690,7 +1180,68 @@ $(function () {
   const HISTORY_SHOW = 10;
   const POS_LABELS = ['万', '千', '百', '十', '个'];
   const MIN_LONG_STREAK = 2;
+  const ROAD_WINDOW = 24;
   let longTab = 'side';
+
+  function playForLongName(name) {
+    const sum = name.match(/^总(.+)$/);
+    if (sum) return sum[1];
+    if (/^[万千百十个][大小单双]$/.test(name)) return name;
+    if (/^[万千百十个][0-9]$/.test(name)) return name;
+    if (name === '龙' || name === '虎' || name === '和') return name;
+    if (name === '无牛' || name.startsWith('牛')) return name;
+    if (/^(前三|中三|后三)/.test(name)) return name;
+    return '';
+  }
+
+  function pushLongDim(list, group, labels, namePrefix) {
+    const s = streakAtHead(labels);
+    if (!s.tag) return;
+    const name = (namePrefix || '') + s.tag;
+    list.push({
+      name,
+      group,
+      count: s.count,
+      play: playForLongName(name),
+    });
+  }
+
+  function roadLabelsForTab(tab) {
+    const rows = historyRows.filter(r => Array.isArray(r.nums) && r.nums.length === 5).slice(0, ROAD_WINDOW);
+    if (tab === 'lhh') {
+      return rows.map(r => {
+        const x = r.nums[0];
+        const y = r.nums[4];
+        return x > y ? '龙' : (x < y ? '虎' : '和');
+      });
+    }
+    if (tab === 'niu') return rows.map(r => niuLabel(niuValue(r.nums)));
+    const sumMeta = rows.map(r => sideOfSum(sumOf(r.nums)));
+    return sumMeta.map(m => (m.big ? '大' : '小') + (m.odd ? '单' : '双'));
+  }
+
+  function roadHtml(labels) {
+    if (!labels.length) return '';
+    const chips = labels.map((tag, i) =>
+      `<span class="ffc-long-road__chip ${longTagClass(tag)}${i === 0 ? ' is-latest' : ''}">${tag}</span>`
+    ).join('');
+    return `<div class="ffc-long-road"><div class="ffc-long-road__label">近 ${labels.length} 期走势 · 左新右旧</div><div class="ffc-long-road__row">${chips}</div></div>`;
+  }
+
+  function currentShapeHtml(items) {
+    if (!items.length) return '';
+    const cards = items.map(item => {
+      const play = item.play || playForLongName(item.name);
+      const playAttr = play && parsePlay(play) ? ` data-predict-play="${play}"` : '';
+      const clickable = playAttr ? ' is-clickable' : '';
+      return `<div class="ffc-long-shape${clickable}"${playAttr} role="${playAttr ? 'button' : 'group'}"${playAttr ? ' tabindex="0"' : ''}>
+        <span class="ffc-long-shape__group">${item.group}</span>
+        <span class="ffc-long-shape__tag ${longTagClass(item.name)}">${item.name}</span>
+        <span class="ffc-long-shape__count">${item.count}<small>连</small></span>
+      </div>`;
+    }).join('');
+    return `<div class="ffc-long-shape-wrap"><div class="ffc-long-road__label">当前形态</div><div class="ffc-long-shape-grid">${cards}</div></div>`;
+  }
 
   function streakAtHead(labels) {
     if (!labels.length) return { tag: '', count: 0 };
@@ -703,10 +1254,6 @@ $(function () {
     return { tag, count };
   }
 
-  function pushLongItem(list, name, count) {
-    if (count >= MIN_LONG_STREAK) list.push({ name, count });
-  }
-
   function buildLongDragonGroups() {
     const rows = historyRows.filter(r => Array.isArray(r.nums) && r.nums.length === 5);
     const side = [];
@@ -715,89 +1262,49 @@ $(function () {
     if (!rows.length) return { side, lhh, niu };
 
     const sumMeta = rows.map(r => sideOfSum(sumOf(r.nums)));
-    {
-      const labels = sumMeta.map(m => (m.big ? '大' : '小'));
-      const s = streakAtHead(labels);
-      pushLongItem(side, `总${s.tag}`, s.count);
-    }
-    {
-      const labels = sumMeta.map(m => (m.odd ? '单' : '双'));
-      const s = streakAtHead(labels);
-      pushLongItem(side, `总${s.tag}`, s.count);
-    }
+    pushLongDim(side, '总和大小', sumMeta.map(m => (m.big ? '大' : '小')), '总');
+    pushLongDim(side, '总和单双', sumMeta.map(m => (m.odd ? '单' : '双')), '总');
 
     POS_LABELS.forEach((pos, idx) => {
       const ballMeta = rows.map(r => sideOfBall(r.nums[idx]));
-      {
-        const labels = ballMeta.map(m => (m.big ? '大' : '小'));
-        const s = streakAtHead(labels);
-        pushLongItem(side, `${pos}${s.tag}`, s.count);
-      }
-      {
-        const labels = ballMeta.map(m => (m.odd ? '单' : '双'));
-        const s = streakAtHead(labels);
-        pushLongItem(side, `${pos}${s.tag}`, s.count);
-      }
+      pushLongDim(side, pos + '位大小', ballMeta.map(m => (m.big ? '大' : '小')), pos);
+      pushLongDim(side, pos + '位单双', ballMeta.map(m => (m.odd ? '单' : '双')), pos);
     });
 
-    for (let a = 1; a <= 4; a++) {
-      for (let b = a + 1; b <= 5; b++) {
-        const labels = rows.map(r => {
-          const x = r.nums[a - 1];
-          const y = r.nums[b - 1];
-          return x > y ? '龙' : (x < y ? '虎' : '和');
-        });
-        const s = streakAtHead(labels);
-        pushLongItem(lhh, `${a}v${b}${s.tag}`, s.count);
-      }
-    }
+    pushLongDim(lhh, '万vs个', rows.map(r => {
+      const x = r.nums[0];
+      const y = r.nums[4];
+      return x > y ? '龙' : (x < y ? '虎' : '和');
+    }));
 
-    {
-      const labels = rows.map(r => (niuValue(r.nums) === -1 ? '无牛' : '有牛'));
-      const s = streakAtHead(labels);
-      if (s.tag === '无牛') pushLongItem(niu, '无牛', s.count);
-    }
-    {
-      const labels = rows.map(r => {
-        const v = niuValue(r.nums);
-        if (v === -1) return '无牛';
-        return (v >= 6 || v === 10) ? '牛大' : '牛小';
-      });
-      const s = streakAtHead(labels);
-      if (s.tag !== '无牛') pushLongItem(niu, s.tag, s.count);
-    }
-    {
-      const labels = rows.map(r => {
-        const v = niuValue(r.nums);
-        if (v === -1) return '无牛';
-        return v % 2 === 1 ? '牛单' : '牛双';
-      });
-      const s = streakAtHead(labels);
-      if (s.tag !== '无牛') pushLongItem(niu, s.tag, s.count);
-    }
-    {
-      const labels = rows.map(r => niuLabel(niuValue(r.nums)));
-      const s = streakAtHead(labels);
-      pushLongItem(niu, s.tag, s.count);
-    }
+    pushLongDim(niu, '有无斗牛', rows.map(r => (niuValue(r.nums) === -1 ? '无牛' : '有牛')));
+    pushLongDim(niu, '斗牛大小', rows.map(r => {
+      const v = niuValue(r.nums);
+      if (v === -1) return '无牛';
+      return (v >= 6 || v === 10) ? '牛大' : '牛小';
+    }));
+    pushLongDim(niu, '斗牛单双', rows.map(r => {
+      const v = niuValue(r.nums);
+      if (v === -1) return '无牛';
+      return v % 2 === 1 ? '牛单' : '牛双';
+    }));
+    pushLongDim(niu, '斗牛点数', rows.map(r => niuLabel(niuValue(r.nums))));
 
     const sortDesc = arr => arr.sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'zh'));
-    return { side: sortDesc(side), lhh: sortDesc(lhh), niu: sortDesc(niu) };
+    return {
+      side: sortDesc(side.filter(x => x.count >= MIN_LONG_STREAK)),
+      lhh: sortDesc(lhh.filter(x => x.count >= MIN_LONG_STREAK)),
+      niu: sortDesc(niu.filter(x => x.count >= MIN_LONG_STREAK && x.name !== '有牛')),
+    };
   }
-
-  const LHH_POS = ['', '万', '千', '百', '十', '个'];
 
   function longItemParts(name) {
     const pos = name.match(/^([万千百十个])(.+)$/);
     if (pos) return { group: pos[1] + '位', tag: pos[2], full: name };
     const sum = name.match(/^总(.+)$/);
     if (sum) return { group: '总和', tag: sum[1], full: name };
-    const lhh = name.match(/^(\d)v(\d)(.+)$/);
-    if (lhh) {
-      const a = +lhh[1];
-      const b = +lhh[2];
-      const group = `${LHH_POS[a]} vs ${LHH_POS[b]}`;
-      return { group: '龙虎', tag: lhh[3], full: `${group} · ${lhh[3]}` };
+    if (name === '龙' || name === '虎' || name === '和') {
+      return { group: '龙虎', tag: name, full: `万vs个 · ${name}` };
     }
     if (name === '无牛' || name.startsWith('牛')) return { group: '斗牛', tag: name, full: name };
     return { group: '形态', tag: name, full: name };
@@ -826,49 +1333,62 @@ $(function () {
 
   function renderLongDragonPanel() {
     const groups = buildLongDragonGroups();
-    const list = groups[longTab] || [];
+    const all = groups[longTab] || [];
+    const list = all.filter(x => x.count >= MIN_LONG_STREAK);
     const tabLabel = { side: '两面', lhh: '龙虎', niu: '斗牛' }[longTab] || '';
-    if (!list.length) {
-      $('#longSummary').text(`${tabLabel} · 暂无连续形态`);
+    const rows = historyRows.filter(r => Array.isArray(r.nums) && r.nums.length === 5);
+
+    if (!rows.length) {
+      $('#longSummary').text(`${tabLabel} · 等待开奖`);
       $('#longBody').html(`
         <div class="ffc-long-empty">
           <div class="ffc-long-empty__icon">◎</div>
-          <div class="ffc-long-empty__text">当前没有 2 期以上的长龙</div>
-          <div class="ffc-long-empty__hint">开奖后会自动更新</div>
+          <div class="ffc-long-empty__text">暂无开奖数据</div>
+          <div class="ffc-long-empty__hint">接入官方开奖后会自动统计长龙</div>
         </div>`);
       return;
     }
-    const top = list[0];
-    const topParts = longItemParts(top.name);
-    $('#longSummary').text(`${tabLabel} · 共 ${list.length} 条`);
-    const hero = `
-      <div class="ffc-long-hero ${longTierClass(top.count)}">
-        <div class="ffc-long-hero__label">当前最长</div>
-        <div class="ffc-long-hero__main">
-          <span class="ffc-long-hero__tag ${longTagClass(topParts.tag)}">${topParts.tag}</span>
-          <span class="ffc-long-hero__text">${topParts.full}</span>
-          <span class="ffc-long-hero__num">${top.count}</span>
-          <span class="ffc-long-hero__unit">期</span>
-        </div>
-      </div>`;
-    const rows = list.map((item, idx) => {
-      const parts = longItemParts(item.name);
-      const tier = longTierClass(item.count);
-      const rank = idx + 1;
-      return `
-        <div class="ffc-long-item ${tier}">
-          <div class="ffc-long-item__rank">${rank}</div>
-          <div class="ffc-long-item__tag ${longTagClass(parts.tag)}">${parts.tag}</div>
-          <div class="ffc-long-item__info">
-            <div class="ffc-long-item__name">${parts.group}<span class="sep">·</span>${parts.full}</div>
-            ${longStreakBar(item.count)}
-          </div>
-          <div class="ffc-long-item__count">
-            <b>${item.count}</b><small>连</small>
+
+    $('#longSummary').text(list.length
+      ? `${tabLabel} · ${list.length} 条长龙 · 样本 ${rows.length} 期`
+      : `${tabLabel} · 暂无 2 连以上 · 样本 ${rows.length} 期`);
+
+    let hero = '';
+    if (list.length) {
+      const top = list[0];
+      const topParts = longItemParts(top.name);
+      hero = `
+        <div class="ffc-long-hero ${longTierClass(top.count)}">
+          <div class="ffc-long-hero__label">当前最长</div>
+          <div class="ffc-long-hero__main">
+            <span class="ffc-long-hero__tag ${longTagClass(topParts.tag)}">${topParts.tag}</span>
+            <span class="ffc-long-hero__text">${top.group || topParts.full}</span>
+            <span class="ffc-long-hero__num">${top.count}</span>
+            <span class="ffc-long-hero__unit">期</span>
           </div>
         </div>`;
-    }).join('');
-    $('#longBody').html(hero + `<div class="ffc-long-list">${rows}</div>`);
+    }
+
+    const listHtml = list.length
+      ? `<div class="ffc-long-list">${list.map((item, idx) => {
+          const parts = longItemParts(item.name);
+          return `
+          <div class="ffc-long-item ${longTierClass(item.count)}${item.play && parsePlay(item.play) ? ' is-clickable' : ''}"${item.play && parsePlay(item.play) ? ` data-predict-play="${item.play}" role="button" tabindex="0"` : ''}>
+            <div class="ffc-long-item__rank">${idx + 1}</div>
+            <div class="ffc-long-item__tag ${longTagClass(parts.tag)}">${parts.tag}</div>
+            <div class="ffc-long-item__info">
+              <div class="ffc-long-item__name">${item.group || parts.group}<span class="sep">·</span>${parts.full}</div>
+              ${longStreakBar(item.count)}
+            </div>
+            <div class="ffc-long-item__count"><b>${item.count}</b><small>连</small></div>
+          </div>`;
+        }).join('')}</div>`
+      : `<div class="ffc-long-empty ffc-long-empty--soft">
+          <div class="ffc-long-empty__text">暂无 2 期以上长龙</div>
+          <div class="ffc-long-empty__hint">下方仍可看近期走势与当前形态</div>
+        </div>`;
+
+    $('#longBody').html(hero + roadHtml(roadLabelsForTab(longTab)) + currentShapeHtml(all) + listHtml);
   }
 
   function openLongSheet(open) {
@@ -985,6 +1505,7 @@ $(function () {
     updateComposerAction();
     showKeypad(true);
     openPredictSheet(false);
+    openLongSheet(false);
     App.toast(`已填入 ${play}/${amount}`);
   }
 
@@ -1123,7 +1644,7 @@ $(function () {
 
   function settleIssue(issue, nums) {
     const book = issueBetBook[issue];
-    if (!book) return {};
+    if (!book || !Object.keys(book).length) return {};
     const out = {};
     Object.keys(book).forEach(name => {
       out[name] = book[name].map(b => {
@@ -1134,48 +1655,55 @@ $(function () {
     return out;
   }
 
-  function buildWinListVerifyText(issue, settled) {
-    const winners = Object.keys(settled).filter(name => {
-      const totalWin = settled[name].reduce((s, r) => s + r.winAmount, 0);
-      return totalWin > 0;
-    });
-    if (!winners.length) {
-      return `${issue}期\n中奖列表核对\n——————————\n本期暂无中奖`;
+  function applyUserSettle(issue, settled, nums) {
+    const rows = settled[user.name];
+    if (rows && rows.length) {
+      let profit = 0;
+      let turnover = 0;
+      rows.forEach(r => {
+        profit += r.profit;
+        turnover += r.amount;
+        // 真派彩只由 server 账本完成；此处不再 setBalance
+      });
+      const stats = getStats(user.uid);
+      stats.winloss += profit;
+      stats.turnover += turnover;
+      stats.rebate = (stats.rebate || 0) + Math.floor(turnover * 0.005);
+      saveStats(user.uid, stats);
+      if (App.refreshBalance) {
+        App.refreshBalance().then(function () { refreshStats(); });
+      } else {
+        refreshStats();
+      }
     }
-    const blocks = winners.map(name => {
-      const rows = settled[name].filter(r => r.winAmount > 0);
-      const totalWin = rows.reduce((s, r) => s + r.winAmount, 0);
-      const totalProfit = settled[name].reduce((s, r) => s + r.profit, 0);
-      const hits = rows.filter(r => r.hit).map(r => r.hit);
-      const line1 = `${name}  中奖金额：+${totalWin}`;
-      const line2 = hits.join('、');
-      const line3 = `输赢：${fmtProfit(totalProfit)}`;
-      return `${line1}\n${line2}\n${line3}`;
-    });
-    return `${issue}期\n中奖列表核对\n——————————\n${blocks.join('\n\n')}`;
+    settleUserBetLog(issue, nums || lastDraw || [], rows);
   }
 
-  function applyUserSettle(issue, settled) {
-    const rows = settled[user.name];
-    if (!rows) return;
-    let profit = 0;
-    let turnover = 0;
-    rows.forEach(r => {
-      profit += r.profit;
-      turnover += r.amount;
-      if (r.winAmount > 0) {
-        App.setBalance(user.uid, App.getBalance(user.uid) + r.winAmount);
-      }
-    });
+  /** 用服务端派彩校正顶部输赢/流水（本地 settle 已 floor，通常一致；有差异时以服务端为准） */
+  function refineUserStatsFromServer(issue, list) {
+    const id = String(issue || '');
+    if (!id) return;
+    const bets = (list || []).filter(function (b) { return b && b.status !== 'CANCELLED' && b.status !== 'PENDING'; });
+    if (!bets.length) return;
+    const storeKey = 'ffc_stats_applied_' + (user && user.uid ? user.uid : 'guest');
+    let applied = [];
+    try { applied = JSON.parse(localStorage.getItem(storeKey) || '[]'); } catch (e) { applied = []; }
+    if (!Array.isArray(applied)) applied = [];
+    if (applied.indexOf(id) >= 0) return;
+    applied.push(id);
+    if (applied.length > 120) applied = applied.slice(-120);
+    try { localStorage.setItem(storeKey, JSON.stringify(applied)); } catch (e) { /* ignore */ }
+    const serverProfit = bets.reduce(function (s, b) { return s + serverBetProfit(b); }, 0);
+    const serverTurnover = bets.reduce(function (s, b) { return s + (Number(b.amount) || 0); }, 0);
     const stats = getStats(user.uid);
-    stats.winloss += profit;
-    stats.turnover += turnover;
-    stats.rebate = (stats.rebate || 0) + Math.floor(turnover * 0.005);
+    stats.winloss += serverProfit;
+    stats.turnover += serverTurnover;
+    stats.rebate = (stats.rebate || 0) + Math.floor(serverTurnover * 0.005);
     saveStats(user.uid, stats);
     refreshStats();
   }
 
-  /* ================= 倒计时：1:56 → 00:00 → 准备中 ================= */
+  /* ================= 倒计时：距封盘 / 距开奖（数字格） ================= */
   function fmtMmss(sec) {
     const s = Math.max(0, Math.floor(sec));
     return pad(Math.floor(s / 60), 2) + ':' + pad(s % 60, 2);
@@ -1188,17 +1716,37 @@ $(function () {
       $cells.eq(i).text(text[i]);
     }
   }
-  function updateCountdownUI(r) {
-    const $box = $('#countdownBox').removeClass('is-preparing');
-    if (r <= PREP_SEC) {
-      $box.addClass('is-preparing');
-      $('#cdDigits').prop('hidden', true);
-      $('#cdPrep').prop('hidden', false);
-      return;
+  function updateCountdownUI(phaseOrRemain, maybeSec) {
+    /* 兼容：updateCountdownUI('bet'|'prep', sec) 或旧版 updateCountdownUI(remainToOpenAligned) */
+    let phase = 'bet';
+    let sec = 0;
+    if (phaseOrRemain === 'bet' || phaseOrRemain === 'prep') {
+      phase = phaseOrRemain;
+      sec = Math.max(0, Number(maybeSec) || 0);
+    } else {
+      const r = Math.max(0, Number(phaseOrRemain) || 0);
+      if (r <= PREP_SEC) {
+        phase = 'prep';
+        sec = r;
+      } else {
+        phase = 'bet';
+        sec = Math.max(0, r - PREP_SEC);
+      }
     }
-    $('#cdDigits').prop('hidden', false);
-    $('#cdPrep').prop('hidden', true);
-    renderCountdownDigits(r - PREP_SEC);
+    const displaySec = Math.max(0, Math.ceil(sec));
+    const $box = $('#countdownBox').removeClass('is-preparing is-betting');
+    const $label = $('#cdLabel');
+    if (phase === 'prep') {
+      $box.addClass('is-preparing');
+      $label.text('距开奖');
+      $box.attr('aria-label', '封盘中，距开奖 ' + fmtMmss(displaySec));
+    } else {
+      $box.addClass('is-betting');
+      $label.text('距封盘');
+      $box.attr('aria-label', '距封盘 ' + fmtMmss(displaySec));
+    }
+    $('#cdDigits').prop('hidden', false).attr('aria-label', $box.attr('aria-label'));
+    renderCountdownDigits(displaySec);
   }
 
   /* ================= 统计 ================= */
@@ -1219,24 +1767,35 @@ $(function () {
     const $wl = $('#statWinloss').text((s.winloss >= 0 ? '+' : '') + Math.round(s.winloss).toLocaleString('en-US'));
     $wl.toggleClass('is-plus', s.winloss > 0).toggleClass('is-minus', s.winloss < 0);
     $('#statRebate').text(Math.round(s.rebate).toLocaleString('en-US'));
+    $('#playFootBalance').text(bal.toLocaleString('en-US'));
   }
   function hasLastDraw() {
     return Array.isArray(lastDraw) && lastDraw.length > 0;
   }
-  function buildHistory(count) {
-    const rows = [];
-    const base = Math.max(1, Math.floor((Date.now() - todayStartMs()) / 1000 / INTERVAL));
-    for (let i = 0; i < count; i++) {
-      const nums = i === 0 && hasLastDraw() ? lastDraw : randomDraw();
-      rows.push({
-        issue: fmtIssue(base - i),
-        nums,
-        gy: gyMeta(nums).text,
-        lh: lhRow(nums)
-      });
-    }
-    return rows;
+
+  const CHAT_KEEP = 50;
+  const chatLog = [];
+
+  function chatStorageKey() {
+    const uid = (user && user.uid) ? user.uid : 'guest';
+    return 'ffc_chat_v3_' + uid + (roomNo ? '_' + roomNo : '');
   }
+  function saveChatLog() {
+    try {
+      localStorage.setItem(chatStorageKey(), JSON.stringify(chatLog.slice(-CHAT_KEEP)));
+    } catch (e) { /* quota / private mode */ }
+  }
+  function trimChatDom() {
+    const $msgs = $('#chatFeed > .ffc-msg');
+    const extra = $msgs.length - CHAT_KEEP;
+    if (extra > 0) $msgs.slice(0, extra).remove();
+  }
+  function escapeHtml(value) {
+    return String(value == null ? '' : value).replace(/[&<>"']/g, function (ch) {
+      return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch];
+    });
+  }
+
   function scrollChat() {
     const el = document.getElementById('chatFeed');
     if (el) el.scrollTop = el.scrollHeight;
@@ -1249,8 +1808,8 @@ $(function () {
       ? opts.avatarHtml
       : `<div class="ffc-msg__avatar"><img src="${fixAvatar(opts.avatar)}" alt=""></div>`;
     const meta = `<div class="ffc-msg__meta">
-            <span class="ffc-msg__name">${opts.name}</span>
-            <span class="ffc-msg__time">${time}</span>
+            <span class="ffc-msg__name">${escapeHtml(opts.name)}</span>
+            <span class="ffc-msg__time">${escapeHtml(time)}</span>
           </div>`;
     const bubbleCls = isRobot ? ' ffc-msg__bubble--bot' : '';
     const bubble = `<div class="ffc-msg__bubble${bubbleCls}">${opts.html}</div>`;
@@ -1267,81 +1826,280 @@ $(function () {
         </div>
       </div>`;
     $('#chatFeed').append(html);
+    if (!opts.skipPersist) {
+      chatLog.push({
+        name: opts.name,
+        avatar: opts.avatar || '',
+        avatarHtml: opts.avatarHtml || '',
+        html: opts.html,
+        self: !!isSelf,
+        robot: !!isRobot,
+        time,
+      });
+      if (chatLog.length > CHAT_KEEP) chatLog.splice(0, chatLog.length - CHAT_KEEP);
+      trimChatDom();
+      saveChatLog();
+    }
     scrollChat();
   }
-
-  function pushRobotClose(issue) {
-    const botAv = avatarHtml('机', 0);
-    appendMsg({
-      name: ROBOT.name,
-      avatarHtml: botAv,
-      robot: true,
-      html: closeNoticeHtml(issue)
-    });
-    setTimeout(() => {
+  function restoreChat() {
+    let list = [];
+    try {
+      list = JSON.parse(localStorage.getItem(chatStorageKey()) || '[]');
+    } catch (e) {
+      list = [];
+    }
+    if (!Array.isArray(list) || !list.length) return false;
+    chatLog.length = 0;
+    $('#chatFeed').empty();
+    list.slice(-CHAT_KEEP).forEach((m) => {
+      if (!m || !m.html) return;
       appendMsg({
-        name: ROBOT.name,
-        avatarHtml: botAv,
-        robot: true,
-        html: buildBetListVerifyHtml(issue)
+        name: m.name || '玩家',
+        avatar: m.avatar || '',
+        avatarHtml: m.avatarHtml || '',
+        html: m.html,
+        self: !!m.self,
+        robot: !!m.robot,
+        time: m.time || '',
+        skipPersist: true,
       });
-    }, 400);
+      chatLog.push({
+        name: m.name || '玩家',
+        avatar: m.avatar || '',
+        avatarHtml: m.avatarHtml || '',
+        html: m.html,
+        self: !!m.self,
+        robot: !!m.robot,
+        time: m.time || '',
+      });
+    });
+    saveChatLog();
+    scrollChat();
+    settleRestoredResultCards();
+    return chatLog.length > 0;
   }
 
-  function pushRobotResult(nums, issue) {
-    const settled = settleIssue(issue, nums);
-    applyUserSettle(issue, settled);
-    settleUserBetLog(issue, nums, settled[user.name] || null);
-    const botAv = avatarHtml('机', 0);
-    const resultDelay = 600;
-    const revealMs = resultRevealDurationMs();
-    const calcPause = 1000;
-    setTimeout(() => {
-      appendMsg({
-        name: ROBOT.name,
-        avatarHtml: botAv,
-        robot: true,
-        html: resultCardHtml(nums, issue)
+  /* ========== 房间公共聊天（服务端时间线 · 共享内核） ========== */
+  function applyRoomWinVerifyMineLine(issue) {
+    issue = String(issue || '').trim();
+    if (!App.fetchMyLotteryBets) return;
+    App.fetchMyLotteryBets(SERVER_GAME, issue).then(function (res) {
+      const list = (res && res.list) || [];
+      if (list.length) refineUserStatsFromServer(issue, list);
+      const mine = buildMineLineHtmlFromServer(issue, list);
+      if (!mine) return;
+      const $card = $('#chatFeed .ffc-msg').has('.ffc-bot-card--win').filter(function () {
+        return String($(this).find('.ffc-bot-card__issue').text() || '').trim() === issue;
+      }).last();
+      if (!$card.length) return;
+      let h = $card.find('.ffc-msg__bubble').html() || '';
+      h = applyMineLineToWinHtml(h, mine);
+      $card.find('.ffc-msg__bubble').html(h);
+    }).catch(function () { /* ignore */ });
+  }
+
+  function buildBetVerifyFromPayload(p) {
+    return LotteryRoomChat.buildBetVerifyHtml("ffc", p, {
+      escapeHtml: typeof escapeHtml === 'function' ? escapeHtml : undefined,
+      userName: user.name,
+    });
+  }
+
+  function buildWinVerifyFromPayload(p) {
+    return LotteryRoomChat.buildWinVerifyHtml("ffc", p, {
+      escapeHtml: typeof escapeHtml === 'function' ? escapeHtml : undefined,
+      fmtProfit: typeof fmtProfit === 'function' ? fmtProfit : undefined,
+    });
+  }
+
+  const roomChat = LotteryRoomChat.create({
+    gameCode: SERVER_GAME,
+    appendMsg: appendMsg,
+    clearFeed: function () {
+      $('#chatFeed').empty();
+      chatLog.length = 0;
+    },
+    getUserName: function () { return user.name; },
+    robotFallbackName: (typeof ROBOT !== 'undefined' && ROBOT.name) ? ROBOT.name : '机器人',
+    fmtTime: typeof fmtTime === 'function' ? fmtTime : undefined,
+    buildBetHtml: function (p) {
+      return (typeof escapeHtml === 'function') ? escapeHtml(String(p.text || '')) : String(p.text || '');
+    },
+    buildCloseHtml: function (issue) {
+      return (typeof closeNoticeHtml === 'function') ? closeNoticeHtml(issue) : ('封盘 ' + issue);
+    },
+    buildResultHtml: function (p, msg) {
+      const nums = Array.isArray(p.nums) ? p.nums.map(Number) : [];
+      const issue = String(p.issueNo || msg.issueNo || '');
+      if (typeof resultCardHtml === 'function') return resultCardHtml(nums, issue);
+      return '开奖 ' + issue;
+    },
+    buildBetVerifyHtml: function (p) { return buildBetVerifyFromPayload(p); },
+    buildWinVerifyHtml: function (p) { return buildWinVerifyFromPayload(p); },
+    buildWinVerifyCalculatingHtml: function (issue) {
+      return buildWinListVerifyHtml(issue, null);
+    },
+    onClose: function (issue) {
+      roomBetFrozen = true;
+      sealedIssueNo = String(issue || '');
+      closedIssues.add(sealedIssueNo);
+    },
+    onResultMeta: function (p, msg) {
+      const nums = Array.isArray(p.nums) ? p.nums.map(Number) : [];
+      const issue = String(p.issueNo || msg.issueNo || '');
+      revealedIssues.add(issue);
+      if (nums.length === 5) lastDraw = nums.slice();
+    },
+    onWinVerifyUnlocked: function () {
+      roomBetFrozen = false;
+      sealedIssueNo = '';
+    },
+    onWinVerifyShown: function (issue) {
+      applyRoomWinVerifyMineLine(issue);
+    },
+    onFlushWinVerify: function (issue, pending) {
+      const html = buildWinVerifyFromPayload(pending);
+      LotteryRoomChat.replaceCalculatingWinCard({
+        prefix: "ffc",
+        issue: issue,
+        html: html,
+        appendMsg: appendMsg,
+        robotName: (typeof ROBOT !== 'undefined' && ROBOT.name) ? ROBOT.name : '机器人',
       });
+      roomBetFrozen = false;
+      sealedIssueNo = '';
+      applyRoomWinVerifyMineLine(issue);
+    },
+    afterResultAppended: function (ctx) {
+      const nums = Array.isArray(ctx.payload.nums) ? ctx.payload.nums.map(Number) : [];
+      const issue = ctx.issue;
       const card = $('#chatFeed .ffc-bot-card--result').last()[0];
-      if (card) FfcResultCard.bindReveal(card, nums);
-    }, resultDelay);
-    setTimeout(() => {
-      appendMsg({
-        name: ROBOT.name,
-        avatarHtml: botAv,
-        robot: true,
-        html: buildWinListVerifyHtml(issue, null)
-      });
-      setTimeout(() => {
-        const $bubble = $('#chatFeed .ffc-bot-card--win.is-calculating').last().closest('.ffc-msg__bubble');
-        if ($bubble.length) {
-          $bubble.html(buildWinListVerifyHtml(issue, settled));
-          scrollChat();
+      if (card && nums.length === 5 && window.FfcResultCard) {
+        if (ctx.animate && ctx.live && FfcResultCard.bindReveal) {
+          ctx.setRevealPending(issue);
+          const readyMs = resultRevealDurationMs() + 300;
+          const readyAt = Date.now() + readyMs;
+          FfcResultCard.bindReveal(card, nums, function () {
+            ctx.scheduleRevealReady(issue, Math.max(200, readyAt - Date.now()));
+          });
+          ctx.scheduleRevealReady(issue, readyMs);
+        } else if (FfcResultCard.settle) {
+          FfcResultCard.settle(card, nums);
+          ctx.setRevealReadyFlag(issue, true);
+        } else {
+          ctx.setRevealReadyFlag(issue, true);
         }
-      }, calcPause);
-    }, resultDelay + revealMs);
+      } else {
+        ctx.setRevealReadyFlag(issue, true);
+      }
+    },
+    getRevealFallbackMs: function () {
+      return resultRevealDurationMs() + 800;
+    },
+  });
+
+  function onResultRevealReady(issue) {
+    roomChat.markRevealReady(issue);
+  }
+
+  function scheduleResultRevealReady(issue, ms) {
+    roomChat.scheduleRevealReady(issue, ms);
+  }
+
+  function syncRoomChat(initial) {
+    roomChat.sync(!!initial);
+  }
+
+  function startRoomChatPolling() {
+    roomChat.startPolling();
+  }
+
+  /** 滚号落定后把最终 HTML 写回 chatLog，避免下次进房仍是占位 0 */
+  function persistBotCardHtml(card) {
+    if (!card || !chatLog.length) return;
+    const issueEl = card.querySelector('.ffc-bot-card__issue');
+    const issue = issueEl ? String(issueEl.textContent || '').trim() : '';
+    const html = card.outerHTML;
+    for (let i = chatLog.length - 1; i >= 0; i--) {
+      const m = chatLog[i];
+      if (!m || !m.robot) continue;
+      if (!/ffc-bot-card--result/.test(String(m.html || ''))) continue;
+      if (issue && String(m.html).indexOf(issue) < 0) continue;
+      m.html = html;
+      saveChatLog();
+      break;
+    }
+  }
+
+  /** 进房/同步后：把仍显示 0 的开奖卡按 data-nums 或历史期号落定 */
+  function settleRestoredResultCards() {
+    if (!window.FfcResultCard || !FfcResultCard.settle) return;
+    $('#chatFeed .ffc-bot-card--result').each(function () {
+      const card = this;
+      if (card.querySelector('.ffc-bot-result__ball-roll.is-rolling')) return;
+      let nums = null;
+      const raw = card.getAttribute('data-nums') || '';
+      if (raw) {
+        const arr = raw.split(',').map(Number);
+        if (arr.length === 5 && arr.every(function (n) { return !Number.isNaN(n) && n >= 0 && n <= 9; })) {
+          nums = arr;
+        }
+      }
+      if (!nums) {
+        const issue = String($(card).find('.ffc-bot-card__issue').first().text() || '').trim();
+        const row = historyRows.find(function (r) { return String(r.issue) === issue; });
+        if (row && row.nums && row.nums.length === 5) nums = row.nums;
+      }
+      if (!nums) return;
+      const nodes = card.querySelectorAll('.ffc-bot-result__ball-num');
+      let allMatch = nodes.length === 5;
+      nodes.forEach(function (el, i) {
+        if (parseInt(el.textContent, 10) !== Number(nums[i])) allMatch = false;
+      });
+      if (allMatch && card.classList.contains('is-settled')) return;
+      FfcResultCard.settle(card, nums);
+      persistBotCardHtml(card);
+    });
+  }
+
+
+  function seedMockNames() {
+    const names = App.NAME_PREFIX || ['黄金', '银河', '夜行', '闪电', '深海', '炽焰', '疾风', '幻影'];
+    const suffix = App.NAME_SUFFIX || ['猎手', '行者', '骑士', '大师', '旅人', '王者', '武士', '侠客'];
+    MOCK_NAMES.length = 0;
+    const used = new Set();
+    let i = 0;
+    while (MOCK_NAMES.length < ROBOT_COUNT && i < 64) {
+      const name = names[i % names.length] + suffix[(i * 3 + 1) % suffix.length];
+      i += 1;
+      if (used.has(name)) continue;
+      used.add(name);
+      MOCK_NAMES.push({ name, avatar: avatarFromPool(11 + MOCK_NAMES.length * 17) });
+    }
+    while (MOCK_NAMES.length < ROBOT_COUNT) {
+      const idx = MOCK_NAMES.length + 1;
+      MOCK_NAMES.push({ name: '玩家' + idx, avatar: avatarFromPool(30 + idx * 9) });
+    }
+  }
+
+  function recordMockBetLines(name, betText) {
+    let ok = false;
+    String(betText || '').split(/<br\s*\/?>/i).forEach((line) => {
+      const t = String(line || '').trim();
+      if (t && recordBet(name, t, { mock: true })) ok = true;
+    });
+    return ok;
   }
 
   function seedChat() {
-    const names = App.NAME_PREFIX || ['幸运'];
-    const suffix = App.NAME_SUFFIX || ['玩家'];
-    MOCK_NAMES.length = 0;
-    for (let i = 0; i < 8; i++) {
-      const name = names[i % names.length] + suffix[i % suffix.length];
-      const betText = `${PLAY_ITEMS[i % PLAY_ITEMS.length]}/${[20, 50, 100][i % 3]}`;
-      MOCK_NAMES.push({ name });
-      appendMsg({ name, avatarHtml: avatarHtml(name, i), html: betText });
-      recordBet(name, betText);
+    seedMockNames();
+    for (let i = 0; i < ROBOT_COUNT; i++) {
+      const n = MOCK_NAMES[i];
+      const betText = randomMockBetText();
+      appendMsg({ name: n.name, avatar: n.avatar, html: betText });
+      recordMockBetLines(n.name, betText);
     }
-    const myBet = PLAY_ITEMS[0] + '/100';
-    appendMsg({
-      name: user.name,
-      avatar: fixAvatar(user.avatar),
-      self: true,
-      html: myBet
-    });
-    recordBet(user.name, myBet);
   }
 
   /* ================= 键盘 ================= */
@@ -1350,10 +2108,8 @@ $(function () {
       { left: '万', mid: ['1', '2', '3'], right: '删除', del: true },
       { left: '千', mid: ['4', '5', '6'], right: '大' },
       { left: '百', mid: ['7', '8', '9'], right: '小' },
-      { left: '十', mid: ['0', '/', '龙'], right: '单' },
-      { left: '个', mid: ['100', '200', '500'], right: '双' },
-      { left: '虎', mid: ['和', '牛', '前三'], right: '中三' },
-      { left: '后三', mid: ['豹子', '顺子', '对子'], right: '半顺' }
+      { left: '十', mid: ['无牛', '0', '/'], right: '单' },
+      { left: '个', mid: ['牛', '龙', '虎'], right: '双' }
     ];
     let html = '';
     rows.forEach(row => {
@@ -1368,13 +2124,44 @@ $(function () {
     $('#keyGrid').html(html);
   }
 
+  let keypadArmTimer = 0;
+  let keypadGuardUntil = 0;
+  let delHoldTimer = 0;
+  let delHoldInterval = 0;
+
+  function stopDeleteHold() {
+    if (delHoldTimer) {
+      clearTimeout(delHoldTimer);
+      delHoldTimer = 0;
+    }
+    if (delHoldInterval) {
+      clearInterval(delHoldInterval);
+      delHoldInterval = 0;
+    }
+  }
+
   function showKeypad(show) {
     const $room = $('.ffc-room');
+    const $pad = $('#keypad');
     if (show) {
-      $('#keypad').prop('hidden', false);
+      $pad.prop('hidden', false);
       $room.addClass('has-keypad');
+      /* 弹出瞬间：禁点防误触 + 短时不响应「点外面关闭」（避免版面顶起后同一次点击被当成点外面） */
+      keypadGuardUntil = Date.now() + 450;
+      $pad.addClass('is-arming');
+      if (keypadArmTimer) clearTimeout(keypadArmTimer);
+      keypadArmTimer = setTimeout(() => {
+        $pad.removeClass('is-arming');
+        keypadArmTimer = 0;
+      }, 320);
     } else {
-      $('#keypad').prop('hidden', true);
+      stopDeleteHold();
+      if (keypadArmTimer) {
+        clearTimeout(keypadArmTimer);
+        keypadArmTimer = 0;
+      }
+      keypadGuardUntil = 0;
+      $pad.removeClass('is-arming').prop('hidden', true);
       $room.removeClass('has-keypad');
     }
   }
@@ -1399,7 +2186,7 @@ $(function () {
       updateComposerAction();
       return;
     }
-    $in.val(v + text);
+    $in.val(appendKeyWithSlash(v, text));
     updateComposerAction();
   }
 
@@ -1416,27 +2203,151 @@ $(function () {
     }
   }
 
+  /** 取消：输入「取消」再发送 → 撤销本期本人全部注单并退款 */
+  function trySendCancel(text) {
+    if (String(text || '').trim() !== '取消') return false;
+    if (!isBettingOpen()) {
+      toastBetBlocked('cancel');
+      return true;
+    }
+    if (!App.cancelLotteryBets) {
+      App.toast('请从大厅进入游戏');
+      return true;
+    }
+    App.cancelLotteryBets(SERVER_GAME).then(function (res) {
+      refreshStats();
+      const issue = getCurrentIssue();
+      if (issueBetBook[issue] && issueBetBook[issue][user.name]) {
+        delete issueBetBook[issue][user.name];
+      }
+      clearUserPendingBetLog(issue);
+      const refunded = res && res.refunded != null ? res.refunded : 0;
+      const count = res && res.count != null ? res.count : 0;
+      appendMsg({
+        name: user.name,
+        avatar: fixAvatar(user.avatar),
+        self: true,
+        html: '已取消本期注单'
+      });
+      $('#chatInput').val('');
+      updateComposerAction();
+      showKeypad(false);
+      App.toast(count ? `已取消 ${count} 注，退回 ${refunded}` : '已取消本期注单');
+    }).catch(function (e) {
+      App.toast((e && e.message) || '取消失败');
+    });
+    return true;
+  }
+
+  /** 上分：上分200 / 上分/200 → 建单并同步客服 */
+  function trySendTopup(text) {
+    const m = String(text || '').match(/^上分\s*\/?\s*(\d+)$/);
+    if (!m) {
+      if (/^上分/.test(String(text || '').trim())) {
+        App.toast('格式：上分200 或 上分/200');
+        return true;
+      }
+      return false;
+    }
+    const amount = parseInt(m[1], 10);
+    if (!(amount > 0)) {
+      App.toast('请输入有效上分金额');
+      return true;
+    }
+    if (amount < 200) {
+      App.toast('上分最低 200 积分');
+      return true;
+    }
+    if (!App.requestTopup) {
+      App.toast('请从大厅进入游戏');
+      return true;
+    }
+    App.requestTopup(amount, '人工').then(function () {
+      appendMsg({
+        name: user.name,
+        avatar: fixAvatar(user.avatar),
+        self: true,
+        html: '上分' + amount
+      });
+      $('#chatInput').val('');
+      updateComposerAction();
+      showKeypad(false);
+      App.toast('上分申请已发给客服');
+    }).catch(function (e) {
+      App.toast((e && e.message) || '上分申请失败');
+    });
+    return true;
+  }
+
+  /** 下分：下分500 / 下分/500 → 立即扣余额并建单，同步给客服审核 */
+  function trySendWithdraw(text) {
+    const m = String(text || '').match(/^下分\s*\/?\s*(\d+)$/);
+    if (!m) {
+      if (/^下分/.test(String(text || '').trim())) {
+        App.toast('格式：下分500 或 下分/500');
+        return true;
+      }
+      return false;
+    }
+    const amount = parseInt(m[1], 10);
+    if (!(amount > 0)) {
+      App.toast('请输入有效下分金额');
+      return true;
+    }
+    if (amount < 500) {
+      App.toast('下分最低 500 积分');
+      return true;
+    }
+    const bal = App.getBalance(user.uid);
+    if (amount > bal) {
+      App.toast('下分金额不能大于当前积分');
+      return true;
+    }
+    if (!App.requestWithdraw) {
+      App.toast('请从大厅进入游戏');
+      return true;
+    }
+    App.requestWithdraw(amount).then(function () {
+      refreshStats();
+      appendMsg({
+        name: user.name,
+        avatar: fixAvatar(user.avatar),
+        self: true,
+        html: '下分' + amount
+      });
+      $('#chatInput').val('');
+      updateComposerAction();
+      showKeypad(false);
+      App.toast('已扣除 ' + amount + '，申请已发给客服');
+    }).catch(function (e) {
+      App.toast((e && e.message) || '下分申请失败');
+    });
+    return true;
+  }
+
   function sendBetMessage() {
     const text = $('#chatInput').val().trim();
     if (!text) return;
+    if (trySendCancel(text)) return;
+    if (trySendTopup(text)) return;
+    if (trySendWithdraw(text)) return;
     if (!isBettingOpen()) {
-      App.toast('封盘中，无法下注');
+      toastBetBlocked('bet');
       return;
     }
     let lines;
     if (composerAllin) {
       composerAllin = false;
-      const m = text.match(/^(.+?)\/(.+)$/);
-      if (!m) {
-        App.toast('格式：玩法/金额，如 万千单/50');
-        return;
+      const parts = text.split(/\s+/).filter(Boolean);
+      const allPlays = [];
+      for (let i = 0; i < parts.length; i++) {
+        const stripped = stripComposerAmount(parts[i]);
+        let via = parseBetLines(stripped + '/梭哈');
+        let plays = via && via.length ? via.map(function (l) { return l.play; }) : expandPlayPart(stripped);
+        if (!plays || !plays.length) { App.toast('格式错误'); return; }
+        allPlays.push.apply(allPlays, plays);
       }
-      const plays = expandPlayPart(m[1].trim());
-      if (!plays || !plays.length) {
-        App.toast('玩法无效，请检查后再发送');
-        return;
-      }
-      lines = resolveBetAmounts(plays, '梭哈');
+      lines = resolveBetAmounts(allPlays, '梭哈');
       if (!lines) {
         App.toast('余额不足，无法梭哈');
         return;
@@ -1444,27 +2355,36 @@ $(function () {
     } else {
       lines = parseBetInput(text);
       if (!lines) {
-        App.toast('格式：万单/100、1龙/100、无牛/100、前三豹子/100');
+        App.toast('格式错误');
         return;
       }
     }
     const bal = App.getBalance(user.uid);
     const total = lines.reduce((s, l) => s + l.amount, 0);
     if (total > bal) { App.toast('余额不足'); return; }
-    App.setBalance(user.uid, bal - total);
-    refreshStats();
-    const display = lines.map(l => `${l.play}/${l.amount}`).join('<br>');
-    appendMsg({
-      name: user.name,
-      avatar: fixAvatar(user.avatar),
-      self: true,
-      html: display
+    const mapped = mapLinesToServerBets(lines);
+    if (mapped.unsupported.length || !mapped.bets.length) {
+      App.toast('格式错误');
+      return;
+    }
+    if (!App.placeLotteryBets) {
+      App.toast('请从大厅进入游戏');
+      return;
+    }
+    App.placeLotteryBets(SERVER_GAME, mapped.bets, {
+      /* 核对卡/气泡用原口令折叠展示，与机器人一致；账本仍按拆注 bets */
+      chatText: text.replace(/\s+/g, ' '),
+    }).then(function () {
+      refreshStats();
+      recordBetLines(user.name, lines);
+      lastBetText = formatResolvedBets(lines);
+      $('#chatInput').val('');
+      updateComposerAction();
+      if (lines.length > 1) App.toast(`投注成功 · ${lines.length}注`);
+      syncRoomChat(false);
+    }).catch(function (e) {
+      App.toast((e && e.message) || '下注失败');
     });
-    recordBetLines(user.name, lines);
-    lastBetText = formatResolvedBets(lines);
-    $('#chatInput').val('');
-    updateComposerAction();
-    if (lines.length > 1) App.toast(`投注成功 · ${lines.length}注`);
   }
 
   function toggleDrawPanel() {
@@ -1476,9 +2396,9 @@ $(function () {
   function pushRandomBet() {
     if (!MOCK_NAMES.length || !isBettingOpen()) return;
     const n = MOCK_NAMES[Math.floor(Math.random() * MOCK_NAMES.length)];
-    const betText = `${PLAY_ITEMS[Math.floor(Math.random() * PLAY_ITEMS.length)]}/${[10, 20, 50, 100, 200][Math.floor(Math.random() * 5)]}`;
-    appendMsg({ name: n.name, avatarHtml: avatarHtml(n.name, n.name.length * 7), html: betText });
-    recordBet(n.name, betText);
+    const betText = randomMockBetText();
+    appendMsg({ name: n.name, avatar: n.avatar, html: betText });
+    recordMockBetLines(n.name, betText);
   }
 
   function openPlusMenu(open) {
@@ -1538,7 +2458,7 @@ $(function () {
     {
       id: 'twoSide',
       title: '两面',
-      hint: '总和≥23为大 · 单球≥5为大 · 赔率 1.995',
+      hint: () => `总和≥23为大 · 单球≥5为大 · 赔率 ${ODDS.sumSide}`,
       subs: null,
       sideGroups: [
         { label: '总和', prefix: '', odds: ODDS.sumSide },
@@ -1548,7 +2468,7 @@ $(function () {
     {
       id: 'position',
       title: '定位胆',
-      hint: '选位置与号码 · 赔率 9.95',
+      hint: () => `选位置与号码 · 赔率 ${ODDS.position}`,
       subs: Object.keys(POS),
       mode: 'positionDigit',
       odds: ODDS.position
@@ -1556,7 +2476,7 @@ $(function () {
     {
       id: 'anyDigit',
       title: '不定位',
-      hint: '三位含所选号码即中 · 赔率 3.6',
+      hint: () => `三位含所选号码即中 · 赔率 ${ODDS.anyDigit}`,
       subs: Object.keys(SEG),
       mode: 'segDigit',
       odds: ODDS.anyDigit
@@ -1564,38 +2484,32 @@ $(function () {
     {
       id: 'group3',
       title: '三星组三',
-      hint: '选2个号码 · 赔率 260',
+      hint: () => `选2个及以上为复式 · 注数C(n,2) · 赔率 ${ODDS.group3}`,
       subs: Object.keys(SEG),
       mode: 'group3',
-      pickCount: 2,
+      minPick: 2,
       odds: ODDS.group3
     },
     {
       id: 'group6',
       title: '三星组六',
-      hint: '选3个号码 · 赔率 125',
+      hint: () => `选3个及以上为复式 · 注数C(n,3) · 赔率 ${ODDS.group6}`,
       subs: Object.keys(SEG),
       mode: 'group6',
-      pickCount: 3,
+      minPick: 3,
       odds: ODDS.group6
     },
     {
       id: 'lhh',
       title: '龙虎和',
-      hint: '1龙=第1对 · 龙/虎 1.99 · 和 9',
+      hint: () => `万位 vs 个位 · 龙/虎 ${ODDS.dragon} · 和 ${ODDS.tie} · 口令：龙100 或 龙/100`,
       subs: null,
       items() {
-        const list = [];
-        let n = 1;
-        for (let a = 1; a <= 4; a++) {
-          for (let b = a + 1; b <= 5; b++) {
-            ['龙', '虎', '和'].forEach(x => {
-              list.push({ play: n + x, label: n + x, odds: x === '和' ? ODDS.tie : ODDS.dragon });
-            });
-            n += 1;
-          }
-        }
-        return list;
+        return [
+          { play: '龙', label: '龙', odds: ODDS.dragon, tip: '万>个' },
+          { play: '虎', label: '虎', odds: ODDS.tiger, tip: '万<个' },
+          { play: '和', label: '和', odds: ODDS.tie, tip: '万=个' }
+        ];
       }
     },
     {
@@ -1664,29 +2578,71 @@ $(function () {
     if (cat.mode === 'segDigit' && digits.length === 1) {
       return sub + digits[0];
     }
-    if (cat.mode === 'group3' && digits.length === 2) {
-      return sub + '组三' + digits.join('');
-    }
-    if (cat.mode === 'group6' && digits.length === 3) {
-      return sub + '组六' + digits.join('');
-    }
     return '';
   }
 
+  /** 组三/组六：按已点号码同步复式注单到已选列表 */
+  function syncGroupDuplexSelection(cat) {
+    if (cat.mode !== 'group3' && cat.mode !== 'group6') return;
+    const seg = currentPlaySub();
+    const wantType = cat.mode === 'group3' ? 'group3' : 'group6';
+    playSelectedList = playSelectedList.filter((p) => {
+      const parsed = parsePlay(p);
+      return !(parsed && parsed.type === wantType && parsed.seg === seg);
+    });
+    const minPick = cat.minPick || (cat.mode === 'group3' ? 2 : 3);
+    if (playPickedDigits.length < minPick) return;
+    const digitStr = playPickedDigits.slice().sort((a, b) => a - b).join('');
+    const plays = cat.mode === 'group3'
+      ? expandGroup3Duplex(seg, digitStr)
+      : expandGroup6Duplex(seg, digitStr);
+    if (plays && plays.length) playSelectedList.push(...plays);
+  }
+
+  function groupDuplexBetCount(cat, n) {
+    if (cat.mode === 'group3') return n >= 2 ? (n * (n - 1)) / 2 : 0;
+    if (cat.mode === 'group6') return n >= 3 ? (n * (n - 1) * (n - 2)) / 6 : 0;
+    return 0;
+  }
+
   function updatePlaySelected() {
+    const cat = currentPlayCat();
+    if ((cat.mode === 'group3' || cat.mode === 'group6') && playPickedDigits.length) {
+      const n = playPickedDigits.length;
+      const bets = groupDuplexBetCount(cat, n);
+      const minPick = cat.minPick || (cat.mode === 'group3' ? 2 : 3);
+      const codes = playPickedDigits.slice().sort((a, b) => a - b).join('');
+      const name = cat.mode === 'group3' ? '组三' : '组六';
+      if (n < minPick) {
+        $('#playSelected').text(`${currentPlaySub()}${name} 已选${codes || '—'}（还需${minPick - n}个号）`);
+        $('#playClear').prop('disabled', !(n || playSelectedList.length));
+        return;
+      }
+      $('#playSelected').text(`${currentPlaySub()}${name}${codes} · ${bets}注复式`);
+      $('#playClear').prop('disabled', false);
+      return;
+    }
     if (!playSelectedList.length) {
       $('#playSelected').text('—');
+      $('#playClear').prop('disabled', true);
       return;
     }
     const n = playSelectedList.length;
     const preview = playSelectedList.slice(0, 4).join('、');
     $('#playSelected').text(n > 4 ? `${preview}… 共${n}项` : (n > 1 ? `${preview}（${n}项）` : preview));
+    $('#playClear').prop('disabled', false);
   }
 
   function resetPlayPick(clearAll) {
     playPickedDigits = [];
     if (clearAll) playSelectedList = [];
     updatePlaySelected();
+  }
+
+  function clearPlaySelection() {
+    resetPlayPick(true);
+    renderPlayPanel();
+    $('#playClear').prop('disabled', true);
   }
 
   function initPlaySheet() {
@@ -1699,7 +2655,7 @@ $(function () {
     ).join(''));
   }
 
-  /** 副玩法栏（蓝胶囊等宽，对齐快乐时时彩 / LHC） */
+  /** 副玩法栏（蓝胶囊等宽，对齐 LHC） */
   function renderPlaySubBar(cat) {
     const $sub = $('#playSub');
     if (!cat.subs || !cat.subs.length) {
@@ -1736,7 +2692,7 @@ $(function () {
 
   function renderPlayPanel() {
     const cat = currentPlayCat();
-    $('#playHint').text(cat.hint);
+    $('#playHint').text(typeof cat.hint === 'function' ? cat.hint() : cat.hint);
     renderPlaySubBar(cat);
 
     const $grid = $('#playGrid');
@@ -1753,11 +2709,23 @@ $(function () {
       }).join('');
     } else if (cat.mode === 'group3' || cat.mode === 'group6') {
       isDigits = true;
+      const nPick = playPickedDigits.length;
+      const bets = groupDuplexBetCount(cat, nPick);
+      const minPick = cat.minPick || (cat.mode === 'group3' ? 2 : 3);
+      const name = cat.mode === 'group3' ? '组三' : '组六';
+      if (nPick > 0) {
+        $('#playHint').text(
+          nPick < minPick
+            ? `已选${nPick}码 · 至少选${minPick}个 · ${name}复式 · 赔率 ${cat.odds}`
+            : `已选${nPick}码 · ${name}复式 ${bets}注 · 每注金额见下方 · 赔率 ${cat.odds}`
+        );
+      }
       html = digitItems(cat.odds).map(it => {
         const picking = playPickedDigits.indexOf(+it.play) >= 0;
         return `<button type="button" class="ffc-play-item${picking ? ' is-picked' : ''}" data-play="${it.play}" data-digit="1"><span>${it.label}</span></button>`;
       }).join('');
     } else if (cat.mode === 'shape') {
+      // 形态已放在副玩法栏「玩法」行，下方给简短提示
       html = `<div class="ffc-play-panel__empty">先选副玩法（前/中/后三），再点上方形态下注</div>`;
     } else if (cat.id === 'twoSide' && cat.sideGroups) {
       html = cat.sideGroups.map(g => {
@@ -1771,7 +2739,8 @@ $(function () {
     } else if (typeof cat.items === 'function') {
       html = cat.items().map(it => {
         const active = isPlaySelected(it.play);
-        return `<button type="button" class="ffc-play-item${active ? ' is-active' : ''}" data-play="${it.play}"><span>${it.label}</span><small>${it.odds}</small></button>`;
+        const sub = it.tip ? it.tip : it.odds;
+        return `<button type="button" class="ffc-play-item${active ? ' is-active' : ''}" data-play="${it.play}"><span>${it.label}</span><small>${sub}</small></button>`;
       }).join('');
     }
 
@@ -1790,7 +2759,7 @@ $(function () {
       return;
     }
     if (!isBettingOpen()) {
-      App.toast('封盘中，无法下注');
+      toastBetBlocked('bet');
       return;
     }
     const amount = Math.max(1, parseInt($('#playAmount').val(), 10) || 0);
@@ -1803,18 +2772,33 @@ $(function () {
       App.toast('玩法无效，请重新选择');
       return;
     }
-    const lines = validPlays.map(p => p + '/' + amount);
-    appendMsg({
-      name: user.name,
-      avatar: fixAvatar(user.avatar),
-      self: true,
-      html: lines.join('<br>')
+    const lines = validPlays.map(p => ({ play: p, amount: amount }));
+    const mapped = mapLinesToServerBets(lines);
+    if (mapped.unsupported.length || !mapped.bets.length) {
+      App.toast('格式错误');
+      return;
+    }
+    const bal = App.getBalance(user.uid);
+    const total = lines.reduce((s, l) => s + l.amount, 0);
+    if (total > bal) { App.toast('余额不足'); return; }
+    if (!App.placeLotteryBets) {
+      App.toast('请从大厅进入游戏');
+      return;
+    }
+    App.placeLotteryBets(SERVER_GAME, mapped.bets, {
+      chatText: lines.map(function (l) { return l.play + '/' + l.amount; }).join(' '),
+    }).then(function () {
+      refreshStats();
+      recordBetLines(user.name, lines);
+      lastBetText = lines.map(l => l.play + '/' + l.amount).join(' ');
+      playSelectedList = [];
+      playPickedDigits = [];
+      openPlaySheet(false);
+      App.toast(`投注成功 · ${lines.length}注`);
+      syncRoomChat(false);
+    }).catch(function (e) {
+      App.toast((e && e.message) || '下注失败');
     });
-    lines.forEach(line => recordBet(user.name, line));
-    lastBetText = lines[lines.length - 1];
-    playSelectedList = [];
-    openPlaySheet(false);
-    App.toast(`投注成功 · ${lines.length}注`);
   }
 
   function initPlaySheetEvents() {
@@ -1849,20 +2833,11 @@ $(function () {
       if (isDigit && (cat.mode === 'group3' || cat.mode === 'group6')) {
         const d = +play;
         const idx = playPickedDigits.indexOf(d);
-        if (idx >= 0) {
-          playPickedDigits.splice(idx, 1);
-        } else {
-          playPickedDigits.push(d);
-        }
-        if (playPickedDigits.length >= cat.pickCount) {
-          const built = buildPlayFromDigits(cat);
-          if (built && parsePlay(built)) {
-            togglePlaySelect(built);
-          }
-          playPickedDigits = [];
-          updatePlaySelected();
-        }
+        if (idx >= 0) playPickedDigits.splice(idx, 1);
+        else playPickedDigits.push(d);
+        syncGroupDuplexSelection(cat);
         renderPlayPanel();
+        updatePlaySelected();
         return;
       }
 
@@ -1901,84 +2876,220 @@ $(function () {
   }
 
   // ===== 初始化 =====
-  lastDraw = randomDraw();
-  lastIssueSeq = Math.max(1, Math.floor((Date.now() - todayStartMs()) / 1000 / INTERVAL));
-  historyRows = buildHistory(60);
-  historyRows[0].nums = lastDraw.slice();
-  historyRows[0].gy = gyMeta(lastDraw).text;
-  historyRows[0].lh = lhRow(lastDraw);
-
   refreshStats();
-  renderDrawBar(historyRows[0]);
-  renderDrawTable();
-  setCurIssueDisplay(fmtIssue(lastIssueSeq + 1));
-  updateCountdownUI(getRoundRemain());
   initKeypad();
   initPlaySheet();
+  $('#playClear').prop('disabled', true);
   initPlaySheetEvents();
+  seedMockNames();
+  restoreBetBook();
+  loadServerPayTable();
+  startRoomChatPolling();
 
-  seedChat();
-
-  function tick() {
-    const elapsed = (Date.now() - todayStartMs()) / 1000;
-    const seq = Math.floor(elapsed / INTERVAL) + 1;
-    const r = INTERVAL - (elapsed % INTERVAL);
-    const issueCur = fmtIssue(seq);
-    setCurIssueDisplay(issueCur);
-    updateCountdownUI(r);
-
-    if (r <= PREP_SEC && !closedIssues.has(issueCur)) {
-      closedIssues.add(issueCur);
-      pushRobotClose(issueCur);
-    }
-
-    if (r <= PREP_SEC && !drawnIssues.has(issueCur)) {
-      drawnIssues.add(issueCur);
-      const newDraw = randomDraw();
-      lastDraw = newDraw;
-      lastIssueSeq = seq;
-      const row = {
-        issue: issueCur,
-        nums: newDraw,
-        gy: gyMeta(newDraw).text,
-        lh: lhRow(newDraw)
-      };
-      historyRows.unshift(row);
-      if (historyRows.length > 120) historyRows.pop();
-      renderDrawBar(row);
+  function restoreClosedIssues() {
+    try {
+      const list = JSON.parse(localStorage.getItem(CLOSED_STORAGE_KEY) || '[]');
+      if (Array.isArray(list)) closedIssues = new Set(list.slice(-120).map(String));
+    } catch (e) { closedIssues = new Set(); }
+  }
+  function saveClosedIssues() {
+    try { localStorage.setItem(CLOSED_STORAGE_KEY, JSON.stringify(Array.from(closedIssues).slice(-120))); } catch (e) { /* ignore */ }
+  }
+  function hydrateClosedFromChat() {
+    /* 聊天里已有封盘/注单核对 → 视为已推过，进房不再重刷 */
+    chatLog.forEach(function (m) {
+      const html = String(m.html || '');
+      if (!/(bot-close-line|bot-card--bets|bot-card--win)/.test(html)) return;
+      const hit = html.match(/bot-card__issue[^>]*>([^<]+)</) || html.match(/close-line__issue[^>]*>([^<]+)</);
+      if (hit && hit[1]) closedIssues.add(String(hit[1]).trim());
+    });
+    saveClosedIssues();
+  }
+  /** @returns {boolean} true = 首次封盘，需要推送封盘线 */
+  function markIssueClosed(issue) {
+    const id = String(issue || '');
+    if (!id || closedIssues.has(id)) return false;
+    closedIssues.add(id);
+    saveClosedIssues();
+    return true;
+  }
+  function hydrateRevealedFromChat() {
+    /* 聊天里已有开奖/中奖卡 → 进房不再重推动画与二次结算 */
+    chatLog.forEach(function (m) {
+      const html = String(m.html || '');
+      if (!/(result-card|bot-card--result|bot-card--win|is-reveal|is-settled|is-drawing)/.test(html)) return;
+      let hit = html.match(/data-issue="([^"]+)"/);
+      if (!hit) hit = html.match(/bot-card__issue[^>]*>([^<]+)</);
+      if (!hit) hit = html.match(/result-card__issue[^>]*>([^<]+)</);
+      if (hit && hit[1]) revealedIssues.add(String(hit[1]).trim());
+    });
+    saveRevealedIssues();
+  }
+  function restoreRevealedIssues() {
+    try {
+      const list = JSON.parse(localStorage.getItem(REVEALED_STORAGE_KEY) || '[]');
+      if (Array.isArray(list)) revealedIssues = new Set(list.slice(-120).map(String));
+    } catch (e) { revealedIssues = new Set(); }
+  }
+  function saveRevealedIssues() {
+    try { localStorage.setItem(REVEALED_STORAGE_KEY, JSON.stringify(Array.from(revealedIssues).slice(-120))); } catch (e) { /* ignore */ }
+  }
+  function parseServerHistory(history) {
+    return (Array.isArray(history) ? history : []).map(function (row) {
+      let nums = [];
+      try { nums = JSON.parse(row.drawNumbers || '[]').map(Number); } catch (e) { nums = []; }
+      return { issue: String(row.issueNo || ''), nums, gy: nums.length === 5 ? gyMeta(nums).text : '', dt: nums.length === 5 ? dragonTigerOf(nums) : '', lh: nums.length === 5 ? lhRow(nums) : '' };
+    }).filter(r => r.issue && r.nums.length === 5);
+  }
+  function syncServerSnapshot() {
+    if (snapshotBusy || !App.fetchLotterySnapshot) return;
+    snapshotBusy = true;
+    App.fetchLotterySnapshot(SERVER_GAME).then(function (snapshot) {
+      /* 历史与当前期解耦：即使短暂没有 current，上期栏也要能刷新 */
+      const rows = parseServerHistory(snapshot && snapshot.history);
+      const headChanged = rows[0] && (!historyRows[0] || rows[0].issue !== historyRows[0].issue);
+      historyRows = rows;
+      if (rows.length) {
+        lastDraw = rows[0].nums.slice();
+        renderDrawBar(rows[0]);
+      } else if (typeof renderDrawBar === 'function') {
+        try { renderDrawBar(null); } catch (e) { /* ignore */ }
+      }
+      const current = snapshot && snapshot.current;
+      if (current && current.issueNo) {
+        serverCurrent = current;
+        serverSynced = true;
+        if (typeof tick === 'function') try { tick(); } catch (e) { /* ignore */ }
+      }
       renderDrawTable();
-      pushRobotResult(newDraw, issueCur);
+      if (serverCurrent && serverCurrent.issueNo) setCurIssueDisplay(serverCurrent.issueNo);
+      settleRestoredResultCards();
+      if (rows[0]) {
+        revealedIssues.add(rows[0].issue);
+        saveRevealedIssues();
+        historyHeadBootstrapped = true;
+      }
       if ($('#longSheet').hasClass('is-open')) renderLongDragonPanel();
       if ($('#predictSheet').hasClass('is-open')) renderPredictPanel();
+    }).catch(function () {
+      /* Parent bridge can be unavailable when a static H5 is opened directly. */
+    }).finally(function () { snapshotBusy = false; });
+  }
+
+  function tick() {
+    if (serverSynced && serverCurrent) {
+      const lockAt = new Date(serverCurrent.lockAt).getTime();
+      const openAt = new Date(serverCurrent.openAt).getTime();
+      const issueCur = String(serverCurrent.issueNo || '');
+      const now = Date.now();
+      const open = serverCurrent.status === 'PENDING' && now < lockAt;
+      setCurIssueDisplay(issueCur);
+      if (open) {
+        updateCountdownUI('bet', Math.max(0, (lockAt - now) / 1000));
+      } else {
+        updateCountdownUI('prep', Math.max(0, (openAt - now) / 1000));
+      }
+      if (!open && issueCur && markIssueClosed(issueCur)) {
+        roomBetFrozen = true;
+        sealedIssueNo = issueCur;
+      }
+      /* unfreeze-if-next-pending */
+      if (roomBetFrozen && sealedIssueNo && issueCur && issueCur !== sealedIssueNo && open) {
+        /* 下一期已开盘：以服务端为准解冻（不强制等历史，避免漏推卡死） */
+        roomBetFrozen = false;
+        sealedIssueNo = '';
+      }
+      return;
     }
+    /* 未同步服务端：禁止本地钟（期号会差 1），只显示同步中 */
+    if (typeof setCurIssueDisplay === 'function') setCurIssueDisplay('--------');
+    else if (typeof setIssueEl === 'function') setIssueEl($('#curIssue'), '--------');
+    else $('#curIssue').text('--------');
+    const $label = $('#cdLabel');
+    if ($label.length) $label.text('同步中');
+    const $box = $('#countdownBox').removeClass('is-preparing is-betting is-freeze').addClass('is-betting');
+    $box.attr('aria-label', '房间同步中');
+    if (typeof renderCountdownDigits === 'function') renderCountdownDigits(0);
+    $('#cdPrep').prop('hidden', true);
+    $('#cdDigits').prop('hidden', false);
   }
   setInterval(tick, 1000);
-  setInterval(pushRandomBet, 8000);
+  restoreRevealedIssues();
+  restoreClosedIssues();
+  hydrateClosedFromChat();
+  hydrateRevealedFromChat();
+  if (App.startAdaptiveInterval) App.startAdaptiveInterval(syncServerSnapshot, 2000, 5000); else { syncServerSnapshot(); setInterval(syncServerSnapshot, 2000); }
+  /* robot bets from server room chat */
   tick();
 
   // ===== 事件 =====
   $('#backBtn').on('click', () => {
-    App.go('../../client-app/pages/game-lobby/game-lobby.html' + q);
+    if (App.backToLobby) App.backToLobby();
+    else App.go('../../client-app/pages/game-lobby/game-lobby.html' + q);
   });
 
   /* === chat-rail handlers (ffc) === */
 
   function openRulesSheet(open) {
     if (open) {
-      const tip = '格式：万单/100、1龙/100、无牛/100、前三豹子/100';
-      let rows = '';
-      if (typeof PLAY_CATEGORIES !== 'undefined' && PLAY_CATEGORIES && PLAY_CATEGORIES.length) {
-        rows = PLAY_CATEGORIES.map(c => {
-          const title = c.title || c.name || c.id || '';
-          const hint = c.hint || '';
-          return '<tr><td>' + title + '</td><td>' + hint + '</td></tr>';
-        }).join('');
-      }
-      const html =
-        '<p class="ffc-rules-intro">' + tip + '</p>' +
-        (rows
-          ? '<table class="ffc-rules-table"><thead><tr><th>玩法</th><th>说明</th></tr></thead><tbody>' + rows + '</tbody></table>'
-          : '<p class="ffc-rules-intro">点击右侧或输入栏「玩法」可点选下注；封盘后不可下注。</p>');
+      const o = ODDS;
+      const so = SHAPE_ODDS;
+      const betSec = (typeof BET_SEC !== 'undefined') ? BET_SEC : (INTERVAL - PREP_SEC);
+      const html = `
+        <div class="ffc-rules-sec">
+          <h3 class="ffc-rules-sec__title">一、开奖与时间</h3>
+          <p>1分时时彩每期开出 <b>5</b> 个号码（万、千、百、十、个），每位为 <b>0～9</b>。</p>
+          <p>每期共 <b>${INTERVAL} 秒</b>：可下注 <b>${betSec} 秒</b>，提前 <b>${PREP_SEC} 秒</b> 封盘并准备开奖。顶栏显示「距封盘」或「距开奖」；封盘后不可下注、不可取消。</p>
+          <p>开奖结果、历史栏与核对派彩均以服务端账本为准。</p>
+        </div>
+        <div class="ffc-rules-sec">
+          <h3 class="ffc-rules-sec__title">二、如何下注</h3>
+          <p>支持三种方式：</p>
+          <ul>
+            <li>点右侧 / 底部「玩法」面板点选号码后投注</li>
+            <li>底部输入口令，格式：<b>玩法/金额</b>（空格可下多注）</li>
+            <li>键盘快捷：上分、取消、梭哈、重复、下分</li>
+          </ul>
+          <span class="ffc-rules-ex">大/100　万单/50　龙 虎/20</span>
+          <span class="ffc-rules-ex">十百59/100　前三组六258/50　万5/梭哈</span>
+          <p>金额可用「梭哈」：按当前可用积分均分到所选玩法（向下取整）。玩法脚「重复」可快速跟上一笔。</p>
+          <p>底部「+」可进入：上下分、申请记录、竞猜报表、自助回水、福利活动、我的账户。</p>
+        </div>
+        <div class="ffc-rules-sec">
+          <h3 class="ffc-rules-sec__title">三、玩法与赔率</h3>
+          <p>下列为当前房间赔率（会随后台赔率表更新）。中奖派彩 = 投注金额 × 赔率（向下取整）。</p>
+          <table class="ffc-rules-table">
+            <thead><tr><th>玩法</th><th>说明</th><th>赔率</th></tr></thead>
+            <tbody>
+              <tr><td>总和两面</td><td>五星和值：≥23 大，≤22 小；奇单偶双</td><td>${o.sumSide}</td></tr>
+              <tr><td>定位两面</td><td>万/千/百/十/个 + 大(≥5)/小(≤4)/单/双</td><td>${o.ballSide}</td></tr>
+              <tr><td>定位胆</td><td>指定某一位为某数字，如「万5」「个0」</td><td>${o.position}</td></tr>
+              <tr><td>不定位</td><td>前三/中三/后三中出现指定数字（不限位置）</td><td>${o.anyDigit}</td></tr>
+              <tr><td>三星组三</td><td>前/中/后三开出对子形态，且两枚选号都出现</td><td>${o.group3}</td></tr>
+              <tr><td>三星组六</td><td>前/中/后三三个不同号，且三枚选号都出现</td><td>${o.group6}</td></tr>
+              <tr><td>龙 / 虎</td><td>万位 vs 个位：万&gt;个为龙，万&lt;个为虎</td><td>${o.dragon} / ${o.tiger}</td></tr>
+              <tr><td>和</td><td>万位 = 个位</td><td>${o.tie}</td></tr>
+              <tr><td>斗牛</td><td>任三张和为 10 倍数则有牛；余两码和个位为牛几（0=牛牛）</td><td>无牛 ${o.noNiu} · 牛 ${o.niu}</td></tr>
+              <tr><td>牛两面</td><td>有牛时：牛大(6～牛牛)/牛小(1～5)/牛单/牛双</td><td>${o.niuSide}</td></tr>
+              <tr><td>前中后形态</td><td>豹子 / 顺子 / 对子 / 半顺 / 杂六（含 9-0、0-1）</td><td>豹${so['豹子']} 顺${so['顺子']} 对${so['对子']} 半${so['半顺']} 杂${so['杂六']}</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="ffc-rules-sec">
+          <h3 class="ffc-rules-sec__title">四、取消与结算</h3>
+          <p>当期未封盘前可输入「取消」或点键盘「取消」，撤销本人本期未结算注单；封盘后不可取消。</p>
+          <p>开奖后房间会推送结果卡与注单/中奖核对；积分变动以服务端派彩为准。顶部「输赢 / 流水 / 回水」为房间会话统计参考。</p>
+        </div>
+        <div class="ffc-rules-sec">
+          <h3 class="ffc-rules-sec__title">五、温馨提示</h3>
+          <ul>
+            <li>请理性竞猜，注意自身资金安全</li>
+            <li>网络延迟可能导致倒计时与封盘线相差约 1～2 秒，以能否成功提交为准</li>
+            <li>侧栏「记录」查看本游戏注单；底部「+」里的「竞猜报表」可看全部游戏</li>
+            <li>长龙 / 预测仅供走势参考，不构成投注建议</li>
+          </ul>
+        </div>`;
       $('#rulesBody').html(html);
       $('#rulesMask').prop('hidden', false);
       $('#rulesSheet').prop('hidden', false).addClass('is-open');
@@ -1994,6 +3105,10 @@ $(function () {
     App.go('../../client-app/pages/bet-records/bet-records.html' + q + sep + 'game=ffc');
   }
 
+  function goAllBetRecords() {
+    App.go('../../client-app/pages/bet-records/bet-records.html' + q);
+  }
+
   $('#btnCs').on('click', () => App.go('../../client-app/pages/cs/cs.html' + q));
 
   $('#btnExpand, #btnComposerPlay').on('click', () => openPlaySheet(true));
@@ -2001,9 +3116,16 @@ $(function () {
   $('#rulesSheetClose, #rulesMask').on('click', () => openRulesSheet(false));
   $('#btnRecords').on('click', () => goBetRecords());
   $('#playSheetClose, #playMask').on('click', () => openPlaySheet(false));
-$('#btnSlip').on('click', () => {
-    const sep = q.includes('?') ? '&' : '?';
-    App.go('../../client-app/pages/bet-records/bet-records.html' + q + sep + 'game=ffc');
+  $('#playClear').on('click', clearPlaySelection);
+  $('#playRepeat').on('click', function () {
+    if (!lastBetText) {
+      App.toast('暂无上次投注');
+      return;
+    }
+    openPlaySheet(false);
+    $('#chatInput').val(lastBetText);
+    updateComposerAction();
+    App.toast('已填入上次投注，确认后发送');
   });
   $('#btnLong').on('click', () => openLongSheet(true));
   $('#longSheetClose, #longMask').on('click', () => openLongSheet(false));
@@ -2012,6 +3134,15 @@ $('#btnSlip').on('click', () => {
     $('#longTabs button').removeClass('is-active');
     $(this).addClass('is-active');
     renderLongDragonPanel();
+  });
+  $('#longBody').on('click', '[data-predict-play]', function () {
+    fillPredictPlay(String($(this).data('predict-play') || ''));
+  });
+  $('#longBody').on('keydown', '[data-predict-play]', function (e) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      fillPredictPlay(String($(this).data('predict-play') || ''));
+    }
   });
   $('#btnPredict').on('click', () => openPredictSheet(true));
   $('#predictSheetClose, #predictMask').on('click', () => openPredictSheet(false));
@@ -2034,8 +3165,16 @@ $('#btnSlip').on('click', () => {
   $('#drawToggle').on('click', toggleDrawPanel);
 
   $('#chatInput').on('focus', () => {
-    showKeypad(true);
     openPlusMenu(false);
+    /* 等当前手势的 click 冒泡完再弹，避免立刻被 document 关闭 */
+    setTimeout(() => showKeypad(true), 0);
+  });
+
+  $('#chatInput').on('click', function (e) {
+    e.stopPropagation();
+    try { this.focus({ preventScroll: true }); } catch (err) { this.focus(); }
+    openPlusMenu(false);
+    showKeypad(true);
   });
 
   $('#chatInput').on('input', () => {
@@ -2051,18 +3190,46 @@ $('#btnSlip').on('click', () => {
   });
 
   $('#keyGrid').on('click', '.ffc-key', function () {
-    insertInput($(this).data('key'));
+    const key = $(this).attr('data-key');
+    if (key === '删除') return; /* 删除走 pointer 长按逻辑，避免连删双触发 */
+    insertInput(key);
+  });
+
+  $('#keyGrid').on('pointerdown', '.ffc-key', function (e) {
+    if ($(this).attr('data-key') !== '删除') return;
+    e.preventDefault();
+    stopDeleteHold();
+    insertInput('删除');
+    delHoldTimer = setTimeout(() => {
+      delHoldInterval = setInterval(() => insertInput('删除'), 55);
+    }, 380);
+  });
+
+  $('#keyGrid').on('pointerup pointerleave pointercancel', '.ffc-key', function () {
+    if ($(this).attr('data-key') === '删除') stopDeleteHold();
+  });
+  $(window).on('pointerup pointercancel', stopDeleteHold);
+
+  $('#keypad').on('click', '[data-key]', function () {
+    const key = String($(this).attr('data-key') ?? '');
+    if (!key || $(this).closest('#keyGrid').length) return;
+    insertInput(key);
   });
 
   $('#keypad').on('click', '[data-cmd]', function () {
     const cmd = $(this).data('cmd');
     if (cmd === 'cancel') {
       composerAllin = false;
-      $('#chatInput').val('');
+      $('#chatInput').val('取消');
       updateComposerAction();
       return;
     }
-    if (cmd === 'repeat' && lastBetText) {
+    if (cmd === 'repeat') {
+      if (!lastBetText) {
+        App.toast('暂无上次投注');
+        return;
+      }
+      composerAllin = false;
       $('#chatInput').val(lastBetText);
       updateComposerAction();
       return;
@@ -2072,11 +3239,15 @@ $('#btnSlip').on('click', () => {
       return;
     }
     if (cmd === 'topup') {
-      App.go('../../client-app/pages/recharge/recharge.html' + q);
+      composerAllin = false;
+      $('#chatInput').val('上分');
+      updateComposerAction();
       return;
     }
     if (cmd === 'withdraw') {
-      App.toast('下分请联系客服');
+      $('#chatInput').val('下分');
+      composerAllin = false;
+      updateComposerAction();
       return;
     }
   });
@@ -2094,31 +3265,27 @@ $('#btnSlip').on('click', () => {
 
   const LINKS = {
     recharge: '../../client-app/pages/recharge/recharge.html',
-    withdraw: '../../client-app/pages/profile/profile.html',
     'apply-records': '../../client-app/pages/apply-records/apply-records.html',
-    welfare: '../../client-app/pages/welfare/welfare.html',
     'bet-records': '../../client-app/pages/bet-records/bet-records.html',
-    flow: '../../client-app/pages/flow/flow.html',
-    redpack: null,
-    'points-log': '../../client-app/pages/points-log/points-log.html'
+    rebate: '../../client-app/pages/rebate/rebate.html',
+    activities: '../../client-app/pages/activities/activities.html',
+    settings: '../../client-app/pages/profile/profile.html',
   };
 
   $('#plusMenu').on('click', 'button', function () {
     const key = $(this).data('link');
     openPlusMenu(false);
-    if (key === 'redpack') {
-      App.toast('红包报表 · 开发中');
+    if (key === 'bet-records') {
+      goAllBetRecords();
       return;
     }
     const url = LINKS[key];
-    if (url) {
-      let go = url + q;
-      if (key === 'bet-records') go += (go.includes('?') ? '&' : '?') + 'game=ffc';
-      App.go(go);
-    } else App.toast('即将开放');
+    if (url) App.go(url + q);
+    else App.toast('即将开放');
   });
 
   $(document).on('click', function (e) {
+    if (Date.now() < keypadGuardUntil) return;
     if (!$(e.target).closest('#keypad, #chatInput, .ffc-composer').length && $('#keypad').is(':visible')) {
       if (!$(e.target).closest('.ffc-plus-menu, #plusBtn, .ffc-menu-mask').length) {
         showKeypad(false);
@@ -2127,4 +3294,5 @@ $('#btnSlip').on('click', () => {
   });
 
   updateComposerAction();
+  window.addEventListener('gamebox-balance', function () { refreshStats(); });
 });

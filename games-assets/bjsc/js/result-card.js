@@ -295,9 +295,9 @@
   }
 
   function buildResultCardHtml(nums, issue, meta, lh) {
-    const no = 'No.' + String(issue).slice(-6);
+    const no = 'No.' + String(issue || '');
     const gy = String(meta.text || '').replace(/\s+/g, ' ').trim();
-    return '<div class="bjsc-result-card is-reveal">' +
+    return '<div class="bjsc-result-card is-reveal" data-issue="' + String(issue) + '">' +
       '<header class="bjsc-rc-head"><span class="bjsc-rc-title">北京赛车</span>' +
       '<div class="bjsc-rc-balls">' + nums.map(n => ballHtml(n, 'sm')).join('') + '</div></header>' +
       '<div class="bjsc-rc-stage"><canvas class="bjsc-rc-canvas" width="' + W + '" height="' + H + '" data-nums="' + nums.join(',') + '"></canvas></div>' +
@@ -308,16 +308,25 @@
       '</footer></div>';
   }
 
-  function bindStage(root) {
+  function bindStage(root, onDone) {
     const card = root && root.classList && root.classList.contains('bjsc-result-card')
       ? root : root && root.closest('.bjsc-result-card');
     const canvas = card && card.querySelector('.bjsc-rc-canvas');
-    if (!canvas || !canvas.dataset.nums) return;
+    if (!canvas || !canvas.dataset.nums) {
+      if (typeof onDone === 'function') onDone();
+      return;
+    }
     const nums = canvas.dataset.nums.split(',').map(Number);
-    if (nums.length !== 10 || nums.some(n => n < 1 || n > 10)) return;
+    if (nums.length !== 10 || nums.some(n => n < 1 || n > 10)) {
+      if (typeof onDone === 'function') onDone();
+      return;
+    }
     const run = () => {
-      composeStage(canvas, nums).catch(() => {
+      composeStage(canvas, nums).then(() => {
+        if (typeof onDone === 'function') onDone();
+      }).catch(() => {
         if (canvas.isConnected) canvas.outerHTML = '<div class="bjsc-rc-fail">加载失败</div>';
+        if (typeof onDone === 'function') onDone();
       });
     };
     if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run);

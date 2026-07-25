@@ -142,10 +142,10 @@ body.jsb-bg::after {
 .jsb-head-title {
   margin: 0;
   white-space: nowrap;
-  font-size: 15px;
-  letter-spacing: 1px;
+  font-size: 17px;
+  letter-spacing: 3px;
   font-family: 'Noto Serif SC', 'Songti SC', serif;
-  background: linear-gradient(180deg, #e8f8ff 0%, #d4af37 55%, #1a5a78 100%);
+  background: linear-gradient(180deg, #fff6d6 0%, #e4c15a 42%, #d4af37 68%, #8a6a1a 100%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
@@ -307,24 +307,21 @@ body.jsb-bg::after {
   text-shadow: 0 0 10px rgba(244, 211, 107, 0.3);
 }
 .jsb-timer__prep {
-  font-size: 13px;
-  font-weight: 700;
-  font-family: 'Noto Serif SC', serif;
-  letter-spacing: 1px;
-  color: #ff9aaa;
-  white-space: nowrap;
-}
-.jsb-timer.is-preparing .jsb-timer__digits {
   display: none !important;
 }
-.jsb-timer.is-preparing .jsb-timer__prep {
-  display: inline-block;
-  animation: jsb-prep-pulse 1.2s ease-in-out infinite;
-  text-shadow: 0 0 12px rgba(255, 120, 130, 0.4);
+.jsb-timer.is-preparing .jsb-timer__digits {
+  display: flex;
+}
+@keyframes jsb-prep-dot {
+  0%, 100% { opacity: 0.55; transform: scale(0.92); }
+  50% { opacity: 1; transform: scale(1); }
 }
 @keyframes jsb-prep-pulse {
-  0%, 100% { opacity: 0.88; }
+  0%, 100% { opacity: 1; }
   50% { opacity: 1; }
+}
+@keyframes jsb-prep-dots {
+  0%, 100% { width: 0; }
 }
 .jsb-issue-btn {
   flex: 0 0 auto;
@@ -401,10 +398,10 @@ body.jsb-bg::after {
 .jsb-draw-bar__main {
   width: 100%;
   display: grid;
-  grid-template-columns: auto 1fr auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
+  gap: 8px;
+  padding: 8px 10px;
   border: none;
   background: transparent;
   cursor: pointer;
@@ -417,11 +414,12 @@ body.jsb-bg::after {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 3.6em;
   font-size: 12px;
   font-weight: 600;
   font-family: ui-monospace, Consolas, monospace;
   color: #f4d36b;
-  letter-spacing: -0.3px;
+  letter-spacing: 0;
   line-height: 1.2;
   white-space: nowrap;
 }
@@ -437,23 +435,25 @@ body.jsb-bg::after {
 .jsb-draw-bar__balls {
   flex: 1;
   display: flex;
-  gap: 8px;
+  gap: 1px;
   justify-content: center;
+  align-items: center;
   overflow: visible;
   min-width: 0;
-  padding: 2px 4px;
+  padding: 0;
 }
 .jsb-draw-bar__balls .jsb-ball {
-  width: 26px;
-  height: 26px;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
 }
 .jsb-draw-bar__meta {
   flex-shrink: 0;
-  max-width: 118px;
+  max-width: 96px;
   color: var(--gold-bright);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
-  line-height: 1.35;
+  line-height: 1.3;
   text-align: right;
   white-space: nowrap;
   overflow: hidden;
@@ -1285,6 +1285,9 @@ body.jsb-bg::after {
   border-top: 1px solid var(--jsb-border);
   padding: 6px;
 }
+.jsb-keypad.is-arming {
+  pointer-events: none;
+}
 .jsb-keypad__tools {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
@@ -1382,8 +1385,8 @@ body.jsb-bg::after {
   max-width: 100%;
   margin: 0;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  grid-template-rows: repeat(2, 54px);
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(2, 56px);
   gap: 1px;
   background: var(--line);
   padding-bottom: env(safe-area-inset-bottom, 0px);
@@ -1395,10 +1398,11 @@ body.jsb-bg::after {
 .jsb-plus-menu button {
   border: none;
   background: var(--bg-card);
-  font-size: var(--jsb-fs-sm);
+  font-size: var(--jsb-fs-md);
+  font-weight: 600;
   color: var(--text-dim);
   cursor: pointer;
-  letter-spacing: 1px;
+  letter-spacing: 2px;
 }
 .jsb-plus-menu button:active {
   background: var(--bg-elev);
@@ -1749,12 +1753,14 @@ body.jsb-bg::after {
 }
 .jsb-play-foot__clear {
   flex-shrink: 0;
-  padding: 4px 10px;
+  height: 28px;
+  padding: 0 12px;
   border-radius: 999px;
-  border: 1px solid var(--line);
-  background: rgba(0, 0, 0, 0.3);
-  color: var(--text-dim);
-  font-size: 11px;
+  border: 1px solid rgba(212, 175, 55, 0.35);
+  background: rgba(48, 34, 14, 0.55);
+  color: var(--gold-bright);
+  font-size: 12px;
+  letter-spacing: 1px;
   cursor: pointer;
 }
 .jsb-play-foot__clear:disabled {
@@ -1860,6 +1866,23 @@ body.jsb-bg::after {
 }
 .jsb-play-foot__input.is-allin::placeholder {
   color: var(--gold-bright);
+}
+.jsb-play-foot__repeat {
+  flex-shrink: 0;
+  height: 44px;
+  padding: 0 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(212, 175, 55, 0.38);
+  background: rgba(48, 34, 14, 0.65);
+  color: var(--gold-bright);
+  font-size: var(--jsb-fs-sm);
+  font-weight: 600;
+  letter-spacing: 1px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.jsb-play-foot__repeat:active {
+  filter: brightness(1.1);
 }
 .jsb-play-foot__allin {
   flex-shrink: 0;
@@ -2634,12 +2657,12 @@ body.jsb-bg::after {
   .jsb-draw-bar__balls {
     grid-row: 1;
     grid-column: 2;
-    gap: 5px;
+    gap: 1px;
     padding: 0;
   }
   .jsb-draw-bar__balls .jsb-ball {
-    width: 22px;
-    height: 22px;
+    width: 20px;
+    height: 20px;
   }
   .jsb-draw-bar__arrow {
     grid-row: 1;
@@ -2846,8 +2869,9 @@ body.jsb-bg::after {
 }
 .jsb-rail-btn--play .jsb-rail-ic,
 .jsb-rail-ic--play {
-  width: 50px;
-  height: 50px;
+  width: 56px;
+  height: 56px;
+  filter: drop-shadow(0 3px 10px rgba(212, 175, 55, 0.45));
 }
 .jsb-rail-btn:active .jsb-rail-ic {
   transform: scale(0.92);
@@ -2896,17 +2920,17 @@ body.jsb-bg::after {
 }
 /* ---------- 规则弹层 ---------- */
 .jsb-rules-mask {
-  position: absolute;
+  position: fixed;
   inset: 0;
-  z-index: 60;
+  z-index: 100;
   background: rgba(0, 0, 0, 0.55);
 }
 .jsb-rules-sheet {
-  position: absolute;
+  position: fixed;
   left: 0;
   right: 0;
   bottom: 0;
-  z-index: 61;
+  z-index: 110;
   max-height: 72%;
   display: flex;
   flex-direction: column;
@@ -2950,6 +2974,44 @@ body.jsb-bg::after {
   margin: 0 0 12px;
   color: var(--text-dim, rgba(245, 236, 214, 0.75));
 }
+
+.jsb-rules-sec {
+  margin: 0 0 16px;
+}
+.jsb-rules-sec__title {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: var(--gold-bright, #f4d36b);
+  font-family: 'Noto Serif SC', serif;
+}
+.jsb-rules-sec p {
+  margin: 0 0 8px;
+  color: var(--text-dim, rgba(245, 236, 214, 0.78));
+  font-size: 12px;
+  line-height: 1.65;
+}
+.jsb-rules-sec ul {
+  margin: 0 0 8px;
+  padding-left: 1.2em;
+  color: var(--text-dim, rgba(245, 236, 214, 0.78));
+  font-size: 12px;
+  line-height: 1.65;
+}
+.jsb-rules-ex {
+  display: block;
+  margin: 6px 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(212, 175, 55, 0.2);
+  color: #ffe9a8;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  letter-spacing: 0.2px;
+}
+
 .jsb-rules-table {
   width: 100%;
   border-collapse: collapse;
@@ -2978,4 +3040,47 @@ body.jsb-bg::after {
   background: transparent !important;
   font-size: 0 !important;
   color: transparent !important;
+}
+
+.jsb-long-road{margin-bottom:12px;padding:12px;border:1px solid rgba(212,175,55,.22);border-radius:12px;background:rgba(0,0,0,.28)}
+.jsb-long-road__label{margin-bottom:8px;font-size:11px;color:var(--text-muted)}
+.jsb-long-road__row{display:flex;flex-wrap:wrap;gap:6px}
+.jsb-long-road__chip{min-width:36px;padding:6px 8px;border-radius:8px;border:1px solid rgba(255,255,255,.08);font:700 12px serif;text-align:center}
+.jsb-long-road__chip.is-latest{outline:1px solid rgba(240,200,72,.7);transform:scale(1.04)}
+.jsb-long-shape-wrap{margin-bottom:12px}
+.jsb-long-shape-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.jsb-long-shape{display:grid;grid-template-columns:1fr auto auto;gap:8px;padding:10px 12px;border:1px solid rgba(212,175,55,.22);border-radius:12px;background:rgba(0,0,0,.32)}
+.jsb-long-shape.is-clickable{cursor:pointer}
+.jsb-long-shape__group{font-size:11px;color:var(--text-muted)}
+.jsb-long-shape__tag{min-width:40px;padding:4px 8px;border-radius:8px;font:800 14px serif;text-align:center}
+.jsb-long-shape__count{font:700 16px monospace;color:#fff0b0}
+.jsb-long-empty--soft{padding:12px 0}
+
+
+/* 倒计时标签 · 距封盘 / 距开奖 */
+.jsb-timer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-width: 88px;
+}
+.jsb-timer__lbl {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: rgba(212, 175, 55, 0.78);
+  line-height: 1;
+  font-family: 'Noto Serif SC', 'Songti SC', serif;
+}
+.jsb-timer.is-preparing .jsb-timer__lbl {
+  color: #ffb4a8;
+}
+.jsb-timer.is-preparing .jsb-timer__cell {
+  border-color: rgba(255, 140, 120, 0.55);
+  color: #ffd0c4;
+}
+.jsb-timer.is-preparing .jsb-timer__sep {
+  color: rgba(255, 176, 160, 0.85);
 }

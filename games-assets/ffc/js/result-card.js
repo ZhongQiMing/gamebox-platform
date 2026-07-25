@@ -34,6 +34,12 @@
     return niuLabel(niuValue(nums));
   }
 
+  function dragonTigerOf(nums) {
+    const wan = nums[0];
+    const ge = nums[4];
+    return wan > ge ? '龙' : wan < ge ? '虎' : '和';
+  }
+
   const POS_LABELS = ['万', '千', '百', '十', '个'];
 
   function buildResultCardHtml(nums, issue) {
@@ -54,7 +60,7 @@
       `<span class="ffc-bot-result__chip ffc-bot-chip-pop" style="--pop-delay:${delay}s">` +
       `<span class="ffc-bot-result__chip-k">${label}</span>` +
       `<span class="ffc-bot-result__chip-v">${val}</span></span>`;
-    return `<div class="ffc-bot-card ffc-bot-card--result is-reveal">
+    return `<div class="ffc-bot-card ffc-bot-card--result is-reveal" data-nums="${nums.join(',')}">
       <div class="ffc-bot-card__head"><span class="ffc-bot-card__title">开奖结果</span><span class="ffc-bot-card__issue">${issue}</span></div>
       <div class="ffc-bot-result__body">
         <div class="ffc-bot-result__glow" aria-hidden="true"></div>
@@ -62,14 +68,26 @@
         <div class="ffc-bot-result__meta">
           ${chip('和值', meta.sum, chipBase.toFixed(2))}
           ${chip('双面', sideVal, (chipBase + 0.14).toFixed(2))}
-          ${chip('斗牛', lhRow(nums), (chipBase + 0.28).toFixed(2))}
+          ${chip('龙虎', dragonTigerOf(nums), (chipBase + 0.28).toFixed(2))}
+          ${chip('斗牛', lhRow(nums), (chipBase + 0.42).toFixed(2))}
         </div>
       </div>
     </div>`;
   }
 
-  function randomDraw() {
-    return Array.from({ length: 5 }, () => Math.floor(Math.random() * 10));
+  /** 立刻落定球号（进房恢复历史卡用，不做滚号） */
+  function settle(root, nums) {
+    if (!root || !nums || nums.length !== 5) return;
+    root.setAttribute('data-nums', nums.join(','));
+    const rolls = root.querySelectorAll('.ffc-bot-result__ball-roll');
+    rolls.forEach((roll, i) => {
+      const numEl = roll.querySelector('.ffc-bot-result__ball-num');
+      if (!numEl) return;
+      numEl.textContent = nums[i];
+      roll.classList.remove('is-rolling');
+      roll.classList.add('is-settled');
+    });
+    root.classList.add('is-settled');
   }
 
   function parseNums(text) {
@@ -83,12 +101,25 @@
     return nums;
   }
 
-  function bindReveal(root, nums) {
-    if (!root || !nums || nums.length !== 5) return;
+  function bindReveal(root, nums, onDone) {
+    if (!root || !nums || nums.length !== 5) {
+      if (typeof onDone === 'function') onDone();
+      return;
+    }
+    root.setAttribute('data-nums', nums.join(','));
     const rolls = root.querySelectorAll('.ffc-bot-result__ball-roll');
+    let left = rolls.length;
+    if (!left) {
+      if (typeof onDone === 'function') onDone();
+      return;
+    }
     rolls.forEach((roll, i) => {
       const numEl = roll.querySelector('.ffc-bot-result__ball-num');
-      if (!numEl) return;
+      if (!numEl) {
+        left -= 1;
+        if (left <= 0 && typeof onDone === 'function') onDone();
+        return;
+      }
       const target = nums[i];
       const startDelay = i * 180;
       const spinMs = 480 + i * 70;
@@ -104,6 +135,11 @@
             numEl.textContent = target;
             roll.classList.remove('is-rolling');
             roll.classList.add('is-settled');
+            left -= 1;
+            if (left <= 0) {
+              root.classList.add('is-settled');
+              if (typeof onDone === 'function') onDone();
+            }
           }
         }
         requestAnimationFrame(frame);
@@ -114,7 +150,7 @@
   global.FfcResultCard = {
     build: buildResultCardHtml,
     bindReveal,
-    randomDraw,
+    settle,
     parseNums,
     gyMeta,
     lhRow

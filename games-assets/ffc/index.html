@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>1分时时彩</title>
+  <title>1鍒嗘椂鏃跺僵</title>
   <link rel="stylesheet" href="/legacy/css/common.css">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@500;600;700&display=swap">
-  <link rel="stylesheet" href="./css/ffc.css?v=3">
+  <link rel="stylesheet" href="./css/ffc.css?v=12">
   <script>
-    /* 大厅 iframe 嵌入时标记，布局用 100% 跟随容器而非外层 100dvh */
+    /* 澶у巺 iframe 宓屽叆鏃舵爣璁帮紝甯冨眬鐢?100% 璺熼殢瀹瑰櫒鑰岄潪澶栧眰 100dvh */
     (function () {
       if (window.parent !== window) {
         document.documentElement.classList.add('ffc-in-iframe');
@@ -20,29 +20,31 @@
 
 <div class="ffc-room">
   <div class="ffc-room-glow" aria-hidden="true"></div>
-  <!-- 顶：返回+标题 | 统计 2×2 -->
+  <!-- 椤讹細杩斿洖+鏍囬 | 缁熻 2脳2 -->
   <header class="ffc-head">
     <div class="ffc-head__brand">
-      <button type="button" class="ffc-head-back" id="backBtn" aria-label="返回"></button>
-      <h1 class="ffc-head-title">1分时时彩</h1>
+      <button type="button" class="ffc-head-back" id="backBtn" aria-label="杩斿洖"></button>
+      <h1 class="ffc-head-title">1鍒嗘椂鏃跺僵</h1>
     </div>
     <div class="ffc-stats" id="statsBar">
-      <div class="ffc-stat"><span class="k">积分</span><span class="v" id="statBalance">0</span></div>
-      <div class="ffc-stat"><span class="k">输赢</span><span class="v" id="statWinloss">0</span></div>
-      <div class="ffc-stat"><span class="k">流水</span><span class="v" id="statTurnover">0</span></div>
-      <div class="ffc-stat"><span class="k">回水</span><span class="v" id="statRebate">0</span></div>
+      <div class="ffc-stat"><span class="k">绉垎</span><span class="v" id="statBalance">0</span></div>
+      <div class="ffc-stat"><span class="k">杈撹耽</span><span class="v" id="statWinloss">0</span></div>
+      <div class="ffc-stat"><span class="k">娴佹按</span><span class="v" id="statTurnover">0</span></div>
+      <div class="ffc-stat"><span class="k">鍥炴按</span><span class="v" id="statRebate">0</span></div>
     </div>
   </header>
 
-  <!-- 期号行：一行 · 期号 + 倒计时 + 按钮 -->
+  <!-- 鏈熷彿琛岋細涓€琛?路 鏈熷彿 + 鍊掕鏃?+ 鎸夐挳 -->
   <section class="ffc-issue-card">
     <div class="ffc-issue-card__top">
       <div class="ffc-issue-card__left">
+        <em class="ffc-cur-issue__tag">褰撳墠鏈?/em>
         <span class="ffc-cur-issue" id="curIssue" title="">--------</span>
       </div>
       <div class="ffc-issue-card__mid">
         <div class="ffc-timer" id="countdownBox">
-          <div class="ffc-timer__digits" id="cdDigits" aria-label="倒计时">
+          <span class="ffc-timer__lbl" id="cdLabel">璺濆皝鐩?/span>
+          <div class="ffc-timer__digits" id="cdDigits" aria-label="鍊掕鏃?>
             <div class="ffc-timer__group">
               <span class="ffc-timer__cell">0</span>
               <span class="ffc-timer__cell">0</span>
@@ -53,24 +55,25 @@
               <span class="ffc-timer__cell">0</span>
             </div>
           </div>
-          <span class="ffc-timer__prep" id="cdPrep" hidden>准备中</span>
         </div>
       </div>
       <div class="ffc-issue-card__acts">
-        <button type="button" class="ffc-issue-btn" id="btnSlip">注单</button>
-        <button type="button" class="ffc-issue-btn" id="btnLong">长龙</button>
-        <button type="button" class="ffc-issue-btn" id="btnPredict">预测</button>
+      <button type="button" class="ffc-issue-btn" id="btnLong">闀块緳</button>
+        <button type="button" class="ffc-issue-btn" id="btnPredict">棰勬祴</button>
       </div>
     </div>
   </section>
 
-  <!-- 开奖下拉栏 -->
+  <!-- 寮€濂栦笅鎷夋爮 -->
   <section class="ffc-draw-bar" id="drawBar">
     <button type="button" class="ffc-draw-bar__main" id="drawToggle" aria-expanded="false">
-      <span class="ffc-draw-bar__issue" id="barIssue">--------</span>
+      <span class="ffc-draw-bar__issue-wrap">
+        <em class="ffc-draw-bar__issue-tag">涓婃湡</em>
+        <span class="ffc-draw-bar__issue" id="barIssue">--------</span>
+      </span>
       <span class="ffc-draw-bar__balls" id="barBalls"></span>
       <span class="ffc-draw-bar__meta" id="barSummary">---</span>
-      <span class="ffc-draw-bar__arrow" id="drawArrow">▼</span>
+      <span class="ffc-draw-bar__arrow" id="drawArrow">鈻?/span>
     </button>
     <div class="ffc-draw-panel" id="drawPanel">
       <div class="ffc-draw-table-wrap">
@@ -79,14 +82,16 @@
             <col class="col-issue">
             <col class="col-ball" span="5">
             <col class="col-gy">
+            <col class="col-dt">
             <col class="col-lh">
           </colgroup>
           <thead>
             <tr>
-              <th>期数</th>
-              <th>万</th><th>千</th><th>百</th><th>十</th><th>个</th>
-              <th>和值</th>
-              <th>斗牛</th>
+              <th>鏈熸暟</th>
+              <th>涓?/th><th>鍗?/th><th>鐧?/th><th>鍗?/th><th>涓?/th>
+              <th>鍜屽€?/th>
+              <th>榫欒檸</th>
+              <th>鏂楃墰</th>
             </tr>
           </thead>
           <tbody id="drawTableBody"></tbody>
@@ -95,74 +100,72 @@
     </div>
   </section>
 
-  <!-- 聊天主栏：全房间下注信息 -->
+  <!-- 鑱婂ぉ涓绘爮锛氬叏鎴块棿涓嬫敞淇℃伅 -->
   <main class="ffc-chat" id="chatFeed" role="log" aria-live="polite"></main>
 
-    <!-- 右侧浮钮：客服 / 规则 / 记录 / 玩法 -->
-  <aside class="ffc-rail" aria-label="快捷操作">
-    <button type="button" class="ffc-rail-btn" id="btnCs" title="客服">
+    <!-- 鍙充晶娴挳锛氬鏈?/ 瑙勫垯 / 璁板綍 / 鐜╂硶 -->
+  <aside class="ffc-rail" aria-label="蹇嵎鎿嶄綔">
+    <button type="button" class="ffc-rail-btn" id="btnCs" title="瀹㈡湇">
       <img class="ffc-rail-ic" src="/images/chat-rail/cs.png?v=1" alt="" draggable="false">
-      <span class="ffc-rail-lb">客服</span>
+      <span class="ffc-rail-lb">瀹㈡湇</span>
     </button>
-    <button type="button" class="ffc-rail-btn" id="btnRules" title="规则">
+    <button type="button" class="ffc-rail-btn" id="btnRules" title="瑙勫垯">
       <img class="ffc-rail-ic" src="/images/chat-rail/rules.png?v=1" alt="" draggable="false">
-      <span class="ffc-rail-lb">规则</span>
+      <span class="ffc-rail-lb">瑙勫垯</span>
     </button>
-    <button type="button" class="ffc-rail-btn" id="btnRecords" title="记录">
+    <button type="button" class="ffc-rail-btn" id="btnRecords" title="璁板綍">
       <img class="ffc-rail-ic" src="/images/chat-rail/records.png?v=1" alt="" draggable="false">
-      <span class="ffc-rail-lb">记录</span>
+      <span class="ffc-rail-lb">璁板綍</span>
     </button>
-    <button type="button" class="ffc-rail-btn ffc-rail-btn--play" id="btnExpand" title="玩法">
+    <button type="button" class="ffc-rail-btn ffc-rail-btn--play" id="btnExpand" title="鐜╂硶">
       <img class="ffc-rail-ic ffc-rail-ic--play" src="/images/chat-rail/play.png?v=1" alt="" draggable="false">
-      <span class="ffc-rail-lb">玩法</span>
+      <span class="ffc-rail-lb">鐜╂硶</span>
     </button>
   </aside>
 
-    <!-- 底部输入：输入框 + / 玩法 -->
+    <!-- 搴曢儴杈撳叆锛氳緭鍏ユ + / 鐜╂硶 -->
   <footer class="ffc-composer">
-    <input type="text" class="ffc-input" id="chatInput" placeholder="玩法/金额，如 十百59/100、万单/梭哈" autocomplete="off" enterkeyhint="send">
-    <button type="button" class="ffc-composer-btn" id="plusBtn" aria-label="更多">
+    <input type="text" class="ffc-input" id="chatInput" placeholder="渚嬶細澶?100銆佷竾鍗?50銆佸崄鐧?9/100" autocomplete="off" enterkeyhint="send">
+    <button type="button" class="ffc-composer-btn" id="plusBtn" aria-label="鏇村">
       <img class="ffc-composer-btn__img" id="plusBtnImg" src="/images/chat-rail/plus.png?v=1" alt="" draggable="false">
     </button>
-    <button type="button" class="ffc-composer-btn ffc-composer-btn--play" id="btnComposerPlay" title="玩法" aria-label="玩法">
+    <button type="button" class="ffc-composer-btn ffc-composer-btn--play" id="btnComposerPlay" title="鐜╂硶" aria-label="鐜╂硶">
       <img class="ffc-composer-btn__img ffc-composer-btn__img--play" src="/images/chat-rail/play.png?v=1" alt="" draggable="false">
     </button>
   </footer>
 
-  <!-- 投注键盘 -->
+  <!-- 鎶曟敞閿洏 -->
   <div class="ffc-keypad" id="keypad" hidden>
     <div class="ffc-keypad__tools">
-      <button type="button" data-cmd="topup">上分</button>
-      <button type="button" data-cmd="cancel">取消</button>
-      <button type="button" data-cmd="allin">梭哈</button>
-      <button type="button" data-cmd="repeat">重复</button>
-      <button type="button" data-cmd="withdraw">下分</button>
+      <button type="button" data-cmd="topup">涓婂垎</button>
+      <button type="button" data-cmd="cancel">鍙栨秷</button>
+      <button type="button" data-cmd="allin">姊搱</button>
+      <button type="button" data-cmd="repeat">閲嶅</button>
+      <button type="button" data-cmd="withdraw">涓嬪垎</button>
     </div>
     <div class="ffc-keypad__grid" id="keyGrid"></div>
   </div>
 
-  <!-- + 菜单：2 行 × 4 列 = 8 项 -->
+    <!-- + 鑿滃崟锛?脳3 蹇嵎鍏ュ彛 -->
   <div class="ffc-menu-mask" id="menuMask" hidden></div>
   <div class="ffc-plus-menu" id="plusMenu" hidden>
-    <button type="button" data-link="recharge">存款</button>
-    <button type="button" data-link="withdraw">取款</button>
-    <button type="button" data-link="apply-records">申请记录</button>
-    <button type="button" data-link="welfare">自助回水</button>
-    <button type="button" data-link="bet-records">竞猜报表</button>
-    <button type="button" data-link="flow">回水报表</button>
-    <button type="button" data-link="redpack">红包报表</button>
-    <button type="button" data-link="points-log">积分账变</button>
+    <button type="button" data-link="recharge">涓婁笅鍒?/button>
+    <button type="button" data-link="apply-records">鐢宠璁板綍</button>
+    <button type="button" data-link="bet-records">绔炵寽鎶ヨ〃</button>
+    <button type="button" data-link="rebate">鑷姪鍥炴按</button>
+    <button type="button" data-link="activities">绂忓埄娲诲姩</button>
+    <button type="button" data-link="settings">鎴戠殑璐︽埛</button>
   </div>
 
-  <!-- 玩法展开：左玩法名 · 右选项 · 底金额投注 -->
+  <!-- 鐜╂硶灞曞紑锛氬乏鐜╂硶鍚?路 鍙抽€夐」 路 搴曢噾棰濇姇娉?-->
   <div class="ffc-play-mask" id="playMask" hidden></div>
   <div class="ffc-play-sheet" id="playSheet" hidden>
     <div class="ffc-play-sheet__head">
-      <span>全部玩法</span>
-      <button type="button" id="playSheetClose">×</button>
+      <span>鍏ㄩ儴鐜╂硶</span>
+      <button type="button" id="playSheetClose">脳</button>
     </div>
     <div class="ffc-play-sheet__main">
-      <nav class="ffc-play-nav" id="playNav" aria-label="玩法分类"></nav>
+      <nav class="ffc-play-nav" id="playNav" aria-label="鐜╂硶鍒嗙被"></nav>
       <div class="ffc-play-panel">
         <p class="ffc-play-panel__hint" id="playHint"></p>
         <div class="ffc-play-panel__sub" id="playSub" hidden></div>
@@ -170,71 +173,79 @@
       </div>
     </div>
     <footer class="ffc-play-sheet__foot">
-      <div class="ffc-play-foot__sel">已选 <strong id="playSelected">—</strong> <span class="ffc-play-foot__hint">（可多选）</span></div>
+      <div class="ffc-play-foot__sel">
+        <div class="ffc-play-foot__sel-main">宸查€?<strong id="playSelected">鈥?/strong> <span class="ffc-play-foot__hint">锛堝彲澶氶€夛級</span></div>
+        <button type="button" class="ffc-play-foot__clear" id="playClear">娓呯┖</button>
+      </div>
+      <div class="ffc-play-foot__meta">
+        <span class="ffc-play-foot__bal">浣欓 <strong id="playFootBalance">0</strong></span>
+      </div>
       <div class="ffc-play-foot__chips" id="playAmountChips"></div>
       <div class="ffc-play-foot__row">
-        <button type="button" class="ffc-play-foot__step" id="playAmountMinus" aria-label="减少">−</button>
+        <button type="button" class="ffc-play-foot__step" id="playAmountMinus" aria-label="鍑忓皯">鈭?/button>
         <input type="number" class="ffc-play-foot__input" id="playAmount" value="100" min="1" inputmode="numeric">
-        <button type="button" class="ffc-play-foot__step" id="playAmountPlus" aria-label="增加">+</button>
-        <button type="button" class="ffc-play-foot__submit" id="playSubmit">投注</button>
+        <button type="button" class="ffc-play-foot__step" id="playAmountPlus" aria-label="澧炲姞">+</button>
+        <button type="button" class="ffc-play-foot__repeat" id="playRepeat">閲嶅</button>
+        <button type="button" class="ffc-play-foot__submit" id="playSubmit">鎶曟敞</button>
       </div>
     </footer>
   </div>
 
   
-  <!-- 游戏规则 -->
+  <!-- 娓告垙瑙勫垯 -->
   <div class="ffc-rules-mask" id="rulesMask" hidden></div>
   <div class="ffc-rules-sheet" id="rulesSheet" hidden>
     <div class="ffc-rules-sheet__head">
-      <span>游戏规则</span>
-      <button type="button" id="rulesSheetClose" aria-label="关闭">×</button>
+      <span>娓告垙瑙勫垯</span>
+      <button type="button" id="rulesSheetClose" aria-label="鍏抽棴">脳</button>
     </div>
     <div class="ffc-rules-sheet__body" id="rulesBody"></div>
   </div>
 
-<!-- 长龙统计 -->
+<!-- 闀块緳缁熻 -->
   <div class="ffc-long-mask" id="longMask" hidden></div>
   <div class="ffc-long-sheet" id="longSheet" hidden>
     <div class="ffc-long-sheet__handle" aria-hidden="true"></div>
     <div class="ffc-long-sheet__head">
       <div class="ffc-long-sheet__title-wrap">
-        <span class="ffc-long-sheet__title">长龙统计</span>
-        <span class="ffc-long-sheet__sub" id="longSummary">连续 2 期及以上</span>
+        <span class="ffc-long-sheet__title">闀块緳缁熻</span>
+        <span class="ffc-long-sheet__sub" id="longSummary">杩炵画 2 鏈熷強浠ヤ笂</span>
       </div>
-      <button type="button" id="longSheetClose" aria-label="关闭">×</button>
+      <button type="button" id="longSheetClose" aria-label="鍏抽棴">脳</button>
     </div>
     <div class="ffc-long-sheet__tabs" id="longTabs">
-      <button type="button" class="is-active" data-tab="side">两面</button>
-      <button type="button" data-tab="lhh">龙虎</button>
-      <button type="button" data-tab="niu">斗牛</button>
+      <button type="button" class="is-active" data-tab="side">涓ら潰</button>
+      <button type="button" data-tab="lhh">榫欒檸</button>
+      <button type="button" data-tab="niu">鏂楃墰</button>
     </div>
     <div class="ffc-long-sheet__body" id="longBody"></div>
   </div>
 
-  <!-- 智能预测 -->
+  <!-- 鏅鸿兘棰勬祴 -->
   <div class="ffc-long-mask" id="predictMask" hidden></div>
   <div class="ffc-long-sheet ffc-predict-sheet" id="predictSheet" hidden>
     <div class="ffc-long-sheet__handle" aria-hidden="true"></div>
     <div class="ffc-long-sheet__head">
       <div class="ffc-long-sheet__title-wrap">
-        <span class="ffc-long-sheet__title">智能预测</span>
-        <span class="ffc-predict-sheet__issue" id="predictSummary">下一期 · --------</span>
+        <span class="ffc-long-sheet__title">鏅鸿兘棰勬祴</span>
+        <span class="ffc-predict-sheet__issue" id="predictSummary">涓嬩竴鏈?路 --------</span>
       </div>
-      <button type="button" id="predictSheetClose" aria-label="关闭">×</button>
+      <button type="button" id="predictSheetClose" aria-label="鍏抽棴">脳</button>
     </div>
     <div class="ffc-long-sheet__tabs" id="predictTabs">
-      <button type="button" class="is-active" data-tab="side">双面</button>
-      <button type="button" data-tab="digit">号码</button>
-      <button type="button" data-tab="shape">形态</button>
+      <button type="button" class="is-active" data-tab="side">鍙岄潰</button>
+      <button type="button" data-tab="digit">鍙风爜</button>
+      <button type="button" data-tab="shape">褰㈡€?/button>
     </div>
     <div class="ffc-long-sheet__body" id="predictBody"></div>
-    <div class="ffc-predict-foot">基于近期开奖走势统计，仅供参考</div>
+    <div class="ffc-predict-foot">鍩轰簬杩戞湡寮€濂栬蛋鍔跨粺璁★紝浠呬緵鍙傝€?/div>
   </div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
-<script src="/legacy/js/games-common.js"></script>
-<script src="./js/result-card.js?v=5"></script>
-<script src="./js/ffc.js?v=10"></script>
+<script src="/legacy/js/games-common.js?v=25"></script>
+<script src="/games-assets/_lottery-common/room-chat.js?v=1"></script>
+<script src="./js/result-card.js?v=9"></script>
+<script src="./js/ffc.js?v=73"></script>
 </body>
 </html>

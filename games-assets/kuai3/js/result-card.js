@@ -639,7 +639,7 @@
     }
   }
 
-  function startRoll(card, finalNums, issue, meta, shape, durationMs) {
+  function startRoll(card, finalNums, issue, meta, shape, durationMs, onDone) {
     if (!card) return;
     cancelRoll(card);
     card.classList.add('is-rolling');
@@ -656,6 +656,7 @@
       if (finished) return;
       finished = true;
       settle(card, finalNums, issue, meta, shape, true);
+      if (typeof onDone === 'function') onDone();
     }
     card._rollDone = done;
 

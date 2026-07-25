@@ -2,63 +2,78 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@500;600;700&display=swap">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>??????/title>
+  <title>骞歌繍鍏悎褰?/title>
   <link rel="stylesheet" href="/legacy/css/common.css">
-  <link rel="stylesheet" href="./css/lhc.css?v=25">
+  <link rel="stylesheet" href="./css/lhc.css?v=37">
+  <script>
+    /* 澶у巺 iframe 宓屽叆鏃舵爣璁帮紝甯冨眬鐢?100% 璺熼殢瀹瑰櫒鑰岄潪澶栧眰 100dvh */
+    (function () {
+      if (window.parent !== window) {
+        document.documentElement.classList.add('lhc-in-iframe');
+      }
+    })();
+  </script>
 </head>
 <body class="lhc-body lhc-bg">
 
 <div class="lhc-room">
   <div class="lhc-room-glow" aria-hidden="true"></div>
-  <!-- ????+?? | ?? 2?2 -->
+  <!-- 椤讹細杩斿洖+鏍囬 | 缁熻 2脳2 -->
   <header class="lhc-head">
     <div class="lhc-head__brand">
-      <button type="button" class="lhc-head-back" id="backBtn" aria-label="??"></button>
-      <h1 class="lhc-head-title">??????????/h1>
+      <button type="button" class="lhc-head-back" id="backBtn" aria-label="杩斿洖"></button>
+      <h1 class="lhc-head-title">骞歌繍鍏悎褰?/h1>
     </div>
     <div class="lhc-stats" id="statsBar">
-      <div class="lhc-stat"><span class="k">??</span><span class="v" id="statBalance">0</span></div>
-      <div class="lhc-stat"><span class="k">??</span><span class="v" id="statWinloss">0</span></div>
-      <div class="lhc-stat"><span class="k">??</span><span class="v" id="statTurnover">0</span></div>
-      <div class="lhc-stat"><span class="k">??</span><span class="v" id="statRebate">0</span></div>
+      <div class="lhc-stat"><span class="k">绉垎</span><span class="v" id="statBalance">0</span></div>
+      <div class="lhc-stat"><span class="k">杈撹耽</span><span class="v" id="statWinloss">0</span></div>
+      <div class="lhc-stat"><span class="k">娴佹按</span><span class="v" id="statTurnover">0</span></div>
+      <div class="lhc-stat"><span class="k">鍥炴按</span><span class="v" id="statRebate">0</span></div>
     </div>
   </header>
 
-  <!-- ???????? ? ????? ????-->
+  <!-- 鏈熷彿鍗＄墖锛氬乏鏈熸暟 路 涓琛?路 鍙虫寜閽?-->
   <section class="lhc-issue-card">
     <div class="lhc-issue-card__left">
-      <span class="lbl">??</span>
-      <span class="val" id="curIssue">00000000</span>
+      <em class="lhc-cur-issue__tag">褰撳墠鏈?/em>
+      <span class="val lhc-cur-issue" id="curIssue">00000000</span>
     </div>
 
     <div class="lhc-issue-card__mid">
-      <div class="lhc-timer" id="countdownBox">
-        <svg class="lhc-timer__ring" viewBox="0 0 100 40" preserveAspectRatio="none" aria-hidden="true">
-          <rect class="lhc-timer__ring-track" x="1.5" y="1.5" width="97" height="37" rx="5" ry="5" pathLength="1" />
-          <rect class="lhc-timer__ring-fill" x="1.5" y="1.5" width="97" height="37" rx="5" ry="5" pathLength="1" />
-        </svg>
-        <div class="lhc-timer__row">
-          <span class="lhc-timer__lbl" id="cdLabel">????/span>
-          <span class="lhc-timer__time" id="cdTime">--:--</span>
+      <div class="lhc-timer" id="countdownBox" aria-label="璺濆皝鐩樺€掕鏃?>
+          <span class="lhc-timer__lbl" id="cdLabel">璺濆皝鐩?/span>
+        <div class="lhc-timer__digits" id="cdDigits">
+          <div class="lhc-timer__group">
+            <span class="lhc-timer__cell">0</span>
+            <span class="lhc-timer__cell">0</span>
+          </div>
+          <span class="lhc-timer__sep" aria-hidden="true">:</span>
+          <div class="lhc-timer__group">
+            <span class="lhc-timer__cell">0</span>
+            <span class="lhc-timer__cell">0</span>
+          </div>
         </div>
       </div>
     </div>
 
     <div class="lhc-issue-card__acts">
-      <button type="button" class="lhc-issue-btn" id="btnSlip">??</button>
-      <button type="button" class="lhc-issue-btn" id="btnLong">??</button>
-      <button type="button" class="lhc-issue-btn" id="btnPredict">??</button>
+      <button type="button" class="lhc-issue-btn" id="btnLong">闀块緳</button>
+      <button type="button" class="lhc-issue-btn" id="btnPredict">棰勬祴</button>
     </div>
   </section>
 
-  <!-- ????? -->
+  <!-- 寮€濂栦笅鎷夋爮 -->
   <section class="lhc-draw-bar" id="drawBar">
     <button type="button" class="lhc-draw-bar__main" id="drawToggle" aria-expanded="false">
-      <span class="lhc-draw-bar__issue" id="barIssue">00000000</span>
+      <span class="lhc-draw-bar__issue-wrap">
+        <em class="lhc-draw-bar__issue-tag">涓婃湡</em>
+        <span class="lhc-draw-bar__issue" id="barIssue">00000000</span>
+      </span>
       <span class="lhc-draw-bar__balls" id="barBalls"></span>
-      <span class="lhc-draw-bar__gy" id="barGy">?? ??/span>
-      <span class="lhc-draw-bar__arrow" id="drawArrow">??/span>
+      <span class="lhc-draw-bar__gy" id="barGy">鐗圭爜 鈥?/span>
+      <span class="lhc-draw-bar__arrow" id="drawArrow">鈻?/span>
     </button>
     <div class="lhc-draw-panel" id="drawPanel">
       <div class="lhc-draw-table-wrap">
@@ -66,16 +81,15 @@
           <colgroup>
             <col class="col-issue">
             <col class="col-ball" span="7">
-            <col class="col-meta" span="3">
+            <col class="col-meta" span="2">
           </colgroup>
           <thead>
             <tr>
-              <th>??</th>
-              <th>??</th><th>??</th><th>??</th><th>??</th><th>??</th><th>??</th>
-              <th>??/th>
-              <th>??</th>
-              <th>??</th>
-              <th>??</th>
+              <th>鏈熸暟</th>
+              <th>姝?</th><th>姝?</th><th>姝?</th><th>姝?</th><th>姝?</th><th>姝?</th>
+              <th>鐗?/th>
+              <th>鎬诲拰</th>
+              <th>涓ら潰</th>
             </tr>
           </thead>
           <tbody id="drawTableBody"></tbody>
@@ -84,74 +98,72 @@
     </div>
   </section>
 
-  <!-- ???????????? -->
+  <!-- 鑱婂ぉ鍖?-->
   <main class="lhc-chat" id="chatFeed" role="log" aria-live="polite"></main>
 
-    <!-- ????????/ ?? / ?? / ?? -->
-  <aside class="lhc-rail" aria-label="????">
-    <button type="button" class="lhc-rail-btn" id="btnCs" title="??">
+  <!-- 鍙充晶娴挳锛氬鏈?/ 瑙勫垯 / 璁板綍 / 鐜╂硶 -->
+  <aside class="lhc-rail" aria-label="蹇嵎鎿嶄綔">
+    <button type="button" class="lhc-rail-btn" id="btnCs" title="瀹㈡湇">
       <img class="lhc-rail-ic" src="/images/chat-rail/cs.png?v=1" alt="" draggable="false">
-      <span class="lhc-rail-lb">??</span>
+      <span class="lhc-rail-lb">瀹㈡湇</span>
     </button>
-    <button type="button" class="lhc-rail-btn" id="btnRules" title="??">
+    <button type="button" class="lhc-rail-btn" id="btnRules" title="瑙勫垯">
       <img class="lhc-rail-ic" src="/images/chat-rail/rules.png?v=1" alt="" draggable="false">
-      <span class="lhc-rail-lb">??</span>
+      <span class="lhc-rail-lb">瑙勫垯</span>
     </button>
-    <button type="button" class="lhc-rail-btn" id="btnRecords" title="??">
+    <button type="button" class="lhc-rail-btn" id="btnRecords" title="璁板綍">
       <img class="lhc-rail-ic" src="/images/chat-rail/records.png?v=1" alt="" draggable="false">
-      <span class="lhc-rail-lb">??</span>
+      <span class="lhc-rail-lb">璁板綍</span>
     </button>
-    <button type="button" class="lhc-rail-btn lhc-rail-btn--play" id="btnExpand" title="??">
+    <button type="button" class="lhc-rail-btn lhc-rail-btn--play" id="btnExpand" title="鐜╂硶">
       <img class="lhc-rail-ic lhc-rail-ic--play" src="/images/chat-rail/play.png?v=1" alt="" draggable="false">
-      <span class="lhc-rail-lb">??</span>
+      <span class="lhc-rail-lb">鐜╂硶</span>
     </button>
   </aside>
 
-    <!-- ???????? + / ?? -->
+  <!-- 搴曢儴杈撳叆锛氳緭鍏ユ + 鏇村 / 鐜╂硶 -->
   <footer class="lhc-composer">
-    <input type="text" class="lhc-input" id="chatInput" placeholder="请输入竞猜内容" autocomplete="off" enterkeyhint="send">
-    <button type="button" class="lhc-composer-btn" id="plusBtn" aria-label="??">
+    <input type="text" class="lhc-input" id="chatInput" placeholder="渚嬶細鐗圭爜08/100 鎴?鐗圭爜澶?50" autocomplete="off" enterkeyhint="send">
+    <button type="button" class="lhc-composer-btn" id="plusBtn" aria-label="鏇村">
       <img class="lhc-composer-btn__img" id="plusBtnImg" src="/images/chat-rail/plus.png?v=1" alt="" draggable="false">
     </button>
-    <button type="button" class="lhc-composer-btn lhc-composer-btn--play" id="btnComposerPlay" title="??" aria-label="??">
+    <button type="button" class="lhc-composer-btn lhc-composer-btn--play" id="btnComposerPlay" title="鐜╂硶" aria-label="鐜╂硶">
       <img class="lhc-composer-btn__img lhc-composer-btn__img--play" src="/images/chat-rail/play.png?v=1" alt="" draggable="false">
     </button>
   </footer>
 
-  <!-- ???? -->
+  <!-- 鎶曟敞閿洏 -->
   <div class="lhc-keypad" id="keypad" hidden>
     <div class="lhc-keypad__tools">
-      <button type="button" data-cmd="topup">??</button>
-      <button type="button" data-cmd="cancel">??</button>
-      <button type="button" data-cmd="allin">??</button>
-      <button type="button" data-cmd="repeat">??</button>
-      <button type="button" data-cmd="withdraw">??</button>
+      <button type="button" data-cmd="topup">涓婂垎</button>
+      <button type="button" data-cmd="cancel">鍙栨秷</button>
+      <button type="button" data-cmd="allin">姊搱</button>
+      <button type="button" data-cmd="repeat">閲嶅</button>
+      <button type="button" data-cmd="withdraw">涓嬪垎</button>
     </div>
     <div class="lhc-keypad__grid" id="keyGrid"></div>
   </div>
 
-  <!-- + ???? ??? 4 ??= 8 ??-->
+    <!-- + 鑿滃崟锛?脳3 蹇嵎鍏ュ彛 -->
   <div class="lhc-menu-mask" id="menuMask" hidden></div>
   <div class="lhc-plus-menu" id="plusMenu" hidden>
-    <button type="button" data-link="recharge">??</button>
-    <button type="button" data-link="withdraw">??</button>
-    <button type="button" data-link="apply-records">????</button>
-    <button type="button" data-link="welfare">????</button>
-    <button type="button" data-link="bet-records">????</button>
-    <button type="button" data-link="flow">????</button>
-    <button type="button" data-link="redpack">????</button>
-    <button type="button" data-link="points-log">????</button>
+    <button type="button" data-link="recharge">涓婁笅鍒?/button>
+    <button type="button" data-link="apply-records">鐢宠璁板綍</button>
+    <button type="button" data-link="bet-records">绔炵寽鎶ヨ〃</button>
+    <button type="button" data-link="rebate">鑷姪鍥炴按</button>
+    <button type="button" data-link="activities">绂忓埄娲诲姩</button>
+    <button type="button" data-link="settings">鎴戠殑璐︽埛</button>
   </div>
 
-  <!-- ???????? ? ??? -->
+  <!-- 鐜╂硶灞曞紑锛氬乏鐜╂硶鍚?路 鍙抽€夐」 路 搴曢噾棰濇姇娉?-->
   <div class="lhc-play-mask" id="playMask" hidden></div>
   <div class="lhc-play-sheet" id="playSheet" hidden>
     <div class="lhc-play-sheet__head">
-      <span>????</span>
-      <button type="button" id="playSheetClose">?</button>
+      <span>鍏ㄩ儴鐜╂硶</span>
+      <button type="button" id="playSheetClose">脳</button>
     </div>
     <div class="lhc-play-sheet__main">
-      <nav class="lhc-play-nav" id="playNav" aria-label="????"></nav>
+      <nav class="lhc-play-nav" id="playNav" aria-label="鐜╂硶鍒嗙被"></nav>
       <div class="lhc-play-panel">
         <p class="lhc-play-panel__hint" id="playHint"></p>
         <div class="lhc-play-panel__sub" id="playSub" hidden></div>
@@ -160,35 +172,78 @@
     </div>
     <footer class="lhc-play-sheet__foot">
       <div class="lhc-play-foot__sel">
-        <div class="lhc-play-foot__sel-main">???<strong id="playSelected">??/strong> <span class="lhc-play-foot__hint">?????</span></div>
-        <button type="button" class="lhc-play-foot__clear" id="playClear">??</button>
+        <div class="lhc-play-foot__sel-main">宸查€?<strong id="playSelected">鈥?/strong> <span class="lhc-play-foot__hint">锛堝彲澶氶€夛級</span></div>
+        <button type="button" class="lhc-play-foot__clear" id="playClear">娓呯┖</button>
+      </div>
+      <div class="lhc-play-foot__meta">
+        <span class="lhc-play-foot__bal">浣欓 <strong id="playFootBalance">0</strong></span>
       </div>
       <div class="lhc-play-foot__chips" id="playAmountChips"></div>
       <div class="lhc-play-foot__row">
-        <button type="button" class="lhc-play-foot__step" id="playAmountMinus" aria-label="??">??/button>
+        <button type="button" class="lhc-play-foot__step" id="playAmountMinus" aria-label="鍑忓皯">鈭?/button>
         <input type="number" class="lhc-play-foot__input" id="playAmount" value="100" min="1" inputmode="numeric">
-        <button type="button" class="lhc-play-foot__step" id="playAmountPlus" aria-label="??">+</button>
-        <button type="button" class="lhc-play-foot__repeat" id="playRepeat">??</button>
-        <button type="button" class="lhc-play-foot__submit" id="playSubmit">??</button>
+        <button type="button" class="lhc-play-foot__step" id="playAmountPlus" aria-label="澧炲姞">+</button>
+        <button type="button" class="lhc-play-foot__repeat" id="playRepeat">閲嶅</button>
+        <button type="button" class="lhc-play-foot__submit" id="playSubmit">鎶曟敞</button>
       </div>
     </footer>
   </div>
 </div>
 
-
-  <!-- ???? -->
+  <!-- 瑙勫垯 -->
   <div class="lhc-rules-mask" id="rulesMask" hidden></div>
   <div class="lhc-rules-sheet" id="rulesSheet" hidden>
     <div class="lhc-rules-sheet__head">
-      <span>????</span>
-      <button type="button" id="rulesSheetClose" aria-label="??">?</button>
+      <span>娓告垙瑙勫垯</span>
+      <button type="button" id="rulesSheetClose" aria-label="鍏抽棴">脳</button>
     </div>
     <div class="lhc-rules-sheet__body" id="rulesBody"></div>
   </div>
 
+  <!-- 闀块緳缁熻 -->
+  <div class="lhc-long-mask" id="longMask" hidden></div>
+  <div class="lhc-long-sheet" id="longSheet" hidden>
+    <div class="lhc-long-sheet__handle" aria-hidden="true"></div>
+    <div class="lhc-long-sheet__head">
+      <div>
+        <b>闀块緳缁熻</b>
+        <small id="longSummary">杩炵画 2 鏈熷強浠ヤ笂</small>
+      </div>
+      <button type="button" id="longSheetClose" aria-label="鍏抽棴">脳</button>
+    </div>
+    <div class="lhc-long-sheet__tabs" id="longTabs">
+      <button type="button" class="is-active" data-tab="side">涓ら潰</button>
+      <button type="button" data-tab="color">鑹叉尝</button>
+      <button type="button" data-tab="zodiac">鐢熻倴</button>
+    </div>
+    <div class="lhc-long-sheet__body" id="longBody"></div>
+  </div>
+
+  <!-- 鏅鸿兘棰勬祴 -->
+  <div class="lhc-long-mask" id="predictMask" hidden></div>
+  <div class="lhc-long-sheet lhc-predict-sheet" id="predictSheet" hidden>
+    <div class="lhc-long-sheet__handle" aria-hidden="true"></div>
+    <div class="lhc-long-sheet__head">
+      <div>
+        <b>鏅鸿兘棰勬祴</b>
+        <small id="predictSummary">涓嬩竴鏈?路 --------</small>
+      </div>
+      <button type="button" id="predictSheetClose" aria-label="鍏抽棴">脳</button>
+    </div>
+    <div class="lhc-long-sheet__tabs" id="predictTabs">
+      <button type="button" class="is-active" data-tab="side">涓ら潰</button>
+      <button type="button" data-tab="color">鑹叉尝</button>
+      <button type="button" data-tab="zodiac">鐢熻倴</button>
+      <button type="button" data-tab="hot">鐑喎</button>
+    </div>
+    <div class="lhc-long-sheet__body" id="predictBody"></div>
+    <div class="lhc-predict-foot">鍩轰簬杩戞湡寮€濂栬蛋鍔跨粺璁★紝浠呬緵鍙傝€?/div>
+  </div>
+
 <script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
-<script src="/legacy/js/games-common.js"></script>
-<script src="./js/result-card.js?v=5"></script>
-<script src="./js/lhc.js?v=60"></script>
+<script src="/legacy/js/games-common.js?v=25"></script>
+<script src="/games-assets/_lottery-common/room-chat.js?v=1"></script>
+<script src="./js/result-card.js?v=9"></script>
+<script src="./js/lhc.js?v=151"></script>
 </body>
 </html>
