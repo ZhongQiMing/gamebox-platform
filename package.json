@@ -9,6 +9,7 @@
     "pnpm": ">=9.0.0"
   },
   "scripts": {
+    "audit:rtp": "ts-node --project scripts/tsconfig.json scripts/rtp-audit.ts",
     "dev:server": "pnpm --filter @gamebox/server start:dev",
     "build:server": "pnpm --filter @gamebox/server build",
     "dev:app": "pnpm --filter @gamebox/client-app dev",
@@ -22,7 +23,10 @@
     "format": "prettier --write \"**/*.{ts,vue,js,json,md}\""
   },
   "devDependencies": {
+    "@gamebox/shared": "workspace:*",
+    "@types/node": "^20.12.0",
     "prettier": "^3.3.0",
+    "ts-node": "^10.9.2",
     "typescript": "^5.5.0"
   }
 }

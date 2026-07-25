@@ -127,13 +127,23 @@ Record 'mahjong_spin' {
 }
 
 Record 'fruit_spin' {
+  $fruitReq = "fruit_smoke_$(Get-Random)_$([guid]::NewGuid().ToString('N').Substring(0,8))"
   $r = Invoke-Api POST '/bet/fruit' @{
     gameCode = 'fruit-machine'
     bets = @{ apple = 10; orange = 10 }
+    clientRequestId = $fruitReq
   } -Token $playerToken
   Assert-True ($r.code -eq 0) 'fruit spin ok'
   Assert-True ($null -ne $r.data.awardType) 'has awardType'
   Assert-True ($null -ne $r.data.balance) 'has balance'
+  $fruitBal = [int]$r.data.balance
+  $r2 = Invoke-Api POST '/bet/fruit' @{
+    gameCode = 'fruit-machine'
+    bets = @{ apple = 10; orange = 10 }
+    clientRequestId = $fruitReq
+  } -Token $playerToken
+  Assert-True ($r2.code -eq 0) 'fruit idempotent replay ok'
+  Assert-True ([int]$r2.data.balance -eq $fruitBal) 'fruit idempotent balance unchanged'
 }
 
 Record 'table_snapshot' {
