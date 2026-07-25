@@ -90,6 +90,73 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     await this.client.eval(script, 1, key, token);
   }
 
+  /**
+   * 房间态 CAS：仅当当前 JSON.version == expectedVersion 时写入 newJson（内含 version+1）
+   * 返回 true=成功，false=版本冲突或 key 不存在
+   */
+  async compareAndSetRoom(
+    key: string,
+    expectedVersion: number,
+    newJson: string,
+  ): Promise<boolean> {
+    const script = `
+      local raw = redis.call("GET", KEYS[1])
+      if not raw then return 0 end
+      local ok, room = pcall(cjson.decode, raw)
+      if not ok or type(room) ~= "table" then return 0 end
+      local ver = tonumber(room["version"] or 0)
+      if ver ~= tonumber(ARGV[1]) then return 0 end
+      redis.call("SET", KEYS[1], ARGV[2])
+      return 1
+    `;
+    const res = await this.client.eval(script, 1, key, String(expectedVersion), newJson);
+    return Number(res) === 1;
+  }
+
+  /**
+   * 下注侧增量 patch：仅 phase=BETTING 且 roundNo 匹配时更新 roundId/betSummary
+   * 返回 1=ok，0=无 key，-1=非下注，-2=局号不符
+   */
+  async patchTableBetSummary(
+    key: string,
+    roundNo: string,
+    roundId: string,
+    side: string,
+    amount: number,
+  ): Promise<number> {
+    const script = `
+      local raw = redis.call("GET", KEYS[1])
+      if not raw then return 0 end
+      local ok, room = pcall(cjson.decode, raw)
+      if not ok or type(room) ~= "table" then return 0 end
+      if room["phase"] ~= "BETTING" then return -1 end
+      if tostring(room["roundNo"]) ~= tostring(ARGV[1]) then return -2 end
+      if ARGV[2] ~= nil and ARGV[2] ~= "" then
+        room["roundId"] = ARGV[2]
+      end
+      if type(room["betSummary"]) ~= "table" then
+        room["betSummary"] = {}
+      end
+      local side = tostring(ARGV[3])
+      local amt = tonumber(ARGV[4]) or 0
+      local prev = tonumber(room["betSummary"][side]) or 0
+      room["betSummary"][side] = prev + amt
+      room["version"] = (tonumber(room["version"]) or 0) + 1
+      redis.call("SET", KEYS[1], cjson.encode(room))
+      return 1
+    `;
+    const res = await this.client.eval(
+      script,
+      1,
+      key,
+      roundNo,
+      roundId,
+      side,
+      String(amount),
+    );
+    return Number(res);
+  }
+
   async ping(): Promise<boolean> {
     try {
       return (await this.client.ping()) === 'PONG';

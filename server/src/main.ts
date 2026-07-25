@@ -1,19 +1,22 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { NestExpressApplication } from '@nestjs/platform-express';
+import { join } from 'node:path';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
   const config = app.get(ConfigService);
   const isProd = (config.get<string>('NODE_ENV') ?? 'development') === 'production';
 
+  app.useStaticAssets(join(process.cwd(), 'uploads'), { prefix: '/uploads/' });
+
   app.use(
     helmet({
-      // API 由网关托管静态前端，关闭 CSP 以免误伤同源页面
       contentSecurityPolicy: false,
       crossOriginResourcePolicy: { policy: 'cross-origin' },
     }),
@@ -33,7 +36,6 @@ async function bootstrap() {
   } else if (!isProd) {
     app.enableCors();
   } else {
-    // 生产默认同源（由 nginx 反代），不开放通配 CORS
     app.enableCors({ origin: false });
   }
 
