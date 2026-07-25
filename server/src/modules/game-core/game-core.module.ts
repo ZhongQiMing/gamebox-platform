@@ -6,11 +6,12 @@ import { BetController } from './bet.controller';
 import { PointsModule } from '../points/points.module';
 import { AgentsModule } from '../agents/agents.module';
 import { MahjongEngine } from './mahjong-engine';
+import { SettlementKernel } from './settlement-kernel';
 
 @Module({
   imports: [PointsModule, AgentsModule],
-  providers: [SlotEngine, BcbmEngine, FruitMachineEngine, MahjongEngine],
+  providers: [SettlementKernel, SlotEngine, BcbmEngine, FruitMachineEngine, MahjongEngine],
   controllers: [BetController],
-  exports: [SlotEngine, BcbmEngine, FruitMachineEngine, MahjongEngine],
+  exports: [SettlementKernel, SlotEngine, BcbmEngine, FruitMachineEngine, MahjongEngine],
 })
 export class GameCoreModule {}

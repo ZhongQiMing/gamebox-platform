@@ -20,6 +20,8 @@ export interface PlaceBetInput {
   roundId?: string;
   /** 可证明公平：客户端种子 */
   clientSeed?: string;
+  /** 幂等键：同一意图重试复用，避免重复扣款开奖 */
+  clientRequestId?: string;
 }
 
 /** 单个玩家的结算结果 */

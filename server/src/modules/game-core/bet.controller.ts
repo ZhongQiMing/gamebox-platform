@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Get, Param } from '@nestjs/common';
+import { BadRequestException, Controller, Post, Body, Get, Param } from '@nestjs/common';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { SlotEngine } from './slot-engine';
 import { BcbmEngine } from './bcbm-engine';
@@ -8,27 +8,37 @@ import { Type } from 'class-transformer';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MahjongEngine } from './mahjong-engine';
 
+export class TableInstantDto {
+  @IsString() gameCode!: string;
+  @IsString() side!: string;
+  @IsInt() @Min(1) @Max(10_000_000) @Type(() => Number) amount!: number;
+}
+
 export class PlaceBetDto {
   @IsString() gameCode!: string;
   @IsInt() @Min(1) @Max(10_000_000) @Type(() => Number) amount!: number;
+  @IsString() @MaxLength(100) clientRequestId!: string;
   @IsOptional() @IsString() @MaxLength(128) clientSeed?: string;
 }
 
 export class BcbmSpinDto {
   @IsString() gameCode!: string;
   @IsObject() bets!: Record<string, number>;
+  @IsString() @MaxLength(100) clientRequestId!: string;
   @IsOptional() @IsString() @MaxLength(128) clientSeed?: string;
 }
 
 export class FruitSpinDto {
   @IsOptional() @IsString() gameCode?: string;
   @IsObject() bets!: Record<string, number>;
+  @IsString() @MaxLength(100) clientRequestId!: string;
   @IsOptional() @IsString() @MaxLength(128) clientSeed?: string;
 }
 
 export class FruitGambleDto {
   @IsInt() @Min(1) @Max(10_000_000) @Type(() => Number) amount!: number;
   @IsString() @IsIn(['big', 'small']) choice!: 'big' | 'small';
+  @IsString() @MaxLength(100) clientRequestId!: string;
 }
 
 export class MahjongSpinDto {
@@ -48,6 +58,12 @@ export class BetController {
     private prisma: PrismaService,
   ) {}
 
+  /** POST /api/bet/table-instant — 已废弃：改为整局挂单 /api/table/:gameCode/bet */
+  @Post('table-instant')
+  tableInstantBet() {
+    throw new BadRequestException('牌桌已改为整局结算，请使用 /api/table/:gameCode/bet');
+  }
+
   /**
    * POST /api/bet/spin — 电子/街机一键下注+立即开奖（单事务，失败整体回滚）
    * 返回：中奖结果 + 新余额
@@ -59,17 +75,17 @@ export class BetController {
       gameCode: dto.gameCode,
       amount: dto.amount,
       clientSeed: dto.clientSeed,
+      clientRequestId: dto.clientRequestId,
     });
 
-    // 查最新余额
-    const account = await this.prisma.pointsAccount.findUnique({
+    const balance = result.balance ?? (await this.prisma.pointsAccount.findUnique({
       where: { ownerId: u.id },
       select: { balance: true },
-    });
+    }))?.balance ?? 0;
 
     return {
       ...result,
-      balance: account?.balance ?? 0,
+      balance,
     };
   }
 
@@ -82,6 +98,7 @@ export class BetController {
       playerId: u.id,
       gameCode: dto.gameCode,
       bets: dto.bets,
+      clientRequestId: dto.clientRequestId,
       clientSeed: dto.clientSeed,
     });
   }
@@ -95,6 +112,7 @@ export class BetController {
       playerId: u.id,
       gameCode: dto.gameCode || 'fruit-machine',
       bets: dto.bets,
+      clientRequestId: dto.clientRequestId,
       clientSeed: dto.clientSeed,
     });
   }
@@ -106,6 +124,7 @@ export class BetController {
       playerId: u.id,
       amount: dto.amount,
       choice: dto.choice,
+      clientRequestId: dto.clientRequestId,
     });
   }
 
@@ -115,13 +134,19 @@ export class BetController {
     return this.mahjong.spin(u.id, dto);
   }
 
-  /** GET /api/bet/history — 下注历史（街机按局聚合，含明细供展开） */
+  /** GET /api/bet/mahjong/session — 恢复未完成的免费旋转 */
+  @Get('mahjong/session')
+  mahjongSession(@CurrentUser() u: { id: string }) {
+    return this.mahjong.getActiveSession(u.id);
+  }
+
+  /** GET /api/bet/history — 下注历史（街机按局 / 彩票按期聚合，报表用） */
   @Get('history')
   async history(@CurrentUser() u: { id: string }) {
     const list = await this.prisma.bet.findMany({
-      where: { playerId: u.id },
+      where: { playerId: u.id, status: { not: 'CANCELLED' } },
       orderBy: { createdAt: 'desc' },
-      take: 200,
+      take: 500,
       select: {
         id: true,
         betNo: true,
@@ -135,6 +160,7 @@ export class BetController {
         settledAt: true,
         createdAt: true,
         roundId: true,
+        issueId: true,
         game: { select: { name: true, code: true } },
         round: {
           select: {
@@ -145,21 +171,25 @@ export class BetController {
             endedAt: true,
           },
         },
+        issue: { select: { issueNo: true } },
       },
     });
 
-    /** 有 roundId 的按局合并；无 round 的单条保留 */
+    /** 街机按 round；彩票按 issue；其余单条 */
     type Agg = {
       id: string
       betNo: string
       amount: number
       payout: number
       validBet: number
+      betCount: number
       status: string
       createdAt: Date
+      settledAt: Date | null
       game: { name: string; code: string }
       roundId: string | null
       roundNo: string | null
+      issueNo: string | null
       outcome: unknown
       details: Array<{
         position: string
@@ -170,8 +200,14 @@ export class BetController {
       }>
     }
 
-    const byRound = new Map<string, Agg>()
+    const byGroup = new Map<string, Agg>()
     const singles: Agg[] = []
+
+    const mergeStatus = (cur: string, next: string) => {
+      if (cur === 'PENDING' || next === 'PENDING') return 'PENDING'
+      if (cur === 'WON' || next === 'WON') return 'WON'
+      return next || cur
+    }
 
     for (const b of list) {
       const detail = {
@@ -181,29 +217,63 @@ export class BetController {
         multiplier: Number(b.multiplier || b.odds || 0),
         won: b.payout > 0,
       }
+
+      let groupKey: string | null = null
+      let base: Omit<Agg, 'details'> | null = null
+
       if (b.roundId && b.round) {
-        const existing = byRound.get(b.roundId)
+        groupKey = `round:${b.roundId}`
+        base = {
+          id: b.roundId,
+          betNo: b.round.roundNo || b.betNo,
+          amount: b.amount,
+          payout: b.payout,
+          validBet: b.validFlow || b.amount,
+          betCount: 1,
+          status: b.status,
+          createdAt: b.createdAt,
+          settledAt: b.settledAt,
+          game: b.game,
+          roundId: b.roundId,
+          roundNo: b.round.roundNo,
+          issueNo: null,
+          outcome: b.round.outcome,
+        }
+      } else if (b.issueId && b.issue) {
+        groupKey = `issue:${b.issueId}`
+        base = {
+          id: b.issueId,
+          betNo: b.issue.issueNo,
+          amount: b.amount,
+          payout: b.payout,
+          validBet: b.validFlow || b.amount,
+          betCount: 1,
+          status: b.status,
+          createdAt: b.createdAt,
+          settledAt: b.settledAt,
+          game: b.game,
+          roundId: null,
+          roundNo: null,
+          issueNo: b.issue.issueNo,
+          outcome: null,
+        }
+      }
+
+      if (groupKey && base) {
+        const existing = byGroup.get(groupKey)
         if (existing) {
           existing.amount += b.amount
           existing.payout += b.payout
           existing.validBet += b.validFlow || b.amount
+          existing.betCount += 1
+          existing.status = mergeStatus(existing.status, b.status)
           existing.details.push(detail)
           if (b.createdAt > existing.createdAt) existing.createdAt = b.createdAt
+          if (b.settledAt && (!existing.settledAt || b.settledAt > existing.settledAt)) {
+            existing.settledAt = b.settledAt
+          }
         } else {
-          byRound.set(b.roundId, {
-            id: b.roundId,
-            betNo: b.round.roundNo || b.betNo,
-            amount: b.amount,
-            payout: b.payout,
-            validBet: b.validFlow || b.amount,
-            status: b.status,
-            createdAt: b.createdAt,
-            game: b.game,
-            roundId: b.roundId,
-            roundNo: b.round.roundNo,
-            outcome: b.round.outcome,
-            details: [detail],
-          })
+          byGroup.set(groupKey, { ...base, details: [detail] })
         }
       } else {
         singles.push({
@@ -212,21 +282,24 @@ export class BetController {
           amount: b.amount,
           payout: b.payout,
           validBet: b.validFlow || b.amount,
+          betCount: 1,
           status: b.status,
           createdAt: b.createdAt,
+          settledAt: b.settledAt,
           game: b.game,
           roundId: null,
           roundNo: null,
+          issueNo: null,
           outcome: null,
           details: detail.position ? [detail] : [],
         })
       }
     }
 
-    const rows = [...byRound.values(), ...singles].sort(
+    const rows = [...byGroup.values(), ...singles].sort(
       (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
     )
-    return rows.slice(0, 50)
+    return rows.slice(0, 100)
   }
 
   /** GET /api/bet/round/:id — 查单局详情（可证明公平验证用） */
