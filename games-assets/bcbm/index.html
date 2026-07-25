@@ -8,6 +8,12 @@
   <link rel="stylesheet" href="./css/bcb.css?v=5">
 </head>
 <body class="bcb-body bcb-body--splash">
+<!-- DEPRECATED: 正式玩法已迁至 Vue /game/arcade/bcbm（服务端结算）。本页仅为旧 H5 原型，勿当生产入口。 -->
+<script>
+  if (!/([?&]legacy=1\b)/.test(location.search)) {
+    location.replace('/game/arcade/bcbm');
+  }
+</script>
 
 <div class="bcb-splash" id="bcbSplash">
   <img class="bcb-splash__bg" src="./assets/splash.png?v=3" alt="" draggable="false">

@@ -8,6 +8,12 @@
   <link rel="stylesheet" href="./css/slt.css?v=5">
 </head>
 <body class="slt-body slt-body--splash">
+<!-- DEPRECATED: 正式玩法已迁至 Vue /game/fruit（服务端结算）。本页仅为旧 H5 原型，勿当生产入口。 -->
+<script>
+  if (!/([?&]legacy=1\b)/.test(location.search)) {
+    location.replace('/game/fruit');
+  }
+</script>
 
 <div class="slt-splash" id="sltSplash">
   <img class="slt-splash__bg" src="./assets/splash.png?v=3" alt="" draggable="false">
