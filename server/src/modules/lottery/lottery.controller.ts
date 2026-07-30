@@ -2,6 +2,7 @@ import {
   Controller, Post, Get, Body, Param, Query,
   DefaultValuePipe, ParseIntPipe,
 } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
 import { Type } from 'class-transformer';
 import { IsArray, IsInt, IsOptional, IsString, Max, MaxLength, Min, ValidateNested } from 'class-validator';
 import { LotteryService } from './lottery.service';
@@ -98,15 +99,17 @@ export class LotteryController {
     return this.lottery.cancelCurrentBets(user.id, gameCode);
   }
 
-  /** 当前期（公开） */
+  /** 当前期（公开；大厅/房间高频轮询，不计入全局限流） */
   @Public()
+  @SkipThrottle()
   @Get(':gameCode/current')
   currentIssue(@Param('gameCode') gameCode: string) {
     return this.lottery.currentIssue(gameCode);
   }
 
-  /** 历史开奖（公开） */
+  /** 历史开奖（公开；同上） */
   @Public()
+  @SkipThrottle()
   @Get(':gameCode/history')
   history(
     @Param('gameCode') gameCode: string,
@@ -117,6 +120,7 @@ export class LotteryController {
 
   /** 活跃赔率表（公开，H5 展示唯一来源） */
   @Public()
+  @SkipThrottle()
   @Get(':gameCode/pay-table')
   payTable(@Param('gameCode') gameCode: string) {
     return this.lottery.getPayTable(gameCode);

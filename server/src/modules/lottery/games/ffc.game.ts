@@ -13,7 +13,7 @@
  *   group6                      组六     value="段:a,b,c"
  *   lhh                         龙虎和   value=龙|虎|和（万vs个）
  *   niu                         斗牛     value=-1|1-9|10（无牛/牛几/牛牛）
- *   niuSide                     牛两面   value=大|小|单|双
+ *   niuSide                     牛两面   value=大|小|单|双（无牛判输）
  *   shape                       形态     value="段:豹子|顺子|对子|半顺|杂六"
  */
 import { createHash } from 'node:crypto';
@@ -244,8 +244,8 @@ export const ffcGame: LotteryGameDef = {
       case 'niuSide': {
         const side = String(value ?? '');
         const v = extras['niu'] as number;
-        /* 无牛为和局退本：牛两面只在有牛时定输赢，否则 35.6% 的局会白吃玩家 */
-        if (v === -1) return 'refund';
+        /* 无牛直接判输（与常见私彩盘一致，不退本） */
+        if (v === -1) return null;
         let hit = false;
         if (side === '大') hit = v >= 6;
         else if (side === '小') hit = v <= 5;
@@ -274,7 +274,11 @@ export const sscGame: LotteryGameDef = { ...ffcGame, code: 'ssc' };
 /**
  * 【赔率唯一来源】改赔率只改这里；seed 写入 DB；H5 经 /pay-table 覆盖展示。SSC/FFC 共用。
  * multiplier = 含本金返还倍数（payout = 下注 × multiplier）。
- * 改动前后必须跑 `node scripts/rtp-audit.cjs ffc` 确认每项 RTP 落在 90%~100%。
+ *
+ * 盘口对齐常见私彩门面（两面/定位高标；斗牛/形态偏杀；组三 260 / 组六 125）。
+ * 注意：组三 260 在「选 2 码、命中约 0.6%」规则下理论 RTP>100%，属门面价。
+ * 牛两面：开无牛判输（不退本）。
+ * 改动后跑 `pnpm audit:rtp ffc`。
  */
 export const sscFfcPayTable = {
   refund: { multiplier: 1, desc: '和局退本' },
@@ -282,23 +286,21 @@ export const sscFfcPayTable = {
   small: { multiplier: 1.995, desc: '总和 0-22' },
   odd: { multiplier: 1.995, desc: '总和为奇数' },
   even: { multiplier: 1.995, desc: '总和为偶数' },
-  exact: { multiplier: 9.95, desc: '猜中个位数字' },
   ballSide: { multiplier: 1.995, desc: '定位两面' },
+  exact: { multiplier: 9.95, desc: '猜中个位数字' },
   position: { multiplier: 9.95, desc: '定位胆' },
   anyDigit: { multiplier: 3.6, desc: '不定位' },
-  // 组三/组六命中率同为 6/1000（选定号码的全部排列）
-  group3: { multiplier: 160, desc: '三星组三' },
-  group6: { multiplier: 160, desc: '三星组六' },
-  dragon: { multiplier: 2.13, desc: '龙（万>个）' },
-  tiger: { multiplier: 2.13, desc: '虎（万<个）' },
+  group3: { multiplier: 260, desc: '三星组三' },
+  group6: { multiplier: 125, desc: '三星组六' },
+  dragon: { multiplier: 1.995, desc: '龙（万>个）' },
+  tiger: { multiplier: 1.995, desc: '虎（万<个）' },
   tie: { multiplier: 9, desc: '和（万=个）' },
-  noNiu: { multiplier: 2.69, desc: '无牛' },
-  // 牛1~牛牛各档命中率 6.38%~6.51%，差异 <2%，共用一个赔率
-  niu: { multiplier: 14.9, desc: '牛1~牛9、牛牛' },
-  niuSide: { multiplier: 1.9, desc: '牛大/小/单/双（无牛退本）' },
-  shape_豹子: { multiplier: 96, desc: '前中后·豹子' },
-  shape_顺子: { multiplier: 16, desc: '前中后·顺子' },
-  shape_对子: { multiplier: 3.55, desc: '前中后·对子' },
-  shape_半顺: { multiplier: 2.66, desc: '前中后·半顺' },
-  shape_杂六: { multiplier: 3.2, desc: '前中后·杂六' },
+  noNiu: { multiplier: 2.02, desc: '无牛' },
+  niu: { multiplier: 9.9, desc: '牛1~牛9、牛牛' },
+  niuSide: { multiplier: 1.98, desc: '牛大/小/单/双（无牛判输）' },
+  shape_豹子: { multiplier: 75, desc: '前中后·豹子' },
+  shape_顺子: { multiplier: 14.5, desc: '前中后·顺子' },
+  shape_对子: { multiplier: 3.3, desc: '前中后·对子' },
+  shape_半顺: { multiplier: 2.51, desc: '前中后·半顺' },
+  shape_杂六: { multiplier: 3.01, desc: '前中后·杂六' },
 } as const;

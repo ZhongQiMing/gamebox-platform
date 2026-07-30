@@ -14,6 +14,7 @@ export type ChatLotteryGame = (typeof CHAT_LOTTERY_GAMES)[number];
 export type RoomChatKind =
   | 'bet'
   | 'close'
+  | 'open'
   | 'result'
   | 'bet_verify'
   | 'win_verify'

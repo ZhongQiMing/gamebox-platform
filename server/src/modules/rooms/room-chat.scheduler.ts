@@ -8,6 +8,7 @@ import { CHAT_LOTTERY_GAMES } from './room-chat.types';
 export class RoomChatScheduler {
   private readonly logger = new Logger(RoomChatScheduler.name);
   private locking = false;
+  private openBusy = false;
   private robotBusy = false;
 
   constructor(
@@ -39,8 +40,22 @@ export class RoomChatScheduler {
           );
         }
       }
+      await this.tickDueOpens();
     } finally {
       this.locking = false;
+    }
+  }
+
+  /** 开盘线：全局单飞，避免 announceLocks 与 robot 定时器并发各写一条 */
+  private async tickDueOpens() {
+    if (this.openBusy) return;
+    this.openBusy = true;
+    try {
+      await this.chat.fanOutDueOpens();
+    } catch (e) {
+      this.logger.warn(`fanOut opens: ${(e as Error).message}`);
+    } finally {
+      this.openBusy = false;
     }
   }
 
@@ -50,6 +65,7 @@ export class RoomChatScheduler {
     if (this.robotBusy) return;
     this.robotBusy = true;
     try {
+      /* 开盘线只在 announceLocks 链路写；这里不再 fanOutDueOpens，杜绝双开盘线 */
       await this.chat.tickRobotAtmosphere();
     } catch (e) {
       this.logger.warn(`robot atmosphere: ${(e as Error).message}`);

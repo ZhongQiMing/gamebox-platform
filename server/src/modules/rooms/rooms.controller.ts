@@ -1,5 +1,6 @@
 import { Controller, Get, Param, Query, DefaultValuePipe, ParseIntPipe } from '@nestjs/common';
 import { Body, Post } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
 import { IsString, Matches } from 'class-validator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RoomsService } from './rooms.service';
@@ -33,7 +34,9 @@ export class RoomsController {
   /**
    * GET /api/rooms/:roomNo/games/:gameCode/chat
    * after 有值：增量；无 after：最近 limit 条（时间正序）
+   * 房间内高频轮询，不计入全局限流
    */
+  @SkipThrottle()
   @Get(':roomNo/games/:gameCode/chat')
   listChat(
     @CurrentUser() user: { id: string },

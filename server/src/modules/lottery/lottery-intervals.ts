@@ -3,8 +3,8 @@
  * 与 @gamebox/shared lottery-intervals 保持同值；改周期时两边一起改。
  */
 export const LOTTERY_INTERVALS: Record<string, number> = {
-  ssc: 90,
-  ffc: 60,
+  ssc: 60,
+  ffc: 55,
   'speed-racing': 55,
   bjsc: 60,
   'speed-boat': 60,

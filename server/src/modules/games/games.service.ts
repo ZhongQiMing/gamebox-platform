@@ -1,5 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { sscFfcPayTable } from '../lottery/games/ffc.game';
+import { LOTTERY_INTERVALS } from '../lottery/lottery-intervals';
 
 /** 从 payTable 剥离 weight 字段，只保留展示信息 */
 function stripWeights(payTable: unknown): unknown {
@@ -55,35 +57,31 @@ export class GamesService {
     };
   }
 
-  /** 初始化默认游戏（供 seed 调用） */
+  /**
+   * 初始化默认游戏（供 seed 调用）。
+   * 时时彩赔率/间隔与 prisma/seed、sscFfcPayTable 同源，禁止再内嵌旧数字。
+   */
   async seed() {
+    const SSC_FFC_PAY = { ...sscFfcPayTable };
     const defaults = [
       {
-        code: 'ffc', name: '1分时时彩', category: 'LOTTERY' as const,
-        status: 'ONLINE' as const, sortOrder: 2, drawIntervalSec: 60,
-        payTable: {
-          big:    { multiplier: 1.995, desc: '总和 23-45' },
-          small:  { multiplier: 1.995, desc: '总和 0-22' },
-          odd:    { multiplier: 1.995, desc: '总和为奇数' },
-          even:   { multiplier: 1.995, desc: '总和为偶数' },
-          exact:  { multiplier: 9.95,  desc: '猜中个位数字' },
-          ballSide: { multiplier: 1.995, desc: '定位两面' },
-          position: { multiplier: 9.95, desc: '定位胆' },
-          anyDigit: { multiplier: 3.6, desc: '不定位' },
-          group3: { multiplier: 260, desc: '三星组三' },
-          group6: { multiplier: 125, desc: '三星组六' },
-          dragon: { multiplier: 1.99, desc: '龙（万>个）' },
-          tiger: { multiplier: 1.99, desc: '虎（万<个）' },
-          tie: { multiplier: 9, desc: '和（万=个）' },
-          noNiu: { multiplier: 2.02, desc: '无牛' },
-          niu: { multiplier: 9.22, desc: '牛1~牛9、牛牛' },
-          niuSide: { multiplier: 1.98, desc: '牛大/小/单/双' },
-          shape_豹子: { multiplier: 75, desc: '前中后·豹子' },
-          shape_顺子: { multiplier: 14.5, desc: '前中后·顺子' },
-          shape_对子: { multiplier: 3.3, desc: '前中后·对子' },
-          shape_半顺: { multiplier: 2.5, desc: '前中后·半顺' },
-          shape_杂六: { multiplier: 3, desc: '前中后·杂六' },
-        },
+        code: 'ffc',
+        name: '1分时时彩',
+        category: 'LOTTERY' as const,
+        status: 'ONLINE' as const,
+        sortOrder: 2,
+        drawIntervalSec: LOTTERY_INTERVALS.ffc,
+        payTable: SSC_FFC_PAY,
+        rtp: 0.95,
+      },
+      {
+        code: 'ssc',
+        name: '快乐时时彩',
+        category: 'LOTTERY' as const,
+        status: 'ONLINE' as const,
+        sortOrder: 4,
+        drawIntervalSec: LOTTERY_INTERVALS.ssc,
+        payTable: SSC_FFC_PAY,
         rtp: 0.95,
       },
     ];
@@ -92,16 +90,25 @@ export class GamesService {
       const { payTable, rtp, ...gameData } = d;
       const game = await this.prisma.game.upsert({
         where: { code: d.code },
-        update: {},
+        update: {
+          status: d.status,
+          name: d.name,
+          sortOrder: d.sortOrder,
+          drawIntervalSec: d.drawIntervalSec,
+        },
         create: gameData,
       });
-      // 如果没有激活配置，创建一个
       const existing = await this.prisma.gameConfig.findFirst({
         where: { gameId: game.id, active: true },
       });
       if (!existing) {
         await this.prisma.gameConfig.create({
           data: { gameId: game.id, version: 1, active: true, rtp, payTable },
+        });
+      } else {
+        await this.prisma.gameConfig.update({
+          where: { id: existing.id },
+          data: { rtp, payTable },
         });
       }
     }

@@ -19,7 +19,7 @@ import { GameConfigCache } from '../game-core/game-config.cache';
 import { LotteryGameRegistry } from './lottery-game.registry';
 import type { LotteryBetPayload, LotteryPayTable } from './lottery.types';
 import type { Prisma } from '@prisma/client';
-import { capWin } from '@gamebox/shared';
+import { asMoney, capWin, isValidMoney, roundMoney } from '@gamebox/shared';
 import { businessNo } from '../game-core/business-id';
 import { RoomChatService } from '../rooms/room-chat.service';
 import type { RoomChatPlayLine } from '../rooms/room-chat.types';
@@ -145,8 +145,8 @@ export class LotteryService {
   }
 
   /**
-   * 封盘：lockAt 已到仍 PENDING → LOCKED，并立即推封盘线 + 注单核对。
-   * （开奖 draw 里 fanOutIssueLocked 仅作补写，appendSystemOnce 防重。）
+   * 封盘：lockAt 已到仍 PENDING → LOCKED，并立即推封盘线 + 注单核对，
+   * 随即开奖结算（不再干等 openAt，把 lock→open 窗口留给前端开奖仪式）。
    */
   async lockDueIssues() {
     const now = new Date();
@@ -166,6 +166,12 @@ export class LotteryService {
         await this.roomChat.fanOutIssueLocked(issue.game.code, issue.issueNo);
       } catch {
         /* 聊天失败不影响封盘状态 */
+      }
+      /* 封盘后立刻开奖：号码与派彩就绪，聊天结果卡由客户端延时 1s 后播长仪式 */
+      try {
+        await this.draw(issue.id);
+      } catch (e) {
+        this.logger.error(`draw-after-lock[${issue.issueNo}] failed: ${(e as Error).message}`);
       }
     }
   }
@@ -218,20 +224,37 @@ export class LotteryService {
         include: { player: { select: { id: true, agentPath: true } } },
       });
 
+      let settledFlow = 0;
       for (const bet of bets) {
         const payload = bet.payload as unknown as LotteryBetPayload;
+        const amt = asMoney(bet.amount);
         const hitKey = gameDef.judge(payload, drawResult, payTable);
         const odds = hitKey ? (payTable[hitKey]?.multiplier ?? 0) : 0;
-        const raw = hitKey ? Math.floor(bet.amount * odds) : 0;
-        const { win: payout, capped } = capWin(bet.amount, raw);
+        const raw = hitKey ? roundMoney(amt * odds) : 0;
+        const { win: payout, capped } = capWin(amt, raw);
         if (capped) {
           this.logger.error(
             `派彩触顶 ${issue.game.code} bet=${bet.id} 玩法=${bet.betType} 原始=${raw} 封顶=${payout}`,
           );
         }
         const won = payout > 0;
-        /* 和局退本（如六合彩 49 六肖、时时彩无牛）本金原路返回，不算有效流水 */
+        /* 和局退本（如六合彩 49 六肖）本金原路返回，不算有效流水 */
         const isRefund = hitKey === 'refund';
+
+        /* 先 CAS 占住 PENDING，避免与「取消退本」并发导致退本后又派彩 */
+        const settled = await tx.bet.updateMany({
+          where: { id: bet.id, status: 'PENDING' },
+          data: {
+            status: won ? 'WON' : 'LOST',
+            payout,
+            odds,
+            validFlow: isRefund ? 0 : amt,
+            settledAt: new Date(),
+          },
+        });
+        if (settled.count === 0) continue;
+
+        settledFlow = roundMoney(settledFlow + amt);
 
         if (won) {
           await this.points.transferInTx(
@@ -252,26 +275,15 @@ export class LotteryService {
           );
         }
 
-        await tx.bet.update({
-          where: { id: bet.id },
-          data: {
-            status: won ? 'WON' : 'LOST',
-            payout,
-            odds,
-            validFlow: isRefund ? 0 : bet.amount,
-            settledAt: new Date(),
-          },
-        });
-
         // 多级代理佣金（idemScope 用 bet.id 保证每注独立分润）
         if (bet.player?.agentPath && !isRefund) {
-          await this.commission.distributeInTx(tx, bet.player, bet.amount, undefined, `lottery_${bet.id}`);
+          await this.commission.distributeInTx(tx, bet.player, amt, undefined, `lottery_${bet.id}`);
         }
       }
 
       await tx.lotteryIssue.update({
         where: { id: issue.id },
-        data: { totalFlow: bets.reduce((s, b) => s + b.amount, 0) },
+        data: { totalFlow: settledFlow },
       });
     });
 
@@ -350,9 +362,11 @@ export class LotteryService {
     if (!gameDef) throw new BadRequestException('游戏类型不支持');
 
     for (const b of bets) {
-      if (!Number.isInteger(b.amount) || b.amount < 1) throw new BadRequestException('投注额无效');
-      if (b.amount < game.minBet || b.amount > game.maxBet) {
-        throw new BadRequestException(`投注额须在 ${game.minBet}~${game.maxBet} 之间`);
+      if (!isValidMoney(b.amount, 1)) throw new BadRequestException('投注额无效');
+      const minBet = asMoney(game.minBet);
+      const maxBet = asMoney(game.maxBet);
+      if (b.amount < minBet || b.amount > maxBet) {
+        throw new BadRequestException(`投注额须在 ${minBet}~${maxBet} 之间`);
       }
       if (!gameDef.validateBet(b.betType, b.betValue)) {
         throw new BadRequestException(`玩法参数无效: ${b.betType}`);
@@ -474,14 +488,14 @@ export class LotteryService {
       openAt: first.issue?.openAt ?? new Date(0),
       gameCode: '',
       count: sorted.length,
-      totalAmount: sorted.reduce((s, r) => s + r.amount, 0),
+      totalAmount: sorted.reduce((s, r) => s + asMoney(r.amount), 0),
       bets: sorted.map((r) => {
         const payload = r.payload as { value?: string } | null;
         return {
           betId: r.id,
           betType: r.betType,
           betValue: payload?.value,
-          amount: r.amount,
+          amount: asMoney(r.amount),
         };
       }),
       replayed: true as const,
@@ -564,7 +578,7 @@ export class LotteryService {
     clientRequestIdRaw?: string,
   ) {
     const clientRequestId = this.assertClientRequestId(clientRequestIdRaw);
-    if (!Number.isInteger(amount) || amount < 1) throw new BadRequestException('投注额无效');
+    if (!isValidMoney(amount, 1)) throw new BadRequestException('投注额无效');
 
     const existing = await this.prisma.bet.findUnique({
       where: { clientRequestId },
@@ -588,8 +602,8 @@ export class LotteryService {
 
     const game = await this.configCache.get(gameCode);
     if (!game || game.status !== 'ONLINE') throw new NotFoundException('游戏未上架');
-    if (amount < game.minBet || amount > game.maxBet) {
-      throw new BadRequestException(`投注额须在 ${game.minBet}~${game.maxBet} 之间`);
+    if (amount < asMoney(game.minBet) || amount > asMoney(game.maxBet)) {
+      throw new BadRequestException(`投注额须在 ${asMoney(game.minBet)}~${asMoney(game.maxBet)} 之间`);
     }
 
     const gameDef = this.registry.get(gameCode);
@@ -673,21 +687,24 @@ export class LotteryService {
       },
       orderBy: { openAt: 'asc' },
     });
-    if (!issue) throw new BadRequestException('当前无可取消期，或已封盘');
+    if (!issue) throw new BadRequestException('当前期无可取消注单');
 
     return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      /* 与下注/开奖互斥，避免封盘瞬间「退本 + 派彩」双付 */
+      await tx.$queryRaw`SELECT id FROM "LotteryIssue" WHERE id = ${issue.id} FOR UPDATE`;
+
       const fresh = await tx.lotteryIssue.findUnique({
         where: { id: issue.id },
         select: { status: true, lockAt: true },
       });
       if (!fresh || fresh.status !== 'PENDING' || fresh.lockAt <= new Date()) {
-        throw new BadRequestException('本期已封盘，无法取消');
+        throw new BadRequestException('当前期无可取消注单');
       }
 
       const bets = await tx.bet.findMany({
         where: { issueId: issue.id, playerId, status: 'PENDING' },
       });
-      if (!bets.length) throw new BadRequestException('本期没有可取消的注单');
+      if (!bets.length) throw new BadRequestException('当前期无可取消注单');
 
       let refunded = 0;
       let count = 0;
@@ -710,7 +727,7 @@ export class LotteryService {
             id: playerId,
             idempotencyKey: `lottery_cancel_player_${bet.id}`,
           },
-          bet.amount,
+          asMoney(bet.amount),
           {
             bizType: 'ADJUST',
             refType: 'issue',
@@ -718,10 +735,10 @@ export class LotteryService {
             remark: `取消投注退回 ${bet.betType}`,
           },
         );
-        refunded += bet.amount;
+        refunded = roundMoney(refunded + asMoney(bet.amount));
         count += 1;
       }
-      if (!count) throw new BadRequestException('本期没有可取消的注单');
+      if (!count) throw new BadRequestException('当前期无可取消注单');
 
       return { issueNo: issue.issueNo, count, refunded };
     });
