@@ -1,9 +1,11 @@
 /**
  * 牌桌赔率单源（服务端结算 + H5 动画预估必须同源）
  *
- * profit-odds：返还 = 本金 + floor(本金 × 利润倍率)
- * stake-mult-commission：返还 = 本金 + floor(本金×(倍数-1)×(1-抽水))（龙虎）
+ * profit-odds：返还 = 本金 + roundMoney(本金 × 利润倍率)
+ * stake-mult-commission：返还 = 本金 + roundMoney(本金×(倍数-1)×(1-抽水))（龙虎）
  */
+
+import { roundMoney } from './money';
 
 export type TablePayMode = 'profit-odds' | 'stake-mult-commission';
 
@@ -69,7 +71,7 @@ export const TABLE_PAYTABLE: Record<string, TablePayTable> = {
       niu06: 0.8,
       flower: 1150,
     },
-    sideMaxBet: { small: 200, flower: 200 },
+    sideMaxBet: { small: 200, flower: 200, niuniu: 2000 },
   },
   'dragon-tiger': {
     mode: 'stake-mult-commission',
@@ -100,9 +102,9 @@ export function tableSideMaxBet(gameCode: string, side: string, fallback: number
   return typeof cap === 'number' && cap > 0 ? Math.min(cap, fallback) : fallback;
 }
 
-/** 利润倍率 → 含本返还（与服务端 Math.floor 对齐） */
+/** 利润倍率 → 含本返还（两位小数） */
 export function payoutFromProfitOdds(amount: number, profitOdds: number): number {
-  return amount + Math.floor(amount * profitOdds);
+  return roundMoney(amount + roundMoney(amount * profitOdds));
 }
 
 /** 龙虎：含本倍数 + 赢利抽水 */
@@ -112,5 +114,5 @@ export function payoutFromStakeMultCommission(
   commission: number,
 ): number {
   const grossProfit = amount * (stakeMult - 1);
-  return amount + Math.floor(grossProfit * (1 - commission));
+  return roundMoney(amount + roundMoney(grossProfit * (1 - commission)));
 }

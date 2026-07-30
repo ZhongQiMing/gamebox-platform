@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { asMoney, roundMoney } from '@gamebox/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 
 export type OwnerType = 'PLATFORM' | 'BRANCH' | 'AGENT' | 'PROXY' | 'PLAYER';
@@ -67,6 +68,7 @@ export class PointsService {
     amount: number,
     opts: LedgerOpts & { bizType: BizType } = { bizType: 'ADJUST' },
   ) {
+    amount = roundMoney(amount);
     if (amount <= 0) throw new BadRequestException('转账金额必须 > 0');
     const debit = () =>
       this.creditInTx(tx, from.type, from.id, -amount, opts.bizType, {
@@ -99,6 +101,7 @@ export class PointsService {
     bizType: BizType,
     opts: LedgerOpts = {},
   ) {
+    amount = roundMoney(amount);
     if (amount === 0) throw new BadRequestException('金额不能为 0');
     return this.prisma.$transaction((tx) =>
       this.creditInTx(tx, ownerType, ownerId, amount, bizType, opts),
@@ -114,6 +117,7 @@ export class PointsService {
     bizType: BizType,
     opts: LedgerOpts = {},
   ) {
+    amount = roundMoney(amount);
     if (opts.idempotencyKey) {
       const existed = await tx.pointsLedger.findUnique({
         where: { idempotencyKey: opts.idempotencyKey },
@@ -129,12 +133,15 @@ export class PointsService {
 
     // 原子增减（UPDATE 自带行锁），杜绝并发读改写丢更新。
     // 扣款时把下限写进 WHERE：普通账户不得透支，平台账户不得跌破 floor。
+    // 金额用字符串写入 DECIMAL，避免 JS 浮点进库漂移。
     const floor = ownerType === 'PLATFORM' ? platformFloor() : 0;
+    const amountSql = new Prisma.Decimal(amount.toFixed(2));
+    const floorSql = new Prisma.Decimal(roundMoney(floor).toFixed(2));
     const guard =
-      amount < 0 ? Prisma.sql`AND "balance" + ${amount} >= ${floor}` : Prisma.empty;
-    const rows = await tx.$queryRaw<{ balance: number }[]>`
+      amount < 0 ? Prisma.sql`AND "balance" + ${amountSql} >= ${floorSql}` : Prisma.empty;
+    const rows = await tx.$queryRaw<{ balance: unknown }[]>`
       UPDATE "PointsAccount"
-      SET "balance" = "balance" + ${amount}, "updatedAt" = NOW()
+      SET "balance" = "balance" + ${amountSql}, "updatedAt" = NOW()
       WHERE "id" = ${account.id}
         ${guard}
       RETURNING "balance"
@@ -147,14 +154,14 @@ export class PointsService {
       }
       throw new BadRequestException(`账户余额不足：${ownerType}/${ownerId}`);
     }
-    const newBalance = rows[0].balance;
+    const newBalance = asMoney(rows[0].balance);
 
     return tx.pointsLedger.create({
       data: {
         accountId: account.id,
         bizType: bizType as never,
-        amount,
-        balanceAfter: newBalance,
+        amount: amountSql,
+        balanceAfter: new Prisma.Decimal(newBalance.toFixed(2)),
         refType: opts.refType,
         refId: opts.refId,
         remark: opts.remark,
@@ -171,6 +178,7 @@ export class PointsService {
     amount: number,
     opts: LedgerOpts & { bizTypeOut?: BizType; bizTypeIn?: BizType } = {},
   ) {
+    amount = roundMoney(amount);
     if (amount <= 0) throw new BadRequestException('转账金额必须 > 0');
     if (from.id === to.id) throw new BadRequestException('不能转给自己');
     const bizOut = opts.bizTypeOut ?? 'TRANSFER_OUT';

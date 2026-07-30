@@ -5,8 +5,8 @@ import { BcbmEngine } from './bcbm-engine';
 import { FruitMachineEngine } from './fruit-machine-engine';
 import { IsString, IsInt, IsOptional, IsObject, IsIn, Min, Max, MaxLength } from 'class-validator';
 import { Type } from 'class-transformer';
+import { asMoney } from '@gamebox/shared';
 import { PrismaService } from '../../prisma/prisma.service';
-import { MahjongEngine } from './mahjong-engine';
 
 export class TableInstantDto {
   @IsString() gameCode!: string;
@@ -41,20 +41,12 @@ export class FruitGambleDto {
   @IsString() @MaxLength(100) clientRequestId!: string;
 }
 
-export class MahjongSpinDto {
-  @IsInt() @Min(0) @Max(10_000_000) @Type(() => Number) amount!: number;
-  @IsString() @MaxLength(100) clientRequestId!: string;
-  @IsOptional() @IsString() @MaxLength(128) clientSeed?: string;
-  @IsOptional() @IsString() @MaxLength(100) sessionId?: string;
-}
-
 @Controller('bet')
 export class BetController {
   constructor(
     private slot: SlotEngine,
     private bcbm: BcbmEngine,
     private fruit: FruitMachineEngine,
-    private mahjong: MahjongEngine,
     private prisma: PrismaService,
   ) {}
 
@@ -78,10 +70,16 @@ export class BetController {
       clientRequestId: dto.clientRequestId,
     });
 
-    const balance = result.balance ?? (await this.prisma.pointsAccount.findUnique({
-      where: { ownerId: u.id },
-      select: { balance: true },
-    }))?.balance ?? 0;
+    const balance = asMoney(
+      result.balance ??
+        (
+          await this.prisma.pointsAccount.findUnique({
+            where: { ownerId: u.id },
+            select: { balance: true },
+          })
+        )?.balance ??
+        0,
+    );
 
     return {
       ...result,
@@ -126,18 +124,6 @@ export class BetController {
       choice: dto.choice,
       clientRequestId: dto.clientRequestId,
     });
-  }
-
-  /** POST /api/bet/mahjong/spin — 麻将胡了服务端权威级联结算 */
-  @Post('mahjong/spin')
-  mahjongSpin(@CurrentUser() u: { id: string }, @Body() dto: MahjongSpinDto) {
-    return this.mahjong.spin(u.id, dto);
-  }
-
-  /** GET /api/bet/mahjong/session — 恢复未完成的免费旋转 */
-  @Get('mahjong/session')
-  mahjongSession(@CurrentUser() u: { id: string }) {
-    return this.mahjong.getActiveSession(u.id);
   }
 
   /** GET /api/bet/history — 下注历史（街机按局 / 彩票按期聚合，报表用） */
@@ -212,10 +198,10 @@ export class BetController {
     for (const b of list) {
       const detail = {
         position: b.betType || '',
-        amount: b.amount,
-        payout: b.payout,
+        amount: asMoney(b.amount),
+        payout: asMoney(b.payout),
         multiplier: Number(b.multiplier || b.odds || 0),
-        won: b.payout > 0,
+        won: asMoney(b.payout) > 0,
       }
 
       let groupKey: string | null = null
@@ -226,9 +212,9 @@ export class BetController {
         base = {
           id: b.roundId,
           betNo: b.round.roundNo || b.betNo,
-          amount: b.amount,
-          payout: b.payout,
-          validBet: b.validFlow || b.amount,
+          amount: asMoney(b.amount),
+          payout: asMoney(b.payout),
+          validBet: asMoney(b.validFlow || b.amount),
           betCount: 1,
           status: b.status,
           createdAt: b.createdAt,
@@ -244,9 +230,9 @@ export class BetController {
         base = {
           id: b.issueId,
           betNo: b.issue.issueNo,
-          amount: b.amount,
-          payout: b.payout,
-          validBet: b.validFlow || b.amount,
+          amount: asMoney(b.amount),
+          payout: asMoney(b.payout),
+          validBet: asMoney(b.validFlow || b.amount),
           betCount: 1,
           status: b.status,
           createdAt: b.createdAt,
@@ -262,9 +248,9 @@ export class BetController {
       if (groupKey && base) {
         const existing = byGroup.get(groupKey)
         if (existing) {
-          existing.amount += b.amount
-          existing.payout += b.payout
-          existing.validBet += b.validFlow || b.amount
+          existing.amount += asMoney(b.amount)
+          existing.payout += asMoney(b.payout)
+          existing.validBet += asMoney(b.validFlow || b.amount)
           existing.betCount += 1
           existing.status = mergeStatus(existing.status, b.status)
           existing.details.push(detail)
@@ -279,9 +265,9 @@ export class BetController {
         singles.push({
           id: b.id,
           betNo: b.betNo,
-          amount: b.amount,
-          payout: b.payout,
-          validBet: b.validFlow || b.amount,
+          amount: asMoney(b.amount),
+          payout: asMoney(b.payout),
+          validBet: asMoney(b.validFlow || b.amount),
           betCount: 1,
           status: b.status,
           createdAt: b.createdAt,

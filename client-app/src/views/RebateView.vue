@@ -174,7 +174,10 @@ const extraClaims = computed(() => {
 })
 
 function fmtInt(n: number) {
-  return Math.round(n || 0).toLocaleString('en-US')
+  return (Math.round((Number(n) || 0) * 100) / 100).toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })
 }
 
 function fmtMoney(n: number) {

@@ -4,7 +4,7 @@
     <div class="lottery-header">
       <button class="back-btn" @click="router.back()">‹</button>
       <span class="title">{{ gameLabel }}</span>
-      <span class="balance">{{ walletStore.balance.toLocaleString() }} 分</span>
+      <span class="balance">{{ walletStore.balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }} 分</span>
     </div>
 
     <!-- 当前期 -->

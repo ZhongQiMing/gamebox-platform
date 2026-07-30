@@ -2,6 +2,7 @@ import {
   Controller, Get, Patch, Post, Param, Body, Query,
   DefaultValuePipe, ParseIntPipe, NotFoundException, BadRequestException,
 } from '@nestjs/common';
+import { asMoney } from '@gamebox/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PointsService, PLATFORM_OWNER_ID } from '../points/points.service';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -64,7 +65,7 @@ export class AgentAdminController {
 
     const nodes: AgentTreeNode[] = allUsers.map(u => ({
       id: u.id, uid: u.uid, nickname: u.nickname, role: u.role,
-      depth: u.depth, balance: balMap[u.id] ?? 0, children: [],
+      depth: u.depth, balance: asMoney(balMap[u.id] ?? 0), children: [],
     }));
     const nodeMap = Object.fromEntries(nodes.map(n => [n.id, n]));
     const pathMap = Object.fromEntries(allUsers.map(u => [u.id, u.agentPath ?? '']));

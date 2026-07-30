@@ -10,7 +10,7 @@ export const useWalletStore = defineStore('wallet', () => {
     loading.value = true
     try {
       const res = await walletApi.balance()
-      balance.value = res.balance
+      balance.value = Math.round((Number(res.balance) || 0) * 100) / 100
     } finally {
       loading.value = false
     }

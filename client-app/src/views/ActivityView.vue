@@ -103,7 +103,9 @@ const router = useRouter()
 const walletStore = useWalletStore()
 const { success: toastOk, error: toastErr } = useToast()
 
-const balanceNum = computed(() => walletStore.balance.toLocaleString('en-US'))
+const balanceNum = computed(() =>
+  walletStore.balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+)
 
 function goBack() {
   if (window.history.length > 1) router.back()

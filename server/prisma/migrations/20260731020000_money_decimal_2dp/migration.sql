@@ -1,0 +1,56 @@
+-- 金额字段：Int → Decimal(18,2)，存真实两位小数（如 199.50）
+-- 既有整数按原值迁入（100 → 100.00），不乘不除
+
+ALTER TABLE "Agent"
+  ALTER COLUMN "teamFlowTotal" TYPE DECIMAL(18,2) USING "teamFlowTotal"::DECIMAL(18,2),
+  ALTER COLUMN "teamFlowMonth" TYPE DECIMAL(18,2) USING "teamFlowMonth"::DECIMAL(18,2),
+  ALTER COLUMN "pointsQuota" TYPE DECIMAL(18,2) USING "pointsQuota"::DECIMAL(18,2),
+  ALTER COLUMN "pointsUsed" TYPE DECIMAL(18,2) USING "pointsUsed"::DECIMAL(18,2);
+
+ALTER TABLE "AgentLevel"
+  ALTER COLUMN "minTeamFlow" TYPE DECIMAL(18,2) USING "minTeamFlow"::DECIMAL(18,2);
+
+ALTER TABLE "PointsAccount"
+  ALTER COLUMN "balance" TYPE DECIMAL(18,2) USING "balance"::DECIMAL(18,2),
+  ALTER COLUMN "frozen" TYPE DECIMAL(18,2) USING "frozen"::DECIMAL(18,2);
+
+ALTER TABLE "PointsLedger"
+  ALTER COLUMN "amount" TYPE DECIMAL(18,2) USING "amount"::DECIMAL(18,2),
+  ALTER COLUMN "balanceAfter" TYPE DECIMAL(18,2) USING "balanceAfter"::DECIMAL(18,2);
+
+ALTER TABLE "RechargeOrder"
+  ALTER COLUMN "amount" TYPE DECIMAL(18,2) USING "amount"::DECIMAL(18,2);
+
+ALTER TABLE "Game"
+  ALTER COLUMN "minBet" TYPE DECIMAL(18,2) USING "minBet"::DECIMAL(18,2),
+  ALTER COLUMN "maxBet" TYPE DECIMAL(18,2) USING "maxBet"::DECIMAL(18,2);
+
+ALTER TABLE "LotteryIssue"
+  ALTER COLUMN "totalFlow" TYPE DECIMAL(18,2) USING "totalFlow"::DECIMAL(18,2);
+
+ALTER TABLE "SlotFeatureSession"
+  ALTER COLUMN "lockedBetAmount" TYPE DECIMAL(18,2) USING "lockedBetAmount"::DECIMAL(18,2),
+  ALTER COLUMN "totalWin" TYPE DECIMAL(18,2) USING "totalWin"::DECIMAL(18,2);
+
+ALTER TABLE "GameRound"
+  ALTER COLUMN "totalFlow" TYPE DECIMAL(18,2) USING "totalFlow"::DECIMAL(18,2);
+
+ALTER TABLE "Bet"
+  ALTER COLUMN "amount" TYPE DECIMAL(18,2) USING "amount"::DECIMAL(18,2),
+  ALTER COLUMN "payout" TYPE DECIMAL(18,2) USING "payout"::DECIMAL(18,2),
+  ALTER COLUMN "validFlow" TYPE DECIMAL(18,2) USING "validFlow"::DECIMAL(18,2);
+
+ALTER TABLE "CommissionRecord"
+  ALTER COLUMN "baseFlow" TYPE DECIMAL(18,2) USING "baseFlow"::DECIMAL(18,2),
+  ALTER COLUMN "amount" TYPE DECIMAL(18,2) USING "amount"::DECIMAL(18,2);
+
+ALTER TABLE "RebateRecord"
+  ALTER COLUMN "personalFlow" TYPE DECIMAL(18,2) USING "personalFlow"::DECIMAL(18,2),
+  ALTER COLUMN "amount" TYPE DECIMAL(18,2) USING "amount"::DECIMAL(18,2);
+
+ALTER TABLE "DailyRebateSettlement"
+  ALTER COLUMN "validFlow" TYPE DECIMAL(18,2) USING "validFlow"::DECIMAL(18,2),
+  ALTER COLUMN "amount" TYPE DECIMAL(18,2) USING "amount"::DECIMAL(18,2);
+
+ALTER TABLE "ActivityClaim"
+  ALTER COLUMN "rewardPoints" TYPE DECIMAL(18,2) USING "rewardPoints"::DECIMAL(18,2);

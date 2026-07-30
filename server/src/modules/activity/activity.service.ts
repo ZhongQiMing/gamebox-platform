@@ -8,6 +8,7 @@
  */
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { asMoney } from '@gamebox/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PointsService, PLATFORM_OWNER_ID } from '../points/points.service';
 
@@ -137,7 +138,7 @@ export class ActivityService {
         where: { playerId, type: 'UP', status: 'APPROVED' },
         _sum: { amount: true },
       });
-      const totalDeposit = agg._sum.amount ?? 0;
+      const totalDeposit = asMoney(agg._sum.amount ?? 0);
 
       const tiers = cfg.tiers ?? [];
       let reward = 0;

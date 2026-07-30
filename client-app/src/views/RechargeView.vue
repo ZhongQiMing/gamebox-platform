@@ -30,7 +30,7 @@
           </div>
           <div class="ra-balance">
             <div class="rb-label">当 前 积 分</div>
-            <div class="rb-num">{{ walletStore.balance.toLocaleString('en-US') }}</div>
+            <div class="rb-num">{{ walletStore.balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}</div>
           </div>
         </div>
       </div>
@@ -194,7 +194,7 @@ const QUICK = computed(() => (curType.value === 'up' ? QUICK_UP : QUICK_DOWN))
 const amountHint = computed(() =>
   curType.value === 'up'
     ? '（请输入整数积分，最低 200）'
-    : `（最低 500，最多可下 ${walletStore.balance.toLocaleString('en-US')} 积分）`
+    : `（最低 500，最多可下 ${walletStore.balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} 积分）`
 )
 
 function switchType(t: 'up' | 'down') {

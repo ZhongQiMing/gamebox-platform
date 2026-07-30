@@ -31,6 +31,7 @@ import {
   roomKey,
   roomLeaderKey,
   secondsLeftOf,
+  normalizeRoomHistory,
   type RedisRoomState,
 } from './table.redis-state';
 import {
@@ -51,7 +52,7 @@ import {
   TABLE_RISK,
 } from './table-risk';
 import { createHash } from 'node:crypto';
-import { capWin, getTablePayTable, tableSideMaxBet, tableTimingOf } from '@gamebox/shared';
+import { capWin, asMoney, getTablePayTable, isValidMoney, tableSideMaxBet, tableTimingOf } from '@gamebox/shared';
 
 /** 覆盖 settle + 最长 draw 窗口，transition 内还会续期 */
 const LEADER_TTL_MS = 30_000;
@@ -165,7 +166,7 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
             data: { status: 'CANCELLED', settledAt: new Date() },
           });
           if (claimed.count === 0) continue;
-          await this.refundOneBetInTx(tx, bet, roundId, reason);
+          await this.refundOneBetInTx(tx, { ...bet, amount: asMoney(bet.amount) }, roundId, reason);
         }
       });
     }
@@ -200,8 +201,8 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
       gameCode,
       gameId: game.id,
       gameName: game.name,
-      minBet: Math.max(1, game.minBet || 1),
-      maxBet: game.maxBet,
+      minBet: Math.max(1, asMoney(game.minBet) || 1),
+      maxBet: asMoney(game.maxBet),
       roundId: null,
       roundNo: alignedRoundNo(gameCode, now),
       phase: 'BETTING',
@@ -239,7 +240,7 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
     try {
       const room = JSON.parse(raw) as RedisRoomState;
       if (typeof room.version !== 'number') room.version = 0;
-      return room;
+      return normalizeRoomHistory(room);
     } catch {
       return null;
     }
@@ -384,7 +385,7 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
           data: { status: 'CANCELLED', settledAt: new Date() },
         });
         if (claimed.count === 0) continue;
-        await this.refundOneBetInTx(tx, bet, roundId, reason);
+        await this.refundOneBetInTx(tx, { ...bet, amount: asMoney(bet.amount) }, roundId, reason);
       }
     });
   }
@@ -410,7 +411,7 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
         remark: reason,
         idempotencyKey: `table_refund_player_${bet.id}`,
       },
-      bet.amount,
+      asMoney(bet.amount),
       { bizType: 'ADJUST', refType: 'round', refId: roundId },
     );
   }
@@ -451,30 +452,31 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
         const bets = await tx.bet.findMany({
           where: { roundId, status: 'PENDING' },
         });
-        const totalFlow = bets.reduce((s, b) => s + b.amount, 0);
+        const totalFlow = bets.reduce((s, b) => s + asMoney(b.amount), 0);
         await tx.gameRound.update({
           where: { id: roundId },
           data: { totalFlow },
         });
 
         for (const bet of bets) {
-          const raw = calcTablePayout(room.gameCode, bet.betType ?? '', outcome, bet.amount);
-          const { win: payout, capped } = capWin(bet.amount, raw);
+          const amt = asMoney(bet.amount);
+          const raw = calcTablePayout(room.gameCode, bet.betType ?? '', outcome, amt);
+          const { win: payout, capped } = capWin(amt, raw);
           if (capped) {
             this.logger.error(
               `派彩触顶 ${room.gameCode} bet=${bet.id} 原始=${raw} 封顶=${payout}`,
             );
           }
-          const refundOnly = payout > 0 && payout === bet.amount;
+          const refundOnly = payout > 0 && payout === amt;
 
           const betClaimed = await tx.bet.updateMany({
             where: { id: bet.id, status: 'PENDING' },
             data: {
               status: payout > 0 ? 'WON' : 'LOST',
               payout,
-              odds: bet.amount > 0 ? payout / bet.amount : 0,
+              odds: amt > 0 ? payout / amt : 0,
               /* 开和退本本金原路返回，不构成有效流水，不参与回水与分佣 */
-              validFlow: refundOnly ? 0 : bet.amount,
+              validFlow: refundOnly ? 0 : amt,
               settledAt: new Date(),
             },
           });
@@ -512,7 +514,7 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
             await this.commission.distributeInTx(
               tx,
               player,
-              bet.amount,
+              amt,
               roundId,
               `table_${bet.id}`,
             );
@@ -586,7 +588,7 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
     }
     /* 千倍赔率的低频边单独限红，避免单注击穿平台池 */
     const sideCap = tableSideMaxBet(room.gameCode, side, room.maxBet);
-    if (!Number.isInteger(amount) || amount < room.minBet || amount > sideCap) {
+    if (!isValidMoney(amount, 1) || amount < room.minBet || amount > sideCap) {
       throw new BadRequestException(`下注额须在 ${room.minBet}~${sideCap} 之间`);
     }
 
@@ -658,7 +660,12 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
             select: { id: true },
           });
           if (hedged) {
-            throw new BadRequestException('同局不可对冲下注（庄闲/龙虎互斥）');
+            const code = normalizeGameCode(room.gameCode);
+            const tip =
+              code === 'dragon-tiger'
+                ? '同局不可对冲下注（龙虎互斥）'
+                : '同局不可对冲下注（庄闲互斥）';
+            throw new BadRequestException(tip);
           }
         }
 
@@ -671,7 +678,7 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
           },
           _sum: { amount: true },
         });
-        const nextUserSide = (userSideAgg._sum.amount || 0) + amount;
+        const nextUserSide = asMoney(userSideAgg._sum.amount || 0) + amount;
         const userCap = Math.min(sideCap, TABLE_RISK.maxUserSidePerRound);
         if (nextUserSide > userCap) {
           throw new BadRequestException(`该方向本局累计不可超过 ${userCap}`);
@@ -752,7 +759,7 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
       side,
       amount,
       roundNo: snapRoom.roundNo,
-      balance: account?.balance ?? 0,
+      balance: asMoney(account?.balance ?? 0),
       phase: snapRoom.phase,
       secondsLeft: secondsLeftOf(snapRoom),
     };
@@ -821,8 +828,8 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
       roundNo: resolvedRoundNo,
       phase,
       bets,
-      totalPayout: bets.reduce((s, b) => s + (b.payout || 0), 0),
-      totalStake: bets.reduce((s, b) => s + (b.amount || 0), 0),
+      totalPayout: bets.reduce((s, b) => s + asMoney(b.payout || 0), 0),
+      totalStake: bets.reduce((s, b) => s + asMoney(b.amount || 0), 0),
     };
   }
 

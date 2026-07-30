@@ -4,6 +4,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { IsString, Length } from 'class-validator';
+import { asMoney } from '@gamebox/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
@@ -106,7 +107,7 @@ export class AgentController {
         nickname: m.nickname,
         createdAt: m.createdAt,
         lastLoginAt: m.lastLoginAt,
-        totalFlow: flowAgg._sum.validFlow ?? 0,
+        totalFlow: asMoney(flowAgg._sum.validFlow ?? 0),
         myCommission: commAgg._sum.amount ?? 0,
       };
     }));

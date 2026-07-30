@@ -1,4 +1,5 @@
 import { Controller, Get, Query, ParseIntPipe, DefaultValuePipe } from '@nestjs/common';
+import { asMoney } from '@gamebox/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
@@ -6,14 +7,14 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 export class PointsController {
   constructor(private prisma: PrismaService) {}
 
-  /** GET /api/wallet/balance — 当前用户余额 */
+  /** GET /api/wallet/balance — 当前用户余额（两位小数 number） */
   @Get('balance')
   async balance(@CurrentUser() user: { id: string }) {
     const account = await this.prisma.pointsAccount.findUnique({
       where: { ownerId: user.id },
       select: { balance: true },
     });
-    return { balance: account?.balance ?? 0 };
+    return { balance: asMoney(account?.balance ?? 0) };
   }
 
   /** GET /api/wallet/ledger?page=1&pageSize=20 — 流水列表 */
@@ -47,6 +48,15 @@ export class PointsController {
       }),
     ]);
 
-    return { total, page, pageSize, list };
+    return {
+      total,
+      page,
+      pageSize,
+      list: list.map((row) => ({
+        ...row,
+        amount: asMoney(row.amount),
+        balanceAfter: asMoney(row.balanceAfter),
+      })),
+    };
   }
 }

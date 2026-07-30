@@ -172,11 +172,17 @@
   </div>
 
   <TabBar />
-  
-  <PgLoader v-if="showMahjongPgLoader" @done="onMahjongPgLoaderDone" />
-  <MahjongCover v-if="showMahjongCover" @start="enterMahjongGame" />
-  <SlotsCover v-if="showSlotsCover" @start="enterSlotsGame" />
-  <BcbmCover v-if="showBcbmCover" @start="enterBcbmGame" />
+
+  <SlotsCover
+    v-if="showSlotsCover"
+    @start="enterSlotsGame"
+    @close="closeSlotsCover"
+  />
+  <BcbmCover
+    v-if="showBcbmCover"
+    @start="enterBcbmGame"
+    @close="closeBcbmCover"
+  />
 </template>
 
 <script setup lang="ts">
@@ -196,8 +202,6 @@ import {
   LOTTERY_PREP_SEC,
 } from '@gamebox/shared'
 import TabBar from '@/components/TabBar.vue'
-import PgLoader from '@/components/PgLoader.vue'
-import MahjongCover from '@/components/MahjongCover.vue'
 import SlotsCover from '@/components/SlotsCover.vue'
 import BcbmCover from '@/components/BcbmCover.vue'
 import '@/assets/game-lobby.css'
@@ -244,7 +248,7 @@ interface LobbyGame {
   assetGame?: boolean
 }
 
-/** 大厅排序：时时彩 → 赛车飞艇 → 快三/六合 → 牌桌 → 街机电子（麻将靠后） */
+/** 大厅排序：时时彩 → 赛车飞艇 → 快三/六合 → 牌桌 → 街机电子 */
 const GAMES: LobbyGame[] = [
   // —— 时时彩 ——
   {
@@ -327,11 +331,6 @@ const GAMES: LobbyGame[] = [
     iconImg: '/images/games/bcbm/bcbm-icon.png',
     route: '/game/arcade/bcbm', backendCode: 'bcbm',
   },
-  {
-    key: 'mahjong', name: '麻将胡了', tag: '热 门', type: 'instant',
-    iconImg: '/images/games/mahjong/mahjong.png',
-    route: '/game/slot/slots-mahjong', backendCode: 'slots-mahjong',
-  },
 ]
 
 /* ===== 跑马灯喜报（与原型同款随机模板） ===== */
@@ -340,7 +339,12 @@ const NAME_SUFFIX = ['猎手', '行者', '刺客', '骑士', '大师', '旅人',
 
 const marqueeItems = ref<string[]>([])
 
-function fmt(n: number) { return n.toLocaleString('en-US') }
+function fmt(n: number) {
+  return (Math.round((Number(n) || 0) * 100) / 100).toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })
+}
 function randName() {
   return NAME_PREFIX[Math.floor(Math.random() * NAME_PREFIX.length)]
     + NAME_SUFFIX[Math.floor(Math.random() * NAME_SUFFIX.length)]
@@ -785,15 +789,15 @@ function parseApiDrawNumbers(raw: string | null | undefined): string[] {
 function resolveDraw(gameKey: string, prevIssue: string): { nums: string[]; parts: DrawPart[] } {
   if (!prevIssue || prevIssue === '— —') return { nums: [], parts: [] }
   const cached = apiDrawCache[gameKey]
-  // 牌类优先用服务端 snapshot 历史
+  // 牌类优先用服务端 snapshot 历史；无 cache 不造假开奖
   if (DRAW_KIND[gameKey] === 'table') {
     if (cached?.parts?.length) return { nums: [], parts: cached.parts }
-    return seededDraw(gameKey, prevIssue)
+    return { nums: [], parts: [] }
   }
   if (cached?.nums?.length) {
     return { nums: cached.nums, parts: [] }
   }
-  return seededDraw(gameKey, prevIssue)
+  return { nums: [], parts: [] }
 }
 
 function numClass(gameKey: string, n: string, index: number) {
@@ -965,38 +969,31 @@ function tickAll() {
 /* ===== 后端在线游戏（决定卡片是否可进入） ===== */
 const onlineCodes = ref<Set<string>>(new Set())
 
-const showMahjongPgLoader = ref(false)
-const showMahjongCover = ref(false)
-let currentMahjongRoute = ''
 const showSlotsCover = ref(false)
-let currentSlotsRoute = ''
+const currentSlotsRoute = ref('')
 const showBcbmCover = ref(false)
-let currentBcbmRoute = ''
+const currentBcbmRoute = ref('')
 
-function onMahjongPgLoaderDone() {
-  showMahjongCover.value = true
-  showMahjongPgLoader.value = false
-}
-
-function enterMahjongGame() {
-  showMahjongCover.value = false
-  if (currentMahjongRoute) {
-    router.push(currentMahjongRoute)
-  }
-}
-
-function enterSlotsGame() {
+function closeSlotsCover() {
   showSlotsCover.value = false
-  if (currentSlotsRoute) {
-    router.push(currentSlotsRoute)
-  }
+  currentSlotsRoute.value = ''
 }
 
-function enterBcbmGame() {
+function closeBcbmCover() {
   showBcbmCover.value = false
-  if (currentBcbmRoute) {
-    router.push(currentBcbmRoute)
-  }
+  currentBcbmRoute.value = ''
+}
+
+async function enterSlotsGame() {
+  const target = currentSlotsRoute.value
+  if (target) await router.push(target)
+  closeSlotsCover()
+}
+
+async function enterBcbmGame() {
+  const target = currentBcbmRoute.value
+  if (target) await router.push(target)
+  closeBcbmCover()
 }
 
 function onGameClick(g: LobbyGame) {
@@ -1012,21 +1009,14 @@ function onGameClick(g: LobbyGame) {
     return
   }
 
-  // 麻将胡了：正版 PG 开屏 → 专属封面
-  if (g.key === 'mahjong') {
-    currentMahjongRoute = g.route || ''
-    showMahjongPgLoader.value = true
-    return
-  }
-
   // 水果机 / 奔驰宝马：专属封面
   if (g.key === 'slots') {
-    currentSlotsRoute = g.route || ''
+    currentSlotsRoute.value = g.route || ''
     showSlotsCover.value = true
     return
   }
   if (g.key === 'bcbm') {
-    currentBcbmRoute = g.route || ''
+    currentBcbmRoute.value = g.route || ''
     showBcbmCover.value = true
     return
   }

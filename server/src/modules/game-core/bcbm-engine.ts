@@ -15,12 +15,14 @@ import {
   BCBM_DEFAULT_AWARD_WEIGHTS,
   BCBM_AWARD_TYPES,
   allocateCappedWins,
+  asMoney,
   bcbmBetSlot,
   bcbmIndexesOfBrand,
   bcbmIndexesOfColor,
   bcbmFreeIndexes,
   bcbmNonFreeIndexes,
   isBcbmBetId,
+  roundMoney,
   type BcbmAwardType,
   type BcbmBetId,
   type BcbmBrandId,
@@ -98,8 +100,8 @@ export class BcbmEngine {
     if (game.category !== 'ARCADE') throw new BadRequestException('该游戏不是街机品类');
     const config = game.configs[0];
     if (!config) throw new BadRequestException('游戏未配置');
-    if (totalAmount < game.minBet || totalAmount > game.maxBet) {
-      throw new BadRequestException(`总押注须在 ${game.minBet}~${game.maxBet} 之间`);
+    if (totalAmount < asMoney(game.minBet) || totalAmount > asMoney(game.maxBet)) {
+      throw new BadRequestException(`总押注须在 ${asMoney(game.minBet)}~${asMoney(game.maxBet)} 之间`);
     }
 
     const rawPay = config.payTable;
@@ -267,12 +269,12 @@ export class BcbmEngine {
       wins: o.wins ?? [],
       bets: roundBets.map((b) => ({
         position: b.betType ?? '',
-        amount: b.amount,
-        payout: b.payout,
-        won: b.payout > 0,
+        amount: asMoney(b.amount),
+        payout: asMoney(b.payout),
+        won: asMoney(b.payout) > 0,
       })),
-      totalBet: o.totalBet ?? roundBets.reduce((s, b) => s + b.amount, 0),
-      totalPayout: o.totalPayout ?? roundBets.reduce((s, b) => s + b.payout, 0),
+      totalBet: o.totalBet ?? roundBets.reduce((s, b) => s + asMoney(b.amount), 0),
+      totalPayout: o.totalPayout ?? roundBets.reduce((s, b) => s + asMoney(b.payout), 0),
       balance,
       serverSeed: bet.round.serverSeed ?? '',
       serverSeedHash: bet.round.serverSeedHash ?? '',
@@ -400,7 +402,7 @@ function settleWins(hitIndexes: number[], betMap: Record<BcbmBetId, number>): Bc
     wins.push({
       position: pos,
       mult: slot.mult,
-      amount: Math.floor(amt * slot.mult),
+      amount: roundMoney(amt * slot.mult),
       cellIndex: i,
     });
   }

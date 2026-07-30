@@ -10,6 +10,7 @@
  * 每次 spin = 单事务内完成下注 + 开奖 + 结算；placeBet/settle 保留以实现 IGameEngine 契约。
  */
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { asMoney, roundMoney } from '@gamebox/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PointsService, PLATFORM_OWNER_ID } from '../points/points.service';
 import { CommissionService } from '../agents/commission.service';
@@ -49,8 +50,8 @@ export class SlotEngine implements IGameEngine {
 
     const game = await this.configCache.get(gameCode);
     if (!game || game.status !== 'ONLINE') throw new NotFoundException('游戏不存在或已下架');
-    if (amount < game.minBet || amount > game.maxBet) {
-      throw new BadRequestException(`下注额须在 ${game.minBet}~${game.maxBet} 之间`);
+    if (amount < asMoney(game.minBet) || amount > asMoney(game.maxBet)) {
+      throw new BadRequestException(`下注额须在 ${asMoney(game.minBet)}~${asMoney(game.maxBet)} 之间`);
     }
 
     const config = game.configs[0];
@@ -94,7 +95,7 @@ export class SlotEngine implements IGameEngine {
         keyPrefix: 'slot',
       });
 
-      const rawPayout = Math.floor(amount * prize.multiplier);
+      const rawPayout = roundMoney(amount * prize.multiplier);
       const { paid: payout } = await this.kernel.creditWinInTx(tx, {
         playerId,
         roundId: round.id,
@@ -172,17 +173,17 @@ export class SlotEngine implements IGameEngine {
       refType: 'round',
       refId: bet.round.id,
       roundId: bet.round.id,
-      totalFlow: bet.amount,
+      totalFlow: asMoney(bet.amount),
       outcome: { prize, index: outcome.index ?? 0 },
       bets: [{
         betId: bet.id,
         playerId,
-        amount: bet.amount,
-        payout: bet.payout,
+        amount: asMoney(bet.amount),
+        payout: asMoney(bet.payout),
         multiplier: bet.multiplier ?? prize.multiplier,
         odds: bet.odds ?? prize.multiplier,
-        won: bet.payout > 0,
-        validFlow: bet.validFlow || bet.amount,
+        won: asMoney(bet.payout) > 0,
+        validFlow: asMoney(bet.validFlow || bet.amount),
       }],
       serverSeed: bet.round.serverSeed ?? undefined,
       serverSeedHash: bet.round.serverSeedHash ?? undefined,
@@ -199,8 +200,8 @@ export class SlotEngine implements IGameEngine {
       include: { configs: { where: { active: true }, take: 1 } },
     });
     if (!game || game.status !== 'ONLINE') throw new NotFoundException('游戏不存在或已下架');
-    if (amount < game.minBet || amount > game.maxBet) {
-      throw new BadRequestException(`下注额须在 ${game.minBet}~${game.maxBet} 之间`);
+    if (amount < asMoney(game.minBet) || amount > asMoney(game.maxBet)) {
+      throw new BadRequestException(`下注额须在 ${asMoney(game.minBet)}~${asMoney(game.maxBet)} 之间`);
     }
     const config = game.configs[0];
     if (!config) throw new BadRequestException('游戏未配置');
@@ -277,8 +278,9 @@ export class SlotEngine implements IGameEngine {
       const summaries: SettlementSummary['bets'] = [];
       let totalFlow = 0;
       for (const bet of round.bets) {
-        totalFlow += bet.amount;
-        const rawPayout = Math.floor(bet.amount * prize.multiplier);
+        const amt = asMoney(bet.amount);
+        totalFlow = roundMoney(totalFlow + amt);
+        const rawPayout = roundMoney(amt * prize.multiplier);
         const { paid: payout } = await this.kernel.creditWinInTx(tx, {
           playerId: bet.playerId,
           roundId: round.id,
@@ -286,7 +288,7 @@ export class SlotEngine implements IGameEngine {
           amount: rawPayout,
           remark: `${round.game.name} 命中 ${prize.label}`,
           keyPrefix: 'slot',
-          stake: bet.amount,
+          stake: amt,
         });
         const won = payout > 0;
         await tx.bet.update({
@@ -296,22 +298,22 @@ export class SlotEngine implements IGameEngine {
             payout,
             odds: prize.multiplier,
             multiplier: prize.multiplier,
-            validFlow: bet.amount,
+            validFlow: amt,
             settledAt: new Date(),
           },
         });
         if (bet.player?.agentPath) {
-          await this.commission.distributeInTx(tx, bet.player, bet.amount, round.id);
+          await this.commission.distributeInTx(tx, bet.player, amt, round.id);
         }
         summaries.push({
           betId: bet.id,
           playerId: bet.playerId,
-          amount: bet.amount,
+          amount: amt,
           payout,
           multiplier: prize.multiplier,
           odds: prize.multiplier,
           won,
-          validFlow: bet.amount,
+          validFlow: amt,
         });
       }
       await tx.gameRound.update({

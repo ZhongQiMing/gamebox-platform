@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
+import { asMoney, formatMoney, roundMoney } from '@gamebox/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PLATFORM_OWNER_ID, PointsService } from '../points/points.service';
 import {
@@ -167,7 +168,7 @@ export class RebateService {
         gameMap = new Map();
         flowByDateGame.set(dateKey, gameMap);
       }
-      gameMap.set(b.gameId, (gameMap.get(b.gameId) ?? 0) + b.validFlow);
+      gameMap.set(b.gameId, roundMoney((gameMap.get(b.gameId) ?? 0) + asMoney(b.validFlow)));
     }
 
     const result = new Map<string, UnclaimedSlice>();
@@ -261,7 +262,7 @@ export class RebateService {
     const claimable = [...unclaimedMap.values()]
       .filter((c) => c.date < todayKey)
       .sort((a, b) => (a.date < b.date ? 1 : -1));
-    const claimableTotal = claimable.reduce((s, c) => s + c.amount, 0);
+    const claimableTotal = roundMoney(claimable.reduce((s, c) => s + c.amount, 0));
     const todaySlice = unclaimedMap.get(todayKey) ?? {
       date: todayKey,
       validFlow: 0,
@@ -289,8 +290,8 @@ export class RebateService {
           m: r.rebateDate.getUTCMonth() + 1,
           day: r.rebateDate.getUTCDate(),
         }),
-        validFlow: r.validFlow,
-        amount: r.amount,
+        validFlow: asMoney(r.validFlow),
+        amount: asMoney(r.amount),
         claimType: r.claimType as 'AUTO' | 'MANUAL',
         claimedAt: r.claimedAt.toISOString(),
         games: (r.gameDetail as GameRebateFlow[] | null) ?? [],
@@ -317,11 +318,12 @@ export class RebateService {
   async claim(playerId: string, dateKey?: string) {
     const target = dateKey ?? shiftDateKey(dateKeyFromParts(shanghaiParts()), -1);
     const row = await this.claimDate(playerId, target, 'MANUAL');
+    const amount = asMoney(row.amount);
     return {
       ok: true,
-      amount: row.amount,
+      amount,
       date: target,
-      message: row.amount > 0 ? `已领取 ${row.amount} 积分回水` : '无可领回水',
+      message: amount > 0 ? `已领取 ${formatMoney(amount)} 积分回水` : '无可领回水',
     };
   }
 

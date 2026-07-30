@@ -1,4 +1,5 @@
 import { Controller, Get, Query } from '@nestjs/common';
+import { asMoney } from '@gamebox/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { PLATFORM_OWNER_ID } from '../points/points.service';
@@ -44,9 +45,9 @@ export class DashboardController {
     ]);
 
     // 今日 BET 流水（进入平台的部分）
-    const todayBetFlow = todayBetAgg._sum.amount ?? 0;
+    const todayBetFlow = asMoney(todayBetAgg._sum.amount ?? 0);
     // 今日盈亏 = 流水进 + 胜率出（WIN 是负数，自然相加）
-    const todayWinOut = todayWinAgg._sum.amount ?? 0;
+    const todayWinOut = asMoney(todayWinAgg._sum.amount ?? 0);
     const todayPnl = todayBetFlow + todayWinOut;
 
     // 今日活跃（有下注的玩家数，排除平台账户）
@@ -62,7 +63,7 @@ export class DashboardController {
       totalPlayers,
       todayNew,
       activeToday: activeTodayGroups.length,
-      platformBalance: platformAccount?.balance ?? 0,
+      platformBalance: asMoney(platformAccount?.balance ?? 0),
       todayBetFlow,
       todayPnl,
       pendingRecharge,
@@ -98,8 +99,8 @@ export class DashboardController {
         this.prisma.user.count({ where: { role: 'PLAYER', createdAt: { gte: d, lt: dEnd } } }),
       ]);
 
-      const betFlow = betAgg._sum.amount ?? 0;
-      const winOut  = winAgg._sum.amount ?? 0;
+      const betFlow = asMoney(betAgg._sum.amount ?? 0);
+      const winOut  = asMoney(winAgg._sum.amount ?? 0);
       result.push({
         date: d.toISOString().slice(0, 10),
         betFlow,

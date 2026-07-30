@@ -18,12 +18,14 @@ import {
   FRUIT_DEFAULT_AWARD_WEIGHTS,
   FRUIT_AWARD_TYPES,
   allocateCappedWins,
+  asMoney,
   capWin,
   fruitAppleIndexes,
   fruitBigIndexes,
   fruitLuckIndexes,
   fruitNonLuckIndexes,
   isFruitBetSymbolId,
+  roundMoney,
   type FruitAwardType,
   type FruitBetSymbolId,
 } from '@gamebox/shared';
@@ -102,8 +104,8 @@ export class FruitMachineEngine {
     if (game.category !== 'ARCADE') throw new BadRequestException('该游戏不是街机品类');
     const config = game.configs[0];
     if (!config) throw new BadRequestException('游戏未配置');
-    if (totalAmount < game.minBet || totalAmount > game.maxBet) {
-      throw new BadRequestException(`总押注须在 ${game.minBet}~${game.maxBet} 之间`);
+    if (totalAmount < asMoney(game.minBet) || totalAmount > asMoney(game.maxBet)) {
+      throw new BadRequestException(`总押注须在 ${asMoney(game.minBet)}~${asMoney(game.maxBet)} 之间`);
     }
 
     const payCfg = (config.payTable ?? {}) as FruitConfigPayTable;
@@ -292,8 +294,8 @@ export class FruitMachineEngine {
       select: { betType: true, amount: true, payout: true },
     });
     const balance = await this.settle.getBalance(playerId);
-    const totalBet = roundBets.reduce((s, b) => s + b.amount, 0);
-    const totalPayout = o.totalPayout ?? roundBets.reduce((s, b) => s + b.payout, 0);
+    const totalBet = roundBets.reduce((s, b) => s + asMoney(b.amount), 0);
+    const totalPayout = o.totalPayout ?? roundBets.reduce((s, b) => s + asMoney(b.payout), 0);
     return {
       gameCode: bet.game.code,
       roundId: bet.round.id,
@@ -303,9 +305,9 @@ export class FruitMachineEngine {
       wins: o.wins ?? [],
       bets: roundBets.map((b) => ({
         position: b.betType ?? '',
-        amount: b.amount,
-        payout: b.payout,
-        won: b.payout > 0,
+        amount: asMoney(b.amount),
+        payout: asMoney(b.payout),
+        won: asMoney(b.payout) > 0,
       })),
       totalBet,
       totalWin: totalPayout,
@@ -500,7 +502,7 @@ export class FruitMachineEngine {
       amount,
       payout: payoutBack,
       pendingGambleAmount: audit.pendingGambleAmount,
-      balance: after?.balance ?? 0,
+      balance: asMoney(after?.balance ?? 0),
       roundId: audit.roundId,
       betId: audit.betId,
       serverSeed: seed,
@@ -695,7 +697,7 @@ function settleWins(
     wins.push({
       symbol: cell.symbol,
       mult: cell.mult,
-      amount: Math.floor(betAmt * cell.mult),
+      amount: roundMoney(betAmt * cell.mult),
       cellIndex,
     });
   }

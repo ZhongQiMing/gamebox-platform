@@ -1,4 +1,5 @@
 import { GameCategory } from '@prisma/client';
+import { roundMoney } from '@gamebox/shared';
 
 /** 按游戏类别默认回水率 */
 export const CATEGORY_REBATE_RATE: Record<GameCategory, number> = {
@@ -41,11 +42,11 @@ export function calcRebateFromFlows(
     .filter((g) => g.validFlow > 0 && g.rate > 0)
     .map((g) => ({
       ...g,
-      amount: Math.floor(g.validFlow * g.rate),
+      amount: roundMoney(g.validFlow * g.rate),
     }));
 
-  const validFlow = games.reduce((s, g) => s + g.validFlow, 0);
-  const amount = games.reduce((s, g) => s + g.amount, 0);
+  const validFlow = roundMoney(games.reduce((s, g) => s + g.validFlow, 0));
+  const amount = roundMoney(games.reduce((s, g) => s + g.amount, 0));
   const rate = validFlow > 0 ? amount / validFlow : 0;
   return { validFlow, amount, rate, games };
 }

@@ -2,6 +2,7 @@ import {
   Injectable, BadRequestException, NotFoundException, ForbiddenException,
 } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
+import { asMoney } from '@gamebox/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PointsService } from '../points/points.service';
 import { AdminLogService } from '../admin/admin-log.service';
@@ -74,7 +75,7 @@ export class RechargeService {
 
     // 检查余额是否足够（乐观检查，结合事务保证）
     const account = await this.prisma.pointsAccount.findUnique({ where: { ownerId: playerId } });
-    if (!account || account.balance < amount) throw new BadRequestException('余额不足');
+    if (!account || asMoney(account.balance) < amount) throw new BadRequestException('余额不足');
 
     // 在事务内：建单并立即扣除余额（驳回时再退回）
     return this.prisma.$transaction(async (tx) => {
@@ -111,7 +112,7 @@ export class RechargeService {
           tx,
           'PLAYER',
           order.playerId,
-          order.amount,
+          asMoney(order.amount),
           'RECHARGE',
           {
             refType: 'recharge',
@@ -160,7 +161,7 @@ export class RechargeService {
           tx,
           'PLAYER',
           order.playerId,
-          order.amount,
+          asMoney(order.amount),
           'ADJUST',
           {
             refType: 'recharge',

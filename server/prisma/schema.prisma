@@ -5,7 +5,7 @@
 // 核心原则：
 //   1. server 唯一权威：积分/爆率/开奖/分润全后端裁决
 //   2. 积分账本是变动唯一入口：每笔写流水、记 balanceAfter、幂等、事务
-//   3. 金额一律整数（积分最小单位），不用浮点
+//   3. 金额一律 Decimal(18,2)（真实两位小数，如 199.50；禁止「分」内部换算）
 //   4. 配置版本化（爆率/赔率），可灰度可回滚
 //   5. 可证明公平：每局 serverSeed/clientSeed/nonce
 // =============================================================
@@ -172,11 +172,11 @@ model Agent {
   rebateRate     Float @default(0.0) // 给下线的回水比例上限
 
   // 团队统计（缓存，定时/事件更新）
-  teamFlowTotal Int @default(0) // 团队累计有效流水（用于晋级）
-  teamFlowMonth Int @default(0)
+  teamFlowTotal Decimal @default(0) @db.Decimal(18, 2) // 团队累计有效流水（用于晋级）
+  teamFlowMonth Decimal @default(0) @db.Decimal(18, 2)
 
-  pointsQuota Int @default(0) // 上级下发的可用额度
-  pointsUsed  Int @default(0)
+  pointsQuota Decimal @default(0) @db.Decimal(18, 2) // 上级下发的可用额度
+  pointsUsed  Decimal @default(0) @db.Decimal(18, 2)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -189,7 +189,7 @@ model AgentLevel {
   id             String  @id @default(cuid())
   code           String  @unique // V1..V5
   name           String // 青铜代理...
-  minTeamFlow    Int     @default(0) // 晋级所需团队累计流水
+  minTeamFlow    Decimal @default(0) @db.Decimal(18, 2) // 晋级所需团队累计流水
   commissionRate Float   @default(0) // 该等级佣金率
   accent         String? // 展示色
   sortOrder      Int     @default(0)
@@ -235,7 +235,7 @@ model RoomChatMessage {
   @@index([roomId, gameCode, id])
   @@index([roomId, gameCode, kind, issueNo])
   // 部分唯一索引见 migration：RoomChatMessage_system_once_key
-  // (roomId, gameCode, kind, issueNo) WHERE kind IN (close/result/bet_verify/win_verify)
+  // (roomId, gameCode, kind, issueNo) WHERE kind IN (close/open/result/bet_verify/win_verify)
 }
 
 /// 玩家与代理房间的绑定（输入房间号进房后写入，用于按代理隔离客户）
@@ -259,8 +259,8 @@ model PointsAccount {
   id        String           @id @default(cuid())
   ownerType AccountOwnerType
   ownerId   String           @unique // PLATFORM 时为 "PLATFORM"，其余为 userId
-  balance   Int              @default(0)
-  frozen    Int              @default(0) // 冻结额（下分待审核）
+  balance   Decimal          @default(0) @db.Decimal(18, 2)
+  frozen    Decimal          @default(0) @db.Decimal(18, 2) // 冻结额（下分待审核）
   createdAt DateTime         @default(now())
   updatedAt DateTime         @updatedAt
 
@@ -272,8 +272,8 @@ model PointsLedger {
   accountId      String
   account        PointsAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
   bizType        LedgerBizType
-  amount         Int // 正入负出
-  balanceAfter   Int
+  amount         Decimal       @db.Decimal(18, 2) // 正入负出
+  balanceAfter   Decimal       @db.Decimal(18, 2)
   refType        String? // bet / round / issue / recharge / activity / transfer
   refId          String?
   idempotencyKey String?       @unique
@@ -295,7 +295,7 @@ model RechargeOrder {
   playerId     String
   player       User         @relation("RechargePlayer", fields: [playerId], references: [id], onDelete: Cascade)
   type         RechargeType
-  amount       Int
+  amount       Decimal      @db.Decimal(18, 2)
   status       ReviewStatus @default(PENDING)
   channel      String?
   reviewerId   String?
@@ -319,8 +319,8 @@ model Game {
   status    GameStatus   @default(OFFLINE)
   iconUrl   String?
   entryUrl  String? // games-assets 入口
-  minBet    Int          @default(1)
-  maxBet    Int          @default(1000000)
+  minBet    Decimal      @default(1) @db.Decimal(18, 2)
+  maxBet    Decimal      @default(1000000) @db.Decimal(18, 2)
   sortOrder Int          @default(0)
   // 彩票专用：开奖周期（秒），如 SSC=60；非彩票为 null
   drawIntervalSec Int?
@@ -372,7 +372,7 @@ model LotteryIssue {
   drawnAt     DateTime?
   serverSeed  String? // 可证明公平
   serverSeedHash String?
-  totalFlow   Int         @default(0)
+  totalFlow   Decimal     @default(0) @db.Decimal(18, 2)
   createdAt   DateTime    @default(now())
 
   bets Bet[]
@@ -390,9 +390,9 @@ model SlotFeatureSession {
   gameId          String
   game            Game     @relation(fields: [gameId], references: [id], onDelete: Cascade)
   feature         String
-  lockedBetAmount Int
+  lockedBetAmount Decimal  @db.Decimal(18, 2)
   spinsRemaining Int
-  totalWin        Int      @default(0)
+  totalWin        Decimal  @default(0) @db.Decimal(18, 2)
   status          String   @default("ACTIVE") // ACTIVE | COMPLETED | EXPIRED
   version         Int      @default(0)
   expiresAt       DateTime
@@ -418,7 +418,7 @@ model GameRound {
   playerId     String?
   player       User?    @relation(fields: [playerId], references: [id])
   state        String   @default("SETTLED") // PLAYING | SETTLED | CANCELLED
-  totalFlow    Int      @default(0)
+  totalFlow    Decimal  @default(0) @db.Decimal(18, 2)
   outcome      Json? // 开奖/牌局明细
   serverSeed   String?
   serverSeedHash String?
@@ -456,12 +456,12 @@ model Bet {
 
   betType      String? // 玩法（彩票）/ 动作（棋牌）
   payload      Json? // 投注明细
-  amount       Int // 下注额
+  amount       Decimal   @db.Decimal(18, 2) // 下注额
   odds         Float     @default(0) // 命中赔率
   multiplier   Float     @default(0) // 命中倍率（电子）
-  payout       Int       @default(0) // 派彩
+  payout       Decimal   @default(0) @db.Decimal(18, 2) // 派彩
   status       BetStatus @default(PENDING)
-  validFlow    Int       @default(0) // 有效流水（算分润/回水用）
+  validFlow    Decimal   @default(0) @db.Decimal(18, 2) // 有效流水（算分润/回水用）
   settledAt    DateTime?
   createdAt    DateTime  @default(now())
 
@@ -484,9 +484,9 @@ model CommissionRecord {
   level         Int // 第几级（1=直属）
   sourceRoundId String?
   sourceRound   GameRound? @relation(fields: [sourceRoundId], references: [id], onDelete: SetNull)
-  baseFlow      Int
+  baseFlow      Decimal    @db.Decimal(18, 2)
   rate          Float
-  amount        Int
+  amount        Decimal    @db.Decimal(18, 2)
   ledgerId      String?
   settledAt     DateTime   @default(now())
 
@@ -500,9 +500,9 @@ model RebateRecord {
   player        User       @relation(fields: [playerId], references: [id], onDelete: Cascade)
   sourceRoundId String?
   sourceRound   GameRound? @relation(fields: [sourceRoundId], references: [id], onDelete: SetNull)
-  personalFlow  Int
+  personalFlow  Decimal    @db.Decimal(18, 2)
   rate          Float
-  amount        Int
+  amount        Decimal    @db.Decimal(18, 2)
   ledgerId      String?
   settledAt     DateTime   @default(now())
 
@@ -517,9 +517,9 @@ model DailyRebateSettlement {
   playerId   String
   player     User     @relation(fields: [playerId], references: [id], onDelete: Cascade)
   rebateDate DateTime @db.Date
-  validFlow  Int
+  validFlow  Decimal  @db.Decimal(18, 2)
   rate       Float
-  amount     Int
+  amount     Decimal  @db.Decimal(18, 2)
   claimType  String   // AUTO | MANUAL
   ledgerId   String?
   periodEnd  DateTime @default(now())
@@ -557,7 +557,7 @@ model ActivityClaim {
   activity     Activity @relation(fields: [activityId], references: [id], onDelete: Cascade)
   playerId     String
   player       User     @relation(fields: [playerId], references: [id], onDelete: Cascade)
-  rewardPoints Int      @default(0)
+  rewardPoints Decimal  @default(0) @db.Decimal(18, 2)
   status       String   @default("PENDING") // PENDING | GRANTED | REJECTED
   ledgerId     String?
   claimedAt    DateTime @default(now())

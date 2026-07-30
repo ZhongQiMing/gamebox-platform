@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Prisma } from '@prisma/client';
+import { roundMoney } from '@gamebox/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PointsService, PLATFORM_OWNER_ID } from '../points/points.service';
 
@@ -75,7 +76,7 @@ export class CommissionService {
       const configuredRate = Math.min(agent.commissionRate, maxTotalRate);
       const differentialRate = Math.max(0, configuredRate - lowerLevelRate);
       lowerLevelRate = Math.max(lowerLevelRate, configuredRate);
-      const amount = Math.floor(validFlow * differentialRate);
+      const amount = roundMoney(validFlow * differentialRate);
       if (amount <= 0) continue;
 
       const key = `commission:${scope}:${sourceUser.id}:${beneficiaryUserId}`;

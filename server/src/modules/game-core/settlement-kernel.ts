@@ -7,7 +7,7 @@
  */
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
-import { capWin } from '@gamebox/shared';
+import { asMoney, capWin, roundMoney } from '@gamebox/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PointsService, PLATFORM_OWNER_ID } from '../points/points.service';
 import { CommissionService } from '../agents/commission.service';
@@ -55,7 +55,7 @@ export class SettlementKernel {
       where: { ownerId: playerId },
       select: { balance: true },
     });
-    return account?.balance ?? 0;
+    return asMoney(account?.balance ?? 0);
   }
 
   /** 玩家押注 → 平台池（round 级幂等键） */
@@ -111,7 +111,7 @@ export class SettlementKernel {
     const { playerId, roundId, betId, remark, keyPrefix } = opts;
     if (opts.amount <= 0) return { paid: 0, capped: false };
     const { win: amount, capped } = opts.skipCap
-      ? { win: Math.max(0, Math.floor(opts.amount)), capped: false }
+      ? { win: Math.max(0, roundMoney(opts.amount)), capped: false }
       : capWin(opts.stake ?? Number.MAX_SAFE_INTEGER, opts.amount);
     if (capped) {
       this.logger.error(

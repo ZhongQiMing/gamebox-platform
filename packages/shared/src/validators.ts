@@ -3,6 +3,8 @@
  * 仅用于前端即时提示；后端必须独立再校验一遍（安全）。
  */
 
+import { roundMoney } from './money';
+
 /** 账号：8-20 位、英文+数字、且两者都要有。返回 null=通过 */
 export function validateAccount(account: string): string | null {
   if (!account) return '请输入账号';
@@ -22,10 +24,15 @@ export function validatePassword(password: string): string | null {
   return null;
 }
 
-/** 金额：正整数（积分最小单位） */
+/** 金额：正数，最多两位小数（与账本 Decimal(18,2) 一致） */
 export function validateAmount(amount: number): string | null {
   if (!Number.isFinite(amount)) return '金额无效';
-  if (!Number.isInteger(amount)) return '金额必须为整数';
   if (amount <= 0) return '金额必须大于 0';
+  if (Math.abs(roundMoney(amount) - amount) > 1e-9) return '金额最多两位小数';
   return null;
+}
+
+/** 服务端/引擎快速校验：正金额且两位小数 */
+export function isValidMoney(amount: number, min = 0.01): boolean {
+  return Number.isFinite(amount) && amount >= min && Math.abs(roundMoney(amount) - amount) < 1e-9;
 }

@@ -1,9 +1,16 @@
 /** 展示格式化（纯函数，多端共用） */
 
-/** 积分千分位：88888 -> "88,888" */
+import { formatMoney, roundMoney } from './money';
+
+/** 积分展示（统一两位小数）：88888.5 -> "88,888.50" */
 export function formatPoints(n: number): string {
+  return formatMoney(n);
+}
+
+/** @deprecated 用 formatMoney；保留别名兼容旧调用 */
+export function formatPointsInt(n: number): string {
   if (!Number.isFinite(n)) return '0';
-  return Math.floor(n).toLocaleString('en-US');
+  return Math.floor(roundMoney(n)).toLocaleString('en-US');
 }
 
 /** UID 脱敏：123456789 -> "玩家***6789" */
