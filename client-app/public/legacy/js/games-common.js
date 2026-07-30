@@ -81,7 +81,9 @@
   }
 
   App.applyServerBalance = function (bal) {
-    App._balance = Math.max(0, Math.floor(Number(bal) || 0))
+    var n = Math.round((Number(bal) || 0) * 100) / 100
+    if (!isFinite(n) || n < 0) n = 0
+    App._balance = n
     App._ready = true
     try {
       window.dispatchEvent(new CustomEvent('gamebox-balance', { detail: { balance: App._balance } }))
@@ -107,9 +109,14 @@
   /**
    * 向大脑下彩票注（可多注，父页走 bet-batch 事务）。
    * bets: [{ betType, betValue?, amount }]
+   * 未完成前拒绝新请求，防止连点重复提交。
    */
+  var _lotteryBetBusy = null
   App.placeLotteryBets = function (gameCode, bets, extra) {
-    return new Promise(function (resolve, reject) {
+    if (_lotteryBetBusy) {
+      return Promise.reject(new Error('下注处理中'))
+    }
+    _lotteryBetBusy = new Promise(function (resolve, reject) {
       if (!gameCode || !bets || !bets.length) {
         reject(new Error('下注参数无效'))
         return
@@ -144,7 +151,10 @@
         delete App._pending[requestId]
         reject(new Error('请从大厅进入游戏'))
       }
+    }).finally(function () {
+      _lotteryBetBusy = null
     })
+    return _lotteryBetBusy
   }
 
   App.getRoomNo = function () {
@@ -265,7 +275,7 @@
       const timer = setTimeout(function () {
         delete App._pending[requestId]
         reject(new Error('同步开奖超时'))
-      }, 12000)
+      }, 6000)
       App._pending[requestId] = {
         resolve: function (data) {
           clearTimeout(timer)
@@ -517,60 +527,81 @@
   /**
    * 牌桌挂单下注（下注阶段扣分，封盘后整局结算）
    * { side, amount } → { balance, roundNo, pending: true }
+   * 连点排队串行提交，不再以「操作过快」打断。
    */
-  var _tableBetInflight = 0
+  var _tableBetQueue = []
+  var _tableBetBusy = false
+
+  function _flushTableBetQueue() {
+    if (_tableBetBusy) return
+    var job = _tableBetQueue.shift()
+    if (!job) return
+    _tableBetBusy = true
+    var requestId = nextRequestId()
+    var key =
+      job.clientKey ||
+      ('tb_' +
+        Date.now().toString(36) +
+        '_' +
+        Math.random().toString(36).slice(2, 8))
+    var timer = setTimeout(function () {
+      delete App._pending[requestId]
+      _tableBetBusy = false
+      job.reject(new Error('下注超时，请重试'))
+      _flushTableBetQueue()
+    }, 15000)
+    App._pending[requestId] = {
+      resolve: function (data) {
+        clearTimeout(timer)
+        _tableBetBusy = false
+        job.resolve(data)
+        _flushTableBetQueue()
+      },
+      reject: function (err) {
+        clearTimeout(timer)
+        _tableBetBusy = false
+        job.reject(err)
+        _flushTableBetQueue()
+      },
+    }
+    var ok = postToParent({
+      type: 'assets-game-bet',
+      requestId: requestId,
+      kind: 'table',
+      gameCode: job.gameCode,
+      side: job.side,
+      amount: job.amount,
+      clientKey: key,
+    })
+    if (!ok) {
+      clearTimeout(timer)
+      delete App._pending[requestId]
+      _tableBetBusy = false
+      job.reject(new Error('请从大厅进入游戏'))
+      _flushTableBetQueue()
+    }
+  }
+
   App.placeTableBet = function (gameCode, side, amount, clientKey) {
     return new Promise(function (resolve, reject) {
       if (!gameCode || !side || !(amount > 0)) {
         reject(new Error('下注参数无效'))
         return
       }
-      if (_tableBetInflight > 0) {
-        reject(new Error('操作过快，请稍候'))
+      /* 排队上限：防止异常连点撑爆队列 */
+      if (_tableBetQueue.length >= 40) {
+        reject(new Error('下注排队过多，请稍候'))
         return
       }
-      _tableBetInflight += 1
-      const key =
-        clientKey ||
-        ('tb_' +
-          Date.now().toString(36) +
-          '_' +
-          Math.random().toString(36).slice(2, 8))
-      const requestId = nextRequestId()
-      const timer = setTimeout(function () {
-        delete App._pending[requestId]
-        _tableBetInflight = Math.max(0, _tableBetInflight - 1)
-        reject(new Error('下注超时，请重试'))
-      }, 15000)
-      App._pending[requestId] = {
-        resolve: function (data) {
-          clearTimeout(timer)
-          setTimeout(function () {
-            _tableBetInflight = Math.max(0, _tableBetInflight - 1)
-          }, 280)
-          resolve(data)
-        },
-        reject: function (err) {
-          clearTimeout(timer)
-          _tableBetInflight = Math.max(0, _tableBetInflight - 1)
-          reject(err)
-        },
-      }
-      const ok = postToParent({
-        type: 'assets-game-bet',
-        requestId: requestId,
-        kind: 'table',
+      _tableBetQueue.push({
         gameCode: gameCode,
         side: side,
         amount: amount,
-        clientKey: key,
+        clientKey: clientKey,
+        resolve: resolve,
+        reject: reject,
       })
-      if (!ok) {
-        clearTimeout(timer)
-        delete App._pending[requestId]
-        _tableBetInflight = Math.max(0, _tableBetInflight - 1)
-        reject(new Error('请从大厅进入游戏'))
-      }
+      _flushTableBetQueue()
     })
   }
 
@@ -916,7 +947,7 @@
       App._pending[requestId] = {
         resolve: function (data) {
           clearTimeout(timer)
-          resolve(data && typeof data.balance === 'number' ? data.balance : App._balance)
+          resolve(data && (typeof data.balance === 'number' || (typeof data.balance === 'string' && data.balance !== '')) ? Number(data.balance) : App._balance)
         },
         reject: function () {
           clearTimeout(timer)
@@ -995,10 +1026,15 @@
     if (data.type === 'assets-game-init') {
       if (data.bridgeToken) App._bridgeToken = String(data.bridgeToken)
       if (data.user && data.user.uid) App.setUser(data.user)
-      if (typeof data.balance === 'number') App.applyServerBalance(data.balance)
+      if ((typeof data.balance === 'number' || (typeof data.balance === 'string' && data.balance !== ''))) App.applyServerBalance(data.balance)
       if (data.roomNo) App._roomNo = String(data.roomNo)
+      App._bridgeReady = true
       if (typeof App.onAssetsGameReady === 'function') {
         try { App.onAssetsGameReady(data) } catch (_) { /* ignore */ }
+      }
+      /* 进房后立刻重拉彩票快照，避免首轮在父页监听前发出而一直「同步中」 */
+      if (typeof App.resyncLottery === 'function') {
+        try { App.resyncLottery() } catch (_) { /* ignore */ }
       }
       return
     }
@@ -1022,7 +1058,7 @@
     }
 
     if (data.type === 'assets-game-balance') {
-      if (typeof data.balance === 'number') App.applyServerBalance(data.balance)
+      if ((typeof data.balance === 'number' || (typeof data.balance === 'string' && data.balance !== ''))) App.applyServerBalance(data.balance)
       const pending = data.requestId && App._pending[data.requestId]
       if (pending) {
         delete App._pending[data.requestId]
@@ -1032,7 +1068,7 @@
     }
 
     if (data.type === 'assets-game-bet-ok') {
-      if (typeof data.balance === 'number') App.applyServerBalance(data.balance)
+      if ((typeof data.balance === 'number' || (typeof data.balance === 'string' && data.balance !== ''))) App.applyServerBalance(data.balance)
       /* 扣款已成功但房间气泡写入失败时轻提示；注单核对仍以账本为准 */
       if (data.kind === 'lottery' && data.chatPosted === false && typeof App.toast === 'function') {
         App.toast('下注成功，房间消息同步失败，可刷新后查看')
@@ -1183,7 +1219,7 @@
     }
 
     if (data.type === 'assets-game-cancel-ok') {
-      if (typeof data.balance === 'number') App.applyServerBalance(data.balance)
+      if ((typeof data.balance === 'number' || (typeof data.balance === 'string' && data.balance !== ''))) App.applyServerBalance(data.balance)
       const pending = data.requestId && App._pending[data.requestId]
       if (pending) {
         delete App._pending[data.requestId]
@@ -1204,7 +1240,7 @@
     }
 
     if (data.type === 'assets-game-topup-ok' || data.type === 'assets-game-withdraw-ok') {
-      if (typeof data.balance === 'number') App.applyServerBalance(data.balance)
+      if ((typeof data.balance === 'number' || (typeof data.balance === 'string' && data.balance !== ''))) App.applyServerBalance(data.balance)
       const pending = data.requestId && App._pending[data.requestId]
       if (pending) {
         delete App._pending[data.requestId]

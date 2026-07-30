@@ -9,14 +9,14 @@
       allow="autoplay"
       @load="onFrameLoad"
     />
-    <div v-else class="assets-game-loading">???????</div>
+    <div v-else class="assets-game-loading">加载中…</div>
   </div>
 </template>
 
 <script setup lang="ts">
 /**
- * ?????????????????????
- * iframe ????????? / ???? / ??? / ????????? JWT ?? /api???????? H5??
+ * 静态 H5 游戏壳：通过 postMessage 与 iframe 桥接。
+ * iframe 内下注 / 查余额 / 上下分 / 聊天等走父页 JWT 调 /api，再回传给 H5。
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -29,22 +29,22 @@ import { rechargeApi } from '@/api/recharge'
 import http from '@/api/http'
 
 const ASSET_GAMES: Record<string, string> = {
-  bjsc: '/games-assets/bjsc/index.html?v=87',
-  ssc: '/games-assets/ssc/index.html?v=89',
-  ffc: '/games-assets/ffc/index.html?v=73',
-  'speed-racing': '/games-assets/speed-racing/index.html?v=154',
-  'speed-boat': '/games-assets/speed-boat/index.html?v=84',
-  kuai3: '/games-assets/kuai3/index.html?v=103',
-  lhc: '/games-assets/lhc/index.html?v=151',
+  bjsc: '/games-assets/bjsc/index.html?v=140',
+  ssc: '/games-assets/ssc/index.html?v=157',
+  ffc: '/games-assets/ffc/index.html?v=149',
+  'speed-racing': '/games-assets/speed-racing/index.html?v=201',
+  'speed-boat': '/games-assets/speed-boat/index.html?v=125',
+  kuai3: '/games-assets/kuai3/index.html?v=140',
+  lhc: '/games-assets/lhc/index.html?v=141',
   zhajinhua: '/games-assets/zhajinhua/index.html?v=317',
-  douniu: '/games-assets/douniu/index.html?v=61',
+  douniu: '/games-assets/douniu/index.html?v=142',
   baccarat: '/games-assets/baccarat/index.html?v=37',
-  longhu: '/games-assets/longhu/index.html?v=32',
+  longhu: '/games-assets/longhu/index.html?v=33',
   mahjong: '/games-assets/mahjong/index.html',
   'slots-mahjong': '/games-assets/mahjong/index.html',
 }
 
-/** H5 gameCode ?? ???? lottery/table code */
+/** H5 gameCode → 服务端 lottery/table code */
 const SERVER_GAME_CODE: Record<string, string> = {
   longhu: 'dragon-tiger',
 }
@@ -58,7 +58,7 @@ const walletStore = useWalletStore()
 const roomStore = useRoomStore()
 const frameEl = ref<HTMLIFrameElement | null>(null)
 const frameReady = ref(false)
-/** ???? iframe ???????init ???????????????????? WebView contentWindow === ?????? */
+/** 桥接 token：iframe 就绪后 init 下发；部分 WebView contentWindow === 不可靠时作备用校验 */
 const bridgeToken = ref('')
 let frameWindow: Window | null = null
 
@@ -76,7 +76,7 @@ const gameCode = computed(
 const iframeSrc = computed(() => {
   const base = ASSET_GAMES[gameCode.value]
   if (!base) return ''
-  /* bt ??? URL??????? ready/???????????? token??????? init ??? */
+  /* bt 写入 URL，便于 ready/无 source 时校验 token，再由 init 下发 */
   const parts = [`bt=${encodeURIComponent(ensureBridgeToken())}`]
   const room = roomStore.roomNo
   if (room) parts.push(`roomNo=${encodeURIComponent(room)}`)
@@ -85,21 +85,21 @@ const iframeSrc = computed(() => {
 })
 const gameTitle = computed(() => {
   const titles: Record<string, string> = {
-    bjsc: '????????',
-    ssc: '????????',
-    ffc: '1??????',
-    'speed-racing': '????????',
-    'speed-boat': '??????',
-    kuai3: '1?????',
-    lhc: '?????????',
-    zhajinhua: '???',
-    douniu: '???',
-    baccarat: '?????',
-    longhu: '??????',
-    mahjong: '??????',
-    'slots-mahjong': '??????',
+    bjsc: '北京赛车',
+    ssc: '快乐时时彩',
+    ffc: '1分时时彩',
+    'speed-racing': '极速赛车',
+    'speed-boat': '幸运飞艇',
+    kuai3: '1分快三',
+    lhc: '幸运六合彩',
+    zhajinhua: '炸金花',
+    douniu: '斗牛',
+    baccarat: '百家乐',
+    longhu: '龙虎斗',
+    mahjong: '麻将胡了',
+    'slots-mahjong': '麻将胡了',
   }
-  return titles[gameCode.value] || '???'
+  return titles[gameCode.value] || '游戏'
 })
 
 function postToFrame(payload: Record<string, unknown>) {
@@ -184,7 +184,7 @@ async function handleLotteryBet(
     postToFrame({
       type: 'assets-game-bet-err',
       requestId,
-      message: e instanceof Error ? e.message : '??????',
+      message: e instanceof Error ? e.message : '下注失败',
     })
   }
 }
@@ -201,7 +201,7 @@ async function handleRoomChat(
     postToFrame({
       type: 'assets-game-room-chat-err',
       requestId,
-      message: '???????',
+      message: '请先选房间',
     })
     return
   }
@@ -220,7 +220,7 @@ async function handleRoomChat(
     postToFrame({
       type: 'assets-game-room-chat-err',
       requestId,
-      message: e instanceof Error ? e.message : '??????????',
+      message: e instanceof Error ? e.message : '拉取聊天失败',
     })
   }
 }
@@ -229,7 +229,7 @@ async function handleLotterySnapshot(requestId: string, code: string) {
   try {
     const [current, history] = await Promise.all([
       lotteryApi.currentIssue(code),
-      lotteryApi.history(code, 60),
+      lotteryApi.history(code, 20),
     ])
     postToFrame({
       type: 'assets-game-lottery-snapshot-ok',
@@ -241,7 +241,7 @@ async function handleLotterySnapshot(requestId: string, code: string) {
     postToFrame({
       type: 'assets-game-lottery-snapshot-err',
       requestId,
-      message: e instanceof Error ? e.message : '??????????',
+      message: e instanceof Error ? e.message : '拉取快照失败',
     })
   }
 }
@@ -259,7 +259,7 @@ async function handleLotteryPayTable(requestId: string, code: string) {
     postToFrame({
       type: 'assets-game-lottery-paytable-err',
       requestId,
-      message: e instanceof Error ? e.message : '??????????',
+      message: e instanceof Error ? e.message : '拉取赔率失败',
     })
   }
 }
@@ -270,12 +270,12 @@ async function handleLotteryMyBets(
   issueNo: string,
 ) {
   const wantIssue = String(issueNo || '').trim()
-  // ????/????????????????????????????????????????
+  // 无期号时无法过滤本局注单，直接报错避免返回错期数据
   if (!wantIssue) {
     postToFrame({
       type: 'assets-game-lottery-mybets-err',
       requestId,
-      message: '???????????????????',
+      message: '缺少期号，无法查询本局注单',
     })
     return
   }
@@ -297,7 +297,7 @@ async function handleLotteryMyBets(
     postToFrame({
       type: 'assets-game-lottery-mybets-err',
       requestId,
-      message: e instanceof Error ? e.message : '?????????',
+      message: e instanceof Error ? e.message : '查询失败',
     })
   }
 }
@@ -318,7 +318,7 @@ async function handleLotteryCancel(requestId: string, code: string) {
     postToFrame({
       type: 'assets-game-cancel-err',
       requestId,
-      message: e instanceof Error ? e.message : '??????',
+      message: e instanceof Error ? e.message : '撤单失败',
     })
   }
 }
@@ -352,7 +352,7 @@ async function handleTableBet(
         secondsLeft: number
       }
     >(`/table/${encodeURIComponent(serverCode)}/bet`, body)
-    walletStore.balance = res.balance
+    walletStore.balance = Math.round((Number(res.balance) || 0) * 100) / 100
     postToFrame({
       type: 'assets-game-bet-ok',
       requestId,
@@ -361,14 +361,14 @@ async function handleTableBet(
       roundNo: res.roundNo,
       phase: res.phase,
       secondsLeft: res.secondsLeft,
-      /* ???????????????????????? won/payout */
+      /* 牌桌注单待结算，勿提前当 won/payout */
       pending: true,
     })
   } catch (e) {
     postToFrame({
       type: 'assets-game-bet-err',
       requestId,
-      message: e instanceof Error ? e.message : '??????',
+      message: e instanceof Error ? e.message : '下注失败',
     })
   }
 }
@@ -388,7 +388,7 @@ async function handleTableSnapshot(requestId: string, code: string) {
     postToFrame({
       type: 'assets-game-table-snapshot-err',
       requestId,
-      message: e instanceof Error ? e.message : '???????????',
+      message: e instanceof Error ? e.message : '拉取牌桌快照失败',
     })
   }
 }
@@ -409,7 +409,7 @@ async function handleTableMyBets(requestId: string, code: string, roundNo: strin
     postToFrame({
       type: 'assets-game-table-my-bets-err',
       requestId,
-      message: e instanceof Error ? e.message : '?????????',
+      message: e instanceof Error ? e.message : '查询失败',
     })
   }
 }
@@ -429,7 +429,7 @@ async function handleTablePayTable(requestId: string, code: string) {
     postToFrame({
       type: 'assets-game-table-paytable-err',
       requestId,
-      message: e instanceof Error ? e.message : '???????????',
+      message: e instanceof Error ? e.message : '拉取赔率失败',
     })
   }
 }
@@ -450,7 +450,7 @@ async function handleTableVerify(requestId: string, code: string, roundNo: strin
     postToFrame({
       type: 'assets-game-table-verify-err',
       requestId,
-      message: e instanceof Error ? e.message : '???????',
+      message: e instanceof Error ? e.message : '校验失败',
     })
   }
 }
@@ -468,7 +468,7 @@ async function handleTopup(requestId: string, amount: number, channel: string) {
     postToFrame({
       type: 'assets-game-topup-err',
       requestId,
-      message: e instanceof Error ? e.message : '??????????',
+      message: e instanceof Error ? e.message : '上分申请失败',
     })
   }
 }
@@ -487,7 +487,7 @@ async function handleWithdraw(requestId: string, amount: number) {
     postToFrame({
       type: 'assets-game-withdraw-err',
       requestId,
-      message: e instanceof Error ? e.message : '??????????',
+      message: e instanceof Error ? e.message : '下分失败',
     })
   }
 }
@@ -510,7 +510,7 @@ function navigateFromGame(rawPath: string) {
   }
 
   params.set('from', 'game')
-  /* /bets ???? game= ?? ?????????????+????????????????????????? game=????? */
+  /* /bets 由页面自行处理 game=，其它页自动带上当前游戏 */
   if (gameCode.value && !params.has('game') && pathname !== '/bets') {
     params.set('game', gameCode.value)
   }
@@ -528,7 +528,7 @@ function isFromGameFrame(ev: MessageEvent) {
   }
 }
 
-/** source ??? ?? ???? bridgeToken??init ??????? iframe?? */
+/** source 对不上时，用 bridgeToken（init 后）识别 iframe */
 function acceptGameMessage(ev: MessageEvent, data: Record<string, unknown>): boolean {
   if (isFromGameFrame(ev)) return true
   const token = String(data.bridgeToken || '')
@@ -539,7 +539,7 @@ async function onGameMessage(ev: MessageEvent) {
   const data = ev.data
   if (!data || typeof data !== 'object') return
 
-  /* ready????????? token??????? iframe source???????? @load ?? pushInit */
+  /* ready：同源校验 token，或 iframe source 匹配时在 @load 前也可 pushInit */
   if (data.type === 'assets-game-ready') {
     if (isFromGameFrame(ev) || String((data as { bridgeToken?: string }).bridgeToken || '') === bridgeToken.value) {
       pushInit()
@@ -549,7 +549,7 @@ async function onGameMessage(ev: MessageEvent) {
 
   const accepted = acceptGameMessage(ev, data as Record<string, unknown>)
 
-  /* ????????????? iframe ??????????????? WebView source ?????? + token ?????????? */
+  /* 返回大厅：即使 iframe source 对不上（部分 WebView），有 frame 也放行 */
   if (data.type === 'assets-game-nav' && typeof data.path === 'string') {
     const raw = String(data.path)
     const pathname = (raw.split('?')[0] || '').trim()
@@ -613,7 +613,7 @@ async function onGameMessage(ev: MessageEvent) {
     await handleTopup(
       String(data.requestId || ''),
       Math.floor(Number(data.amount) || 0),
-      String(data.channel || '???'),
+      String(data.channel || 'default'),
     )
     return
   }
@@ -695,7 +695,7 @@ async function onGameMessage(ev: MessageEvent) {
     postToFrame({
       type: 'assets-game-bet-err',
       requestId,
-      message: '?????????',
+      message: '未知下注类型',
     })
   }
 }
@@ -708,7 +708,7 @@ onMounted(async () => {
   try {
     await walletStore.fetchBalance()
   } catch {
-    /* ???????????????iframe ????? */
+    /* 余额拉取失败仍进 iframe，由 H5 再试 */
   }
   syncLegacyUserOnly()
   frameReady.value = true
