@@ -1,5 +1,10 @@
 /** 金额：全平台统一保留两位小数（存库 / 计算 / 展示一致，不用「分」换算） */
 
+/** 玩家上分/下分（控制台直接操作 + 申请审核）单笔限额 */
+export const PLAYER_UP_MIN = 200;
+export const PLAYER_DOWN_MIN = 500;
+export const PLAYER_FUND_MAX = 200_000;
+
 /** 四舍五入到分（两位小数） */
 export function roundMoney(n: number): number {
   if (!Number.isFinite(n)) return 0;
