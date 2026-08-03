@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import { asMoney, roundMoney } from '@gamebox/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 
-export type OwnerType = 'PLATFORM' | 'BRANCH' | 'AGENT' | 'PROXY' | 'PLAYER';
+export type OwnerType = 'PLATFORM' | 'BRANCH' | 'AGENT' | 'PROXY' | 'PLAYER' | 'ROOM';
 export type BizType =
   | 'RECHARGE'
   | 'WITHDRAW'
@@ -39,6 +39,25 @@ function platformFloor(): number {
   const raw = Number(process.env.PLATFORM_BALANCE_FLOOR);
   return Number.isFinite(raw) ? raw : DEFAULT_PLATFORM_FLOOR;
 }
+
+/** 代理欠账下限（飞盘关闭后玩家继续赢） */
+const DEFAULT_AGENT_FLOOR = -100_000_000;
+/** 房间盘口池下限 */
+const DEFAULT_ROOM_FLOOR = -100_000_000;
+
+function ownerFloor(ownerType: OwnerType): number | null {
+  if (ownerType === 'PLATFORM') return platformFloor();
+  if (ownerType === 'AGENT') {
+    const raw = Number(process.env.AGENT_BALANCE_FLOOR);
+    return Number.isFinite(raw) ? raw : DEFAULT_AGENT_FLOOR;
+  }
+  if (ownerType === 'ROOM') {
+    const raw = Number(process.env.ROOM_BALANCE_FLOOR);
+    return Number.isFinite(raw) ? raw : DEFAULT_ROOM_FLOOR;
+  }
+  return 0;
+}
+
 
 /**
  * 积分账本 —— 全平台积分变动的唯一入口。
@@ -83,9 +102,10 @@ export class PointsService {
         idempotencyKey: to.idempotencyKey,
       });
 
-    // 平台侧先行；两边都不是平台时按 ownerId 字典序，保证全局一致的加锁顺序
-    if (from.type === 'PLATFORM') return { out: await debit(), in: await credit() };
-    if (to.type === 'PLATFORM') {
+    // 公共池（PLATFORM/ROOM）先行，避免与派彩对锁
+    const poolFirst = (t: OwnerType) => t === 'PLATFORM' || t === 'ROOM';
+    if (poolFirst(from.type)) return { out: await debit(), in: await credit() };
+    if (poolFirst(to.type)) {
       const inn = await credit();
       return { out: await debit(), in: inn };
     }
@@ -131,14 +151,14 @@ export class PointsService {
       create: { ownerType: ownerType as never, ownerId },
     });
 
-    // 原子增减（UPDATE 自带行锁），杜绝并发读改写丢更新。
-    // 扣款时把下限写进 WHERE：普通账户不得透支，平台账户不得跌破 floor。
-    // 金额用字符串写入 DECIMAL，避免 JS 浮点进库漂移。
-    const floor = ownerType === 'PLATFORM' ? platformFloor() : 0;
+    // 原子增减（UPDATE 自带行锁）；扣款时把下限写进 WHERE。
+    const floor = ownerFloor(ownerType);
     const amountSql = new Prisma.Decimal(amount.toFixed(2));
-    const floorSql = new Prisma.Decimal(roundMoney(floor).toFixed(2));
+    const floorSql = new Prisma.Decimal(roundMoney(floor ?? 0).toFixed(2));
     const guard =
-      amount < 0 ? Prisma.sql`AND "balance" + ${amountSql} >= ${floorSql}` : Prisma.empty;
+      amount < 0 && floor != null
+        ? Prisma.sql`AND "balance" + ${amountSql} >= ${floorSql}`
+        : Prisma.empty;
     const rows = await tx.$queryRaw<{ balance: unknown }[]>`
       UPDATE "PointsAccount"
       SET "balance" = "balance" + ${amountSql}, "updatedAt" = NOW()
@@ -147,9 +167,9 @@ export class PointsService {
       RETURNING "balance"
     `;
     if (rows.length === 0) {
-      if (ownerType === 'PLATFORM') {
+      if (ownerType === 'PLATFORM' || ownerType === 'ROOM' || ownerType === 'AGENT') {
         throw new BadRequestException(
-          `平台池已触及下限 ${floor}，本次派彩被拒绝，请检查赔率与风控配置`,
+          `${ownerType} 账户已触及下限 ${floor}，本次变动被拒绝`,
         );
       }
       throw new BadRequestException(`账户余额不足：${ownerType}/${ownerId}`);
