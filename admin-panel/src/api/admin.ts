@@ -36,18 +36,37 @@ export interface ReviewPage { total: number; page: number; pageSize: number; lis
 // ─── Games management ────────────────────────────────────────
 export const gameAdminApi = {
   list: () => http.get<GameAdmin[], GameAdmin[]>('/admin/games'),
+  opsSchedule: () => http.get<GameOpsSchedule, GameOpsSchedule>('/admin/games/ops-schedule'),
+  reorder: (codes: string[]) =>
+    http.post<{ ok: boolean }, { ok: boolean }>('/admin/games/reorder', { codes }),
   setStatus: (code: string, status: string) =>
     http.patch<{ ok: boolean }, { ok: boolean }>(`/admin/games/${code}/status`, { status }),
+  updateBasics: (code: string, data: {
+    minBet?: number
+    maxBet?: number
+    name?: string
+  }) =>
+    http.patch<{ ok: boolean }, { ok: boolean }>(`/admin/games/${code}`, data),
   createConfig: (code: string, data: { rtp: number; payTable: unknown }) =>
-    http.post<{ ok: boolean }, { ok: boolean }>(`/admin/games/${code}/config`, data),
+    http.post<{ ok: boolean; version?: number }, { ok: boolean; version?: number }>(
+      `/admin/games/${code}/config`,
+      data,
+    ),
   listConfigs: (code: string) =>
     http.get<GameConfigAdmin[], GameConfigAdmin[]>(`/admin/games/${code}/configs`),
   activateConfig: (code: string, version: number) =>
     http.patch<{ ok: boolean }, { ok: boolean }>(`/admin/games/${code}/config/${version}/activate`),
 }
+export interface GameOpsSchedule {
+  timezone: string
+  items: { key: string; cron: string; label: string; desc: string; window?: string }[]
+  notes: string[]
+}
 export interface GameAdmin {
   id: string; code: string; name: string; category: string
   status: string; minBet: number; maxBet: number
+  sortOrder?: number
+  drawIntervalSec?: number | null
   configs: { version: number; rtp: number; active: boolean }[]
 }
 export interface GameConfigAdmin {
@@ -55,42 +74,106 @@ export interface GameConfigAdmin {
   payTable: unknown; params: unknown; createdAt: string
 }
 
-// ─── Agents management ───────────────────────────────────────
-export const agentApi = {
-  tree: () => http.get<AgentNode[], AgentNode[]>('/admin/agents/tree'),
-  list: (params?: { page?: number; pageSize?: number }) =>
-    http.get<AgentPage, AgentPage>('/admin/agents', { params }),
-  setLevel: (userId: string, levelCode: string) =>
-    http.patch<{ ok: boolean }, { ok: boolean }>(`/admin/agents/${userId}/level`, { levelCode }),
-  issue: (userId: string, amount: number) =>
-    http.post<{ ok: boolean }, { ok: boolean }>(`/admin/agents/${userId}/issue`, { amount }),
-}
-export interface AgentNode {
-  id: string; uid: string; nickname: string; role: string; depth: number
-  balance: number; children?: AgentNode[]
-}
-export interface AgentPage { total: number; page: number; pageSize: number; list: AgentNode[] }
+/* 多级代理树 / V1–V5 下发：前端已改走 /console/agents 与房间「绑定代理」。
+ * 旧 /admin/agents/* 接口仍保留在服务端，供脚本或以后树形页使用，此处不再封装死代码。 */
 
 // ─── Risk events ─────────────────────────────────────────────
 export const riskApi = {
-  list: (params?: { handled?: boolean; level?: string; page?: number; pageSize?: number }) =>
-    http.get<RiskPage, RiskPage>('/admin/risk', { params }),
-  handle: (id: string) => http.patch<{ ok: boolean }, { ok: boolean }>(`/admin/risk/${id}/handle`),
+  meta: () => http.get<RiskMeta, RiskMeta>('/admin/risk/meta'),
+  summary: () => http.get<RiskSummary, RiskSummary>('/admin/risk/summary'),
+  list: (params?: {
+    handled?: boolean
+    level?: string
+    type?: string
+    keyword?: string
+    from?: string
+    to?: string
+    page?: number
+    pageSize?: number
+  }) => http.get<RiskPage, RiskPage>('/admin/risk', { params }),
+  handle: (id: string, note?: string) =>
+    http.patch<{ ok: boolean }, { ok: boolean }>(`/admin/risk/${id}/handle`, { note }),
+  handleBatch: (ids: string[], note?: string) =>
+    http.patch<{ ok: boolean; count: number }, { ok: boolean; count: number }>(
+      '/admin/risk/handle-batch',
+      { ids, note },
+    ),
+}
+export interface RiskTarget {
+  id: string
+  uid: string
+  nickname: string
+  username: string
+  lastLoginIp: string | null
+  status: string
 }
 export interface RiskEvent {
-  id: string; type: string; level: string; targetId: string | null
-  detail: unknown; handled: boolean; createdAt: string
+  id: string
+  type: string
+  typeLabel: string
+  typeHint: string
+  level: string
+  targetId: string | null
+  target: RiskTarget | null
+  detail: Record<string, unknown>
+  summary: string
+  handled: boolean
+  handleNote: string | null
+  handledAt: string | null
+  handler: { id: string; uid: string; nickname: string } | null
+  createdAt: string
 }
 export interface RiskPage { total: number; page: number; pageSize: number; list: RiskEvent[] }
+export interface RiskSummary {
+  unhandled: number
+  critical: number
+  warn: number
+  todayNew: number
+  byType: Record<string, number>
+}
+export interface RiskMeta {
+  types: Array<{ value: string; label: string; hint: string }>
+  levels: Array<{ value: string; label: string }>
+  monitors: Array<{ type: string; label: string; desc: string }>
+}
 
 // ─── Admin log ───────────────────────────────────────────────
 export const adminLogApi = {
-  list: (params?: { page?: number; pageSize?: number }) =>
-    http.get<LogPage, LogPage>('/admin/logs', { params }),
+  meta: () => http.get<LogMeta, LogMeta>('/admin/logs/meta'),
+  list: (params?: {
+    action?: string
+    keyword?: string
+    from?: string
+    to?: string
+    page?: number
+    pageSize?: number
+  }) => http.get<LogPage, LogPage>('/admin/logs', { params }),
+}
+export interface LogActionOption {
+  value: string
+  label: string
+  group: string
+}
+export interface LogMeta {
+  actions: LogActionOption[]
 }
 export interface AdminLogItem {
-  id: string; action: string; target: string | null
-  detail: unknown; ip: string | null; createdAt: string
-  operator: { uid: string; nickname: string }
+  id: string
+  action: string
+  actionLabel: string
+  actionGroup: string
+  target: string | null
+  targetLabel: string | null
+  detail: unknown
+  summary: string
+  ip: string | null
+  createdAt: string
+  operator: {
+    id: string
+    uid: string
+    nickname: string
+    role: string
+    roleLabel: string
+  }
 }
 export interface LogPage { total: number; page: number; pageSize: number; list: AdminLogItem[] }
