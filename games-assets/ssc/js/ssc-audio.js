@@ -1,28 +1,74 @@
-/** 快乐时时彩 · 大厅 BGM + 倒计时音效 + 开奖滚号 tick */
+/** 快乐时时彩 · bg 大厅 BGM + 末 3 秒铃声 + opening/over 开奖 */
 (function (global) {
   var BASE = '/audio/ssc/';
-  var VER = '9';
+  var VER = '14';
   var LS_KEY = 'ssc_audio_v1';
+  /** 倒计时还剩 3 秒时开始响铃，持续到 00:00 */
+  var RING_LEAD_MS = 3000;
+  var RING_FADE_MS = 160;
 
-  var pref = { music: true, sfx: true };
+  function isAppBgmOn() {
+    try { return localStorage.getItem('app_bgm_off') !== '1'; } catch (e) { return true; }
+  }
+  function isAppSfxOn() {
+    try { return localStorage.getItem('sound_off') !== '1'; } catch (e) { return true; }
+  }
+  /* 无本游戏记录时跟随账号管理；有记录则用本游戏覆盖 */
+  var pref = { music: isAppBgmOn(), sfx: isAppSfxOn() };
   try {
     var raw = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
     if (raw && typeof raw === 'object') {
-      pref.music = raw.music !== false;
-      pref.sfx = raw.sfx !== false;
+      if (typeof raw.music === 'boolean') pref.music = raw.music;
+      if (typeof raw.sfx === 'boolean') pref.sfx = raw.sfx;
     }
   } catch (e) { /* ignore */ }
+
+  function syncFromAppIfNeeded() {
+    try {
+      var stored = localStorage.getItem(LS_KEY);
+      if (stored && stored !== 'null') return;
+    } catch (e) { return; }
+    pref.music = isAppBgmOn();
+    pref.sfx = isAppSfxOn();
+    if (pref.music) {
+      try { if (typeof ensureBgm === 'function') ensureBgm(true); } catch (e2) { /* ignore */ }
+      try { if (typeof ensureLobbyBgm === 'function') ensureLobbyBgm(true); } catch (e3) { /* ignore */ }
+    } else {
+      try { if (bgm) bgm.pause(); } catch (e4) { /* ignore */ }
+      try { if (lobbyBgm) lobbyBgm.pause(); } catch (e5) { /* ignore */ }
+    }
+    if (!pref.sfx) {
+      try { if (typeof clearCountdownArm === 'function') clearCountdownArm(); } catch (e6) { /* ignore */ }
+      try { if (typeof stopRing === 'function') stopRing(); } catch (e7) { /* ignore */ }
+      try { if (typeof stopDrawSfx === 'function') stopDrawSfx(); } catch (e8) { /* ignore */ }
+      try { if (typeof stopRaceSfx === 'function') stopRaceSfx(); } catch (e9) { /* ignore */ }
+    }
+  }
+  window.addEventListener('storage', function (ev) {
+    if (!ev) return;
+    if (ev.key === 'app_bgm_off' || ev.key === 'sound_off' || ev.key === LS_KEY) syncFromAppIfNeeded();
+  });
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) syncFromAppIfNeeded();
+  });
 
   var unlocked = false;
   var bgm = null;
   var lastSfxAt = {};
   var cdTimers = [];
+  var drawTimers = [];
+  var drawNodes = [];
+  var ringNode = null;
+  var ringStopTimer = 0;
+  var ringFadeTimer = 0;
   var cdArmedLockAt = 0;
-  var cdPlayed = {};
+  var ringPlayedForLock = 0;
+  var ringPlayedThisDraw = false;
   var baseVol = 0.42;
+  var drawActive = false;
 
-  function url(name) {
-    return BASE + name + '.wav?v=' + VER;
+  function url(name, ext) {
+    return BASE + name + '.' + (ext || 'wav') + '?v=' + VER;
   }
 
   function savePref() {
@@ -33,7 +79,7 @@
     if (unlocked) return;
     unlocked = true;
     try {
-      var silent = new Audio(url('countdown-4'));
+      var silent = new Audio(url('rings/RING_01'));
       silent.volume = 0;
       silent.play().then(function () { silent.pause(); }).catch(function () {});
     } catch (e) { /* ignore */ }
@@ -42,12 +88,12 @@
 
   function ensureBgm(playNow) {
     if (!bgm) {
-      bgm = new Audio(url('lobby-bgm'));
+      bgm = new Audio(url('official-bg', 'mp3'));
       bgm.loop = true;
       bgm.preload = 'auto';
       bgm.volume = baseVol;
     } else {
-      bgm.volume = baseVol;
+      bgm.volume = drawActive ? baseVol * 0.12 : baseVol;
     }
     if (!pref.music) return;
     if (playNow && bgm.paused) {
@@ -68,44 +114,110 @@
   function setSfxOn(on) {
     pref.sfx = !!on;
     savePref();
-    if (!pref.sfx) clearCountdownArm();
+    if (!pref.sfx) {
+      clearCountdownArm();
+      stopRing();
+      stopDrawSfx();
+    }
   }
 
   function sfx(name, opt) {
-    if (!pref.sfx || !unlocked) return;
+    if (!pref.sfx || !unlocked) return null;
     opt = opt || {};
     var now = Date.now();
     var gap = typeof opt.dedupeMs === 'number' ? opt.dedupeMs : 40;
-    if (lastSfxAt[name] && now - lastSfxAt[name] < gap) return;
-    lastSfxAt[name] = now;
+    var key = name + (opt.ext || '');
+    if (lastSfxAt[key] && now - lastSfxAt[key] < gap) return null;
+    lastSfxAt[key] = now;
     try {
-      var node = new Audio(url(name));
+      var node = new Audio(url(name, opt.ext));
       node.volume = typeof opt.vol === 'number' ? opt.vol : 0.7;
       var p = node.play();
       if (p && p.catch) p.catch(function () {});
-    } catch (e) { /* ignore */ }
+      return node;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function clearRingFade() {
+    if (ringFadeTimer) {
+      clearInterval(ringFadeTimer);
+      ringFadeTimer = 0;
+    }
+  }
+
+  function stopRing() {
+    if (ringStopTimer) {
+      clearTimeout(ringStopTimer);
+      ringStopTimer = 0;
+    }
+    clearRingFade();
+    if (ringNode) {
+      try { ringNode.pause(); ringNode.src = ''; } catch (e) { /* ignore */ }
+      ringNode = null;
+    }
+  }
+
+  function fadeStopRing() {
+    var n = ringNode;
+    if (!n) return;
+    clearRingFade();
+    var from = typeof n.volume === 'number' ? n.volume : 0.75;
+    var steps = 5;
+    var i = 0;
+    ringFadeTimer = setInterval(function () {
+      i += 1;
+      try { n.volume = Math.max(0, from * (1 - i / steps)); } catch (e) { /* ignore */ }
+      if (i >= steps) {
+        clearRingFade();
+        try { n.pause(); n.src = ''; } catch (e2) { /* ignore */ }
+        if (ringNode === n) ringNode = null;
+      }
+    }, Math.max(24, Math.floor(RING_FADE_MS / steps)));
   }
 
   function clearCountdownArm() {
     cdTimers.forEach(function (id) { clearTimeout(id); });
     cdTimers = [];
     cdArmedLockAt = 0;
-    cdPlayed = {};
-  }
-
-  function playCd(key, name, vol) {
-    if (!pref.sfx || !unlocked) return;
-    if (cdPlayed[key]) return;
-    cdPlayed[key] = true;
-    sfx(name, { vol: vol, dedupeMs: 0 });
   }
 
   /**
-   * 按封盘绝对时刻对齐：
-   * - 第 5 秒不响
-   * - 4/3/2/1 各一声
-   * - 00:00（lockAt）双嘀
-   * 不压低 BGM
+   * 末 3 秒铃声：从 00:03 起播 RING_01，播到约 00:00（开奖仪式开始时掐断）。
+   */
+  function playCountdownRing(lockAtMs) {
+    if (!pref.sfx || !unlocked) return;
+    var lockAt = Number(lockAtMs) || 0;
+    if (lockAt && ringPlayedForLock === lockAt) return;
+    if (ringPlayedThisDraw) return;
+    if (lockAt) ringPlayedForLock = lockAt;
+    ringPlayedThisDraw = true;
+
+    stopRing();
+    var node = null;
+    try {
+      node = new Audio(url('rings/RING_01'));
+      node.volume = 0.75;
+      ringNode = node;
+      var p = node.play();
+      if (p && p.catch) p.catch(function () {});
+    } catch (e) {
+      return;
+    }
+
+    var now = Date.now();
+    var remain = lockAt ? Math.max(280, lockAt - now) : RING_LEAD_MS;
+    /* 盖住 3→0，略留余量；开奖 ceremony 会 stopRing */
+    var playMs = Math.min(Math.max(remain, 280), RING_LEAD_MS + 250);
+    ringStopTimer = setTimeout(function () {
+      ringStopTimer = 0;
+      fadeStopRing();
+    }, playMs);
+  }
+
+  /**
+   * 在 lockAt 前 3 秒开火；若进房时已不足 3 秒则立刻开始。
    */
   function armCountdown(lockAtMs) {
     var lockAt = Number(lockAtMs) || 0;
@@ -113,58 +225,104 @@
     if (cdArmedLockAt === lockAt) return;
     clearCountdownArm();
     cdArmedLockAt = lockAt;
+
     var now = Date.now();
+    if (now >= lockAt) return;
 
-    function schedule(at, fn) {
-      var delay = at - now;
-      if (delay < -80) return;
-      if (delay <= 0) {
-        fn();
-        return;
-      }
-      cdTimers.push(setTimeout(fn, delay));
-    }
-
-    /* 4..1：lockAt - n 秒 */
-    for (var s = 4; s >= 1; s--) {
-      (function (sec) {
-        schedule(lockAt - sec * 1000, function () {
-          playCd('t' + sec, 'countdown-' + sec, 0.58 + (4 - sec) * 0.05);
-        });
-      })(s);
-    }
-    /* 00:00 双嘀 */
-    schedule(lockAt, function () {
-      playCd('t0', 'countdown-final', 0.72);
-    });
+    var startAt = lockAt - RING_LEAD_MS;
+    var delay = startAt - now;
+    var fire = function () { playCountdownRing(lockAt); };
+    if (delay <= 0) fire();
+    else cdTimers.push(setTimeout(fire, delay));
   }
 
-  function onCountdownSec() { /* 音效只走 armCountdown，避免双触发 */ }
+  /** 备用：UI 显示到 3 秒时若定时器没打到，补开铃 */
+  function onCountdownSec(sec) {
+    var s = Math.ceil(Number(sec));
+    if (!(s <= 3) || s < 0) return;
+    if (ringPlayedThisDraw) return;
+    if (cdArmedLockAt) playCountdownRing(cdArmedLockAt);
+  }
 
   function onDrawing() {
-    /* 若 arm 因漂移未打到 00:00，进开奖中时补一次双嘀 */
-    if (cdArmedLockAt && !cdPlayed.t0) {
-      playCd('t0', 'countdown-final', 0.72);
-    }
+    /* 封盘后停倒计时铃，开奖音效交给 ceremony */
     clearCountdownArm();
+    /* 若整段 3 秒铃都没响到，不再补长铃，避免和 opening 叠 */
   }
 
   function onBetting() {
+    ringPlayedThisDraw = false;
+    ringPlayedForLock = 0;
+    stopRing();
+    endDrawCeremony();
     ensureBgm(true);
   }
 
   function startRoll() {}
   function stopRoll() {}
-
-  function rollTick() {
-    sfx('roll-tick', { vol: 0.26, dedupeMs: 28 });
+  function rollTick() {}
+  function ballStop() {}
+  function onRevealDone() {
+    endDrawCeremony();
   }
 
-  function ballStop() {
-    sfx('ball-stop', { vol: 0.6, dedupeMs: 30 });
+  function stopDrawSfx() {
+    drawTimers.forEach(function (id) { clearTimeout(id); });
+    drawTimers = [];
+    drawNodes.forEach(function (node) {
+      try { node.pause(); node.src = ''; } catch (e) { /* ignore */ }
+    });
+    drawNodes = [];
   }
 
-  function onRevealDone() {}
+  function playDrawTrack(name, opt) {
+    opt = opt || {};
+    if (!pref.sfx || !unlocked) return null;
+    try {
+      var node = new Audio(url(name, 'mp3'));
+      node.loop = !!opt.loop;
+      node.volume = typeof opt.vol === 'number' ? opt.vol : 0.72;
+      drawNodes.push(node);
+      var p = node.play();
+      if (p && p.catch) p.catch(function () {});
+      return node;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function startDrawCeremony(opts) {
+    opts = opts || {};
+    var mid = opts.midMs != null ? Number(opts.midMs) : 6000;
+    if (!(mid >= 0)) mid = 6000;
+
+    stopRing();
+    stopDrawSfx();
+    drawActive = true;
+    ringPlayedThisDraw = true;
+    if (bgm && pref.music) {
+      try { bgm.volume = baseVol * 0.12; } catch (e) { /* ignore */ }
+    }
+
+    playDrawTrack('official-opening', { loop: false, vol: 0.7 });
+
+    drawTimers.push(setTimeout(function () {
+      drawNodes.slice().forEach(function (node) {
+        try { node.pause(); node.src = ''; } catch (e) { /* ignore */ }
+      });
+      drawNodes = [];
+      playDrawTrack('official-over', { loop: false, vol: 0.78 });
+    }, mid));
+  }
+
+  function endDrawCeremony() {
+    drawActive = false;
+    stopDrawSfx();
+    if (bgm && pref.music) {
+      try { bgm.volume = baseVol; } catch (e) { /* ignore */ }
+      ensureBgm(true);
+    }
+  }
 
   document.addEventListener('pointerdown', unlock, { once: true });
   document.addEventListener('touchstart', unlock, { once: true });
@@ -172,6 +330,9 @@
     if (document.hidden) {
       if (bgm) try { bgm.pause(); } catch (e) { /* ignore */ }
       clearCountdownArm();
+      stopRing();
+      stopDrawSfx();
+      drawActive = false;
     } else if (pref.music && unlocked) {
       ensureBgm(true);
     }
@@ -192,6 +353,8 @@
     rollTick: rollTick,
     ballStop: ballStop,
     onRevealDone: onRevealDone,
+    startDrawCeremony: startDrawCeremony,
+    endDrawCeremony: endDrawCeremony,
     pref: pref
   };
 })(typeof window !== 'undefined' ? window : this);

@@ -1,0 +1,219 @@
+/**
+ * 嵌入房间顶部微调
+ * 公式框（竖线分左右）：
+ *   左 7 等分：n + n + n = 和值
+ *   右 1 格居中：大小
+ */
+
+/* 开场：背景图未就绪前盖住，避免下半截先露黑底 */
+html, body {
+  background: #152536 !important;
+}
+.content .kuai3Animate {
+  background: #152536 !important;
+}
+body:not(.k3-bg-ready) .loading {
+  display: block !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  background: #152536 !important;
+}
+body:not(.k3-bg-ready) .loading .loadtxt {
+  opacity: 0.35;
+}
+
+.content .kuai3Animate .animate_content .nameLogo {
+  top: 12px !important;
+  left: 18px !important;
+  transform: scale(1.28);
+  transform-origin: left top;
+  z-index: 5;
+}
+
+.content .kuai3Animate .position {
+  top: 14px !important;
+  left: 300px !important;
+  width: 490px !important;
+  z-index: 5;
+  overflow: visible;
+}
+
+/* 本期 */
+.content .kuai3Animate .position .middle_div .benqi {
+  position: absolute !important;
+  font-size: 20px !important;
+  font-weight: 700 !important;
+  height: 26px !important;
+  line-height: 26px !important;
+  top: -30px !important;
+  left: 50% !important;
+  transform: translateX(-50%);
+  margin: 0 !important;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.75);
+  z-index: 2;
+}
+
+/*
+ * Grid：左区 7 列均分（到竖线前），右区固定宽（竖线后大小格）
+ * 竖线约在 position 内 x≈389 → 左 389、右约 90
+ */
+.content .kuai3Animate .position .middle_div.formula-grid {
+  position: relative !important;
+  display: grid !important;
+  /* 左 7 等分到竖线前，右格对齐竖线后大小区 */
+  grid-template-columns: repeat(7, minmax(0, 1fr)) 88px !important;
+  grid-template-areas: "n1 p1 n2 p2 n3 eq sum bs" !important;
+  align-items: center !important;
+  justify-items: center !important;
+  width: 488px !important;
+  height: 48px !important;
+  margin: 16px 0 0 6px !important;
+  padding: 0 !important;
+  box-sizing: border-box !important;
+  overflow: visible !important;
+}
+
+/* ul 不占格，子 li 直接进入 grid */
+.content .kuai3Animate .position .middle_div.formula-grid ul#codetop {
+  display: contents !important;
+  width: auto !important;
+  height: auto !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  line-height: normal !important;
+}
+
+.content .kuai3Animate .position .middle_div.formula-grid ul li {
+  float: none !important;
+  position: relative !important;
+  top: auto !important;
+  left: auto !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  width: 100% !important;
+  height: 48px !important;
+  line-height: 48px !important;
+  text-align: center !important;
+  font-size: 36px !important;
+  font-weight: 800 !important;
+  color: #fff000 !important;
+  box-sizing: border-box !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+.content .kuai3Animate .position .middle_div.formula-grid ul li#num1 { grid-area: n1 !important; }
+.content .kuai3Animate .position .middle_div.formula-grid ul li#num2 { grid-area: n2 !important; }
+.content .kuai3Animate .position .middle_div.formula-grid ul li#num3 { grid-area: n3 !important; }
+.content .kuai3Animate .position .middle_div.formula-grid ul li#sumNum { grid-area: sum !important; }
+
+.content .kuai3Animate .position .middle_div.formula-grid ul li.bigOsmall {
+  grid-area: bs !important;
+  margin-left: 0 !important;
+  font-size: 28px !important;
+}
+
+.content .kuai3Animate .position .middle_div.formula-grid .addIcon1,
+.content .kuai3Animate .position .middle_div.formula-grid .addIcon2,
+.content .kuai3Animate .position .middle_div.formula-grid .equalIcon {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  position: relative !important;
+  top: auto !important;
+  left: auto !important;
+  width: 100% !important;
+  height: 48px !important;
+  margin: 0 !important;
+  pointer-events: none;
+  background-repeat: no-repeat !important;
+  background-position: center center !important;
+}
+
+.content .kuai3Animate .position .middle_div.formula-grid .addIcon1 {
+  grid-area: p1 !important;
+  background: none !important;
+}
+.content .kuai3Animate .position .middle_div.formula-grid .addIcon2 {
+  grid-area: p2 !important;
+  background: none !important;
+}
+.content .kuai3Animate .position .middle_div.formula-grid .equalIcon {
+  grid-area: eq !important;
+  background: none !important;
+}
+
+/* 用文字运算符，保证与数字同一套居中逻辑 */
+.content .kuai3Animate .position .middle_div.formula-grid .addIcon1::before,
+.content .kuai3Animate .position .middle_div.formula-grid .addIcon2::before {
+  content: '+';
+  color: #fff;
+  font-size: 32px;
+  font-weight: 700;
+  line-height: 1;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+.content .kuai3Animate .position .middle_div.formula-grid .equalIcon::before {
+  content: '=';
+  color: #fff;
+  font-size: 32px;
+  font-weight: 700;
+  line-height: 1;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+/* 未开奖占位横杠：格子正中 */
+.content .kuai3Animate .position .middle_div.formula-grid ul li.is-ph {
+  color: transparent !important;
+  text-shadow: none !important;
+}
+.content .kuai3Animate .position .middle_div.formula-grid ul li.is-ph::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 20px;
+  height: 5px;
+  transform: translate(-50%, -50%);
+  background: #fff000;
+  border-radius: 2px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+.content .kuai3Animate .position .middle_div.formula-grid ul li.bigOsmall.is-ph::after {
+  width: 18px;
+}
+
+/* 下期 / 开奖 */
+.content .kuai3Animate .currentDraw {
+  top: 6px !important;
+  left: 835px !important;
+  width: 280px !important;
+  z-index: 5;
+}
+.content .kuai3Animate .currentDraw .dl {
+  margin-top: 8px !important;
+  font-size: 19px !important;
+  font-weight: 600 !important;
+  width: 210px !important;
+  white-space: nowrap;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.75);
+}
+.content .kuai3Animate .currentDraw .dl .nextDraw,
+.content .kuai3Animate .currentDraw .dl .kai {
+  width: 210px !important;
+  margin-bottom: 6px !important;
+}
+.content .kuai3Animate .currentDraw .dl .dot {
+  width: 11px !important;
+  height: 11px !important;
+  border-radius: 50% !important;
+  margin-right: 6px !important;
+  vertical-align: middle;
+}
+.content .kuai3Animate .currentDraw .dl .draw,
+.content .kuai3Animate .currentDraw .dl .kaitime {
+  font-weight: 700;
+}

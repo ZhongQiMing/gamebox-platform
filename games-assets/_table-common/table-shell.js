@@ -120,12 +120,11 @@
 
   TableShell.disableUndoButton = function (undoBtn) {
     if (!undoBtn) return;
+    undoBtn.hidden = false;
     undoBtn.classList.add('is-disabled');
     undoBtn.setAttribute('aria-disabled', 'true');
     undoBtn.setAttribute('aria-label', '真账已锁，不可撤销');
     undoBtn.setAttribute('title', '真账已提交，不可撤销');
-    /* UI 上已隐藏；保留禁用以防旧缓存仍显示按钮 */
-    undoBtn.hidden = true;
   };
 
   /**
@@ -156,15 +155,29 @@
     return clock;
   };
 
-  /** 下注剩余秒：有近期 snapshot 用服务器；否则 fallbackFn() */
+  /**
+   * 下注剩余秒：有近期 snapshot 用服务器；否则 fallbackFn()。
+   * 开奖动画期间常停轮询，BETTING 倒计时会在本地耗尽；若仍死守 0，
+   * 会与本地「仍在下注窗」对齐打架，把 UI 锁死在「准备中」。
+   */
   TableShell.bettingLeftSec = function (clock, fallbackFn) {
-    if (clock && clock.syncedAt && clock.phase === 'BETTING') {
-      return Math.max(0, clock.secondsLeft - (Date.now() - clock.syncedAt) / 1000);
+    function fallback() {
+      return typeof fallbackFn === 'function' ? Number(fallbackFn()) || 0 : 0;
     }
-    if (clock && (clock.phase === 'DRAWING' || clock.phase === 'SETTLED')) {
+    if (clock && clock.syncedAt && clock.phase === 'BETTING') {
+      var elapsed = (Date.now() - clock.syncedAt) / 1000;
+      var left = clock.secondsLeft - elapsed;
+      if (left > 0) return left;
+      /* 同步偏旧且倒计时已尽：改用本地对齐，避免永久返回 0 */
+      if (elapsed > Number(clock.secondsLeft) + 1.5) return fallback();
       return 0;
     }
-    return typeof fallbackFn === 'function' ? Number(fallbackFn()) || 0 : 0;
+    if (clock && clock.syncedAt && (clock.phase === 'DRAWING' || clock.phase === 'SETTLED')) {
+      var age = (Date.now() - clock.syncedAt) / 1000;
+      if (age > 3) return fallback();
+      return 0;
+    }
+    return fallback();
   };
 
   /**
@@ -212,13 +225,80 @@
     return '';
   };
 
+  /** Asia/Shanghai 当日 YYYYMMDD */
+  TableShell.shanghaiYmd = function (ms) {
+    var d = new Date(typeof ms === 'number' ? ms : Date.now());
+    var parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Shanghai',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(d);
+    var get = function (t) {
+      for (var i = 0; i < parts.length; i++) if (parts[i].type === t) return parts[i].value;
+      return '01';
+    };
+    return get('year') + get('month') + get('day');
+  };
+
+  /** 从局号取出 YYYYMMDD（BJL20260802-0042） */
+  TableShell.roundNoYmd = function (roundNo) {
+    var m = String(roundNo || '').match(/(\d{8})-/);
+    return m ? m[1] : '';
+  };
+
+  TableShell.historyItemYmd = function (item) {
+    if (!item) return '';
+    var fromRound = TableShell.roundNoYmd(item.roundNo);
+    if (fromRound) return fromRound;
+    if (item.createdAt) {
+      var ts = Date.parse(item.createdAt);
+      if (isFinite(ts)) return TableShell.shanghaiYmd(ts);
+    }
+    return '';
+  };
+
   /**
-   * 服务端 history（新→旧）→ 珠盘序列（旧→新）+ 统计
+   * 主路单视口列数（高度定格子，宽度定可见列）
+   * 固定不滚动：写到倒数第二列满后左移窗口
+   */
+  TableShell.measureRoadViewCols = function (scrollEl, rows) {
+    rows = rows || 6;
+    var gap = 2;
+    var h = scrollEl && scrollEl.clientHeight ? scrollEl.clientHeight : 0;
+    var w = scrollEl && scrollEl.clientWidth ? scrollEl.clientWidth : 0;
+    var cell = h > 8 ? (h - 6 - (rows - 1) * gap) / rows : 22;
+    if (!(cell > 4)) cell = 22;
+    if (!(w > 8)) return 12;
+    return Math.max(8, Math.floor((w + gap) / (cell + gap)));
+  };
+
+  /** 珠盘视口序列：最多填满「总列数 - 1」列，末列留空 */
+  TableShell.roadBeadViewSeq = function (seq, viewCols, rows) {
+    seq = Array.isArray(seq) ? seq : [];
+    rows = rows || 6;
+    var maxFilled = Math.max(1, (viewCols || 12) - 1);
+    var maxBeads = maxFilled * rows;
+    if (seq.length <= maxBeads) return seq.slice();
+    return seq.slice(seq.length - maxBeads);
+  };
+
+  /** 大路视口列：同样只保留最近「总列数 - 1」列 */
+  TableShell.roadBigViewCols = function (colsData, viewCols) {
+    colsData = Array.isArray(colsData) ? colsData : [];
+    var maxFilled = Math.max(1, (viewCols || 12) - 1);
+    if (colsData.length <= maxFilled) return colsData.slice();
+    return colsData.slice(colsData.length - maxFilled);
+  };
+
+  /**
+   * 服务端 history（新→旧）→ 珠盘序列（旧→新）+ 当日统计
    * allowed: 允许的结果键集合，如 { banker:1, player:1, tie:1 }
    */
   TableShell.roadFromHistory = function (history, allowed) {
     allowed = allowed || { banker: 1, player: 1, tie: 1, dragon: 1, tiger: 1 };
     var list = Array.isArray(history) ? history.slice() : [];
+    var today = TableShell.shanghaiYmd();
     var seq = [];
     var stats = {};
     Object.keys(allowed).forEach(function (k) { stats[k] = 0; });
@@ -226,6 +306,8 @@
     for (var i = list.length - 1; i >= 0; i--) {
       var item = list[i];
       if (!item) continue;
+      var ymd = TableShell.historyItemYmd(item);
+      if (ymd && ymd !== today) continue;
       var res = TableShell.resultFromOutcome(item.outcome);
       if (!res || !allowed[res]) continue;
       seq.push(res);
@@ -306,6 +388,166 @@
       lines.push('<p class="' + p + '-rules__intro">' + info.fairLine + '</p>');
     }
     return lines.join('');
+  };
+
+  /**
+   * 正式玩法规则 HTML（牌桌类共用）
+   * @param {{
+   *   sections?: Array<{ title: string, paragraphs?: string[], list?: string[] }>,
+   *   oddsHeaders?: string[],
+   *   oddsRows?: string[][],
+   *   notes?: string[],
+   * }} opts
+   */
+  TableShell.buildFormalRulesHtml = function (opts) {
+    opts = opts || {};
+    var html = ['<div class="tb-rules">'];
+    (opts.sections || []).forEach(function (sec) {
+      if (!sec || !sec.title) return;
+      html.push('<section class="tb-rules__sec">');
+      html.push('<h3 class="tb-rules__title">' + sec.title + '</h3>');
+      (sec.paragraphs || []).forEach(function (p) {
+        html.push('<p class="tb-rules__p">' + p + '</p>');
+      });
+      if (sec.list && sec.list.length) {
+        html.push('<ul class="tb-rules__list">');
+        sec.list.forEach(function (li) {
+          html.push('<li>' + li + '</li>');
+        });
+        html.push('</ul>');
+      }
+      html.push('</section>');
+    });
+    if (opts.oddsRows && opts.oddsRows.length) {
+      var headers = opts.oddsHeaders || ['玩法', '说明', '赔率'];
+      var oddsIdx = headers.indexOf('赔率');
+      if (oddsIdx < 0) oddsIdx = headers.length - 1;
+      html.push('<section class="tb-rules__sec">');
+      html.push('<h3 class="tb-rules__title">玩法与赔率</h3>');
+      html.push(
+        '<p class="tb-rules__p">赔率按「押 1 净得 X」标注（不含本金）；派彩以当局结算为准。</p>',
+      );
+      html.push('<div class="tb-rules__table-wrap"><table class="tb-rules__table"><thead><tr>');
+      headers.forEach(function (h, i) {
+        html.push('<th' + (i === oddsIdx ? ' class="odds"' : '') + '>' + h + '</th>');
+      });
+      html.push('</tr></thead><tbody>');
+      opts.oddsRows.forEach(function (row) {
+        html.push('<tr>');
+        (row || []).forEach(function (cell, i) {
+          html.push('<td' + (i === oddsIdx ? ' class="odds"' : '') + '>' + cell + '</td>');
+        });
+        html.push('</tr>');
+      });
+      html.push('</tbody></table></div></section>');
+    }
+    if (opts.notes && opts.notes.length) {
+      html.push('<section class="tb-rules__sec">');
+      html.push('<h3 class="tb-rules__title">温馨提示</h3>');
+      html.push('<ul class="tb-rules__list">');
+      opts.notes.forEach(function (n) {
+        html.push('<li>' + n + '</li>');
+      });
+      html.push('</ul></section>');
+    }
+    html.push('</div>');
+    return html.join('');
+  };
+
+  /* ===== 音频：个人中心为默认，本游戏可单独覆盖 ===== */
+  TableShell.APP_BGM_OFF_KEY = 'app_bgm_off';
+  TableShell.APP_SFX_OFF_KEY = 'sound_off';
+
+  TableShell.isAppBgmOn = function () {
+    try { return localStorage.getItem(TableShell.APP_BGM_OFF_KEY) !== '1'; }
+    catch (e) { return true; }
+  };
+
+  TableShell.isAppSfxOn = function () {
+    try { return localStorage.getItem(TableShell.APP_SFX_OFF_KEY) !== '1'; }
+    catch (e) { return true; }
+  };
+
+  TableShell.hasStoredAudioPref = function (storageKey) {
+    try {
+      var raw = localStorage.getItem(storageKey);
+      return !!(raw && raw !== 'null');
+    } catch (e) {
+      return false;
+    }
+  };
+
+  /**
+   * 无本游戏记录 → 跟随账号管理（背景音乐 / 点击音效）；
+   * 有本游戏记录 → 只认本游戏开关。
+   */
+  TableShell.loadAudioPref = function (storageKey) {
+    var music = TableShell.isAppBgmOn();
+    var sfx = TableShell.isAppSfxOn();
+    try {
+      var raw = JSON.parse(localStorage.getItem(storageKey) || 'null');
+      if (raw && typeof raw === 'object') {
+        if (typeof raw.music === 'boolean') music = raw.music;
+        if (typeof raw.sfx === 'boolean') sfx = raw.sfx;
+      }
+    } catch (e) { /* ignore */ }
+    return { music: !!music, sfx: !!sfx };
+  };
+
+  TableShell.saveAudioPref = function (storageKey, pref) {
+    try {
+      localStorage.setItem(storageKey, JSON.stringify({
+        music: !!(pref && pref.music),
+        sfx: !!(pref && pref.sfx),
+      }));
+    } catch (e) { /* ignore */ }
+  };
+
+  TableShell.buildAudioSettingsHtml = function (pref) {
+    pref = pref || { music: true, sfx: true };
+    return (
+      '<div class="tb-settings">' +
+        '<div class="tb-settings__row"><span class="tb-settings__label">背景音乐</span>' +
+          '<button type="button" class="tb-switch' + (pref.music ? ' is-on' : '') +
+          '" id="tbSwMusic" role="switch" aria-checked="' + !!pref.music + '"></button></div>' +
+        '<div class="tb-settings__row"><span class="tb-settings__label">游戏音效</span>' +
+          '<button type="button" class="tb-switch' + (pref.sfx ? ' is-on' : '') +
+          '" id="tbSwSfx" role="switch" aria-checked="' + !!pref.sfx + '"></button></div>' +
+      '</div>'
+    );
+  };
+
+  TableShell.bindAudioSettings = function (opts) {
+    opts = opts || {};
+    function wire(id, setter) {
+      var el = document.getElementById(id);
+      if (!el || typeof setter !== 'function') return;
+      el.addEventListener('click', function () {
+        var on = !el.classList.contains('is-on');
+        el.classList.toggle('is-on', on);
+        el.setAttribute('aria-checked', String(on));
+        setter(on);
+      });
+    }
+    wire('tbSwMusic', opts.onMusic);
+    wire('tbSwSfx', opts.onSfx);
+  };
+
+  /** 未单独设置过本游戏时，跟随账号管理变更（不写本游戏 storage） */
+  TableShell.watchAppAudioPref = function (storageKey, apply) {
+    if (typeof apply !== 'function') return;
+    function sync() {
+      if (TableShell.hasStoredAudioPref(storageKey)) return;
+      apply(TableShell.loadAudioPref(storageKey));
+    }
+    window.addEventListener('storage', function (ev) {
+      if (!ev) return;
+      if (ev.key === TableShell.APP_BGM_OFF_KEY || ev.key === TableShell.APP_SFX_OFF_KEY) sync();
+    });
+    window.addEventListener('app-audio-pref-changed', sync);
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden) sync();
+    });
   };
 
   global.TableShell = TableShell;

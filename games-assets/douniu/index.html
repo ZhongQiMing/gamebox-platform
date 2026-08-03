@@ -2,13 +2,11 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
+  <link rel="stylesheet" href="/fonts/gamebox-fonts.css">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>斗牛</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Serif+SC:wght@600;700;900&family=Orbitron:wght@600;700&family=ZCOOL+QingKe+HuangYou&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="./css/dn.css?v=38">
-  <link rel="stylesheet" href="/games-assets/_table-common/table-ui.css?v=1">
+<link rel="stylesheet" href="./css/dn.css?v=49">
+  <link rel="stylesheet" href="/games-assets/_table-common/table-ui.css?v=6">
   <script>
     (function () {
       if (window.parent !== window) document.documentElement.classList.add('dn-in-iframe');
@@ -137,24 +135,24 @@
   <!-- 下注区：上庄闲，下五个牛型区 -->
   <div class="dn-bet dn-bet--hotspot tb-bet" id="betArea" aria-label="下注区">
     <button type="button" class="dn-bet-btn dn-bet-btn--banker" data-bet="banker">
-      <img class="dn-bet-btn__frame" src="./assets/ui/bet-btns/banker.png?v=13" alt="" draggable="false">
+      <img class="dn-bet-btn__frame" src="./assets/ui/bet-btns/banker.png?v=14" alt="" draggable="false">
       <span class="dn-bet-btn__name">庄</span>
       <span class="dn-bet-btn__odds">1:0.95</span>
       <span class="dn-bet-btn__chips" aria-hidden="true"></span>
       <span class="dn-bet-btn__stake" hidden>0</span>
     </button>
     <button type="button" class="dn-bet-btn dn-bet-btn--player" data-bet="player">
-      <img class="dn-bet-btn__frame" src="./assets/ui/bet-btns/player.png?v=13" alt="" draggable="false">
+      <img class="dn-bet-btn__frame" src="./assets/ui/bet-btns/player.png?v=14" alt="" draggable="false">
       <span class="dn-bet-btn__name">闲</span>
-      <span class="dn-bet-btn__odds">1:0.95</span>
+      <span class="dn-bet-btn__odds">1:1</span>
       <span class="dn-bet-btn__chips" aria-hidden="true"></span>
       <span class="dn-bet-btn__stake" hidden>0</span>
     </button>
     <button type="button" class="dn-bet-btn dn-bet-btn--span dn-bet-btn--gold" data-bet="small">
       <img class="dn-bet-btn__frame" src="./assets/ui/bet-btns/small.png?v=21" alt="" draggable="false">
       <span class="dn-bet-btn__label">
-        <span class="dn-bet-btn__name">小牛</span>
-        <span class="dn-bet-btn__odds">1:1000</span>
+        <span class="dn-bet-btn__name">小牛牛</span>
+        <span class="dn-bet-btn__odds">1:100</span>
       </span>
       <span class="dn-bet-btn__chips" aria-hidden="true"></span>
       <span class="dn-bet-btn__stake" hidden>0</span>
@@ -163,7 +161,7 @@
       <img class="dn-bet-btn__frame" src="./assets/ui/bet-btns/niuniu.png?v=21" alt="" draggable="false">
       <span class="dn-bet-btn__label">
         <span class="dn-bet-btn__name">牛牛</span>
-        <span class="dn-bet-btn__odds">1:5.8</span>
+        <span class="dn-bet-btn__odds">1:6.84</span>
       </span>
       <span class="dn-bet-btn__chips" aria-hidden="true"></span>
       <span class="dn-bet-btn__stake" hidden>0</span>
@@ -171,8 +169,8 @@
     <button type="button" class="dn-bet-btn dn-bet-btn--span dn-bet-btn--gold" data-bet="niu79">
       <img class="dn-bet-btn__frame" src="./assets/ui/bet-btns/niu79.png?v=21" alt="" draggable="false">
       <span class="dn-bet-btn__label">
-        <span class="dn-bet-btn__name">牛7-9</span>
-        <span class="dn-bet-btn__odds">1:1.96</span>
+        <span class="dn-bet-btn__name is-stack"><b>牛7</b><i>～</i><b>牛9</b></span>
+        <span class="dn-bet-btn__odds">1:2.98</span>
       </span>
       <span class="dn-bet-btn__chips" aria-hidden="true"></span>
       <span class="dn-bet-btn__stake" hidden>0</span>
@@ -180,8 +178,8 @@
     <button type="button" class="dn-bet-btn dn-bet-btn--span dn-bet-btn--gold" data-bet="niu06">
       <img class="dn-bet-btn__frame" src="./assets/ui/bet-btns/niu06.png?v=21" alt="" draggable="false">
       <span class="dn-bet-btn__label">
-        <span class="dn-bet-btn__name">无-牛6</span>
-        <span class="dn-bet-btn__odds">1:0.8</span>
+        <span class="dn-bet-btn__name is-stack"><b>无牛</b><i>～</i><b>牛6</b></span>
+        <span class="dn-bet-btn__odds">1:1.82</span>
       </span>
       <span class="dn-bet-btn__chips" aria-hidden="true"></span>
       <span class="dn-bet-btn__stake" hidden>0</span>
@@ -190,7 +188,7 @@
       <img class="dn-bet-btn__frame" src="./assets/ui/bet-btns/flower.png?v=21" alt="" draggable="false">
       <span class="dn-bet-btn__label">
         <span class="dn-bet-btn__name">五花牛</span>
-        <span class="dn-bet-btn__odds">1:1150</span>
+        <span class="dn-bet-btn__odds">1:90</span>
       </span>
       <span class="dn-bet-btn__chips" aria-hidden="true"></span>
       <span class="dn-bet-btn__stake" hidden>0</span>
@@ -293,13 +291,7 @@
     </button>
   </div>
 </div><!-- /.dn-room -->
-</div><!-- /.dn-stage -->
-  <div class="dn-payout-fly" id="payoutFlyLayer" aria-hidden="true"></div>
-  <div class="dn-phase-banner" id="phaseBanner" aria-hidden="true">
-    <img class="dn-phase-banner__img" id="phaseBannerImg" alt="" draggable="false">
-  </div>
-
-  <!-- 右侧快捷竖排：客服 / 历史 / 记录 / 玩法 / 设置 -->
+  <!-- 右侧快捷竖排：相对牌桌区域垂直居中 -->
   <aside class="dn-rail" id="dnRail" aria-label="快捷操作">
     <button type="button" class="dn-rail-btn" id="railCs" title="客服">
       <img class="dn-rail-ic" src="/images/table-rail/rail-cs.png?v=3" alt="" draggable="false">
@@ -322,6 +314,11 @@
       <span class="dn-rail-lb">设置</span>
     </button>
   </aside>
+</div><!-- /.dn-stage -->
+  <div class="dn-payout-fly" id="payoutFlyLayer" aria-hidden="true"></div>
+  <div class="dn-phase-banner" id="phaseBanner" aria-hidden="true">
+    <img class="dn-phase-banner__img" id="phaseBannerImg" alt="" draggable="false">
+  </div>
 
   <!-- 通用弹层：历史 / 玩法 / 设置 -->
   <div class="dn-sheet-mask" id="dnSheetMask" hidden></div>
@@ -335,7 +332,7 @@
 </div><!-- /.dn-viewport -->
 
 <script src="/legacy/js/games-common.js?v=28"></script>
-<script src="/games-assets/_table-common/table-shell.js?v=5"></script>
+<script src="/games-assets/_table-common/table-shell.js?v=10"></script>
 <script>
 (function () {
   /* 防重复注入：先清旧定时器；成功跑完再打标 */
@@ -449,16 +446,33 @@
   var voiceAudio = null;
   var sfxLastAt = {};
   /* 音频开关（设置弹层控制）：music=背景音乐，sfx=音效+语音 */
-  var audioPref = { music: true, sfx: true };
-  try {
-    var apRaw = JSON.parse(localStorage.getItem('dn_audio') || 'null');
-    if (apRaw && typeof apRaw === 'object') {
-      audioPref.music = apRaw.music !== false;
-      audioPref.sfx = apRaw.sfx !== false;
-    }
-  } catch (e) { /* ignore */ }
+  var AUDIO_PREF_KEY = 'dn_audio';
+  var audioPref = window.TableShell
+    ? TableShell.loadAudioPref(AUDIO_PREF_KEY)
+    : { music: true, sfx: true };
   function saveAudioPref() {
-    try { localStorage.setItem('dn_audio', JSON.stringify(audioPref)); } catch (e) { /* ignore */ }
+    if (window.TableShell) {
+      TableShell.saveAudioPref(AUDIO_PREF_KEY, audioPref);
+    } else {
+      try { localStorage.setItem(AUDIO_PREF_KEY, JSON.stringify(audioPref)); } catch (e) { /* ignore */ }
+    }
+  }
+  function applyAudioPrefSilent(pref) {
+    if (!pref) return;
+    audioPref.music = !!pref.music;
+    audioPref.sfx = !!pref.sfx;
+    if (audioPref.music) {
+      if (typeof ensureBgm === 'function') ensureBgm(true);
+    } else if (typeof bgmAudio !== 'undefined' && bgmAudio) {
+      try { bgmAudio.pause(); } catch (e) { /* ignore */ }
+    }
+    if (!audioPref.sfx && typeof voiceAudio !== 'undefined' && voiceAudio) {
+      try { voiceAudio.pause(); } catch (e) { /* ignore */ }
+      voiceAudio = null;
+    }
+  }
+  if (window.TableShell && TableShell.watchAppAudioPref) {
+    TableShell.watchAppAudioPref(AUDIO_PREF_KEY, applyAudioPrefSilent);
   }
   function setMusicOn(on) {
     audioPref.music = !!on;
@@ -576,13 +590,13 @@
     });
   }
 
-  /* 按牌型映射 YMBN 报牌音（无牛/牛1-9/牛牛/五花） */
+  /* 按牌型映射 YMBN 报牌音（无牛/牛1-9/牛牛/五花）；特殊牌型优先 */
   function handVoiceKey(ev) {
     if (!ev) return null;
+    if (ev.special === 'bomb' || ev.special === 'small') return 'voice/niuniu';
+    if (ev.type === 'flower' || ev.special === 'flower' || ev.niu === 11) return 'voice/flower';
     if (ev.type === 'none' || ev.niu === 0) return 'voice/none';
     if (ev.type === 'niuniu' || ev.niu === 10) return 'voice/niuniu';
-    if (ev.type === 'flower' || ev.special === 'flower' || ev.niu === 11) return 'voice/flower';
-    if (ev.special === 'bomb' || ev.special === 'small') return 'voice/niuniu';
     if (ev.niu >= 1 && ev.niu <= 9) return 'voice/niu' + ev.niu;
     return 'voice/none';
   }
@@ -606,12 +620,12 @@
   /* 兜底值，须与 packages/shared table-paytable 保持一致；启动后由 /pay-table 覆盖 */
   var BET_ODDS = {
     banker: 0.95,
-    player: 0.95,
-    small: 1000,
-    niuniu: 5.8,
-    niu79: 1.96,
-    niu06: 0.8,
-    flower: 1150
+    player: 1,
+    small: 100,
+    niuniu: 6.84,
+    niu79: 2.98,
+    niu06: 1.82,
+    flower: 90
   };
   if (window.TableShell) TableShell.loadPayTable(SERVER_GAME, { odds: BET_ODDS, domRoot: document.getElementById('betArea') });
   // 发牌顺序：庄5 → 闲1 → 庄4 → 闲2 → 庄3 → 闲3 → 庄2 → 闲4 → 庄1 → 闲5
@@ -2175,18 +2189,14 @@
 
   syncActionButtons();
 
-
   /* ---------- 路单：珠盘路 + 大路 ---------- */
   var ROAD_ROWS = 6;
-  /* 上限取整列（6 的倍数）：满了只按整列裁剪，避免每局全体上移 */
-  var ROAD_MAX = 360;
-  var ROAD_MIN_COLS = 20;
   var ROAD_LABELS = { banker: '庄', player: '闲' };
   var ROAD_NAMES = { banker: '庄', player: '闲' };
   var ROAD_ALLOWED = { banker: 1, player: 1 };
   var roadHistory = [];
   var roadRoundNos = {};
-  var roadStats = { banker: 0, player: 0, tie: 0 };
+  var roadStats = { banker: 0, player: 0 };
   var beadGrid = document.getElementById('beadGrid');
   var bigGrid = document.getElementById('bigGrid');
   var beadScroll = document.getElementById('beadScroll');
@@ -2194,7 +2204,7 @@
 
   function loadRoad() {
     roadHistory = [];
-    roadStats = { banker: 0, player: 0, tie: 0 };
+    roadStats = { banker: 0, player: 0 };
     roadRoundNos = {};
     if (window.TableShell && TableShell.hydrateRoad) {
       TableShell.hydrateRoad(SERVER_GAME, ROAD_ALLOWED, function (packed) {
@@ -2213,7 +2223,7 @@
     });
     if (roadHistory.length > incoming.length) return;
     roadHistory = incoming;
-    roadStats = { banker: 0, player: 0, tie: 0 };
+    roadStats = { banker: 0, player: 0 };
     var st = packed.stats || {};
     roadStats.banker = st.banker || 0;
     roadStats.player = st.player || 0;
@@ -2221,16 +2231,11 @@
     (packed.roundNos || []).forEach(function (rn) {
       if (rn) roadRoundNos[String(rn)] = 1;
     });
-    if (roadHistory.length > ROAD_MAX) {
-      var over = roadHistory.length - ROAD_MAX;
-      over = Math.ceil(over / ROAD_ROWS) * ROAD_ROWS;
-      roadHistory = roadHistory.slice(over);
-    }
     renderRoad();
   }
 
   function countRoad(hist) {
-    var c = { banker: 0, player: 0, tie: 0 };
+    var c = { banker: 0, player: 0 };
     for (var i = 0; i < hist.length; i++) {
       if (c[hist[i]] != null) c[hist[i]] += 1;
     }
@@ -2291,18 +2296,42 @@
     return cols;
   }
 
+  function measureRoadViewCols(scrollEl) {
+    if (window.TableShell && TableShell.measureRoadViewCols) {
+      return TableShell.measureRoadViewCols(scrollEl, ROAD_ROWS);
+    }
+    return 12;
+  }
+
+  function resetRoadForNewDay(roundNo) {
+    if (!roundNo || !window.TableShell) return;
+    var ymd = TableShell.roundNoYmd(roundNo);
+    if (!ymd) return;
+    var keys = Object.keys(roadRoundNos);
+    if (!keys.length) return;
+    var prev = TableShell.roundNoYmd(keys[0]);
+    if (prev && prev !== ymd) {
+      roadHistory = [];
+      roadRoundNos = {};
+      roadStats = { banker: 0, player: 0 };
+    }
+  }
+
   function renderBead() {
     if (!beadGrid) return;
-    var filledCols = Math.ceil(roadHistory.length / ROAD_ROWS) || 0;
-    /* 末尾只留 1 列空白，最新一颗贴近右缘；写满后向右延伸靠滚动看最新 */
-    var cols = Math.max(ROAD_MIN_COLS, filledCols + 1);
-    var lastIdx = roadHistory.length - 1;
+    var viewCols = measureRoadViewCols(beadScroll);
+    var viewSeq = window.TableShell
+      ? TableShell.roadBeadViewSeq(roadHistory, viewCols, ROAD_ROWS)
+      : roadHistory.slice();
+    var filledCols = Math.ceil(viewSeq.length / ROAD_ROWS) || 0;
+    var cols = viewCols;
+    var lastIdx = viewSeq.length - 1;
     var html = '';
     for (var c = 0; c < cols; c++) {
       for (var r = 0; r < ROAD_ROWS; r++) {
         var idx = c * ROAD_ROWS + r;
-        if (idx < roadHistory.length) {
-          var kind = roadHistory[idx];
+        if (idx < viewSeq.length) {
+          var kind = viewSeq[idx];
           var latest = idx === lastIdx ? ' is-latest' : '';
           html += '<span class="dn-bead dn-bead--' + kind + latest + '" role="listitem" title="' + ROAD_NAMES[kind] + '" aria-label="' + ROAD_NAMES[kind] + '">' +
             ROAD_LABELS[kind] + '</span>';
@@ -2313,15 +2342,20 @@
     }
     beadGrid.innerHTML = html;
     beadGrid.style.setProperty('--road-cols', String(cols));
+    beadGrid.setAttribute('data-filled-cols', String(filledCols));
     syncRoadGridWidth(beadGrid, cols);
+    if (beadScroll) beadScroll.scrollLeft = 0;
   }
 
   function renderBig() {
     if (!bigGrid) return;
+    var viewCols = measureRoadViewCols(bigScroll);
     var colsData = buildBigRoad(roadHistory);
-    var cols = Math.max(ROAD_MIN_COLS, colsData.length + 1);
+    if (window.TableShell) colsData = TableShell.roadBigViewCols(colsData, viewCols);
+    var filledCols = colsData.length;
+    var cols = viewCols;
     var html = '';
-    var lastCol = colsData.length - 1;
+    var lastCol = filledCols - 1;
     var lastRow = lastCol >= 0 ? colsData[lastCol].cells.length - 1 : -1;
 
     for (var c = 0; c < cols; c++) {
@@ -2345,17 +2379,18 @@
     }
     bigGrid.innerHTML = html;
     bigGrid.style.setProperty('--road-cols', String(cols));
+    bigGrid.setAttribute('data-filled-cols', String(filledCols));
     syncRoadGridWidth(bigGrid, cols);
+    if (bigScroll) bigScroll.scrollLeft = 0;
   }
 
-  /** 按列数写死宽度，保证超出可视区后一定能横向滚动 */
+  /** 按列数写死宽度 */
   function syncRoadGridWidth(grid, cols) {
     if (!grid || !cols) return;
     var sample = grid.querySelector('.dn-bead, .dn-big');
     var gap = 2;
     var cell = sample ? sample.getBoundingClientRect().width : 0;
     if (!(cell > 4)) {
-      /* 布局未完成时用容器高度估算（与 CSS --cell 一致） */
       var sc = grid.closest('.dn-roadmap__scroll');
       var h = sc ? sc.clientHeight : 0;
       cell = h > 8 ? (h - 6 - 5 * gap) / 6 : 22;
@@ -2363,21 +2398,7 @@
     grid.style.width = (cols * (cell + gap) - gap) + 'px';
   }
 
-  function scrollRoadToEnd() {
-    function go() {
-      if (beadScroll) beadScroll.scrollLeft = beadScroll.scrollWidth;
-      if (bigScroll) bigScroll.scrollLeft = bigScroll.scrollWidth;
-    }
-    go();
-    requestAnimationFrame(function () {
-      go();
-      requestAnimationFrame(go);
-    });
-    setTimeout(go, 48);
-  }
-
   function renderRoad() {
-    /* 统计用累计值（只增不减），珠盘/大路仍用裁剪后的 roadHistory；斗牛无和 */
     var total = roadStats.banker + roadStats.player;
     setText('roadB', String(roadStats.banker));
     setText('roadP', String(roadStats.player));
@@ -2386,22 +2407,15 @@
     setText('roadPpct', pct(roadStats.player, total));
     renderBead();
     renderBig();
-    scrollRoadToEnd();
   }
 
   function pushRoad(result, roundNo) {
-    /* 斗牛无和局 */
-    if (result !== 'banker' && result !== 'player') result = 'banker';
     if (!ROAD_LABELS[result]) return;
     if (roundNo && roadRoundNos[roundNo]) return;
+    resetRoadForNewDay(roundNo);
     if (roundNo) roadRoundNos[roundNo] = 1;
     if (roadStats[result] != null) roadStats[result] += 1;
     roadHistory.push(result);
-    if (roadHistory.length > ROAD_MAX) {
-      var over = roadHistory.length - ROAD_MAX;
-      over = Math.ceil(over / ROAD_ROWS) * ROAD_ROWS;
-      roadHistory = roadHistory.slice(over);
-    }
     renderRoad();
   }
 
@@ -2444,7 +2458,7 @@
       if (window.App && App.go) {
         App.go('../../client-app/pages/game-lobby/game-lobby.html' + q);
       } else if (window.parent !== window) {
-        window.parent.postMessage({ type: 'assets-game-nav', path: '/lobby' + q }, '*');
+        window.parent.postMessage({ type: 'assets-game-nav', path: '/lobby' + q }, location.origin);
       } else {
         history.back();
       }
@@ -2481,7 +2495,7 @@
 
     function nav(path) {
       if (window.App && App.go) App.go(path);
-      else if (window.parent !== window) window.parent.postMessage({ type: 'assets-game-nav', path: path }, '*');
+      else if (window.parent !== window) window.parent.postMessage({ type: 'assets-game-nav', path: path }, location.origin);
     }
 
     var csBtn = document.getElementById('railCs');
@@ -2549,7 +2563,7 @@
           '<span class="player">闲 <b>' + roadStats.player + '</b></span>' +
           '<span>总局 <b>' + total + '</b></span>' +
         '</div>' +
-        '<div class="dn-sheet-road__label">珠盘路（当前 ' + roadHistory.length + ' 局）</div>' +
+        '<div class="dn-sheet-road__label">珠盘路（今日 ' + roadHistory.length + ' 局）</div>' +
         '<div class="dn-sheet-road__scroll"><div class="dn-sheet-road__grid">' + buildBeadCells(roadHistory) + '</div></div>' +
         '<div class="dn-sheet-road__label">大路</div>' +
         '<div class="dn-sheet-road__scroll"><div class="dn-sheet-road__grid">' + buildBigCells(roadHistory) + '</div></div>';
@@ -2561,70 +2575,75 @@
     /* 玩法规则 */
     var rulesBtn = document.getElementById('railRules');
     if (rulesBtn) rulesBtn.addEventListener('click', function () {
-      var rows = [
-        ['庄 / 闲', '押中牌型更大的一方（完全相同亦庄赢，无和局）', '1 : ' + BET_ODDS.banker],
-        ['小牛牛', '赢方为五小牛', '1 : ' + BET_ODDS.small],
-        ['牛牛', '赢方为牛牛（不含炸弹/五小/五花）', '1 : ' + BET_ODDS.niuniu],
-        ['牛7-牛9', '赢方为牛七 / 牛八 / 牛九', '1 : ' + BET_ODDS.niu79],
-        ['无牛-牛6', '赢方为无牛或牛一至牛六', '1 : ' + BET_ODDS.niu06],
-        ['五花牛', '赢方为五花牛', '1 : ' + BET_ODDS.flower]
-      ];
-      var body = '';
-      for (var i = 0; i < rows.length; i++) {
-        body += '<tr><td>' + rows[i][0] + '</td><td>' + rows[i][1] + '</td><td class="odds">' + rows[i][2] + '</td></tr>';
-      }
-      var html =
-        '<p class="dn-rules__intro">庄闲各发五张牌。牌型：五小牛 &gt; 炸弹牛 &gt; 五花牛 &gt; 牛牛 &gt; 牛九 … &gt; 牛一 &gt; 无牛。同级比最大单牌再比花色；完全相同则庄赢（本玩法无和局）。</p>' +
-        '<p class="dn-rules__intro"><b>炸弹牛</b>仅参与比牌定输赢，当前不可单独押注；开出时语音按牛牛播报。</p>' +
-        '<table class="dn-rules__table"><thead><tr><th>玩法</th><th>说明</th><th class="odds">赔率</th></tr></thead><tbody>' + body + '</tbody></table>' +
-        '<p class="dn-rules__intro">桌面飞入的「他人筹码」与人数仅为气氛展示。路单来自本桌服务端最近开奖记录。</p>' +
-        '<button type="button" id="dnVerifyBtn" style="margin-top:10px;padding:8px 14px;border:0;border-radius:8px;background:#c9a227;color:#1a1208;font-weight:700;width:100%">公平验算</button>' +
-        '<div id="dnVerifyBox" style="margin-top:8px"></div>';
+      var html = window.TableShell
+        ? TableShell.buildFormalRulesHtml({
+            sections: [
+              {
+                title: '一、游戏简介',
+                paragraphs: [
+                  '本桌为五张牌斗牛玩法。每局为庄、闲各发五张牌，按牌型比大小确定胜负；玩家可押庄或闲，亦可对赢方牌型区间单独投注。',
+                ],
+              },
+              {
+                title: '二、牌型等级',
+                paragraphs: ['牌型由大到小依次为：'],
+                list: [
+                  '五小牛：五张牌点数之和不超过 10，且每张均不大于 5',
+                  '炸弹牛：四张同点',
+                  '五花牛：五张均为 J、Q、K',
+                  '牛牛：任意三张点数之和为 10 的倍数，其余两张之和个位为 0',
+                  '牛九～牛一：有牛，余数个位为 9～1',
+                  '无牛：无法组成牛',
+                ],
+              },
+              {
+                title: '三、比牌规则',
+                list: [
+                  '先比牌型等级，高等级胜出',
+                  '同级再比最大单牌点数，再比花色',
+                  '双方牌型完全相同则庄赢',
+                  '本玩法无和局',
+                  '炸弹牛仅参与比牌定输赢，当前不可单独押注',
+                ],
+              },
+              {
+                title: '四、结算说明',
+                paragraphs: [
+                  '下注期内可投注；封盘后停止接受注单，开牌后按结果结算。',
+                  '路单展示本桌近期开奖走势，仅供参考。',
+                ],
+              },
+            ],
+            oddsRows: [
+              ['庄 / 闲', '押中牌型更大的一方', '1 : ' + BET_ODDS.banker],
+              ['小牛牛', '赢方为五小牛', '1 : ' + BET_ODDS.small],
+              ['牛牛', '赢方为牛牛（不含炸弹/五小/五花）', '1 : ' + BET_ODDS.niuniu],
+              ['牛7-牛9', '赢方为牛七 / 牛八 / 牛九', '1 : ' + BET_ODDS.niu79],
+              ['无牛-牛6', '赢方为无牛或牛一至牛六', '1 : ' + BET_ODDS.niu06],
+              ['五花牛', '赢方为五花牛', '1 : ' + BET_ODDS.flower],
+            ],
+            notes: [
+              '请理性投注，量力而行。',
+              '最终以当局开牌结果与系统结算为准。',
+            ],
+          })
+        : '<p>玩法规则加载失败，请刷新重试。</p>';
       openSheet('玩法规则', html);
-      var vb = document.getElementById('dnVerifyBtn');
-      if (vb) vb.addEventListener('click', function () {
-        var box = document.getElementById('dnVerifyBox');
-        if (!box) return;
-        box.innerHTML = '<p class="dn-rules__intro">验算中…</p>';
-        var req = (window.App && App.fetchTableVerify)
-          ? App.fetchTableVerify(SERVER_GAME, currentBetIssue || lastSettledRoundNo || undefined)
-          : Promise.reject(new Error('请从大厅进入游戏'));
-        req.then(function (info) {
-          if (window.TableShell) {
-            info.fairLine = TableShell.fairLine(info);
-            box.innerHTML = TableShell.buildVerifyHtml(info, 'dn');
-          } else {
-            box.innerHTML = '<p class="dn-rules__intro">hash: ' + (info.serverSeedHash || '—') + '</p>';
-          }
-        }).catch(function (e) {
-          box.innerHTML = '<p class="dn-rules__intro">' + ((e && e.message) || '验算失败') + '</p>';
-        });
-      });
     });
 
     /* 设置：背景音乐 / 音效开关 */
     var setBtn = document.getElementById('railSettings');
     if (setBtn) setBtn.addEventListener('click', function () {
-      var html =
-        '<div class="dn-setting-row"><span class="dn-setting-row__label">背景音乐</span>' +
-          '<button type="button" class="dn-switch' + (audioPref.music ? ' is-on' : '') + '" id="swMusic" role="switch" aria-checked="' + audioPref.music + '"></button></div>' +
-        '<div class="dn-setting-row"><span class="dn-setting-row__label">游戏音效</span>' +
-          '<button type="button" class="dn-switch' + (audioPref.sfx ? ' is-on' : '') + '" id="swSfx" role="switch" aria-checked="' + audioPref.sfx + '"></button></div>';
+      var html = window.TableShell
+        ? TableShell.buildAudioSettingsHtml(audioPref)
+        : '<p>设置加载失败</p>';
       openSheet('设置', html);
-      var swMusic = document.getElementById('swMusic');
-      var swSfx = document.getElementById('swSfx');
-      if (swMusic) swMusic.addEventListener('click', function () {
-        var on = !swMusic.classList.contains('is-on');
-        swMusic.classList.toggle('is-on', on);
-        swMusic.setAttribute('aria-checked', String(on));
-        setMusicOn(on);
-      });
-      if (swSfx) swSfx.addEventListener('click', function () {
-        var on = !swSfx.classList.contains('is-on');
-        swSfx.classList.toggle('is-on', on);
-        swSfx.setAttribute('aria-checked', String(on));
-        setSfxOn(on);
-      });
+      if (window.TableShell) {
+        TableShell.bindAudioSettings({
+          onMusic: function (on) { if (typeof unlockAudio === 'function') unlockAudio(); setMusicOn(on); },
+          onSfx: function (on) { if (typeof unlockAudio === 'function') unlockAudio(); setSfxOn(on); },
+        });
+      }
     });
   })();
 
@@ -2665,7 +2684,7 @@
       }
     }, {
       intervalMs: 1500,
-      shouldPoll: function () { return phase === 'bet' && !roundBusy; },
+      shouldPoll: function () { return (phase === 'bet' || alignWaiting) && !roundBusy; },
     });
   }
   window.__dnBooted = true;

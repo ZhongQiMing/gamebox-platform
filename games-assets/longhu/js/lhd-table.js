@@ -87,7 +87,7 @@
   var roundBusy = false;
   /** 进房时正逢大厅封盘：等待下一周期，UI 显示「准备中」而非「派奖中」 */
   var alignWaiting = false;
-  var selectedChip = 1;
+  var selectedChip = 10;
   var chipPage = 0;
   var betTotals = { dragon: 0, tiger: 0, tie: 0 };
   var roundPlacements = [];
@@ -98,8 +98,6 @@
   var roadStats = { dragon: 0, tiger: 0, tie: 0 };
   var roadRoundNos = {};
   var ROAD_ROWS = 6;
-  var ROAD_MIN_COLS = 12;
-  var ROAD_MAX = 72;
   var ROAD_LABELS = { dragon: '龙', tiger: '虎', tie: '和' };
   var ROAD_ALLOWED = { dragon: 1, tiger: 1, tie: 1 };
   var SUITS = ['spade', 'heart', 'club', 'diamond'];
@@ -122,18 +120,10 @@
     [1, 5, 10, 50, 100, 500],
     [1000, 2000, 3000, 4000, 5000, 10000]
   ];
-  /* 含本倍数 + 5% 抽水；按钮展示抽水后有效净利（龙/虎≈1:0.95） */
-  var PAY_MULT = { dragon: 2, tiger: 2, tie: 9 };
-  var COMMISSION = 0.05;
-  var _dtCommission = { value: COMMISSION };
+  /* 赔率按「押 1 赔 X」利润倍率；与 @gamebox/shared 同源，启动后 TableShell 覆盖并同步 DOM */
+  var ODDS = { dragon: 0.95, tiger: 1, tie: 8 };
   if (window.TableShell) {
-    TableShell.loadPayTable(SERVER_GAME, {
-      mult: PAY_MULT,
-      commission: _dtCommission,
-      domRoot: document.getElementById('betArea'),
-    }).then(function () {
-      if (_dtCommission.value != null) COMMISSION = _dtCommission.value;
-    });
+    TableShell.loadPayTable(SERVER_GAME, { odds: ODDS, domRoot: document.getElementById('betArea') });
   }
   var TIE_REFUND = 1;
   var DEAL_ORDER = ['d1', 't1'];
@@ -421,17 +411,33 @@
   var bgmAudio = null;
   var voiceAudio = null;
   var sfxLastAt = {};
-  var audioPref = { music: true, sfx: true };
-  try {
-    var apRaw = JSON.parse(localStorage.getItem('lhd_audio') || 'null');
-    if (apRaw && typeof apRaw === 'object') {
-      audioPref.music = apRaw.music !== false;
-      audioPref.sfx = apRaw.sfx !== false;
-    }
-  } catch (e) { /* ignore */ }
-
+  var AUDIO_PREF_KEY = 'lhd_audio';
+  var audioPref = window.TableShell
+    ? TableShell.loadAudioPref(AUDIO_PREF_KEY)
+    : { music: true, sfx: true };
   function saveAudioPref() {
-    try { localStorage.setItem('lhd_audio', JSON.stringify(audioPref)); } catch (e) { /* ignore */ }
+    if (window.TableShell) {
+      TableShell.saveAudioPref(AUDIO_PREF_KEY, audioPref);
+    } else {
+      try { localStorage.setItem(AUDIO_PREF_KEY, JSON.stringify(audioPref)); } catch (e) { /* ignore */ }
+    }
+  }
+  function applyAudioPrefSilent(pref) {
+    if (!pref) return;
+    audioPref.music = !!pref.music;
+    audioPref.sfx = !!pref.sfx;
+    if (audioPref.music) {
+      if (typeof ensureBgm === 'function') ensureBgm(true);
+    } else if (typeof bgmAudio !== 'undefined' && bgmAudio) {
+      try { bgmAudio.pause(); } catch (e) { /* ignore */ }
+    }
+    if (!audioPref.sfx && typeof voiceAudio !== 'undefined' && voiceAudio) {
+      try { voiceAudio.pause(); } catch (e) { /* ignore */ }
+      voiceAudio = null;
+    }
+  }
+  if (window.TableShell && TableShell.watchAppAudioPref) {
+    TableShell.watchAppAudioPref(AUDIO_PREF_KEY, applyAudioPrefSilent);
   }
   function audioUrl(name) { return AUDIO_BASE + name + '.mp3?v=' + AUDIO_V; }
   function unlockAudio() {
@@ -513,17 +519,16 @@
     });
   }
 
-  /** 单注返还（含本金）：赢利抽水；开和龙/虎全退 */
+  /** 单注返还（含本金）：利润倍率；开和龙/虎全退 */
   function calcBetReturn(key, stake, result) {
     if (!(stake > 0)) return 0;
     if (key === result) {
-      var mult = PAY_MULT[key];
-      if (!(mult > 0)) return 0;
-      if (window.TableShell && TableShell.commissionReturn) {
-        return TableShell.commissionReturn(stake, mult, COMMISSION);
+      var odds = ODDS[key];
+      if (!(typeof odds === 'number')) return 0;
+      if (window.TableShell && TableShell.profitReturn) {
+        return TableShell.profitReturn(stake, odds);
       }
-      var grossProfit = stake * (mult - 1);
-      return stake + Math.floor(grossProfit * (1 - COMMISSION));
+      return stake + Math.floor(stake * odds);
     }
     if (result === 'tie' && (key === 'dragon' || key === 'tiger')) {
       return Math.floor(stake * TIE_REFUND);
@@ -1181,7 +1186,13 @@
 
   function placeBet(key) {
     if (isClosed() || !key) return;
-    /* 龙、虎可同时下注（无互斥） */
+    if (
+      (key === 'dragon' && (betTotals.tiger || 0) > 0) ||
+      (key === 'tiger' && (betTotals.dragon || 0) > 0)
+    ) {
+      if (window.App && App.toast) App.toast('同局不可龙虎对冲');
+      return;
+    }
 
     unlockAudio();
     var value = selectedChip;
@@ -1344,17 +1355,42 @@
     grid.style.width = (cols * (cell + gap) - gap) + 'px';
   }
 
+  function measureRoadViewCols(scrollEl) {
+    if (window.TableShell && TableShell.measureRoadViewCols) {
+      return TableShell.measureRoadViewCols(scrollEl, ROAD_ROWS);
+    }
+    return 12;
+  }
+
+  function resetRoadForNewDay(roundNo) {
+    if (!roundNo || !window.TableShell) return;
+    var ymd = TableShell.roundNoYmd(roundNo);
+    if (!ymd) return;
+    var keys = Object.keys(roadRoundNos);
+    if (!keys.length) return;
+    var prev = TableShell.roundNoYmd(keys[0]);
+    if (prev && prev !== ymd) {
+      roadHistory = [];
+      roadRoundNos = {};
+      roadStats = { dragon: 0, tiger: 0, tie: 0 };
+    }
+  }
+
   function renderBead() {
     if (!beadGrid) return;
-    var filledCols = Math.ceil(roadHistory.length / ROAD_ROWS) || 0;
-    var cols = Math.max(ROAD_MIN_COLS, filledCols + 1);
-    var lastIdx = roadHistory.length - 1;
+    var viewCols = measureRoadViewCols(beadScroll);
+    var viewSeq = window.TableShell
+      ? TableShell.roadBeadViewSeq(roadHistory, viewCols, ROAD_ROWS)
+      : roadHistory.slice();
+    var filledCols = Math.ceil(viewSeq.length / ROAD_ROWS) || 0;
+    var cols = viewCols;
+    var lastIdx = viewSeq.length - 1;
     var html = '';
     for (var c = 0; c < cols; c++) {
       for (var r = 0; r < ROAD_ROWS; r++) {
         var idx = c * ROAD_ROWS + r;
-        if (idx < roadHistory.length) {
-          var kind = roadHistory[idx];
+        if (idx < viewSeq.length) {
+          var kind = viewSeq[idx];
           var latest = idx === lastIdx ? ' is-latest' : '';
           html += '<span class="lhd-bead lhd-bead--' + kind + latest + '" role="listitem">' + ROAD_LABELS[kind] + '</span>';
         } else {
@@ -1364,15 +1400,20 @@
     }
     beadGrid.innerHTML = html;
     beadGrid.style.setProperty('--road-cols', String(cols));
+    beadGrid.setAttribute('data-filled-cols', String(filledCols));
     syncRoadGridWidth(beadGrid, cols);
+    if (beadScroll) beadScroll.scrollLeft = 0;
   }
 
   function renderBig() {
     if (!bigGrid) return;
+    var viewCols = measureRoadViewCols(bigScroll);
     var colsData = buildBigRoad(roadHistory);
-    var cols = Math.max(ROAD_MIN_COLS, colsData.length + 1);
+    if (window.TableShell) colsData = TableShell.roadBigViewCols(colsData, viewCols);
+    var filledCols = colsData.length;
+    var cols = viewCols;
     var html = '';
-    var lastCol = colsData.length - 1;
+    var lastCol = filledCols - 1;
     var lastRow = lastCol >= 0 ? colsData[lastCol].cells.length - 1 : -1;
     for (var c = 0; c < cols; c++) {
       var col = colsData[c];
@@ -1393,16 +1434,9 @@
     }
     bigGrid.innerHTML = html;
     bigGrid.style.setProperty('--road-cols', String(cols));
+    bigGrid.setAttribute('data-filled-cols', String(filledCols));
     syncRoadGridWidth(bigGrid, cols);
-  }
-
-  function scrollRoadToEnd() {
-    function go() {
-      if (beadScroll) beadScroll.scrollLeft = beadScroll.scrollWidth;
-      if (bigScroll) bigScroll.scrollLeft = bigScroll.scrollWidth;
-    }
-    go();
-    requestAnimationFrame(function () { go(); requestAnimationFrame(go); });
+    if (bigScroll) bigScroll.scrollLeft = 0;
   }
 
   function renderRoad() {
@@ -1416,20 +1450,15 @@
     setText('roadTiepct', pct(roadStats.tie, total));
     renderBead();
     renderBig();
-    scrollRoadToEnd();
   }
 
   function pushRoad(result, roundNo) {
     if (!ROAD_LABELS[result]) return;
     if (roundNo && roadRoundNos[roundNo]) return;
+    resetRoadForNewDay(roundNo);
     if (roundNo) roadRoundNos[roundNo] = 1;
     if (roadStats[result] != null) roadStats[result] += 1;
     roadHistory.push(result);
-    if (roadHistory.length > ROAD_MAX) {
-      var over = roadHistory.length - ROAD_MAX;
-      over = Math.ceil(over / ROAD_ROWS) * ROAD_ROWS;
-      roadHistory = roadHistory.slice(over);
-    }
     renderRoad();
   }
 
@@ -1447,12 +1476,52 @@
     (packed.roundNos || []).forEach(function (rn) {
       if (rn) roadRoundNos[String(rn)] = 1;
     });
-    if (roadHistory.length > ROAD_MAX) {
-      var over = roadHistory.length - ROAD_MAX;
-      over = Math.ceil(over / ROAD_ROWS) * ROAD_ROWS;
-      roadHistory = roadHistory.slice(over);
-    }
     renderRoad();
+  }
+
+  function buildBeadCells(history) {
+    var cols = Math.max(1, Math.ceil(history.length / ROAD_ROWS));
+    var last = history.length - 1;
+    var html = '';
+    for (var c = 0; c < cols; c++) {
+      for (var r = 0; r < ROAD_ROWS; r++) {
+        var idx = c * ROAD_ROWS + r;
+        if (idx < history.length) {
+          var kind = history[idx];
+          var latest = idx === last ? ' is-latest' : '';
+          html += '<span class="lhd-bead lhd-bead--' + kind + latest + '">' + ROAD_LABELS[kind] + '</span>';
+        } else {
+          html += '<span class="lhd-bead lhd-bead--empty"></span>';
+        }
+      }
+    }
+    return html;
+  }
+
+  function buildBigCells(history) {
+    var data = buildBigRoad(history);
+    var cols = Math.max(1, data.length);
+    var lastCol = data.length - 1;
+    var lastRow = lastCol >= 0 ? data[lastCol].cells.length - 1 : -1;
+    var html = '';
+    for (var c = 0; c < cols; c++) {
+      var col = data[c];
+      for (var r = 0; r < ROAD_ROWS; r++) {
+        if (col && r < col.cells.length) {
+          var cell = col.cells[r];
+          var latest = (c === lastCol && r === lastRow) ? ' is-latest' : '';
+          var tie = '';
+          if (cell.ties > 0) {
+            var n = cell.ties > 9 ? 9 : cell.ties;
+            tie = '<i class="lhd-big__tie" data-n="' + n + '">' + (n > 1 ? String(n) : '') + '</i>';
+          }
+          html += '<span class="lhd-big lhd-big--' + cell.side + latest + '">' + tie + '</span>';
+        } else {
+          html += '<span class="lhd-big lhd-big--empty"></span>';
+        }
+      }
+    }
+    return html;
   }
 
   function setPhase(next) {
@@ -1462,6 +1531,14 @@
   }
 
   function tick() {
+    if (alignWaiting) {
+      if (Date.now() >= payoutDeadline || getBetRemainSec() > 0) {
+        startBet();
+        return;
+      }
+      paint(false);
+      return;
+    }
     if (phase === 'bet') {
       /* 每拍跟墙钟对齐，与大厅剩余秒一致 */
       left = Math.max(0, Math.ceil(getBetRemainSec()));
@@ -1598,7 +1675,7 @@
   if (backBtn) {
     backBtn.addEventListener('click', function () {
       if (window.App && App.go) App.go('../../client-app/pages/game-lobby/game-lobby.html' + q);
-      else if (window.parent !== window) window.parent.postMessage({ type: 'assets-game-nav', path: '/lobby' + q }, '*');
+      else if (window.parent !== window) window.parent.postMessage({ type: 'assets-game-nav', path: '/lobby' + q }, location.origin);
       else history.back();
     });
   }
@@ -1662,13 +1739,17 @@
   if (window.TableShell && TableShell.startSnapshotPoll) {
     window.__lhdSnapTimer = TableShell.startSnapshotPoll(SERVER_GAME, function (snap) {
       applyServerSnap(snap);
+      if (alignWaiting && snap.phase === 'BETTING' && Number(snap.secondsLeft) > 0) {
+        startBet();
+        return;
+      }
       if (phase === 'bet' && !roundBusy) {
         left = Math.max(0, Math.ceil(getBetRemainSec()));
         paint(false);
       }
     }, {
       intervalMs: 1500,
-      shouldPoll: function () { return phase === 'bet' && !roundBusy; },
+      shouldPoll: function () { return (phase === 'bet' && !roundBusy) || alignWaiting; },
     });
   }
 
@@ -1714,7 +1795,7 @@
     function nav(path) {
       if (window.App && App.go) App.go(path);
       else if (window.parent !== window) {
-        window.parent.postMessage({ type: 'assets-game-nav', path: path }, '*');
+        window.parent.postMessage({ type: 'assets-game-nav', path: path }, location.origin);
       }
     }
 
@@ -1737,76 +1818,73 @@
         '<span>虎 <b class="tiger">' + roadStats.tiger + '</b></span>' +
         '<span>和 <b class="tie">' + roadStats.tie + '</b></span>' +
         '<span>总局 <b>' + total + '</b></span></div>' +
-        '<div class="lhd-sheet-road__label">珠盘</div>' +
-        '<div class="lhd-sheet-road__scroll"><div class="lhd-sheet-road__grid" id="sheetBead"></div></div>' +
+        '<div class="lhd-sheet-road__label">珠盘路（今日 ' + roadHistory.length + ' 局）</div>' +
+        '<div class="lhd-sheet-road__scroll"><div class="lhd-sheet-road__grid">' + buildBeadCells(roadHistory) + '</div></div>' +
         '<div class="lhd-sheet-road__label">大路</div>' +
-        '<div class="lhd-sheet-road__scroll"><div class="lhd-sheet-road__grid" id="sheetBig"></div></div>';
+        '<div class="lhd-sheet-road__scroll"><div class="lhd-sheet-road__grid">' + buildBigCells(roadHistory) + '</div></div>';
       openSheet('历史记录', html);
-      var sb = document.getElementById('sheetBead');
-      var sg = document.getElementById('sheetBig');
-      if (sb) { var old = beadGrid; beadGrid = sb; renderBead(); beadGrid = old; }
-      if (sg) { var old2 = bigGrid; bigGrid = sg; renderBig(); bigGrid = old2; }
+      var scrolls = document.querySelectorAll('.lhd-sheet-road__scroll');
+      for (var i = 0; i < scrolls.length; i++) scrolls[i].scrollLeft = scrolls[i].scrollWidth;
     });
 
     var rulesBtn = document.getElementById('railRules');
     if (rulesBtn) rulesBtn.addEventListener('click', function () {
-      var effD = window.TableShell
-        ? TableShell.formatOddsLabel(TableShell.effectiveProfitOdds(PAY_MULT.dragon, COMMISSION))
-        : '1:0.95';
-      var effT = window.TableShell
-        ? TableShell.formatOddsLabel(TableShell.effectiveProfitOdds(PAY_MULT.tiger, COMMISSION))
-        : '1:0.95';
-      var effTie = window.TableShell
-        ? TableShell.formatOddsLabel(TableShell.effectiveProfitOdds(PAY_MULT.tie, COMMISSION))
-        : '1:7.6';
-      openSheet('玩法规则',
-        '<div class="lhd-rules">' +
-        '<p class="lhd-rules__intro">开牌时龙、虎各派一张牌，无须补牌。按牌面点数定输赢：K 最大、A 最小；点数相同则为和（K &gt; Q &gt; J &gt; 10 &gt; … &gt; 2 &gt; A）。</p>' +
-        '<table class="lhd-rules__table"><thead><tr><th>投注</th><th>获胜条件</th><th>有效赔率</th><th>备注</th></tr></thead><tbody>' +
-        '<tr><td>龙</td><td>龙点数 &gt; 虎</td><td class="odds">' + effD + '</td><td>开和全退</td></tr>' +
-        '<tr><td>虎</td><td>虎点数 &gt; 龙</td><td class="odds">' + effT + '</td><td>开和全退</td></tr>' +
-        '<tr><td>和</td><td>龙虎点数相同</td><td class="odds">' + effTie + '</td><td></td></tr>' +
-        '</tbody></table>' +
-        '<p class="lhd-rules__intro">结算按含本倍数（龙/虎 ×' + PAY_MULT.dragon + '、和 ×' + PAY_MULT.tie + '）并对赢利抽 ' +
-          Math.round(COMMISSION * 100) + '%；按钮与上表展示的是抽水后有效净利。例：押龙 1000，龙赢，返还 1950。</p>' +
-        '<p class="lhd-rules__intro">桌面飞入的「他人筹码」与人数仅为气氛展示，不代表真实在线投注。</p>' +
-        '<button type="button" id="lhdVerifyBtn" style="margin-top:10px;padding:8px 14px;border:0;border-radius:8px;background:#c9a227;color:#1a1208;font-weight:700;width:100%">公平验算</button>' +
-        '<div id="lhdVerifyBox" style="margin-top:8px"></div>' +
-        '</div>');
-      var vb = document.getElementById('lhdVerifyBtn');
-      if (vb) vb.addEventListener('click', function () {
-        var box = document.getElementById('lhdVerifyBox');
-        if (!box) return;
-        box.innerHTML = '<p class="lhd-rules__intro">验算中…</p>';
-        var req = (window.App && App.fetchTableVerify)
-          ? App.fetchTableVerify(SERVER_GAME, currentBetIssue || lastSettledRoundNo || undefined)
-          : Promise.reject(new Error('请从大厅进入游戏'));
-        req.then(function (info) {
-          if (window.TableShell) {
-            info.fairLine = TableShell.fairLine(info);
-            box.innerHTML = TableShell.buildVerifyHtml(info, 'lhd');
-          } else {
-            box.innerHTML = '<p class="lhd-rules__intro">hash: ' + (info.serverSeedHash || '—') + '</p>';
-          }
-        }).catch(function (e) {
-          box.innerHTML = '<p class="lhd-rules__intro">' + ((e && e.message) || '验算失败') + '</p>';
-        });
-      });
+      var fmt = function (n) {
+        return window.TableShell ? TableShell.formatOddsLabel(n) : ('1:' + n);
+      };
+      var html = window.TableShell
+        ? TableShell.buildFormalRulesHtml({
+            sections: [
+              {
+                title: '一、游戏简介',
+                paragraphs: [
+                  '本桌为龙虎比牌玩法。每局龙、虎各派一张牌，无须补牌；以牌面点数定胜负，点数相同则为和。',
+                ],
+              },
+              {
+                title: '二、胜负判定',
+                list: [
+                  '点数大小：K &gt; Q &gt; J &gt; 10 &gt; … &gt; 2 &gt; A（K 最大，A 最小）',
+                  '龙点数大于虎，则龙胜；虎点数大于龙，则虎胜',
+                  '点数相同为和',
+                  '开和时，龙/虎注单本金全额退还',
+                ],
+              },
+              {
+                title: '三、结算说明',
+                paragraphs: [
+                  '下注期内可投注；封盘后停止接受注单，开牌后按结果结算。',
+                  '路单展示本桌近期开奖走势，仅供参考。',
+                ],
+              },
+            ],
+            oddsHeaders: ['玩法', '获胜条件', '赔率', '备注'],
+            oddsRows: [
+              ['龙', '龙点数大于虎', fmt(ODDS.dragon), '开和退本'],
+              ['虎', '虎点数大于龙', fmt(ODDS.tiger), '开和退本'],
+              ['和', '龙虎点数相同', fmt(ODDS.tie), '—'],
+            ],
+            notes: [
+              '请理性投注，量力而行。',
+              '最终以当局开牌结果与系统结算为准。',
+            ],
+          })
+        : '<p>玩法规则加载失败，请刷新重试。</p>';
+      openSheet('玩法规则', html);
     });
 
     var setBtn = document.getElementById('railSettings');
     if (setBtn) setBtn.addEventListener('click', function () {
-      openSheet('设置',
-        '<div class="lhd-settings">' +
-        '<label class="lhd-settings__row"><span>背景音乐</span>' +
-        '<input type="checkbox" id="lhdMusicToggle"' + (audioPref.music ? ' checked' : '') + '></label>' +
-        '<label class="lhd-settings__row"><span>音效 / 语音</span>' +
-        '<input type="checkbox" id="lhdSfxToggle"' + (audioPref.sfx ? ' checked' : '') + '></label>' +
-        '</div>');
-      var m = document.getElementById('lhdMusicToggle');
-      var s = document.getElementById('lhdSfxToggle');
-      if (m) m.addEventListener('change', function () { unlockAudio(); setMusicOn(m.checked); });
-      if (s) s.addEventListener('change', function () { unlockAudio(); setSfxOn(s.checked); });
+      var html = window.TableShell
+        ? TableShell.buildAudioSettingsHtml(audioPref)
+        : '<p>设置加载失败</p>';
+      openSheet('设置', html);
+      if (window.TableShell) {
+        TableShell.bindAudioSettings({
+          onMusic: function (on) { if (typeof unlockAudio === 'function') unlockAudio(); setMusicOn(on); },
+          onSfx: function (on) { if (typeof unlockAudio === 'function') unlockAudio(); setSfxOn(on); },
+        });
+      }
     });
   })();
 

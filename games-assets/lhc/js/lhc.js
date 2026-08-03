@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 游戏类型: lhc
  *
  * 幸运六合彩 · 聊天投注房
@@ -6,9 +6,9 @@
 $(function () {
   const GAME_TYPE = 'lhc';
 
-  /** 与服务端开奖引擎一致：60 秒一局，封盘前 10 秒准备开奖。 */
-  const INTERVAL = 60;
-  const PREP_SEC = 10;
+  /** 与服务端一致：75 秒一局，封盘前 35 秒盖住摇珠+七球报号。 */
+  const INTERVAL = 75;
+  const PREP_SEC = 35;
   const BET_SEC = INTERVAL - PREP_SEC;
   function fixAvatar(url) {
     const fallback = '/images/avatars/001.jpg';
@@ -34,12 +34,6 @@ $(function () {
       return '/legacy/' + url.slice('../assets/'.length);
     }
     return url;
-  }
-  /** 头像池：001~162（022/078/086 为 png） */
-  function avatarFromPool(seed) {
-    const n = 1 + (Math.abs(Number(seed) || 0) % 162);
-    const ext = (n === 22 || n === 78 || n === 86) ? 'png' : 'jpg';
-    return `/images/avatars/${String(n).padStart(3, '0')}.${ext}`;
   }
   const ROBOT = { name: '机器人', avatar: '/images/avatars/001.jpg' };
   const params = new URLSearchParams(location.search);
@@ -79,12 +73,30 @@ $(function () {
     }
   }
 
-
   let historyRows = [];
   let lastDraw = [];
   let serverCurrent = null;
   let serverSynced = false;
   let snapshotBusy = false;
+  /** 开奖点后催快照节流 */
+  let openAtResyncAt = 0;
+  function updateCountdownDrawing() {
+    const $box = $('#countdownBox').removeClass('is-preparing is-betting is-freeze is-urgent').addClass('is-drawing');
+    const $label = $('#cdLabel');
+    if ($label.length) $label.text('开奖中');
+    $box.attr('aria-label', '开奖中');
+    /* 开奖中只留三字；class + hide，避免 display:flex 盖掉 [hidden] */
+    $('#cdDigits').attr('hidden', true).hide();
+    $('#cdPrep').attr('hidden', true).hide();
+  }
+  function requestLotteryResync() {
+    const now = Date.now();
+    if (openAtResyncAt && now - openAtResyncAt < 800) return;
+    openAtResyncAt = now;
+    snapshotBusy = false;
+    if (typeof App.resyncLottery === 'function') App.resyncLottery();
+    else if (typeof syncServerSnapshot === 'function') syncServerSnapshot();
+  }
   const REVEALED_STORAGE_KEY = 'lhc_revealed_v1';
   const CLOSED_STORAGE_KEY = 'lhc_closed_v1';
   let revealedIssues = new Set();
@@ -99,18 +111,30 @@ $(function () {
   /** 封盘后冻结下注，开奖核对展示完再解冻（避免下一期过早冒注） */
   let roomBetFrozen = false;
   let sealedIssueNo = '';
-  const MOCK_NAMES = [];
   /** 当期注单：issue -> { 玩家名: [{ play, amount }] } */
   const issueBetBook = {};
 
+  function nextOpenAtMs(now) {
+    const intervalMs = INTERVAL * 1000;
+    const t = now != null ? now : Date.now();
+    return Math.ceil(t / intervalMs) * intervalMs;
+  }
+  function fmtIssueFromOpenAt(openAtMs) {
+    const intervalMs = INTERVAL * 1000;
+    const p = shanghaiYmdParts(new Date(openAtMs));
+    const dayStart = Date.parse(p.y + '-' + p.m + '-' + p.d + 'T00:00:00+08:00');
+    const seq = Math.floor((openAtMs - dayStart) / intervalMs) + 1;
+    return '' + p.m + p.d + pad(Math.max(1, seq), 6);
+  }
   function getRoundRemain() {
-    const elapsed = (Date.now() - todayStartMs()) / 1000;
-    return INTERVAL - (elapsed % INTERVAL);
+    const openAt = nextOpenAtMs();
+    let r = (openAt - Date.now()) / 1000;
+    if (r <= 0) r = INTERVAL;
+    return r;
   }
   function getCurrentIssue() {
     if (serverSynced && serverCurrent && serverCurrent.issueNo) return String(serverCurrent.issueNo);
-    const elapsed = (Date.now() - todayStartMs()) / 1000;
-    return fmtIssue8(Math.floor(elapsed / INTERVAL) + 1);
+    return fmtIssueFromOpenAt(nextOpenAtMs());
   }
   function isBettingOpen() {
     if (!serverSynced || !serverCurrent) return false;
@@ -125,7 +149,7 @@ $(function () {
       App.toast('房间同步中，请稍候');
       return;
     }
-    App.toast(kind === 'cancel' ? '封盘中，无法取消' : '封盘中，无法下注');
+    App.toast(kind === 'cancel' ? '当前期无可取消注单' : '封盘中，无法下注');
   }
   function parseBet(text) {
     const t = String(text || '').trim();
@@ -276,7 +300,7 @@ $(function () {
       const item = {
         play: b.play,
         amount: b.amount,
-        status: r.winAmount > 0 ? 'WON' : 'LOST',
+        status: r.hit === '和' ? 'TIE' : (r.winAmount > 0 ? 'WON' : 'LOST'),
         profit: r.profit,
         winAmount: r.winAmount,
         hit: r.hit || '',
@@ -287,8 +311,12 @@ $(function () {
     saveUserBetLog(log);
   }
 
+  function fmtMoney2(n) {
+    return (Math.round((Number(n) || 0) * 100) / 100).toFixed(2);
+  }
   function fmtProfit(n) {
-    return (n >= 0 ? '+' : '') + n;
+    const v = Math.round((Number(n) || 0) * 100) / 100;
+    return (v >= 0 ? '+' : '') + v.toFixed(2);
   }
   function realBetBook(issue) {
     const book = issueBetBook[issue];
@@ -328,16 +356,32 @@ $(function () {
     ODDS.temaB = ODDS.tema;
     ODDS.zhengma = mulOf(pt, 'zhengma', ODDS.zhengma);
     ODDS.zhengmaB = ODDS.zhengma;
+    ODDS.zhengTe = mulOf(pt, 'zhengTe', ODDS.zhengTe);
     ODDS.side = mulOf(pt, 'big', ODDS.side);
+    ODDS.heSide = mulOf(pt, 'heSide', ODDS.heSide != null ? ODDS.heSide : ODDS.side);
+    ODDS.weiSide = mulOf(pt, 'weiSide', ODDS.weiSide != null ? ODDS.weiSide : ODDS.side);
     ODDS.weiXiao = mulOf(pt, 'weiSideSmall', ODDS.weiXiao);
     ODDS.comboSide = mulOf(pt, 'combo', ODDS.comboSide);
+    ODDS.zhengSide = mulOf(pt, 'zhengSide', ODDS.zhengSide);
+    ODDS.zhengCombo = mulOf(pt, 'zhengCombo', ODDS.zhengCombo);
+    ODDS.zhengHe = mulOf(pt, 'zhengHe', ODDS.zhengHe);
+    ODDS.zhengWei = mulOf(pt, 'zhengWei', ODDS.zhengWei);
+    ODDS.zhengWeiSmall = mulOf(pt, 'zhengWeiSmall', ODDS.zhengWeiSmall);
     ODDS.colorRed = mulOf(pt, 'colorRed', ODDS.colorRed);
     ODDS.colorBlue = mulOf(pt, 'colorBlue', ODDS.colorBlue);
     ODDS.colorGreen = mulOf(pt, 'colorGreen', ODDS.colorGreen);
+    Object.keys(ODDS.colorHalf).forEach(function (k) {
+      ODDS.colorHalf[k] = mulOf(pt, 'colorHalf_' + k, ODDS.colorHalf[k]);
+    });
+    Object.keys(ODDS.colorHalfHalf).forEach(function (k) {
+      ODDS.colorHalfHalf[k] = mulOf(pt, 'colorHalfHalf_' + k, ODDS.colorHalfHalf[k]);
+    });
     ODDS.zodiac = mulOf(pt, 'zodiac', ODDS.zodiac);
     ODDS.zodiacYear = mulOf(pt, 'zodiacYear', ODDS.zodiacYear);
     ODDS.pingTe = mulOf(pt, 'pingTe', ODDS.pingTe);
     ODDS.pingTeYear = mulOf(pt, 'pingTeYear', ODDS.pingTeYear);
+    ODDS.zhengXiao = mulOf(pt, 'zhengXiao', ODDS.zhengXiao);
+    ODDS.zhengXiaoYear = mulOf(pt, 'zhengXiaoYear', ODDS.zhengXiaoYear);
     ODDS.weiShu0 = mulOf(pt, 'weiShu0', ODDS.weiShu0);
     ODDS.weiShu = mulOf(pt, 'weiShu', ODDS.weiShu);
     ODDS.weiShuMiss0 = mulOf(pt, 'weiShuMiss0', ODDS.weiShuMiss0);
@@ -352,54 +396,102 @@ $(function () {
     ODDS.sanQuanZhong = mulOf(pt, 'sanQuanZhong', ODDS.sanQuanZhong);
     ODDS.sanZhongEr = mulOf(pt, 'sanZhongEr', ODDS.sanZhongEr);
     ODDS.sanZhongSan = mulOf(pt, 'sanZhongSan', ODDS.sanZhongSan);
+    ODDS.siQuanZhong = mulOf(pt, 'siQuanZhong', ODDS.siQuanZhong);
+    ODDS.temaTou0 = mulOf(pt, 'temaTou0', ODDS.temaTou0);
+    ODDS.temaTou = mulOf(pt, 'temaTou', ODDS.temaTou);
+    ODDS.temaWei0 = mulOf(pt, 'temaWei0', ODDS.temaWei0);
+    ODDS.temaWei = mulOf(pt, 'temaWei', ODDS.temaWei);
+    ODDS.wuxingJin = mulOf(pt, 'wuxingJin', ODDS.wuxingJin);
+    ODDS.wuxingMu = mulOf(pt, 'wuxingMu', ODDS.wuxingMu);
+    ODDS.wuxingShui = mulOf(pt, 'wuxingShui', ODDS.wuxingShui);
+    ODDS.wuxingHuo = mulOf(pt, 'wuxingHuo', ODDS.wuxingHuo);
+    ODDS.wuxingTu = mulOf(pt, 'wuxingTu', ODDS.wuxingTu);
     ;[2, 3, 4, 5].forEach(function (n) {
       ODDS.sxLianZhong[n] = mulOf(pt, 'sxLianZhong' + n, ODDS.sxLianZhong[n]);
+      ODDS.sxLianZhongYear[n] = mulOf(pt, 'sxLianZhong' + n + 'Year', ODDS.sxLianZhongYear[n]);
       ODDS.sxLianBuZhong[n] = mulOf(pt, 'sxLianBuZhong' + n, ODDS.sxLianBuZhong[n]);
     });
-    ;[2, 3, 4].forEach(function (n) {
+    ;[2, 3, 4, 5].forEach(function (n) {
       ODDS.wsLianZhong[n] = mulOf(pt, 'wsLianZhong' + n, ODDS.wsLianZhong[n]);
       ODDS.wsLianBuZhong[n] = mulOf(pt, 'wsLianBuZhong' + n, ODDS.wsLianBuZhong[n]);
+    });
+    ODDS.wsLianZhong5Zero = mulOf(pt, 'wsLianZhong5Zero', ODDS.wsLianZhong5Zero);
+    ;[2, 3, 4, 5, 6, 7, 8, 9, 10, 11].forEach(function (n) {
+      ODDS.heXiao[n] = mulOf(pt, 'heXiao' + n, ODDS.heXiao[n]);
     });
     ;[5, 6, 7, 8, 9, 10, 11, 12].forEach(function (n) {
       ODDS.buZhong[n] = mulOf(pt, 'buZhong' + n, ODDS.buZhong[n]);
     });
   }
 
-  /* ================= 玩法 · 赔率（本地兜底；启动后由服务端 pay-table 覆盖） ================= */
+  /* 本地兜底须与 server lhc-odds.ts LHC_ODDS 同值；启动后由 /pay-table 覆盖 */
   const ODDS = {
-    tema: 47,               // 特码
+    tema: 48.5,
     temaB: 47,
-    zhengma: 7,             // 平码（正码）
-    zhengmaB: 7,
-    side: 1.95,             // 两面 / 合数 / 尾大小
-    weiXiao: 1.95,
+    zhengma: 7.21,
+    zhengmaB: 7.21,
+    zhengTe: 48.5,
+    side: 1.98,
+    heSide: 1.98,
+    weiSide: 1.98,
+    weiXiao: 1.98,
     comboSide: 3.7,
-    colorRed: 2.823,
-    colorBlue: 3.003,
-    colorGreen: 3.003,
-    zodiac: 12.25,          // 特肖 非本命
-    zodiacYear: 9.55,       // 特肖 本命
-    pingTe: 2,              // 总肖项 / 一肖
-    pingTeYear: 2,
-    weiShu0: 2,             // 总数项 · 0尾（平特尾同此）
-    weiShu: 1.8,            // 总数项 · 1~9尾
-    weiShuMiss0: 2,         // 尾数不中 · 0尾
-    weiShuMiss: 1.8,        // 尾数不中 · 1~9尾
-    sumSide: 1.95,
+    zhengSide: 1.98,
+    zhengCombo: 3.7,
+    zhengHe: 1.98,
+    zhengWei: 1.98,
+    zhengWeiSmall: 1.98,
+    colorRed: 2.7,
+    colorBlue: 2.9,
+    colorGreen: 2.9,
+    colorHalf: {
+      红大: 6.51, 红单: 5.61, 红双: 5.05, 红小: 4.52,
+      蓝小: 6.51, 蓝单: 5.61, 蓝双: 5.61, 蓝大: 5.05,
+      绿小: 6.51, 绿双: 6.51, 绿大: 5.61, 绿单: 5.61,
+    },
+    colorHalfHalf: {
+      红大单: 13.5, 红大双: 11.6, 红小单: 9.3, 红小双: 9.3,
+      蓝小单: 13.5, 蓝大双: 11.6, 蓝小双: 11.6, 蓝大单: 9.3,
+      绿小双: 13.5, 绿大单: 11.6, 绿大双: 11.6, 绿小单: 11.6,
+    },
+    zodiac: 11.3,
+    zodiacYear: 9.3,
+    pingTe: 2.07,
+    pingTeYear: 1.79,
+    zhengXiao: 1.88,
+    zhengXiaoYear: 1.62,
+    weiShu0: 2.07,
+    weiShu: 1.79,
+    weiShuMiss0: 1.81,
+    weiShuMiss: 2.15,
+    sumSide: 1.93,
     sumTail: 1.96,
     liuxiao: 1.95,
-    erQuanZhong: 60,        // 二全中
-    erZhongTe: 55,          // 二中特 · 中二
-    erZhongTeTe: 25,        // 二中特 · 中特
-    teChuan: 160,           // 特串
-    sanQuanZhong: 600,      // 三全中
-    sanZhongEr: 20,         // 三中二 · 中二
-    sanZhongSan: 120,       // 三中二 · 中三
-    sxLianZhong: { 2: 4, 3: 11, 4: 31, 5: 100 },
-    sxLianBuZhong: { 2: 4, 3: 11, 4: 31, 5: 100 },
-    wsLianZhong: { 2: 3.05, 3: 6.8, 4: 15.8 },
-    wsLianBuZhong: { 2: 3.05, 3: 6.8, 4: 15.8 },
-    buZhong: { 5: 2, 6: 2.5, 7: 3, 8: 3.5, 9: 4, 10: 5, 11: 6.2, 12: 7.6 },
+    erQuanZhong: 60,
+    erZhongTe: 50,
+    erZhongTeTe: 25.5,
+    teChuan: 150,
+    sanQuanZhong: 670,
+    sanZhongEr: 20,
+    sanZhongSan: 100,
+    siQuanZhong: 9000,
+    temaTou0: 5,
+    temaTou: 4.36,
+    temaWei0: 12,
+    temaWei: 9.6,
+    wuxingJin: 4.3,
+    wuxingMu: 4.3,
+    wuxingShui: 5.2,
+    wuxingHuo: 3.5,
+    wuxingTu: 4.7,
+    sxLianZhong: { 2: 4.12, 3: 11.12, 4: 31.2, 5: 98 },
+    sxLianZhongYear: { 2: 3.32, 3: 9.02, 4: 25.3, 5: 87 },
+    sxLianBuZhong: { 2: 3.66, 3: 8, 4: 19.3, 5: 52.8 },
+    wsLianZhong: { 2: 3.18, 3: 7.08, 4: 15.8, 5: 40 },
+    wsLianZhong5Zero: 45,
+    wsLianBuZhong: { 2: 5.36, 3: 15.3, 4: 52.8, 5: 120 },
+    heXiao: { 2: 5.6, 3: 3.7, 4: 2.8, 5: 2.2, 6: 1.99, 7: 1.63, 8: 1.43, 9: 1.27, 10: 1.14, 11: 1.05 },
+    buZhong: { 5: 1.75, 6: 1.9, 7: 2.5, 8: 3, 9: 4, 10: 5, 11: 6, 12: 7 },
   };
 
   /** 春节前沿用上一生肖年；表与服务端 lhc-odds.ts 保持一致。 */
@@ -442,98 +534,16 @@ $(function () {
 
   const RED = [1, 2, 7, 8, 12, 13, 18, 19, 23, 24, 29, 30, 34, 35, 40, 45, 46];
   const BLUE = [3, 4, 9, 10, 14, 15, 20, 25, 26, 31, 36, 37, 41, 42, 47, 48];
-  const CN_NUM = { 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10, 十一: 11, 十二: 12 };
-
-  const MOCK_SIDES = ['大', '小', '单', '双'];
-  const MOCK_COMBO = ['大单', '大双', '小单', '小双'];
-  const MOCK_WAVE = ['红波', '蓝波', '绿波'];
-  const MOCK_SUM = ['总和大', '总和小', '总和单', '总和双'];
-  const MOCK_ZX = ZODIAC_CYCLE.slice();
-  const MOCK_TAILS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
-  const ROBOT_COUNT = 10;
-  const CN_LIAN = { 2: '二', 3: '三', 4: '四', 5: '五' };
-
-  function pickOne(arr) {
-    return arr[Math.floor(Math.random() * arr.length)];
-  }
-  function pickUnique(arr, n) {
-    const copy = arr.slice();
-    const out = [];
-    while (out.length < n && copy.length) {
-      out.push(copy.splice(Math.floor(Math.random() * copy.length), 1)[0]);
-    }
-    return out;
-  }
-  /** 各种金额都可能出现，不刻意凑整十/整百 */
-  function pickAmt() {
-    const w = Math.random();
-    if (w < 0.4) return 10 + Math.floor(Math.random() * 90);   // 10~99
-    if (w < 0.75) return 20 + Math.floor(Math.random() * 180);  // 20~199
-    if (w < 0.92) return 50 + Math.floor(Math.random() * 250);  // 50~299
-    return 100 + Math.floor(Math.random() * 400);               // 100~499
-  }
-  function pickBallNo() {
-    return String(1 + Math.floor(Math.random() * 49)).padStart(2, '0');
-  }
-  function mockSxLian(amt) {
-    const n = pickOne([2, 2, 2, 3, 3, 4]);
-    const hit = Math.random() < 0.78 ? '中' : '不中';
-    const zs = pickUnique(MOCK_ZX, n);
-    return `复式${CN_LIAN[n]}肖${hit}${zs.join(',')} ${amt}`;
-  }
-  function mockWsLian(amt) {
-    const n = pickOne([2, 2, 3, 3, 4]);
-    const hit = Math.random() < 0.78 ? '中' : '不中';
-    const tails = pickUnique(MOCK_TAILS, n);
-    return `复式${CN_LIAN[n]}尾${hit}${tails.map(t => t + '尾').join(',')} ${amt}`;
-  }
-  function mockLianma(amt) {
-    const play = pickOne(['二全中', '二全中', '二中特', '二中特', '特串', '三中二']);
-    const need = (play === '三全中' || play === '三中二') ? 3 : 2;
-    const nums = pickUnique(
-      Array.from({ length: 49 }, (_, i) => String(i + 1).padStart(2, '0')),
-      need,
-    );
-    return `复式${play}${nums.join(',')} ${amt}`;
-  }
-  /** 机器人下注：常用玩法（含特码号/生肖连/尾数连），不对冲 */
-  function randomMockBetText() {
-    const amt = pickAmt();
-    const roll = Math.random();
-
-    // 两面
-    if (roll < 0.28) return `${pickOne(MOCK_SIDES)}${amt}`;
-    // 组合两面
-    if (roll < 0.4) return `${pickOne(MOCK_COMBO)}${amt}`;
-    // 特码号
-    if (roll < 0.54) {
-      const no = pickBallNo();
-      return Math.random() < 0.7 ? `${no}/${amt}` : `特码${no} ${amt}`;
-    }
-    // 总肖项 = 一肖（平特同义，口令统一一肖）
-    if (roll < 0.64) {
-      const z = pickOne(MOCK_ZX);
-      return `一肖${z}${amt}`;
-    }
-    // 生肖连
-    if (roll < 0.74) return mockSxLian(amt);
-    // 尾数连
-    if (roll < 0.84) return mockWsLian(amt);
-    // 色波
-    if (roll < 0.9) return `${pickOne(MOCK_WAVE)}${amt}`;
-    // 连码
-    if (roll < 0.95) return mockLianma(amt);
-    // 总和
-    if (roll < 0.98) return `${pickOne(MOCK_SUM)}${amt}`;
-    // 偶尔两注（方向不冲突）
-    const a = Math.random() < 0.6
-      ? `${pickOne(MOCK_SIDES)}${pickAmt()}`
-      : `${pickOne(MOCK_COMBO)}${pickAmt()}`;
-    const b = Math.random() < 0.45
-      ? `${pickBallNo()}/${pickAmt()}`
-      : (Math.random() < 0.5 ? mockSxLian(pickAmt()) : `一肖${pickOne(MOCK_ZX)}${pickAmt()}`);
-    return `${a}<br>${b}`;
-  }
+  const CN_NUM = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10, 十一: 11, 十二: 12 };
+  const NUM_CN = { 1: '一', 2: '二', 3: '三', 4: '四', 5: '五', 6: '六', 7: '七', 8: '八' };
+  /** 五行号码表（与 server lhc-odds.ts 一致） */
+  const WUXING_OF = {
+    1: '火', 2: '火', 3: '金', 4: '金', 5: '土', 6: '土', 7: '木', 8: '木', 9: '火', 10: '火',
+    11: '金', 12: '金', 13: '土', 14: '水', 15: '木', 16: '木', 17: '火', 18: '火', 19: '金', 20: '金',
+    21: '土', 22: '水', 23: '木', 24: '木', 25: '火', 26: '火', 27: '金', 28: '金', 29: '土', 30: '水',
+    31: '木', 32: '木', 33: '火', 34: '火', 35: '金', 36: '金', 37: '土', 38: '水', 39: '木', 40: '木',
+    41: '火', 42: '火', 43: '金', 44: '土', 45: '水', 46: '水', 47: '木', 48: '土', 49: '火',
+  };
 
   function zodiacOf(n) {
     const idx = (n - 1) % 12;
@@ -544,6 +554,36 @@ $(function () {
   }
   function pingTeOdds(z) {
     return z === yearZodiac() ? ODDS.pingTeYear : ODDS.pingTe;
+  }
+  function zhengXiaoOdds(z) {
+    return z === yearZodiac() ? ODDS.zhengXiaoYear : ODDS.zhengXiao;
+  }
+  function wuxingOf(n) {
+    return WUXING_OF[n] || '火';
+  }
+  function numsOfWuxing(wx) {
+    const out = [];
+    for (let n = 1; n <= 49; n++) if (wuxingOf(n) === wx) out.push(n);
+    return out;
+  }
+  function wuxingOdds(wx) {
+    if (wx === '金') return ODDS.wuxingJin;
+    if (wx === '木') return ODDS.wuxingMu;
+    if (wx === '水') return ODDS.wuxingShui;
+    if (wx === '火') return ODDS.wuxingHuo;
+    if (wx === '土') return ODDS.wuxingTu;
+    return 1;
+  }
+  function sxLianOdds(n, hit, zodiacs) {
+    if (!hit) return (ODDS.sxLianBuZhong[n] || 1);
+    const hasYear = (zodiacs || []).indexOf(yearZodiac()) >= 0;
+    if (hasYear) return ODDS.sxLianZhongYear[n] || ODDS.sxLianZhong[n] || 1;
+    return ODDS.sxLianZhong[n] || 1;
+  }
+  function wsLianOdds(n, hit, tails) {
+    if (!hit) return ODDS.wsLianBuZhong[n] || 1;
+    if (n === 5 && (tails || []).some((t) => Number(t) === 0)) return ODDS.wsLianZhong5Zero || 45;
+    return ODDS.wsLianZhong[n] || 1;
   }
   function waveColor(n) {
     if (RED.includes(n)) return '红';
@@ -568,16 +608,57 @@ $(function () {
     return ODDS.colorGreen;
   }
   function parseNumList(str) {
-    return String(str || '').split(/[,，\s]+/).map(s => parseInt(s, 10)).filter(n => n >= 1 && n <= 49);
+    const raw = String(str || '');
+    if (raw.includes('拖')) {
+      const i = raw.indexOf('拖');
+      return parseNumList(raw.slice(0, i)).concat(parseNumList(raw.slice(i + 1)));
+    }
+    return raw.split(/[,，、\s]+/).map(s => parseInt(s, 10)).filter(n => n >= 1 && n <= 49);
   }
   function parseZodiacList(str) {
-    return String(str || '').split(/[,，\s]+/).filter(z => /^[鼠牛虎兔龙蛇马羊猴鸡狗猪]$/.test(z));
+    // 支持「鼠,牛,虎」/「鼠、牛」与无分隔「鼠牛虎」；拖头「鼠拖牛、虎」
+    const raw = String(str || '');
+    if (raw.includes('拖')) {
+      const i = raw.indexOf('拖');
+      return parseZodiacList(raw.slice(0, i)).concat(parseZodiacList(raw.slice(i + 1)));
+    }
+    const parts = raw.split(/[,，、\s]+/).filter(Boolean);
+    const fromParts = parts.filter(z => /^[鼠牛虎兔龙蛇马羊猴鸡狗猪]$/.test(z));
+    if (fromParts.length) return fromParts;
+    const out = [];
+    for (let i = 0; i < raw.length; i++) {
+      if (/^[鼠牛虎兔龙蛇马羊猴鸡狗猪]$/.test(raw[i])) out.push(raw[i]);
+    }
+    return out;
   }
   function parseTailList(str) {
-    return String(str || '').split(/[,，\s]+/).map(s => {
+    const raw = String(str || '');
+    if (raw.includes('拖')) {
+      const i = raw.indexOf('拖');
+      return parseTailList(raw.slice(0, i)).concat(parseTailList(raw.slice(i + 1)));
+    }
+    return raw.split(/[,，、\s]+/).map(s => {
       const m = String(s).match(/^(\d)/);
       return m ? +m[1] : NaN;
     }).filter(n => n >= 0 && n <= 9);
+  }
+  /** 拖头展示：鼠拖牛、虎 / 0尾1尾拖2尾、3尾；选胆中显示「鼠拖」 */
+  function formatTuotouSelecting(items, danN, fmt, joinDan) {
+    const arr = (items || []).map(fmt);
+    const jd = joinDan == null ? '' : joinDan;
+    if (!arr.length) return '';
+    if (arr.length < danN) return arr.join(jd);
+    if (arr.length === danN) return arr.join(jd) + '拖';
+    return arr.slice(0, danN).join(jd) + '拖' + arr.slice(danN).join('、');
+  }
+  function formatTuotouZodiacs(zs, danN) {
+    return formatTuotouSelecting(zs, danN, (z) => z, '');
+  }
+  function formatTuotouTails(ts, danN) {
+    return formatTuotouSelecting(ts, danN, (t) => `${t}尾`, '');
+  }
+  function formatTuotouNums(nums, danN) {
+    return formatTuotouSelecting(nums, danN, (n) => pad(+n, 2), ',');
   }
   function combinations(arr, k) {
     const out = [];
@@ -668,7 +749,11 @@ $(function () {
     if (mode === '拖头') return expandTuotou(items, k);
     return expandFushi(items, k);
   }
+  /** 玩法脚金额栏是否处于梭哈（提前声明，避免 unitAmount/refreshStats TDZ） */
+  let playAllin = false;
+
   function unitAmount() {
+    if (playAllin) return 0;
     return Math.max(1, parseInt($('#playAmount').val(), 10) || 0);
   }
   function fmtBetSummary(betCount, amount) {
@@ -683,37 +768,47 @@ $(function () {
   function parsePlay(raw) {
     const t = String(raw || '').replace(/\s+/g, '').replace(/\//g, '');
     let m;
-    // 连码：复式二全中01,08 / 二中特01,02
-    if ((m = t.match(/^(复式|拖头|生肖对碰|尾数对碰|生尾对碰|任意对碰)?(二全中|二中特|特串|三全中|三中二)([\d,，]+)$/))) {
+    // 连码：复式二全中01,08 / 四全中...
+    if ((m = t.match(/^(复式|拖头|生肖对碰|尾数对碰|生尾对碰|任意对碰)?(四全中|二全中|二中特|特串|三全中|三中二)([\d,，、拖]+)$/))) {
       const nums = parseNumList(m[3]);
-      const need = (m[2] === '三全中' || m[2] === '三中二') ? 3 : 2;
+      const need = m[2] === '四全中' ? 4 : (m[2] === '三全中' || m[2] === '三中二') ? 3 : 2;
       if (nums.length < need) return null;
       const oddsMap = {
+        四全中: ODDS.siQuanZhong,
         二全中: ODDS.erQuanZhong,
         二中特: ODDS.erZhongTe,
         特串: ODDS.teChuan,
         三全中: ODDS.sanQuanZhong,
         三中二: ODDS.sanZhongEr,
       };
-      return { type: 'lianma', mode: m[1] || '复式', play: m[2], nums, odds: oddsMap[m[2]], odds2: m[2] === '二中特' ? ODDS.erZhongTeTe : (m[2] === '三中二' ? ODDS.sanZhongSan : 0) };
+      const mode = m[1] || (String(m[3]).includes('拖') ? '拖头' : '复式');
+      return { type: 'lianma', mode, play: m[2], nums, odds: oddsMap[m[2]], odds2: m[2] === '二中特' ? ODDS.erZhongTeTe : (m[2] === '三中二' ? ODDS.sanZhongSan : 0) };
     }
-    // 生肖连：复式二肖中鼠,牛
-    if ((m = t.match(/^(复式|拖头)?([二三四五])肖(中|不中)([鼠牛虎兔龙蛇马羊猴鸡狗猪,，]+)$/))) {
+    // 连肖：复式二肖中鼠,牛 / 拖头二肖中鼠拖牛、虎
+    if ((m = t.match(/^(复式|拖头)?([二三四五])肖(中|不中)([鼠牛虎兔龙蛇马羊猴鸡狗猪,，、拖]+)$/))) {
       const n = CN_NUM[m[2]];
       const zs = parseZodiacList(m[4]);
       if (!n || zs.length < n) return null;
       const hit = m[3] === '中';
-      const table = hit ? ODDS.sxLianZhong : ODDS.sxLianBuZhong;
-      return { type: 'sxLian', mode: m[1] || '复式', n, hit, zodiacs: zs, odds: table[n] || 1 };
+      const mode = m[1] || (String(m[4]).includes('拖') ? '拖头' : '复式');
+      return { type: 'sxLian', mode, n, hit, zodiacs: zs, odds: sxLianOdds(n, hit, zs) };
     }
-    // 尾数连：复式二尾中0尾,1尾（无五尾）
-    if ((m = t.match(/^(复式|拖头)?([二三四])尾(中|不中)((?:\d尾?[,，]*)+)$/))) {
+    // 连尾：复式三尾中0尾,1尾 / 拖头三尾中0尾1尾拖2尾、3尾
+    if ((m = t.match(/^(复式|拖头)?([二三四五])尾(中|不中)((?:\d尾?[,，、拖]*)+)$/))) {
       const n = CN_NUM[m[2]];
       const tails = parseTailList(m[4]);
       if (!n || tails.length < n) return null;
       const hit = m[3] === '中';
-      const table = hit ? ODDS.wsLianZhong : ODDS.wsLianBuZhong;
-      return { type: 'wsLian', mode: m[1] || '复式', n, hit, tails, odds: table[n] || 1 };
+      const mode = m[1] || (String(m[4]).includes('拖') ? '拖头' : '复式');
+      return { type: 'wsLian', mode, n, hit, tails, odds: wsLianOdds(n, hit, tails) };
+    }
+    // 合肖：须带「合肖」前缀，避免与连肖口语混淆
+    if ((m = t.match(/^合肖(十一|十|[二三四五六七八九])肖([鼠牛虎兔龙蛇马羊猴鸡狗猪,，]+)$/) ) ||
+        (m = t.match(/^合肖(十一|十|[二三四五六七八九])([鼠牛虎兔龙蛇马羊猴鸡狗猪,，]+)$/))) {
+      const n = CN_NUM[m[1]];
+      const zs = [...new Set(parseZodiacList(m[2]))];
+      if (!n || zs.length !== n) return null;
+      return { type: 'heXiao', n, zodiacs: zs, odds: ODDS.heXiao[n] || 1 };
     }
     // 六肖中/不中
     if ((m = t.match(/^(六肖中|六肖不中)([鼠牛虎兔龙蛇马羊猴鸡狗猪,，]+)$/))) {
@@ -721,12 +816,46 @@ $(function () {
       if (zs.length !== 6) return null;
       return { type: 'liuxiao', hit: m[1] === '六肖中', zodiacs: zs, odds: ODDS.liuxiao };
     }
-    // 多选不中：复式五不中01,02,...
+    // 自选不中：复式五不中01,02,...
     if ((m = t.match(/^(复式|多组)?(十一|十二|五|六|七|八|九|十)不中([\d,，]+)$/))) {
       const n = CN_NUM[m[2]];
       const nums = parseNumList(m[3]);
       if (!n || nums.length < n) return null;
       return { type: 'buZhong', mode: m[1] || '复式', n, nums, odds: ODDS.buZhong[n] || 1 };
+    }
+    // 正码特：正一特23 / 正1特23
+    if ((m = t.match(/^正([一二三四五六1-6])特(0?[1-9]|[1-4][0-9])$/))) {
+      const pos = CN_NUM[m[1]] || Number(m[1]);
+      const num = +m[2];
+      if (!pos || pos < 1 || pos > 6 || num < 1 || num > 49) return null;
+      return { type: 'zhengTe', pos, num, odds: ODDS.zhengTe };
+    }
+    // 正码位两面/组合/合/尾：正1大 / 正一大单 / 正1合大 / 正1尾小
+    if ((m = t.match(/^正([一二三四五六1-6])(大单|大双|小单|小双)$/))) {
+      const pos = CN_NUM[m[1]] || Number(m[1]);
+      if (!pos || pos < 1 || pos > 6) return null;
+      return { type: 'zhengCombo', pos, combo: m[2], odds: ODDS.zhengCombo };
+    }
+    if ((m = t.match(/^正([一二三四五六1-6])合(大|小|单|双)$/))) {
+      const pos = CN_NUM[m[1]] || Number(m[1]);
+      if (!pos || pos < 1 || pos > 6) return null;
+      return { type: 'zhengHe', pos, side: m[2], odds: ODDS.zhengHe };
+    }
+    if ((m = t.match(/^正([一二三四五六1-6])尾(大|小)$/))) {
+      const pos = CN_NUM[m[1]] || Number(m[1]);
+      if (!pos || pos < 1 || pos > 6) return null;
+      return { type: 'zhengWei', pos, side: m[2], odds: m[2] === '小' ? ODDS.zhengWeiSmall : ODDS.zhengWei };
+    }
+    if ((m = t.match(/^正([一二三四五六1-6])(大|小|单|双)$/))) {
+      const pos = CN_NUM[m[1]] || Number(m[1]);
+      if (!pos || pos < 1 || pos > 6) return null;
+      return { type: 'zhengSide', pos, side: m[2], odds: ODDS.zhengSide };
+    }
+    // 正波：正1红波 / 正一蓝
+    if ((m = t.match(/^正([一二三四五六1-6])(红|蓝|绿)波?$/))) {
+      const pos = CN_NUM[m[1]] || Number(m[1]);
+      if (!pos || pos < 1 || pos > 6) return null;
+      return { type: 'zhengColor', pos, color: m[2], odds: colorOdds(m[2]) };
     }
     // 特码号码
     if ((m = t.match(/^(?:特码|特)(0?[1-9]|[1-4][0-9])$/))) {
@@ -734,7 +863,7 @@ $(function () {
       if (num < 1 || num > 49) return null;
       return { type: 'tema', num, odds: ODDS.tema };
     }
-    // 正码号码
+    // 正码号码（须在正N两面之后）
     if ((m = t.match(/^(?:正码|正)(0?[1-9]|[1-4][0-9])$/))) {
       const num = +m[1];
       if (num < 1 || num > 49) return null;
@@ -747,10 +876,29 @@ $(function () {
       return { type: 'temaSide', side: m[1], odds: ODDS.side };
     }
     if ((m = t.match(/^(?:特码)?合(大|小|单|双)$/) ) || (m = t.match(/^特合(大|小|单|双)$/))) {
-      return { type: 'heSide', side: m[1], odds: ODDS.side };
+      return { type: 'heSide', side: m[1], odds: ODDS.heSide != null ? ODDS.heSide : ODDS.side };
+    }
+    // 特码头：0头 / 特码0头 / 1头
+    if ((m = t.match(/^(?:特码)?([0-4])头$/))) {
+      const head = +m[1];
+      return { type: 'temaTou', head, odds: head === 0 ? ODDS.temaTou0 : ODDS.temaTou };
+    }
+    // 特码尾（特码位高赔）：特0尾 / 特码3尾 —— 须在平特N尾之前用「特」前缀区分
+    if ((m = t.match(/^特(?:码)?([0-9])尾$/))) {
+      const tail = +m[1];
+      return { type: 'temaWeiNum', tail, odds: tail === 0 ? ODDS.temaWei0 : ODDS.temaWei };
     }
     if ((m = t.match(/^(?:特码)?尾(大|小)$/) ) || (m = t.match(/^特尾(大|小)$/))) {
-      return { type: 'weiSide', side: m[1], odds: m[1] === '小' ? ODDS.weiXiao : ODDS.side };
+      return { type: 'weiSide', side: m[1], odds: m[1] === '小' ? ODDS.weiXiao : (ODDS.weiSide != null ? ODDS.weiSide : ODDS.side) };
+    }
+    // 半半波须在半波之前
+    if ((m = t.match(/^(红|蓝|绿)(大|小)(单|双)$/))) {
+      const spec = m[1] + m[2] + m[3];
+      return { type: 'colorHalfHalf', spec, odds: (ODDS.colorHalfHalf[spec] || 1) };
+    }
+    if ((m = t.match(/^(红|蓝|绿)(大|小|单|双)$/))) {
+      const spec = m[1] + m[2];
+      return { type: 'colorHalf', spec, odds: (ODDS.colorHalf[spec] || 1) };
     }
     if ((m = t.match(/^(红|蓝|绿)波$/))) {
       return { type: 'color', color: m[1], odds: colorOdds(m[1]) };
@@ -761,7 +909,7 @@ $(function () {
     if ((m = t.match(/^总尾(大|小)$/))) {
       return { type: 'sumTail', side: m[1], odds: ODDS.sumTail };
     }
-    // 总数项·尾数（平特尾同义）：七码含该尾；0尾 2 倍，其余 1.8
+    // 平特尾：七码含该尾
     if ((m = t.match(/^(?:平特)?([0-9])尾$/))) {
       const tail = +m[1];
       return { type: 'weiShu', tail, odds: tail === 0 ? ODDS.weiShu0 : ODDS.weiShu };
@@ -770,7 +918,19 @@ $(function () {
       const tail = +m[1];
       return { type: 'weiShuMiss', tail, odds: tail === 0 ? ODDS.weiShuMiss0 : ODDS.weiShuMiss };
     }
-    // 总肖项 / 一肖（七码任一）；平特与一肖同义；裸生肖同义
+    // 五行
+    if ((m = t.match(/^(?:五行)?([金木水火土])$/))) {
+      return { type: 'wuxing', wx: m[1], odds: wuxingOdds(m[1]) };
+    }
+    // 特肖（特码生肖，须在一肖/平特之前）
+    if ((m = t.match(/^特肖([鼠牛虎兔龙蛇马羊猴鸡狗猪])$/))) {
+      return { type: 'temaZodiac', z: m[1], odds: zodiacOdds(m[1]) };
+    }
+    // 正肖
+    if ((m = t.match(/^正肖([鼠牛虎兔龙蛇马羊猴鸡狗猪])$/))) {
+      return { type: 'zhengXiao', z: m[1], odds: zhengXiaoOdds(m[1]) };
+    }
+    // 平特一肖 / 一肖；裸生肖同义
     if ((m = t.match(/^(?:一肖|平特)([鼠牛虎兔龙蛇马羊猴鸡狗猪])$/))) {
       return { type: 'pingZodiac', z: m[1], odds: pingTeOdds(m[1]) };
     }
@@ -790,11 +950,23 @@ $(function () {
     }
     if (p.type === 'tema') return { betType: 'special', betValue: String(p.num) };
     if (p.type === 'zhengma') return { betType: 'zhengma', betValue: String(p.num) };
+    if (p.type === 'zhengTe') return { betType: 'zhengTe', betValue: p.pos + ':' + p.num };
+    if (p.type === 'zhengSide') return { betType: 'zhengSide', betValue: p.pos + ':' + p.side };
+    if (p.type === 'zhengCombo') return { betType: 'zhengCombo', betValue: p.pos + ':' + p.combo };
+    if (p.type === 'zhengHe') return { betType: 'zhengHe', betValue: p.pos + ':' + p.side };
+    if (p.type === 'zhengWei') return { betType: 'zhengWei', betValue: p.pos + ':' + p.side };
+    if (p.type === 'zhengColor') return { betType: 'zhengColor', betValue: p.pos + ':' + p.color };
     if (p.type === 'temaCombo') return { betType: 'combo', betValue: p.combo };
     if (p.type === 'color') return { betType: 'color', betValue: p.color };
-    if (p.type === 'temaZodiac' || p.type === 'pingZodiac') return { betType: p.type, betValue: p.z };
+    if (p.type === 'colorHalf') return { betType: 'colorHalf', betValue: p.spec };
+    if (p.type === 'colorHalfHalf') return { betType: 'colorHalfHalf', betValue: p.spec };
+    if (p.type === 'temaZodiac' || p.type === 'pingZodiac' || p.type === 'zhengXiao') return { betType: p.type, betValue: p.z };
     if (p.type === 'heSide' || p.type === 'weiSide' || p.type === 'sumSide' || p.type === 'sumTail') return { betType: p.type, betValue: p.side };
     if (p.type === 'weiShu' || p.type === 'weiShuMiss') return { betType: p.type, betValue: String(p.tail) };
+    if (p.type === 'temaTou') return { betType: 'temaTou', betValue: String(p.head) };
+    if (p.type === 'temaWeiNum') return { betType: 'temaWei', betValue: String(p.tail) };
+    if (p.type === 'wuxing') return { betType: 'wuxing', betValue: p.wx };
+    if (p.type === 'heXiao') return { betType: 'heXiao', betValue: JSON.stringify({ n: p.n, zodiacs: p.zodiacs }) };
     if (p.type === 'lianma') return { betType: 'lianma', betValue: JSON.stringify({ play: p.play, nums: p.nums, mode: p.mode || '复式' }) };
     if (p.type === 'sxLian') return { betType: 'sxLian', betValue: JSON.stringify({ n: p.n, hit: p.hit, zodiacs: p.zodiacs, mode: p.mode || '复式' }) };
     if (p.type === 'wsLian') return { betType: 'wsLian', betValue: JSON.stringify({ n: p.n, hit: p.hit, tails: p.tails, mode: p.mode || '复式' }) };
@@ -812,14 +984,35 @@ $(function () {
       /* 复式/拖头每一组合必须作为服务端独立注单提交（与本地 settleBet 拆注一致）。 */
       let parts = [l];
       if (parsed && parsed.type === 'lianma') {
-        parts = expandByMode(parsed.mode || '复式', parsed.nums, parsed.play === '三全中' || parsed.play === '三中二' ? 3 : 2)
-          .map(nums => ({ play: `${parsed.mode || '复式'}${parsed.play}${nums.map(n => pad(n, 2)).join(',')}`, amount: l.amount }));
+        const need = lianmaNeedOf(parsed.play);
+        parts = expandByMode(parsed.mode || '复式', parsed.nums, need)
+          .map((nums) => {
+            const mode = parsed.mode || '复式';
+            const body = mode === '拖头'
+              ? formatTuotouNums(nums, need - 1)
+              : nums.map(n => pad(n, 2)).join(',');
+            return { play: `${mode}${parsed.play}${body}`, amount: l.amount };
+          });
       } else if (parsed && parsed.type === 'sxLian') {
         parts = expandByMode(parsed.mode || '复式', parsed.zodiacs, parsed.n)
-          .map(zs => ({ play: `${parsed.mode || '复式'}${NUM_CN[parsed.n]}肖${parsed.hit ? '中' : '不中'}${zs.join(',')}`, amount: l.amount }));
+          .map((zs) => {
+            const tag = `${NUM_CN[parsed.n]}肖${parsed.hit ? '中' : '不中'}`;
+            const mode = parsed.mode || '复式';
+            const body = mode === '拖头'
+              ? formatTuotouZodiacs(zs, parsed.n - 1)
+              : zs.join(',');
+            return { play: `${mode}${tag}${body}`, amount: l.amount };
+          });
       } else if (parsed && parsed.type === 'wsLian') {
         parts = expandByMode(parsed.mode || '复式', parsed.tails, parsed.n)
-          .map(ts => ({ play: `${parsed.mode || '复式'}${NUM_CN[parsed.n]}尾${parsed.hit ? '中' : '不中'}${ts.map(t => t + '尾').join(',')}`, amount: l.amount }));
+          .map((ts) => {
+            const tag = `${NUM_CN[parsed.n]}尾${parsed.hit ? '中' : '不中'}`;
+            const mode = parsed.mode || '复式';
+            const body = mode === '拖头'
+              ? formatTuotouTails(ts, parsed.n - 1)
+              : ts.map(t => t + '尾').join(',');
+            return { play: `${mode}${tag}${body}`, amount: l.amount };
+          });
       } else if (parsed && parsed.type === 'buZhong') {
         if (!(parsed.mode === '多组' && parsed.nums.length === parsed.n)) {
           parts = expandFushi([...new Set(parsed.nums)].sort((a, b) => a - b), parsed.n)
@@ -844,9 +1037,12 @@ $(function () {
   const YOU_NUM = { 二: 2, 三: 3, 四: 4, 五: 5 };
   const LM_ALIAS = {
     三中三: '三全中', 三全中: '三全中', 三中二: '三中二',
-    二中特: '二中特', 二全中: '二全中', 特串: '特串',
+    二中特: '二中特', 二全中: '二全中', 特串: '特串', 四全中: '四全中',
   };
-  const LM_NEED = { 二全中: 2, 二中特: 2, 特串: 2, 三全中: 3, 三中二: 3 };
+  const LM_NEED = { 四全中: 4, 二全中: 2, 二中特: 2, 特串: 2, 三全中: 3, 三中二: 3 };
+  function lianmaNeedOf(play) {
+    return LM_NEED[play] || 2;
+  }
 
   function extractZodiacs(str) {
     const out = [];
@@ -959,10 +1155,10 @@ $(function () {
     }
     const t = normalizeChatBetText(raw0);
 
-    // 键盘简口令：大各100 → 该属性下每个特码号各买
+    // 键盘简口令：大各100 → 该属性下每个特码号各买（不含 49）
     let m = t.match(/^([大小单双])各(\d+)$/);
     if (m) {
-      const lines = temaLines(ballNumsByQuick(m[1]), +m[2]);
+      const lines = temaLines(ballNumsBySide(m[1]), +m[2]);
       if (lines) return lines;
     }
 
@@ -987,6 +1183,16 @@ $(function () {
     if (m) {
       const lines = temaLines(numsOfTail(+m[1]), +m[2]);
       if (lines) return lines;
+    }
+
+    // F0: 特肖X/金额 或多肖（特肖鼠牛/50）
+    m = t.match(/^特肖([鼠牛虎兔龙蛇马羊猴鸡狗猪]+)(?:各|\/)?(\d+)$/);
+    if (m) {
+      const zs = extractZodiacs(m[1]);
+      const amount = +m[2];
+      if (zs.length && amount > 0) {
+        return zs.map(z => ({ play: '特肖' + z, amount }));
+      }
     }
 
     // F: 一肖/平特 多肖（同义，统一展开为一肖X）
@@ -1096,13 +1302,13 @@ $(function () {
       }
     }
 
-    // J: 30,49,27,45,32,43复式二中特各5
-    m = t.match(/^([\d,，]+)复式?(二中特|二全中|特串|三全中|三中二|三中三)各(\d+)$/);
+    // J: 30,49,27,45,32,43复式二中特各5 / 四全中
+    m = t.match(/^([\d,，]+)复式?(四全中|二中特|二全中|特串|三全中|三中二|三中三)各(\d+)$/);
     if (m) {
       const playName = LM_ALIAS[m[2]] || m[2];
       const nums = extractNums(m[1]);
       const amount = +m[3];
-      const need = LM_NEED[playName];
+      const need = lianmaNeedOf(playName);
       if (nums.length >= need && amount > 0) {
         const lines = expandFushi(nums, need).map(c => ({
           play: '复式' + playName + c.map(n => pad(n, 2)).join(','),
@@ -1112,13 +1318,13 @@ $(function () {
       }
     }
 
-    // I: 11,15,05三中三20
-    m = t.match(/^([\d,，]+)(三中三|三全中|三中二|二中特|二全中|特串)(\d+)$/);
+    // I: 11,15,05三中三20 / 01,02,03,04四全中20
+    m = t.match(/^([\d,，]+)(四全中|三中三|三全中|三中二|二中特|二全中|特串)(\d+)$/);
     if (m) {
       const playName = LM_ALIAS[m[2]] || m[2];
       const nums = extractNums(m[1]);
       const amount = +m[3];
-      const need = LM_NEED[playName];
+      const need = lianmaNeedOf(playName);
       if (nums.length >= need && amount > 0) {
         const lines = expandFushi(nums, need).map(c => ({
           play: '复式' + playName + c.map(n => pad(n, 2)).join(','),
@@ -1153,6 +1359,27 @@ $(function () {
       }
     }
 
+    // 拖头连肖：拖头二肖中鼠拖牛、虎各50 / 鼠拖牛、虎二肖中50
+    m = t.match(/^(?:拖头)?([二三四五])肖(中|不中)([鼠牛虎兔龙蛇马羊猴鸡狗猪]+拖[鼠牛虎兔龙蛇马羊猴鸡狗猪、，,]+)(?:各|\/)?(\d+)$/);
+    if (m) {
+      const play = `拖头${m[1]}肖${m[2]}${m[3]}`;
+      const amount = +m[4];
+      if (amount > 0 && parsePlay(play)) return [{ play, amount }];
+    }
+    m = t.match(/^([鼠牛虎兔龙蛇马羊猴鸡狗猪]+拖[鼠牛虎兔龙蛇马羊猴鸡狗猪、，,]+)([二三四五])肖(中|不中)(?:各|\/)?(\d+)$/);
+    if (m) {
+      const play = `拖头${m[2]}肖${m[3]}${m[1]}`;
+      const amount = +m[4];
+      if (amount > 0 && parsePlay(play)) return [{ play, amount }];
+    }
+    // 拖头连尾：拖头二尾中0尾拖1尾、2尾各50
+    m = t.match(/^(?:拖头)?([二三四五])尾(中|不中)((?:\d尾?)+拖(?:\d尾?[,，、]*)+)(?:各|\/)?(\d+)$/);
+    if (m) {
+      const play = `拖头${m[1]}尾${m[2]}${m[3]}`;
+      const amount = +m[4];
+      if (amount > 0 && parsePlay(play)) return [{ play, amount }];
+    }
+
     // 回退：原有单注
     const one = parseBet(raw0);
     if (one) return [one];
@@ -1178,11 +1405,8 @@ $(function () {
     if (plays.length === 1) return [{ play: plays[0], amount: bal }];
     const base = Math.floor(bal / plays.length);
     if (base < 1) return null;
-    const rem = bal - base * plays.length;
-    return plays.map((play, i) => ({
-      play,
-      amount: base + (i === 0 ? rem : 0),
-    }));
+    /* 余数不下注，留在余额里 */
+    return plays.map((play) => ({ play, amount: base }));
   }
 
   function formatResolvedBets(lines) {
@@ -1200,7 +1424,7 @@ $(function () {
       const parsed = parsePlay(l.play);
       let parts = [l.play];
       if (parsed && parsed.type === 'lianma') {
-        parts = expandByMode(parsed.mode || '复式', parsed.nums, parsed.play === '三全中' || parsed.play === '三中二' ? 3 : 2)
+        parts = expandByMode(parsed.mode || '复式', parsed.nums, lianmaNeedOf(parsed.play))
           .map(nums => `${parsed.mode || '复式'}${parsed.play}${nums.map(n => pad(n, 2)).join(',')}`);
       } else if (parsed && parsed.type === 'sxLian') {
         parts = expandByMode(parsed.mode || '复式', parsed.zodiacs, parsed.n)
@@ -1282,7 +1506,6 @@ $(function () {
     }
     return null;
   }
-
 
   /** 玩法与金额之间：没有 / 就补上；已有 / 或 各 则不再加 */
   function joinPlayAmount(play, amount) {
@@ -1374,6 +1597,10 @@ $(function () {
     const full = String(issue || '—');
     $el.attr('title', full).text(full);
   }
+  /** 顶栏当前期（tick 依赖；缺失会抛错导致倒计时永久停在「同步中」） */
+  function setCurIssueDisplay(issue) {
+    setIssueEl($('#curIssue'), issue);
+  }
   function gyMeta(nums) {
     return temaMeta(nums);
   }
@@ -1406,9 +1633,10 @@ $(function () {
       </tr>`;
     }).join(''));
   }
-  function resultCardHtml(nums, issue) {
+  function resultCardHtml(nums, issue, opts) {
+    opts = opts || {};
     if (window.LhcResultCard && typeof LhcResultCard.build === 'function') {
-      return LhcResultCard.build(nums, issue);
+      return LhcResultCard.build(nums, issue, opts);
     }
     const meta = temaMeta(nums);
     const full = String(issue || '');
@@ -1420,13 +1648,16 @@ $(function () {
       </div></div>`;
   }
 
-  /** 七球滚停大致时长（ms）；中奖核对兜底 = 此值 + 余量 */
+  /** 白框开奖动画时长（摇珠 + 七球出号） */
   function resultRevealDurationMs() {
-    return 2600;
+    if (window.LhcResultCard && typeof LhcResultCard.revealDurationMs === 'function') {
+      return LhcResultCard.revealDurationMs();
+    }
+    return 2000 + 480 * 7 + 900;
   }
 
   function payoutResult(amount, odds, hitLabel) {
-    const winAmount = Math.floor(amount * odds);
+    const winAmount = Math.round(amount * odds * 100) / 100;
     return { winAmount, profit: winAmount - amount, hit: hitLabel || '' };
   }
   function settleComboGroup(combos, amount, judgeFn) {
@@ -1440,7 +1671,7 @@ $(function () {
       if (r.tie) { winAmount += amount; return; }
       if (r.win) {
         hits += 1;
-        winAmount += Math.floor(amount * r.odds);
+        winAmount += Math.round(amount * r.odds * 100) / 100;
       }
     });
     return {
@@ -1450,7 +1681,7 @@ $(function () {
     };
   }
 
-  /** 本地展示结算仅用于聊天统计；49 与服务端一致按大单正常结算。 */
+  /** 本地展示结算仅用于聊天统计；与服务端一致：两面等特码49和局退本。 */
   function settleBet(play, amount, nums) {
     const p = parsePlay(play);
     if (!p) return { winAmount: 0, profit: -amount, hit: '' };
@@ -1462,6 +1693,7 @@ $(function () {
     const wsSet = new Set(all.map(n => n % 10));
     let win = false;
     let odds = p.odds;
+    let tie = false;
 
     switch (p.type) {
       case 'tema':
@@ -1471,9 +1703,11 @@ $(function () {
         win = zhengSet.has(p.num);
         break;
       case 'temaSide':
+        if (sp === 49) { tie = true; break; }
         win = matchSide(p.side, sideOfTema(sp));
         break;
       case 'temaCombo': {
+        if (sp === 49) { tie = true; break; }
         const meta = sideOfTema(sp);
         win = !!( {
           大单: meta.big && meta.odd,
@@ -1484,11 +1718,13 @@ $(function () {
         break;
       }
       case 'heSide': {
+        if (sp === 49) { tie = true; break; }
         const hs = digitSum(sp);
         win = matchSide(p.side, { big: hs >= 7, odd: hs % 2 === 1 });
         break;
       }
       case 'weiSide': {
+        if (sp === 49) { tie = true; break; }
         const w = sp % 10;
         win = p.side === '大' ? w >= 5 : w <= 4;
         break;
@@ -1497,13 +1733,27 @@ $(function () {
         // 色波：49 仍结算（绿），不和
         win = waveColor(sp) === p.color;
         break;
+      case 'colorHalf':
+      case 'colorHalfHalf': {
+        if (sp === 49) { tie = true; break; }
+        const c = p.spec[0];
+        const rest = p.spec.slice(1);
+        const big = sp >= 25;
+        const odd = sp % 2 === 1;
+        if (waveColor(sp) !== c) { win = false; break; }
+        win = !!( {
+          大: big, 小: !big, 单: odd, 双: !odd,
+          大单: big && odd, 大双: big && !odd, 小单: !big && odd, 小双: !big && !odd,
+        }[rest]);
+        break;
+      }
       case 'sumSide': {
-        const s = all.reduce((a, b) => a + b, 0);
-        win = matchSide(p.side, { big: s >= 175, odd: s % 2 === 1 });
+        const s = mains.reduce((a, b) => a + b, 0);
+        win = matchSide(p.side, { big: s >= 150, odd: s % 2 === 1 });
         break;
       }
       case 'sumTail': {
-        const s = all.reduce((a, b) => a + b, 0) % 10;
+        const s = mains.reduce((a, b) => a + b, 0) % 10;
         win = p.side === '大' ? s >= 5 : s <= 4;
         break;
       }
@@ -1525,12 +1775,13 @@ $(function () {
         odds = pingTeOdds(p.z);
         break;
       case 'lianma': {
-        const need = (p.play === '三全中' || p.play === '三中二') ? 3 : 2;
+        const need = lianmaNeedOf(p.play);
         // 提交已拆成单注时 nums.length===need；聊天整串复式/拖头仍按 mode 展开
         const combos = expandByMode(p.mode || '复式', p.nums, need);
         return settleComboGroup(combos, amount, (balls) => {
           const hitZ = balls.filter(n => zhengSet.has(n)).length;
           const hitT = balls.filter(n => n === sp).length;
+          if (p.play === '四全中') return { win: hitZ >= 4, odds: ODDS.siQuanZhong };
           if (p.play === '三全中') return { win: hitZ > 2, odds: ODDS.sanQuanZhong };
           if (p.play === '三中二') {
             if (hitZ === 3) return { win: true, odds: ODDS.sanZhongSan };
@@ -1547,21 +1798,94 @@ $(function () {
           return { win: false, odds: 0 };
         });
       }
+      case 'zhengTe':
+        win = mains[p.pos - 1] === p.num;
+        odds = ODDS.zhengTe;
+        break;
+      case 'zhengSide': {
+        const n = mains[p.pos - 1];
+        if (n === 49) { tie = true; break; }
+        win = matchSide(p.side, sideOfTema(n));
+        odds = ODDS.zhengSide;
+        break;
+      }
+      case 'zhengCombo': {
+        const n = mains[p.pos - 1];
+        if (n === 49) { tie = true; break; }
+        const meta = sideOfTema(n);
+        win = !!( {
+          大单: meta.big && meta.odd,
+          大双: meta.big && !meta.odd,
+          小单: !meta.big && meta.odd,
+          小双: !meta.big && !meta.odd,
+        }[p.combo]);
+        odds = ODDS.zhengCombo;
+        break;
+      }
+      case 'zhengHe': {
+        const n = mains[p.pos - 1];
+        if (n === 49) { tie = true; break; }
+        const hs = digitSum(n);
+        win = matchSide(p.side, { big: hs >= 7, odd: hs % 2 === 1 });
+        odds = ODDS.zhengHe;
+        break;
+      }
+      case 'zhengWei': {
+        const n = mains[p.pos - 1];
+        if (n === 49) { tie = true; break; }
+        const w = n % 10;
+        win = p.side === '大' ? w >= 5 : w <= 4;
+        odds = p.side === '小' ? ODDS.zhengWeiSmall : ODDS.zhengWei;
+        break;
+      }
+      case 'zhengColor': {
+        const n = mains[p.pos - 1];
+        win = waveColor(n) === p.color;
+        odds = colorOdds(p.color);
+        break;
+      }
+      case 'temaTou': {
+        win = Math.floor(sp / 10) === p.head;
+        odds = p.head === 0 ? ODDS.temaTou0 : ODDS.temaTou;
+        break;
+      }
+      case 'temaWeiNum': {
+        win = (sp % 10) === p.tail;
+        odds = p.tail === 0 ? ODDS.temaWei0 : ODDS.temaWei;
+        break;
+      }
+      case 'wuxing':
+        win = wuxingOf(sp) === p.wx;
+        odds = wuxingOdds(p.wx);
+        break;
       case 'sxLian': {
         const combos = expandByMode(p.mode || '复式', p.zodiacs, p.n);
         return settleComboGroup(combos, amount, (zs) => {
           const hit = zs.filter(z => sxSet.has(z)).length;
-          if (p.hit) return { win: hit >= zs.length, odds: p.odds };
-          return { win: hit === 0, odds: p.odds };
+          if (p.hit) return { win: hit >= zs.length, odds: sxLianOdds(p.n, true, zs) };
+          return { win: hit === 0, odds: sxLianOdds(p.n, false, zs) };
         });
       }
       case 'wsLian': {
         const combos = expandByMode(p.mode || '复式', p.tails, p.n);
         return settleComboGroup(combos, amount, (ts) => {
           const hit = ts.filter(x => wsSet.has(x)).length;
-          if (p.hit) return { win: hit >= ts.length, odds: p.odds };
-          return { win: hit === 0, odds: p.odds };
+          if (p.hit) return { win: hit >= ts.length, odds: wsLianOdds(p.n, true, ts) };
+          return { win: hit === 0, odds: wsLianOdds(p.n, false, ts) };
         });
+      }
+      case 'heXiao': {
+        if (sp === 49) { tie = true; break; }
+        win = (p.zodiacs || []).includes(zodiacOf(sp));
+        odds = ODDS.heXiao[p.n] || odds;
+        break;
+      }
+      case 'zhengXiao': {
+        const count = mains.filter((n) => zodiacOf(n) === p.z).length;
+        if (count <= 0) { win = false; break; }
+        win = true;
+        odds = (zhengXiaoOdds(p.z) || odds) * Math.min(count, 5);
+        break;
       }
       case 'liuxiao': {
         // 六肖跟特码生肖，整组 1 注不拆；特码 49 与服务端一致退本（和）。
@@ -1584,23 +1908,11 @@ $(function () {
         win = false;
     }
 
+    if (tie) return { winAmount: amount, profit: 0, hit: '和' };
     if (!win) return { winAmount: 0, profit: -amount, hit: '' };
     return payoutResult(amount, odds, play);
   }
   const HISTORY_SHOW = 10;
-
-  function settleIssue(issue, nums) {
-    const book = roomBetBook(issue);
-    if (!book) return {};
-    const out = {};
-    Object.keys(book).forEach(name => {
-      out[name] = book[name].map(b => {
-        const r = settleBet(b.play, b.amount, nums);
-        return { play: b.play, amount: b.amount, ...r };
-      });
-    });
-    return out;
-  }
 
   function buildWinListVerifyText(issue, settled) {
     const winners = Object.keys(settled || {}).filter(function (name) {
@@ -1615,14 +1927,23 @@ $(function () {
       const totalWin = winRows.reduce(function (s, r) { return s + (Number(r.winAmount) || 0); }, 0);
       const totalProfit = rows.reduce(function (s, r) { return s + (Number(r.profit) || 0); }, 0);
       const hits = winRows.filter(function (r) { return r.hit; }).map(function (r) { return r.hit; });
-      return name + '  中奖金额：+' + totalWin + '\n' + hits.join('、') + '\n输赢：' + fmtProfit(totalProfit);
+      return name + '  中奖金额：+' + fmtMoney2(totalWin) + '\n' + hits.join('、') + '\n输赢：' + fmtProfit(totalProfit);
     });
     return issue + '期\n中奖核对\n——————————\n' + blocks.join('\n\n');
   }
 
-
   function closeNoticeHtml(issue) {
     return '<div class="lhc-bot-close-line"><div class="lhc-bot-close-line__bar"><span class="lhc-bot-close-line__deco"></span><span class="lhc-bot-close-line__text">封 盘 线</span><span class="lhc-bot-close-line__deco"></span></div><div class="lhc-bot-close-line__sub">第 <span class="lhc-bot-close-line__issue">' + issue + '</span> 期 · 停止下注 · 即将开奖</div></div>';
+  }
+  function openNoticeHtml(issue) {
+    return `<div class="lhc-bot-open-line">
+      <div class="lhc-bot-open-line__bar">
+        <span class="lhc-bot-open-line__deco"></span>
+        <span class="lhc-bot-open-line__text">开 盘 线</span>
+        <span class="lhc-bot-open-line__deco"></span>
+      </div>
+      <div class="lhc-bot-open-line__sub">第 <span class="lhc-bot-open-line__issue">${issue}</span> 期 · 开始下注</div>
+    </div>`;
   }
 
   function buildBetListVerifyFromServer(issue, list) {
@@ -1634,9 +1955,9 @@ $(function () {
     const total = bets.reduce(function (s, b) { return s + (Number(b.amount) || 0); }, 0);
     const groups = App.groupLotteryBetsByType ? App.groupLotteryBetsByType(bets) : [];
     const tags = groups.map(function (g) {
-      return '<span class="lhc-bot-tag">' + g.label + '×' + g.count + '/' + g.amount + '</span>';
+      return '<span class="lhc-bot-tag">' + g.label + '×' + g.count + '/' + fmtMoney2(g.amount) + '</span>';
     }).join('');
-    const userBlock = '<div class="lhc-bot-user is-me"><div class="lhc-bot-user__head"><span class="lhc-bot-user__name">我</span><span class="lhc-bot-user__sum">' + total + '</span></div><div class="lhc-bot-user__tags">' + tags + '</div></div>';
+    const userBlock = '<div class="lhc-bot-user is-me"><div class="lhc-bot-user__head"><span class="lhc-bot-user__name">我</span><span class="lhc-bot-user__sum">' + fmtMoney2(total) + '</span></div><div class="lhc-bot-user__tags">' + tags + '</div></div>';
     return '<div class="lhc-bot-card lhc-bot-card--bets"><div class="lhc-bot-card__head"><span class="lhc-bot-card__title">注单核对</span><span class="lhc-bot-card__issue">' + issue + '</span></div><div class="lhc-bot-card__body is-full">' + userBlock + '</div></div>';
   }
 
@@ -1650,8 +1971,8 @@ $(function () {
     const profitCls = myProfit >= 0 ? 'pos' : 'neg';
     /* 六肖特码49等：服务端退本 payout=本金、profit=0，勿显示「中奖」 */
     let winText = '未中奖';
-    if (myProfit === 0 && myWin > 0 && myWin === stake) winText = '和·退本 ' + myWin;
-    else if (myWin > 0) winText = '中奖 +' + myWin;
+    if (myProfit === 0 && myWin > 0 && myWin === stake) winText = '和·退本 ' + fmtMoney2(myWin);
+    else if (myWin > 0) winText = '中奖 +' + fmtMoney2(myWin);
     return '<div class="lhc-bot-mine-line ' + profitCls + '">' +
       '<span class="lhc-bot-mine-line__label">您本期</span>' +
       '<span class="lhc-bot-mine-line__win">' + winText + '</span>' +
@@ -1674,8 +1995,8 @@ $(function () {
     const users = names.map(function (name) {
       const bets = book[name];
       const total = bets.reduce(function (s, b) { return s + b.amount; }, 0);
-      const tags = bets.map(function (b) { return '<span class="lhc-bot-tag">' + b.play + '/' + b.amount + '</span>'; }).join('');
-      return '<div class="lhc-bot-user' + (name === user.name ? ' is-me' : '') + '"><div class="lhc-bot-user__head"><span class="lhc-bot-user__name">' + name + '</span><span class="lhc-bot-user__sum">' + total + '</span></div><div class="lhc-bot-user__tags">' + tags + '</div></div>';
+      const tags = bets.map(function (b) { return '<span class="lhc-bot-tag">' + b.play + '/' + fmtMoney2(b.amount) + '</span>'; }).join('');
+      return '<div class="lhc-bot-user' + (name === user.name ? ' is-me' : '') + '"><div class="lhc-bot-user__head"><span class="lhc-bot-user__name">' + name + '</span><span class="lhc-bot-user__sum">' + fmtMoney2(total) + '</span></div><div class="lhc-bot-user__tags">' + tags + '</div></div>';
     }).join('');
     return '<div class="lhc-bot-card lhc-bot-card--bets"><div class="lhc-bot-card__head"><span class="lhc-bot-card__title">注单核对</span><span class="lhc-bot-card__issue">' + issue + '</span></div><div class="lhc-bot-card__body is-full">' + users + '</div></div>';
   }
@@ -1698,58 +2019,32 @@ $(function () {
       const myProfit = myRows.reduce(function (s, r) { return s + r.profit; }, 0);
       const myWin = myRows.reduce(function (s, r) { return s + r.winAmount; }, 0);
       const profitCls = myProfit >= 0 ? 'pos' : 'neg';
-      const winText = myWin > 0 ? ('中奖 +' + myWin) : '未中奖';
+      const winText = myWin > 0 ? ('中奖 +' + fmtMoney2(myWin)) : '未中奖';
       mine = '<div class="lhc-bot-mine-line ' + profitCls + '"><span class="lhc-bot-mine-line__label">您本期</span><span class="lhc-bot-mine-line__win">' + winText + '</span><span class="lhc-bot-mine-line__profit">输赢 ' + fmtProfit(myProfit) + '</span></div>';
     }
     return '<div class="lhc-bot-card lhc-bot-card--win"><div class="lhc-bot-card__head"><span class="lhc-bot-card__title">中奖核对</span><span class="lhc-bot-card__issue">' + issue + '</span></div><div class="lhc-bot-card__body is-full">' + body + '</div>' + mine + '</div>';
   }
 
-  function applyUserSettle(issue, settled) {
-    const rows = settled[user.name];
-    if (!rows) return;
-    let profit = 0;
-    let turnover = 0;
-    rows.forEach(r => {
-      profit += r.profit;
-      turnover += r.amount;
-      // 真派彩只由 server 账本完成；此处不再 setBalance
-    });
-    const stats = getStats(user.uid);
-    stats.winloss += profit;
-    stats.turnover += turnover;
-    stats.rebate = (stats.rebate || 0) + Math.floor(turnover * 0.005);
-    saveStats(user.uid, stats);
-    settleUserBetLog(issue, lastDraw || [], rows);
-    if (App.refreshBalance) {
-      App.refreshBalance().then(function () { refreshStats(); });
-    } else {
-      refreshStats();
-    }
-  }
-
-
+  /** 用服务端派彩校正顶部输赢/流水（按期号去重后直接累加） */
   function refineUserStatsFromServer(issue, list) {
+    const id = String(issue || '');
+    if (!id) return;
     const bets = (list || []).filter(function (b) { return b && b.status !== 'CANCELLED' && b.status !== 'PENDING'; });
     if (!bets.length) return;
+    const storeKey = 'lhc_stats_applied_' + (user && user.uid ? user.uid : 'guest');
+    let applied = [];
+    try { applied = JSON.parse(localStorage.getItem(storeKey) || '[]'); } catch (e) { applied = []; }
+    if (!Array.isArray(applied)) applied = [];
+    if (applied.indexOf(id) >= 0) return;
+    applied.push(id);
+    if (applied.length > 120) applied = applied.slice(-120);
+    try { localStorage.setItem(storeKey, JSON.stringify(applied)); } catch (e) { /* ignore */ }
     const serverProfit = bets.reduce(function (s, b) { return s + serverBetProfit(b); }, 0);
     const serverTurnover = bets.reduce(function (s, b) { return s + (Number(b.amount) || 0); }, 0);
-    const localRows = (issueBetBook[issue] && issueBetBook[issue][user.name]) || [];
-    const localReal = localRows.filter(function (b) { return !b.mock; });
-    let localProfit = 0;
-    let localTurnover = 0;
-    const nums = lastDraw || [];
-    localReal.forEach(function (b) {
-      const r = settleBet(b.play, b.amount, nums);
-      localProfit += r.profit;
-      localTurnover += b.amount;
-    });
-    const dProfit = serverProfit - localProfit;
-    const dTurnover = serverTurnover - localTurnover;
-    if (!dProfit && !dTurnover) return;
     const stats = getStats(user.uid);
-    stats.winloss += dProfit;
-    stats.turnover += dTurnover;
-    stats.rebate = (stats.rebate || 0) - Math.floor(localTurnover * 0.005) + Math.floor(serverTurnover * 0.005);
+    stats.winloss += serverProfit;
+    stats.turnover += serverTurnover;
+    stats.rebate = (stats.rebate || 0) + Math.round(serverTurnover * 0.005 * 100) / 100;
     saveStats(user.uid, stats);
     refreshStats();
   }
@@ -1801,26 +2096,23 @@ $(function () {
   }
 
     function updateCountdownUI(r) {
-    const $box = $('#countdownBox').removeClass('is-freeze is-preparing is-betting');
-    const betRemain = r - PREP_SEC;
-    let displaySec = Math.max(0, Math.ceil(betRemain));
-    const inPrep = r <= PREP_SEC || displaySec <= 0;
-    const $label = $('#cdLabel');
-    if (inPrep) {
-      $box.addClass('is-preparing');
-      displaySec = Math.max(0, Math.ceil(Math.min(r, PREP_SEC)));
-      if ($label.length) $label.text('距开奖');
-      $box.attr('aria-label', '封盘中，距开奖 ' + fmtMmss(displaySec));
-    } else {
-      $box.addClass('is-betting');
-      if ($label.length) $label.text('距封盘');
-      $box.attr('aria-label', '距封盘 ' + fmtMmss(displaySec));
+    /* 只保留：距封盘；封盘后 → 开奖中（不再显示距开奖） */
+    const remainToOpen = Math.max(0, Number(r) || 0);
+    const betRemain = remainToOpen - PREP_SEC;
+    const displaySec = Math.max(0, Math.ceil(betRemain));
+    if (remainToOpen <= PREP_SEC || displaySec <= 0) {
+      updateCountdownDrawing();
+      return;
     }
-    $('#cdDigits').prop('hidden', false).attr('aria-label', $box.attr('aria-label'));
+    const $box = $('#countdownBox').removeClass('is-freeze is-preparing is-betting is-urgent is-drawing').addClass('is-betting');
+    if (displaySec <= 5) $box.addClass('is-urgent');
+    const $label = $('#cdLabel');
+    if ($label.length) $label.text('距封盘');
+    $box.attr('aria-label', '距封盘 ' + fmtMmss(displaySec));
+    $('#cdDigits').removeAttr('hidden').css('display', '').show().attr('aria-label', $box.attr('aria-label'));
     $('#cdPrep').prop('hidden', true);
     renderCountdownDigits(displaySec);
   }
-
 
   function getStats(uid) {
     const key = 'lhc_stats_' + uid;
@@ -1834,14 +2126,20 @@ $(function () {
   function refreshStats() {
     const bal = App.getBalance(user.uid);
     const s = getStats(user.uid);
-    $('#statBalance').text(bal.toLocaleString('en-US'));
-    $('#statTurnover').text(Math.round(s.turnover).toLocaleString('en-US'));
-    const $wl = $('#statWinloss').text((s.winloss >= 0 ? '+' : '') + Math.round(s.winloss).toLocaleString('en-US'));
+    $('#statBalance').text(bal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+    $('#statTurnover').text((Math.round(s.turnover * 100) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+    const $wl = $('#statWinloss').text((s.winloss >= 0 ? '+' : '') + (Math.round(s.winloss * 100) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
     $wl.toggleClass('is-plus', s.winloss > 0).toggleClass('is-minus', s.winloss < 0);
-    $('#statRebate').text(Math.round(s.rebate).toLocaleString('en-US'));
-    $('#playFootBalance').text(bal.toLocaleString('en-US'));
+    $('#statRebate').text((Math.round(s.rebate * 100) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+    $('#playFootBalance').text(bal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+    /* play sheet 变量在文件后部初始化；早期 refreshStats 需吞掉 TDZ */
+    if (typeof syncPlayFootTotals === 'function') {
+      try { syncPlayFootTotals(); } catch (_) { /* not ready */ }
+    }
   }
   function scrollChat() {
+    /* 揭晓期间只暂停自动滚（停留），不钉死；用户手滑后 room-chat 会解除 */
+    if (roomChat && roomChat.isAutoScrollPaused && roomChat.isAutoScrollPaused()) return;
     const el = document.getElementById('chatFeed');
     if (el) el.scrollTop = el.scrollHeight;
   }
@@ -1903,7 +2201,13 @@ $(function () {
           ${bubble}
         </div>
       </div>`;
-    $('#chatFeed').append(html);
+    if (opts.dock) {
+      const $dock = $('#chatDock');
+      if ($dock.length) { $dock.prop('hidden', false).append(html); }
+      else $('#chatFeed').append(html);
+    } else {
+      $('#chatFeed').append(html);
+    }
     if (!opts.skipPersist) {
       chatLog.push({
         name: opts.name,
@@ -2009,13 +2313,19 @@ $(function () {
     buildBetHtml: function (p) {
       return (typeof escapeHtml === 'function') ? escapeHtml(String(p.text || '')) : String(p.text || '');
     },
+    buildOpenHtml: function (issue) {
+      return (typeof openNoticeHtml === 'function') ? openNoticeHtml(issue) : ('开盘 ' + issue);
+    },
     buildCloseHtml: function (issue) {
       return (typeof closeNoticeHtml === 'function') ? closeNoticeHtml(issue) : ('封盘 ' + issue);
     },
-    buildResultHtml: function (p, msg) {
+    buildResultHtml: function (p, msg, ctx) {
       const nums = Array.isArray(p.nums) ? p.nums.map(Number) : [];
       const issue = String(p.issueNo || msg.issueNo || '');
-      if (typeof resultCardHtml === 'function') return resultCardHtml(nums, issue);
+      const liveAnim = !!(ctx && ctx.live && ctx.animate);
+      if (typeof resultCardHtml === 'function') {
+        return resultCardHtml(nums, issue, { settle: !liveAnim });
+      }
       return '开奖 ' + issue;
     },
     buildBetVerifyHtml: function (p) { return buildBetVerifyFromPayload(p); },
@@ -2023,10 +2333,12 @@ $(function () {
     buildWinVerifyCalculatingHtml: function (issue) {
       return buildWinListVerifyHtml(issue, null);
     },
-    onClose: function (issue) {
-      roomBetFrozen = true;
+    onClose: function (issue, p, msg, ctx) {
       sealedIssueNo = String(issue || '');
-      if (typeof closedIssues !== 'undefined' && closedIssues.add) closedIssues.add(sealedIssueNo);
+      closedIssues.add(sealedIssueNo);
+      /* 仅直播封盘禁注；phase 由 room-chat 推进 */
+      if (ctx && ctx.live === false) return;
+      roomBetFrozen = true;
     },
     onResultMeta: function (p, msg) {
       const nums = Array.isArray(p.nums) ? p.nums.map(Number) : [];
@@ -2035,8 +2347,7 @@ $(function () {
       if (nums.length) lastDraw = nums.slice();
     },
     onWinVerifyUnlocked: function () {
-      roomBetFrozen = false;
-      sealedIssueNo = '';
+      /* 解冻只在开盘线刷出（onCeremonyComplete），仪式中禁止下注 */
     },
     onWinVerifyShown: function (issue) {
       applyRoomWinVerifyMineLine(issue);
@@ -2050,27 +2361,50 @@ $(function () {
         appendMsg: appendMsg,
         robotName: (typeof ROBOT !== 'undefined' && ROBOT.name) ? ROBOT.name : '机器人',
       });
-      roomBetFrozen = false;
-      sealedIssueNo = '';
       applyRoomWinVerifyMineLine(issue);
     },
+    onPhaseChange: function (phase) {
+      if (phase === 'betting') {
+        roomBetFrozen = false;
+        sealedIssueNo = '';
+        if (typeof requestLotteryResync === 'function') requestLotteryResync();
+        else if (typeof syncServerSnapshot === 'function') syncServerSnapshot();
+        if (typeof tick === 'function') try { tick(); } catch (e) { /* ignore */ }
+      } else if (phase === 'drawing' || phase === 'revealing' || phase === 'settled') {
+        roomBetFrozen = true;
+        if (typeof tick === 'function') try { tick(); } catch (e) { /* ignore */ }
+      }
+    },
+    onCeremonyComplete: function () {
+      roomBetFrozen = false;
+      sealedIssueNo = '';
+      /* 开盘线已出：立刻拉下一期快照，避免顶栏继续卡在上一期「开奖中」 */
+      if (typeof requestLotteryResync === 'function') requestLotteryResync();
+      else if (typeof syncServerSnapshot === 'function') syncServerSnapshot();
+      if (typeof tick === 'function') try { tick(); } catch (e) { /* ignore */ }
+    },
+
     afterResultAppended: function (ctx) {
       const nums = Array.isArray(ctx.payload.nums) ? ctx.payload.nums.map(Number) : [];
       const issue = ctx.issue;
-      const card = $('#chatFeed .lhc-result-card').last()[0];
+      const card = $('#chatDock .lhc-video-card, #chatDock .lhc-result-card, #chatFeed .lhc-video-card, #chatFeed .lhc-result-card').last()[0];
+      const readyMs = resultRevealDurationMs() + 400;
       if (card && window.LhcResultCard) {
         if (ctx.animate && ctx.live && LhcResultCard.bindReveal) {
           ctx.setRevealPending(issue);
-          const est = LhcResultCard.bindReveal(card, nums, function () {
-            ctx.markRevealReady(issue);
+          LhcResultCard.bindReveal(card, nums, function () { /* scheduleRevealReady 为准 */ }, {
+            durationMs: resultRevealDurationMs(),
           });
-          ctx.scheduleRevealReady(issue, (est || resultRevealDurationMs()) + 300);
+          ctx.scheduleRevealReady(issue, readyMs);
         } else if (LhcResultCard.settle) {
           LhcResultCard.settle(card, nums);
           ctx.setRevealReadyFlag(issue, true);
         } else {
           ctx.setRevealReadyFlag(issue, true);
         }
+      } else if (ctx.live && ctx.animate) {
+        ctx.setRevealPending(issue);
+        ctx.scheduleRevealReady(issue, readyMs);
       } else {
         ctx.setRevealReadyFlag(issue, true);
       }
@@ -2096,49 +2430,8 @@ $(function () {
     roomChat.startPolling();
   }
 
-
   function buildBetListText() {
     return buildBetListVerifyText(getCurrentIssue());
-  }
-
-  function seedMockNames() {
-    const names = App.NAME_PREFIX || ['黄金', '银河', '夜行', '闪电', '深海', '炽焰', '疾风', '幻影'];
-    const suffix = App.NAME_SUFFIX || ['猎手', '行者', '骑士', '大师', '旅人', '王者', '武士', '侠客'];
-    MOCK_NAMES.length = 0;
-    const used = new Set();
-    let i = 0;
-    while (MOCK_NAMES.length < ROBOT_COUNT && i < 64) {
-      const name = names[i % names.length] + suffix[(i * 3 + 1) % suffix.length];
-      i += 1;
-      if (used.has(name)) continue;
-      used.add(name);
-      MOCK_NAMES.push({ name, avatar: avatarFromPool(11 + MOCK_NAMES.length * 17) });
-    }
-    // 兜底补满 10 个
-    while (MOCK_NAMES.length < ROBOT_COUNT) {
-      const idx = MOCK_NAMES.length + 1;
-      MOCK_NAMES.push({ name: '玩家' + idx, avatar: avatarFromPool(30 + idx * 9) });
-    }
-  }
-
-  function recordMockBetLines(name, betText, opts) {
-    const o = Object.assign({ mock: true }, opts || {});
-    let ok = false;
-    String(betText || '').split(/<br\s*\/?>/i).forEach((line) => {
-      const t = String(line || '').trim();
-      if (t && recordBet(name, t, o)) ok = true;
-    });
-    return ok;
-  }
-
-  function seedChat() {
-    seedMockNames();
-    for (let i = 0; i < ROBOT_COUNT; i++) {
-      const n = MOCK_NAMES[i];
-      const betText = randomMockBetText();
-      appendMsg({ name: n.name, avatar: n.avatar, html: betText });
-      recordMockBetLines(n.name, betText);
-    }
   }
 
   function initKeypad() {
@@ -2234,12 +2527,16 @@ $(function () {
       if (issue) clearUserPendingBetLog(issue);
       const refunded = res && res.refunded != null ? res.refunded : 0;
       const count = res && res.count != null ? res.count : 0;
-      appendMsg({ name: user.name, avatar: fixAvatar(user.avatar), self: true, html: '已取消本期注单' });
+      appendMsg({ name: user.name, avatar: fixAvatar(user.avatar), self: true, html: '本期注单已取消' });
       $('#chatInput').val('');
       updateComposerAction();
       showKeypad(false);
-      App.toast(count ? `已取消 ${count} 注，退回 ${refunded}` : '已取消本期注单');
-    }).catch(function (e) { App.toast((e && e.message) || '取消失败'); });
+      App.toast(count ? ('本期注单已取消 · ' + count + ' 注 · 退回 ' + refunded) : '本期注单已取消');
+    }).catch(function (e) {
+      var msg = (e && e.message) || '';
+      if (/取消|封盘|无可/.test(msg)) App.toast('当前期无可取消注单');
+      else App.toast(msg || '取消失败');
+    });
     return true;
   }
   function trySendTopup(text) {
@@ -2313,7 +2610,7 @@ $(function () {
     if (totalAmt > bal) { App.toast('余额不足'); return; }
     const mapped = mapLinesToServerBets(expanded);
     if (mapped.unsupported.length) {
-      App.toast('部分玩法暂未接入大脑：' + mapped.unsupported.slice(0, 3).join('、') + '（请先下特码大小单双/特码号）');
+      App.toast('无法识别：' + mapped.unsupported.slice(0, 3).join('、') + '（请检查口令或到玩法面板点选）');
       return;
     }
     if (!mapped.bets.length) {
@@ -2384,15 +2681,9 @@ $(function () {
   function toggleDrawPanel() {
     drawPanelOpen = !drawPanelOpen;
     $('#drawBar').toggleClass('is-open', drawPanelOpen);
+    layoutRail();
+    setTimeout(layoutRail, 360);
     $('#drawToggle').attr('aria-expanded', drawPanelOpen);
-  }
-
-  function pushRandomBet() {
-    if (!MOCK_NAMES.length || !isBettingOpen()) return;
-    const n = MOCK_NAMES[Math.floor(Math.random() * MOCK_NAMES.length)];
-    const betText = randomMockBetText();
-    appendMsg({ name: n.name, avatar: n.avatar, html: betText });
-    recordMockBetLines(n.name, betText);
   }
 
   function openPlusMenu(open) {
@@ -2407,6 +2698,31 @@ $(function () {
       setTimeout(() => { if (!$('#plusMenu').hasClass('is-open')) $('#plusMenu').prop('hidden', true); }, 280);
       $room.removeClass('has-menu');
     }
+  }
+
+  /** 右侧栏顶对齐开奖条单行下沿；短屏压缩并保证不压住底部输入 */
+  function layoutRail() {
+    const room = document.querySelector('.lhc-room');
+    const rail = room && room.querySelector('.lhc-rail');
+    const anchor = document.getElementById('drawToggle') || document.getElementById('drawBar');
+    const composer = document.querySelector('.lhc-composer');
+    if (!room || !anchor) return;
+    const roomRect = room.getBoundingClientRect();
+    const preferTop = Math.max(
+      8,
+      Math.ceil(anchor.getBoundingClientRect().bottom - roomRect.top + 6)
+    );
+    /* 先按期望 top 写上，再量真实栈高做夹紧 */
+    room.style.setProperty('--rail-top', preferTop + 'px');
+    const shortH = roomRect.height > 0 && roomRect.height < 700;
+    room.classList.toggle('is-rail-compact', shortH);
+    const stackH = rail ? Math.max(rail.offsetHeight, shortH ? 168 : 210) : (shortH ? 168 : 210);
+    const composerTop = composer
+      ? composer.getBoundingClientRect().top - roomRect.top
+      : roomRect.height - 56;
+    const maxTop = Math.max(8, Math.floor(composerTop - stackH - 6));
+    const top = Math.min(preferTop, maxTop);
+    room.style.setProperty('--rail-top', top + 'px');
   }
 
   /** 玩法面板顶边对齐历史开奖栏下沿，盖住聊天区、露出倒计时 */
@@ -2442,6 +2758,7 @@ $(function () {
     }
   }
   $(window).on('resize orientationchange', () => {
+    layoutRail();
     if ($('#playSheet').hasClass('is-open')) layoutPlayOverlay();
   });
 
@@ -2449,104 +2766,209 @@ $(function () {
   refreshStats();
   renderDrawTable();
   setIssueEl($('#curIssue'), getCurrentIssue());
-  updateCountdownUI(INTERVAL - ((Date.now() - todayStartMs()) / 1000 % INTERVAL));
-  /* 左侧玩法分类 */
-  const TEMA_ATTR_SUBS = ['两面', '色波', '总和', '总尾'];
-  const TEMA_ATTR_ITEMS = {
-    两面: [
-      { label: '大', play: '特码大' },
-      { label: '小', play: '特码小' },
-      { label: '单', play: '特码单' },
-      { label: '双', play: '特码双' },
-      { label: '大单', play: '特大单' },
-      { label: '大双', play: '特大双' },
-      { label: '小单', play: '特小单' },
-      { label: '小双', play: '特小双' },
-      { label: '合大', play: '合大' },
-      { label: '合小', play: '合小' },
-      { label: '合单', play: '合单' },
-      { label: '合双', play: '合双' },
-      { label: '尾大', play: '尾大' },
-      { label: '尾小', play: '尾小' },
-    ],
-    色波: [
-      { label: '红波', play: '红波' },
-      { label: '蓝波', play: '蓝波' },
-      { label: '绿波', play: '绿波' },
-    ],
-    总和: [
-      { label: '大', play: '总和大' },
-      { label: '小', play: '总和小' },
-      { label: '单', play: '总和单' },
-      { label: '双', play: '总和双' },
-    ],
-    总尾: [
-      { label: '尾大', play: '总尾大' },
-      { label: '尾小', play: '总尾小' },
-    ],
+  updateCountdownUI(getRoundRemain());
+  /* 左侧玩法分类（对齐官方截图导航） */
+  /** 分区两列：特码两面 / 正码1~6 */
+  const SIDE_SECTIONS_TEMA = [
+    {
+      title: '两面',
+      items: [
+        { label: '大', play: '特码大' }, { label: '小', play: '特码小' },
+        { label: '单', play: '特码单' }, { label: '双', play: '特码双' },
+      ],
+    },
+    {
+      title: '组合',
+      items: [
+        { label: '大单', play: '特大单' }, { label: '大双', play: '特大双' },
+        { label: '小单', play: '特小单' }, { label: '小双', play: '特小双' },
+      ],
+    },
+    {
+      title: '合数',
+      items: [
+        { label: '合大', play: '合大' }, { label: '合小', play: '合小' },
+        { label: '合单', play: '合单' }, { label: '合双', play: '合双' },
+      ],
+    },
+    {
+      title: '尾数',
+      items: [
+        { label: '尾大', play: '尾大' }, { label: '尾小', play: '尾小' },
+      ],
+    },
+  ];
+  const TEMA_COLOR_SECTIONS = [
+    {
+      title: '特码色波',
+      grid: 'is-wave',
+      items: [
+        { label: '红', play: '红波', cls: 'is-red' },
+        { label: '蓝', play: '蓝波', cls: 'is-blue' },
+        { label: '绿', play: '绿波', cls: 'is-green' },
+      ],
+    },
+    {
+      title: '特码半波',
+      grid: 'is-side',
+      items: [
+        { label: '红大', play: '红大', cls: 'is-red' }, { label: '红单', play: '红单', cls: 'is-red' },
+        { label: '红双', play: '红双', cls: 'is-red' }, { label: '红小', play: '红小', cls: 'is-red' },
+        { label: '蓝小', play: '蓝小', cls: 'is-blue' }, { label: '蓝单', play: '蓝单', cls: 'is-blue' },
+        { label: '蓝双', play: '蓝双', cls: 'is-blue' }, { label: '蓝大', play: '蓝大', cls: 'is-blue' },
+        { label: '绿小', play: '绿小', cls: 'is-green' }, { label: '绿双', play: '绿双', cls: 'is-green' },
+        { label: '绿大', play: '绿大', cls: 'is-green' }, { label: '绿单', play: '绿单', cls: 'is-green' },
+      ],
+    },
+    {
+      title: '特码半半波',
+      grid: 'is-side',
+      items: [
+        { label: '红大单', play: '红大单', cls: 'is-red' }, { label: '红大双', play: '红大双', cls: 'is-red' },
+        { label: '红小单', play: '红小单', cls: 'is-red' }, { label: '红小双', play: '红小双', cls: 'is-red' },
+        { label: '蓝小单', play: '蓝小单', cls: 'is-blue' }, { label: '蓝大双', play: '蓝大双', cls: 'is-blue' },
+        { label: '蓝小双', play: '蓝小双', cls: 'is-blue' }, { label: '蓝大单', play: '蓝大单', cls: 'is-blue' },
+        { label: '绿小双', play: '绿小双', cls: 'is-green' }, { label: '绿大单', play: '绿大单', cls: 'is-green' },
+        { label: '绿大双', play: '绿大双', cls: 'is-green' }, { label: '绿小单', play: '绿小单', cls: 'is-green' },
+      ],
+    },
+  ];
+  const SUM_SIDE_SECTIONS = [
+    {
+      title: '总和',
+      items: [
+        { label: '总和大', play: '总和大' }, { label: '总和小', play: '总和小' },
+        { label: '总和单', play: '总和单' }, { label: '总和双', play: '总和双' },
+      ],
+    },
+    {
+      title: '总尾',
+      items: [
+        { label: '总尾大', play: '总尾大' }, { label: '总尾小', play: '总尾小' },
+      ],
+    },
+  ];
+  const ZHENG_POS_TABS = ['正一', '正二', '正三', '正四', '正五', '正六'];
+  const ZHENG16_SECTIONS = (pos) => {
+    const p = NUM_CN[pos] || String(pos);
+    return [
+      {
+        title: '两面',
+        items: [
+          { label: '大', play: `正${p}大` }, { label: '小', play: `正${p}小` },
+          { label: '单', play: `正${p}单` }, { label: '双', play: `正${p}双` },
+        ],
+      },
+      {
+        title: '组合',
+        items: [
+          { label: '大单', play: `正${p}大单` }, { label: '大双', play: `正${p}大双` },
+          { label: '小单', play: `正${p}小单` }, { label: '小双', play: `正${p}小双` },
+        ],
+      },
+      {
+        title: '合数',
+        items: [
+          { label: '合大', play: `正${p}合大` }, { label: '合小', play: `正${p}合小` },
+          { label: '合单', play: `正${p}合单` }, { label: '合双', play: `正${p}合双` },
+        ],
+      },
+      {
+        title: '尾数',
+        items: [
+          { label: '尾大', play: `正${p}尾大` }, { label: '尾小', play: `正${p}尾小` },
+        ],
+      },
+    ];
   };
+  const HEXIAO_TABS = ['二肖', '三肖', '四肖', '五肖', '六肖', '七肖', '八肖', '九肖', '十肖', '十一肖'];
   const PLAY_CATEGORIES = [
     { id: 'tema', title: '特码', hint: () => `点选号码 · 赔率 ${ODDS.tema}`, mode: 'balls', prefix: '特码', odds: ODDS.tema },
+    {
+      id: 'temaSide',
+      title: '特码两面',
+      hint: () => `两面 ${ODDS.side} · 组合 ${ODDS.comboSide}`,
+      mode: 'items',
+      layout: 'sideFlat',
+      panelTitle: '特码两面',
+      sections: SIDE_SECTIONS_TEMA,
+    },
+    {
+      id: 'temaColor',
+      title: '特码色波',
+      hint: () => `色波/半波/半半波 · 红 ${ODDS.colorRed}`,
+      mode: 'items',
+      layout: 'sideSections',
+      sections: TEMA_COLOR_SECTIONS,
+    },
+    {
+      id: 'texiao',
+      title: '特码生肖',
+      hint: () => `特码生肖 · ${ODDS.zodiac}（本命 ${ODDS.zodiacYear}）`,
+      mode: 'zodiacBalls',
+      playPrefix: '特肖',
+      oddsFn: zodiacOdds,
+    },
     { id: 'zhengma', title: '正码', hint: () => `点选号码 · 赔率 ${ODDS.zhengma}`, mode: 'balls', prefix: '正码', odds: ODDS.zhengma },
+    { id: 'zhengTe', title: '正码特', hint: () => `正一特~正六特 · 赔率 ${ODDS.zhengTe}`, mode: 'zhengTe' },
+    { id: 'zheng16', title: '正码1~6', hint: () => `正码位两面 ${ODDS.zhengSide} · 组合 ${ODDS.zhengCombo}`, mode: 'zheng16' },
+    { id: 'zhengBo', title: '正波', hint: () => `正码位色波 · 红 ${ODDS.colorRed} · 蓝/绿 ${ODDS.colorBlue}`, mode: 'zhengBo' },
     {
-      id: 'temaAttr',
-      title: '特码属性',
-      hint: () => `两面 ${ODDS.side} · 色波 · 总和 ${ODDS.sumSide} · 总尾 ${ODDS.sumTail}`,
-      mode: 'temaAttr',
+      id: 'pingTe',
+      title: '平特一肖',
+      hint: () => `七码任一 · ${ODDS.pingTe}（本命 ${ODDS.pingTeYear}）`,
+      mode: 'zodiacBalls',
+      playPrefix: '一肖',
+      oddsFn: pingTeOdds,
     },
-    { id: 'lianma', title: '连码', hint: '先选副玩法，再选连码玩法', mode: 'lianma' },
-    {
-      id: 'zongxiao',
-      title: '总肖项',
-      hint: () => `一肖（七码任一）· 赔率 ${ODDS.pingTe}`,
-      items: ['鼠', '牛', '虎', '兔', '龙', '蛇', '马', '羊', '猴', '鸡', '狗', '猪'].map(z => ({
-        label: z,
-        play: '一肖' + z,
-      })),
-    },
-    { id: 'zongshu', title: '总数项', hint: () => `尾数/尾数不中（平特尾同）· 0尾 ${ODDS.weiShu0} · 其余 ${ODDS.weiShu}`, mode: 'zongshu' },
+    { id: 'pingWei', title: '平特尾数', hint: () => `0尾 ${ODDS.weiShu0} · 其余 ${ODDS.weiShu}`, mode: 'zongshu' },
     {
       id: 'shengxiaolian',
-      title: '生肖连',
-      hint: () => `二肖 ${ODDS.sxLianZhong[2]} · 三肖 ${ODDS.sxLianZhong[3]} · 四肖 ${ODDS.sxLianZhong[4]} · 五肖 ${ODDS.sxLianZhong[5]}`,
+      title: '连肖',
+      hint: () => `二连肖 ${ODDS.sxLianZhong[2]}（本命 ${ODDS.sxLianZhongYear[2]}）`,
       mode: 'shengxiaolian',
     },
     {
       id: 'weishulian',
-      title: '尾数连',
-      hint: () => `二尾 ${ODDS.wsLianZhong[2]} · 三尾 ${ODDS.wsLianZhong[3]} · 四尾 ${ODDS.wsLianZhong[4]}`,
+      title: '连尾',
+      hint: () => `二连尾 ${ODDS.wsLianZhong[2]} · 三连尾 ${ODDS.wsLianZhong[3]}`,
       mode: 'weishulian',
     },
-    { id: 'liuxiao', title: '六肖', hint: () => `中奖 / 不中 · 赔率 ${ODDS.liuxiao}`, mode: 'liuxiao' },
+    { id: 'lianma', title: '连码', hint: '四全中 / 三中二 / 三全中 / 二全中 / 二中特 / 特串', mode: 'lianma' },
+    {
+      id: 'sumSide',
+      title: '总和两面',
+      hint: () => `总和 ${ODDS.sumSide} · 总尾 ${ODDS.sumTail}`,
+      mode: 'items',
+      layout: 'sideFlat',
+      panelTitle: '总和两面',
+      sections: SUM_SIDE_SECTIONS,
+    },
+    { id: 'temaTouWei', title: '特码头尾数', hint: () => `0头 ${ODDS.temaTou0} · 1-4头 ${ODDS.temaTou} · 0尾 ${ODDS.temaWei0}`, mode: 'temaTouWei' },
+    { id: 'heXiao', title: '特码合肖', hint: () => `二~十一肖 · 三肖 ${ODDS.heXiao[3]}`, mode: 'heXiao' },
+    {
+      id: 'wuxing',
+      title: '五行',
+      hint: () => `金木 ${ODDS.wuxingJin} · 水 ${ODDS.wuxingShui} · 火 ${ODDS.wuxingHuo} · 土 ${ODDS.wuxingTu}`,
+      mode: 'wuxing',
+    },
+    {
+      id: 'zhengXiao',
+      title: '正肖',
+      hint: () => `正码任一同肖 · ${ODDS.zhengXiao}（本命 ${ODDS.zhengXiaoYear}）`,
+      mode: 'zodiacBalls',
+      playPrefix: '正肖',
+      oddsFn: zhengXiaoOdds,
+    },
     {
       id: 'duoxuan',
-      title: '多选不中',
-      hint: () => `五 ${ODDS.buZhong[5]} · 六 ${ODDS.buZhong[6]} · 七 ${ODDS.buZhong[7]} · 八 ${ODDS.buZhong[8]} · 九 ${ODDS.buZhong[9]} · 十 ${ODDS.buZhong[10]} · 十一 ${ODDS.buZhong[11]} · 十二 ${ODDS.buZhong[12]}`,
+      title: '自选不中',
+      hint: () => `选5~12个号 · 五不中 ${ODDS.buZhong[5]} · 十二 ${ODDS.buZhong[12]}`,
       mode: 'duoxuan',
     },
   ];
-  /**
-   * 特码/正码快捷 · 6 列优化排布（同色上下对齐，便于扫读）
-   * 1 红蓝绿·单双  2 红蓝绿·大小  3 大小单双+家野
-   * 4 合大小/合单双/尾  5–6 十二生肖
-   */
+  /** 特码/正码快捷：仅十二生肖（6×2） */
   const BALL_QUICK = [
-    { key: '红单', cls: 'is-red' }, { key: '红双', cls: 'is-red' },
-    { key: '蓝单', cls: 'is-blue' }, { key: '蓝双', cls: 'is-blue' },
-    { key: '绿单', cls: 'is-green' }, { key: '绿双', cls: 'is-green' },
-
-    { key: '红大', cls: 'is-red' }, { key: '红小', cls: 'is-red' },
-    { key: '蓝大', cls: 'is-blue' }, { key: '蓝小', cls: 'is-blue' },
-    { key: '绿大', cls: 'is-green' }, { key: '绿小', cls: 'is-green' },
-
-    { key: '大', cls: '' }, { key: '小', cls: '' },
-    { key: '单', cls: '' }, { key: '双', cls: '' },
-    { key: '家禽', cls: 'is-zoo' }, { key: '野兽', cls: 'is-zoo' },
-
-    { key: '合大', cls: '' }, { key: '合小', cls: '' },
-    { key: '合单', cls: '' }, { key: '合双', cls: '' },
-    { key: '尾大', cls: '' }, { key: '尾小', cls: '' },
-
     { key: '鼠', cls: 'is-zx' }, { key: '牛', cls: 'is-zx' }, { key: '虎', cls: 'is-zx' },
     { key: '兔', cls: 'is-zx' }, { key: '龙', cls: 'is-zx' }, { key: '蛇', cls: 'is-zx' },
     { key: '马', cls: 'is-zx' }, { key: '羊', cls: 'is-zx' }, { key: '猴', cls: 'is-zx' },
@@ -2555,23 +2977,65 @@ $(function () {
   const POULTRY_ZODIAC = new Set(['牛', '马', '羊', '鸡', '狗', '猪']);
   const BEAST_ZODIAC = new Set(['鼠', '虎', '兔', '龙', '蛇', '猴']);
   const LIANMA_MODES = ['复式', '拖头', '生肖对碰', '尾数对碰', '生尾对碰', '任意对碰'];
-  const LIANMA_PLAYS = ['二全中', '二中特', '特串', '三全中', '三中二'];
+  const LIANMA_PLAYS = ['四全中', '三中二', '三全中', '二全中', '二中特', '特串'];
   /** 对碰类仅二码玩法 */
   const LIANMA_PLAYS_ER = ['二全中', '二中特', '特串'];
   const LIANMA_DUIPENG_MODES = new Set(['生肖对碰', '尾数对碰', '生尾对碰', '任意对碰']);
   const LIANMA_ZODIAC = ['鼠', '牛', '虎', '兔', '龙', '蛇', '马', '羊', '猴', '鸡', '狗', '猪'];
-  const ZONGSHU_SUBS = ['尾数', '尾数不中'];
-  const SXL_MODES = ['复式', '拖头'];
-  const SXL_PLAYS = ['二肖中', '三肖中', '四肖中', '五肖中', '二肖不中', '三肖不中', '四肖不中', '五肖不中'];
-  const WSL_MODES = ['复式', '拖头'];
-  const WSL_PLAYS = ['二尾中', '三尾中', '四尾中', '二尾不中', '三尾不中', '四尾不中'];
+  /* 官方仅平特尾数（中）；尾数不中仍可由聊天口令投注 */
+  const ZONGSHU_SUBS = ['尾数'];
+  /* 官方：二连肖~五连肖（复式 C）；不中/拖头仍可口令 */
+  const SXL_PLAYS = ['二连肖', '三连肖', '四连肖', '五连肖'];
+  const SXL_CN = ['二', '三', '四', '五'];
+  /* 官方：二连尾~五连尾（复式 C） */
+  const WSL_PLAYS = ['二连尾', '三连尾', '四连尾', '五连尾'];
+  const WSL_CN = ['二', '三', '四', '五'];
   const LIUXIAO_SUBS = ['中奖', '不中'];
-  const DXBZ_MODES = ['复式', '多组'];
-  const DXBZ_PLAYS = ['五不中', '六不中', '七不中', '八不中', '九不中', '十不中', '十一不中', '十二不中'];
-  const AMOUNT_CHIPS = [10, 20, 50, 100, 200, 500];
-  const COMBO_MODES = new Set(['lianma', 'shengxiaolian', 'weishulian', 'liuxiao', 'duoxuan']);
+  const BUZHONG_CN = { 5: '五', 6: '六', 7: '七', 8: '八', 9: '九', 10: '十', 11: '十一', 12: '十二' };
+  const AMOUNT_CHIPS = [
+    { amt: 1, label: '1' },
+    { amt: 10, label: '10' },
+    { amt: 100, label: '100' },
+    { amt: 500, label: '500' },
+    { amt: 1000, label: '1000' },
+    { amt: 5000, label: '5000' },
+    { amt: 10000, label: '1W' },
+    { amt: 50000, label: '5W' }
+  ];
+  const CHIP_IMG = (amt) => `/images/chips/chip-${amt}.png?v=4`;
+  const COMBO_MODES = new Set(['lianma', 'shengxiaolian', 'weishulian', 'liuxiao', 'duoxuan', 'heXiao']);
   let playCatIdx = 0;
   let playSelectedList = [];
+  let zhengTePosIdx = 0;
+  let zheng16PosIdx = 0;
+  let zhengBoPosIdx = 0;
+  let heXiaoTabIdx = 0;
+  let heXiaoPicked = [];
+
+  function clearPlayAmountChipActive() {
+    $('#playAmountChips .lhc-play-foot__chip').removeClass('is-active');
+  }
+
+  function syncPlayAmountUI() {
+    const $in = $('#playAmount');
+    if (playAllin) {
+      $in.attr('type', 'text').prop('readonly', true).val('梭哈').addClass('is-allin');
+      $('#playAmountAllin').addClass('is-active');
+      clearPlayAmountChipActive();
+    } else {
+      $in.attr('type', 'number').prop('readonly', false).removeClass('is-allin');
+      $('#playAmountAllin').removeClass('is-active');
+      if (!$in.val() || $in.val() === '梭哈') $in.val(100);
+    }
+  }
+
+  function setPlayAmount(val) {
+    playAllin = false;
+    $('#playAmount').attr('type', 'number').prop('readonly', false).removeClass('is-allin');
+    $('#playAmountAllin').removeClass('is-active');
+    $('#playAmount').val(Math.max(1, val));
+  }
+
   /** 特码快捷多选：可同时激活多个，号码取并集 */
   const ballQuickKeys = new Set();
   /** 各玩法分类独立暂存，切换特码/正码等不互相清空 */
@@ -2584,16 +3048,12 @@ $(function () {
   let lianmaPengSide = 'A';
   let zongshuSubIdx = 0;
   let temaAttrSubIdx = 0;
-  let sxlModeIdx = 0;
   let sxlPlayIdx = 0;
   let sxlPicked = [];
-  let wslModeIdx = 0;
   let wslPlayIdx = 0;
   let wslPicked = [];
   let liuxiaoSubIdx = 0;
   let liuxiaoPicked = [];
-  let dxbzModeIdx = 0;
-  let dxbzPlayIdx = 0;
   let dxbzPicked = [];
   let dxbzGroups = [];
 
@@ -2624,6 +3084,7 @@ $(function () {
     sxlPicked = [];
     wslPicked = [];
     liuxiaoPicked = [];
+    heXiaoPicked = [];
     dxbzPicked = [];
     dxbzGroups = [];
   }
@@ -2639,6 +3100,8 @@ $(function () {
       wslPicked = [];
     } else if (mode === 'liuxiao') {
       liuxiaoPicked = [];
+    } else if (mode === 'heXiao') {
+      heXiaoPicked = [];
     } else if (mode === 'duoxuan') {
       dxbzPicked = [];
       dxbzGroups = [];
@@ -2667,6 +3130,16 @@ $(function () {
     updatePlaySelected();
     App.toast('已清空全部选择');
   }
+  /** 连码玩法赔率文案（三中二/二中特展示两档） */
+  function lianmaPlayOddsText(play) {
+    if (play === '四全中') return String(ODDS.siQuanZhong);
+    if (play === '三全中') return String(ODDS.sanQuanZhong);
+    if (play === '二全中') return String(ODDS.erQuanZhong);
+    if (play === '特串') return String(ODDS.teChuan);
+    if (play === '三中二') return `${ODDS.sanZhongEr}/${ODDS.sanZhongSan}`;
+    if (play === '二中特') return `${ODDS.erZhongTe}/${ODDS.erZhongTeTe}`;
+    return '';
+  }
   /** 与连码一致的副玩法/玩法栏（蓝胶囊 + 金方块） */
   function buildLmBar(opts) {
     const modes = opts.modes || [];
@@ -2677,6 +3150,7 @@ $(function () {
     const playRow = opts.playRow || 'play';
     const modeCols = opts.modeCols || Math.min(modes.length || 1, 3);
     const playCols = opts.playCols || Math.min(plays.length || 1, 4);
+    const playLab = opts.playLab || '玩法';
     let html = '<div class="lhc-lm-bar">';
     if (modes.length) {
       const modeHtml = modes.map((m, i) =>
@@ -2691,10 +3165,11 @@ $(function () {
       const playHtml = plays.map((p, i) => {
         const dataIdx = typeof opts.playDataIdx === 'function' ? opts.playDataIdx(p, i) : i;
         const active = typeof opts.isPlayActive === 'function' ? opts.isPlayActive(p, i) : (i === playIdx);
-        return `<button type="button" class="lhc-lm-play${active ? ' is-active' : ''}" data-row="${playRow}" data-idx="${dataIdx}">${p}</button>`;
+        const odds = typeof opts.playOdds === 'function' ? opts.playOdds(p, i) : '';
+        return `<button type="button" class="lhc-lm-play${odds ? ' has-odds' : ''}${active ? ' is-active' : ''}" data-row="${playRow}" data-idx="${dataIdx}"><span>${p}</span>${odds ? `<small>${odds}</small>` : ''}</button>`;
       }).join('');
       html += `<div class="lhc-lm-row">
-        <span class="lhc-lm-row__lab is-play">玩法</span>
+        <span class="lhc-lm-row__lab is-play">${playLab}</span>
         <div class="lhc-lm-plays is-n${playCols}">${playHtml}</div>
       </div>`;
     }
@@ -2714,10 +3189,34 @@ $(function () {
     const danN = k - 1;
     return idx < danN ? ' is-active is-dan' : ' is-active is-tuo';
   }
+  function syncPlayFootTotals() {
+    const n = previewComboBetCount();
+    let total = 0;
+    if (playAllin) {
+      const bal = Math.floor(App.getBalance(user.uid) || 0);
+      if (n >= 1 && bal >= 1) total = n === 1 ? bal : Math.floor(bal / n) * n;
+    } else {
+      const unit = Math.max(0, parseInt($('#playAmount').val(), 10) || 0);
+      total = n * unit;
+    }
+    $('#playBetTotal').text(total.toLocaleString('en-US'));
+    const hasPick = !!(
+      playSelectedList.length
+      || lianmaPicked.length || lianmaPickedA.length || lianmaPickedB.length
+      || sxlPicked.length || wslPicked.length || liuxiaoPicked.length || heXiaoPicked.length
+      || dxbzPicked.length || dxbzGroups.length || ballQuickKeys.size
+    );
+    $('#playClear').prop('disabled', !hasPick);
+  }
+
   function setPlaySelectedText(main, betCount) {
-    const amt = unitAmount();
-    const sum = betCount > 0 ? ` · ${fmtBetSummary(betCount, amt)}` : '';
-    $('#playSelected').text(`${main}${sum}`);
+    const $tip = $('#playSelected');
+    if (!main || main === '—') {
+      $tip.prop('hidden', true).text('');
+    } else {
+      $tip.prop('hidden', false).text(main);
+    }
+    syncPlayFootTotals();
   }
 
   /** 当前面板可拆注数（用于底部合计预览） */
@@ -2726,16 +3225,20 @@ $(function () {
     if (cat.mode === 'lianma') return expandLianmaCombos().length;
     if (cat.mode === 'shengxiaolian') {
       const k = sxlMinPick();
-      return expandByMode(sxlMode(), sxlPicked, k).length;
+      return expandFushi(sxlPicked, k).length;
     }
     if (cat.mode === 'weishulian') {
       const k = wslMinPick();
-      return expandByMode(wslMode(), wslPicked.map(Number), k).length;
+      return expandFushi(wslPicked.map(Number), k).length;
     }
     if (cat.mode === 'liuxiao') return liuxiaoPicked.length === 6 ? 1 : 0;
+    if (cat.mode === 'heXiao') {
+      const n = heXiaoTabIdx + 2;
+      return heXiaoPicked.length === n ? 1 : 0;
+    }
     if (cat.mode === 'duoxuan') {
-      if (dxbzMode() === '多组') return dxbzGroups.length;
-      return expandFushi(dxbzPicked.map(Number), dxbzMinPick()).length;
+      const n = dxbzPicked.length;
+      return n >= 5 && n <= 12 ? 1 : 0;
     }
     return playSelectedList.length;
   }
@@ -2780,42 +3283,24 @@ $(function () {
     const mode = cat.mode;
     const amt = unitAmount();
     if (mode === 'lianma') {
-      const lmMode = lianmaMode();
       const min = lianmaMinPick();
       const betCount = expandLianmaCombos().length;
-      if (lmMode === '任意对碰') {
-        const main = `A[${lianmaPickedA.map(fmtPickNum).join(',') || '—'}]#B[${lianmaPickedB.map(fmtPickNum).join(',') || '—'}]`;
-        setPlaySelectedText(`${lmMode}·${lianmaPlay()} · ${main}`, betCount);
-        return;
-      }
-      if (!lianmaPicked.length) {
-        setPlaySelectedText(`已选 0/${min}`, 0);
-      } else {
-        const picks = lianmaPicked.map(fmtPickNum).join(',');
-        const danHint = lmMode === '拖头' ? `（前${min - 1}胆）` : '';
-        setPlaySelectedText(`${lmMode}·${lianmaPlay()}${danHint} · ${picks}`, betCount);
-      }
+      if (!lianmaPicked.length) setPlaySelectedText(`已选 0/${min}`, 0);
+      else setPlaySelectedText(`${lianmaPlay()} · ${lianmaPicked.map(fmtPickNum).join(',')}`, betCount);
       return;
     }
     if (mode === 'shengxiaolian') {
       const k = sxlMinPick();
-      const betCount = expandByMode(sxlMode(), sxlPicked, k).length;
+      const betCount = expandFushi(sxlPicked, k).length;
       if (!sxlPicked.length) setPlaySelectedText(`已选 0/${k}`, 0);
-      else {
-        const danHint = sxlMode() === '拖头' ? `（前${k - 1}胆）` : '';
-        setPlaySelectedText(`${sxlMode()}·${sxlPlay()}${danHint} · ${sxlPicked.join(',')}`, betCount);
-      }
+      else setPlaySelectedText(`${sxlPlay()} · ${sxlPicked.join(',')}`, betCount);
       return;
     }
     if (mode === 'weishulian') {
       const k = wslMinPick();
-      const betCount = expandByMode(wslMode(), wslPicked.map(Number), k).length;
+      const betCount = expandFushi(wslPicked.map(Number), k).length;
       if (!wslPicked.length) setPlaySelectedText(`已选 0/${k}`, 0);
-      else {
-        const picks = wslPicked.map(t => `${t}尾`).join(',');
-        const danHint = wslMode() === '拖头' ? `（前${k - 1}胆）` : '';
-        setPlaySelectedText(`${wslMode()}·${wslPlay()}${danHint} · ${picks}`, betCount);
-      }
+      else setPlaySelectedText(`${wslPlay()} · ${wslPicked.map(t => `${t}尾`).join(',')}`, betCount);
       return;
     }
     if (mode === 'liuxiao') {
@@ -2826,20 +3311,20 @@ $(function () {
       else setPlaySelectedText(`${tag} · ${liuxiaoPicked.join(',')}`, 1);
       return;
     }
+    if (mode === 'heXiao') {
+      const n = heXiaoTabIdx + 2;
+      const tab = HEXIAO_TABS[heXiaoTabIdx] || HEXIAO_TABS[0];
+      if (heXiaoPicked.length !== n) setPlaySelectedText(`已选 ${heXiaoPicked.length}/${n}`, 0);
+      else setPlaySelectedText(`合肖${tab} · ${heXiaoPicked.join(',')}`, 1);
+      return;
+    }
     if (mode === 'duoxuan') {
-      const k = dxbzMinPick();
-      if (dxbzMode() === '多组') {
-        const cur = dxbzPicked.map(n => pad(+n, 2)).join(',');
-        const betCount = dxbzGroups.length;
-        setPlaySelectedText(`已封${betCount}组 · 当前[${cur || '—'}] ${dxbzPicked.length}/${k}`, betCount);
-      } else {
-        const betCount = expandFushi(dxbzPicked.map(Number), k).length;
-        if (!dxbzPicked.length) setPlaySelectedText(`已选 0/${k}`, 0);
-        else {
-          const picks = dxbzPicked.map(n => pad(+n, 2)).join(',');
-          setPlaySelectedText(`${dxbzMode()}·${dxbzPlay()} · ${picks}`, betCount);
-        }
-      }
+      const n = dxbzPicked.length;
+      const picks = dxbzPicked.map((x) => pad(+x, 2)).join(',');
+      const odds = n >= 5 && n <= 12 ? (ODDS.buZhong[n] || '') : '';
+      if (n < 5) setPlaySelectedText(`已选 ${n}/5~12`, 0);
+      else if (n > 12) setPlaySelectedText(`最多12个 · 已选${n}`, 0);
+      else setPlaySelectedText(`自选不中 · ${picks} · 赔率 ${odds}`, 1);
       return;
     }
     const n = playSelectedList.length;
@@ -2847,9 +3332,8 @@ $(function () {
       setPlaySelectedText('—', 0);
       return;
     }
-    const preview = playSelectedList.slice(0, 4).join('、');
-    const main = n > 4 ? `${preview}… 共${n}项` : (n > 1 ? `${preview}（${n}项）` : preview);
-    setPlaySelectedText(main, n);
+    const list = playSelectedList.join('、');
+    setPlaySelectedText(n > 1 ? `${list}（共${n}项）` : list, n);
   }
 
   /** 拆成多条玩法串（不含金额），对齐 123.com 每组合一注 */
@@ -2872,26 +3356,25 @@ $(function () {
       }
       const prefix = (mode === '复式' || mode === '拖头') ? mode : '复式';
       return {
-        plays: combos.map(c => `${prefix}${play} ${c.map(n => pad(+n, 2)).join(',')}`),
+        plays: combos.map((c) => {
+          if (mode === '拖头') return `拖头${play}${formatTuotouNums(c, need - 1)}`;
+          return `${prefix}${play}${c.map(n => pad(+n, 2)).join(',')}`;
+        }),
       };
     }
     if (cat.mode === 'shengxiaolian') {
       const k = sxlMinPick();
-      const mode = sxlMode();
-      const combos = expandByMode(mode, sxlPicked, k);
-      if (!combos.length) {
-        return { err: mode === '拖头' ? `拖头请先选 ${k - 1} 个胆再选托肖` : `请至少选择 ${k} 个生肖` };
-      }
-      return { plays: combos.map(c => `${mode}${sxlPlay()} ${c.join(',')}`) };
+      const combos = expandFushi(sxlPicked, k);
+      if (!combos.length) return { err: `请至少选择 ${k} 个生肖` };
+      const tag = sxlBetTag();
+      return { plays: combos.map((c) => `复式${tag}${c.join(',')}`) };
     }
     if (cat.mode === 'weishulian') {
       const k = wslMinPick();
-      const mode = wslMode();
-      const combos = expandByMode(mode, wslPicked.map(Number), k);
-      if (!combos.length) {
-        return { err: mode === '拖头' ? `拖头请先选 ${k - 1} 个胆再选托尾` : `请至少选择 ${k} 个尾` };
-      }
-      return { plays: combos.map(c => `${mode}${wslPlay()} ${c.map(t => `${t}尾`).join(',')}`) };
+      const combos = expandFushi(wslPicked.map(Number), k);
+      if (!combos.length) return { err: `请至少选择 ${k} 个尾` };
+      const tag = wslBetTag();
+      return { plays: combos.map((c) => `复式${tag}${c.map((t) => `${t}尾`).join(',')}`) };
     }
     if (cat.mode === 'liuxiao') {
       if (liuxiaoPicked.length !== 6) return { err: '请选择 6 个生肖' };
@@ -2899,18 +3382,18 @@ $(function () {
       const tag = sub === '不中' ? '六肖不中' : '六肖中';
       return { plays: [`${tag} ${liuxiaoPicked.join(',')}`] };
     }
+    if (cat.mode === 'heXiao') {
+      const n = heXiaoTabIdx + 2;
+      const tab = HEXIAO_TABS[heXiaoTabIdx] || HEXIAO_TABS[0];
+      if (heXiaoPicked.length !== n) return { err: `合肖请选满 ${n} 个生肖` };
+      return { plays: [`合肖${tab}${heXiaoPicked.join(',')}`] };
+    }
     if (cat.mode === 'duoxuan') {
-      const k = dxbzMinPick();
-      const mode = dxbzMode();
-      let combos;
-      if (mode === '多组') {
-        if (!dxbzGroups.length) return { err: `多组：每满 ${k} 个号自动封一组，请先封组` };
-        combos = expandDuozu(dxbzGroups);
-      } else {
-        combos = expandFushi(dxbzPicked.map(Number), k);
-        if (!combos.length) return { err: `请至少选择 ${k} 个号码` };
-      }
-      return { plays: combos.map(c => `复式${dxbzPlay()} ${c.map(n => pad(+n, 2)).join(',')}`) };
+      const n = dxbzPicked.length;
+      if (n < 5 || n > 12) return { err: '自选不中请选 5～12 个号码' };
+      const cn = BUZHONG_CN[n];
+      const nums = dxbzPicked.map((x) => pad(+x, 2)).join(',');
+      return { plays: [`复式${cn}不中${nums}`] };
     }
     return { err: '当前玩法不支持' };
   }
@@ -2921,40 +3404,52 @@ $(function () {
       toastBetBlocked('bet');
       return;
     }
-    const amount = unitAmount();
-    if (!amount) {
-      App.toast('请输入有效金额');
-      return;
-    }
-    let lines = [];
+    let plays = [];
     if (isComboPlayMode(cat.mode)) {
       const built = buildComboBetPlays();
       if (built.err) {
         App.toast(built.err);
         return;
       }
-      lines = built.plays.map(p => `${p} ${amount}`);
+      plays = built.plays;
     } else {
       if (!playSelectedList.length) {
         App.toast('请先选择玩法');
         return;
       }
-      lines = playSelectedList.map(p => `${p} ${amount}`);
+      plays = playSelectedList.slice();
+    }
+    let resolved;
+    if (playAllin) {
+      resolved = resolveBetAmounts(plays, '梭哈');
+      if (!resolved) { App.toast('余额不足，无法梭哈'); return; }
+    } else {
+      const amount = unitAmount();
+      if (!amount) {
+        App.toast('请输入有效金额');
+        return;
+      }
+      resolved = resolveBetAmounts(plays, String(amount));
+      if (!resolved) {
+        App.toast('请输入有效金额');
+        return;
+      }
+      const bal = App.getBalance(user.uid);
+      const total = resolved.reduce((s, b) => s + b.amount, 0);
+      if (total > bal) { App.toast('余额不足'); return; }
     }
     const expanded = [];
-    lines.forEach((line) => {
-      const b = parseBet(line);
+    resolved.forEach((l) => {
+      const b = parseBet(l.play + ' ' + l.amount);
       if (b) expanded.push(b);
     });
     if (!expanded.length) {
       App.toast('玩法无效，请重新选择');
       return;
     }
-    const total = expanded.reduce((s, b) => s + b.amount, 0);
-    if (total > App.getBalance(user.uid)) { App.toast('余额不足'); return; }
     const mapped = mapLinesToServerBets(expanded);
     if (mapped.unsupported.length) {
-      App.toast('部分玩法暂未接入大脑：' + mapped.unsupported.slice(0, 3).join('、') + '（请先下特码大小单双/特码号）');
+      App.toast('无法识别：' + mapped.unsupported.slice(0, 3).join('、') + '（请检查口令或到玩法面板点选）');
       return;
     }
     if (!mapped.bets.length) {
@@ -2982,59 +3477,22 @@ $(function () {
       ballQuickKeys.clear();
       clearComboPicksForMode(cat.mode);
       playCatState[cat.id] = { list: [], quick: [] };
+      playAllin = false;
+      syncPlayAmountUI();
       openPlaySheet(false);
-      App.toast(`投注成功 · ${fmtBetSummary(ok.length, amount)}`);
+      App.toast(`投注成功 · ${ok.length}注`);
     }).catch(function (e) {
       App.toast((e && e.message) || '下注失败');
     });
   }
 
   function ballNumsByQuick(key) {
-    const all = Array.from({ length: 49 }, (_, i) => i + 1);
-    const he = (n) => digitSum(n);
-    const tail = (n) => n % 10;
-    const big = (n) => n >= 25;
-    const small = (n) => n <= 24;
-    const odd = (n) => n % 2 === 1;
-    const even = (n) => n % 2 === 0;
-    const wave = (c) => (n) => waveColor(n) === c;
-
-    if (key === '红') return all.filter(wave('红'));
-    if (key === '蓝') return all.filter(wave('蓝'));
-    if (key === '绿') return all.filter(wave('绿'));
-    if (key === '大') return all.filter(big);
-    if (key === '小') return all.filter(small);
-    if (key === '单') return all.filter(odd);
-    if (key === '双') return all.filter(even);
-
-    if (key === '红单') return all.filter(n => wave('红')(n) && odd(n));
-    if (key === '红双') return all.filter(n => wave('红')(n) && even(n));
-    if (key === '蓝单') return all.filter(n => wave('蓝')(n) && odd(n));
-    if (key === '蓝双') return all.filter(n => wave('蓝')(n) && even(n));
-    if (key === '绿单') return all.filter(n => wave('绿')(n) && odd(n));
-    if (key === '绿双') return all.filter(n => wave('绿')(n) && even(n));
-
-    if (key === '红大') return all.filter(n => wave('红')(n) && big(n));
-    if (key === '红小') return all.filter(n => wave('红')(n) && small(n));
-    if (key === '蓝大') return all.filter(n => wave('蓝')(n) && big(n));
-    if (key === '蓝小') return all.filter(n => wave('蓝')(n) && small(n));
-    if (key === '绿大') return all.filter(n => wave('绿')(n) && big(n));
-    if (key === '绿小') return all.filter(n => wave('绿')(n) && small(n));
-
-    // 合数大小与服务端一致：7 起为大；49 同样按实际属性结算。
-    if (key === '合单') return all.filter(n => he(n) % 2 === 1);
-    if (key === '合双') return all.filter(n => he(n) % 2 === 0);
-    if (key === '合大') return all.filter(n => he(n) >= 7);
-    if (key === '合小') return all.filter(n => he(n) <= 6);
-    if (key === '尾大') return all.filter(n => tail(n) >= 5);
-    if (key === '尾小') return all.filter(n => tail(n) <= 4);
-
-    if (key === '家禽') return all.filter(n => POULTRY_ZODIAC.has(zodiacOf(n)));
-    if (key === '野兽') return all.filter(n => BEAST_ZODIAC.has(zodiacOf(n)));
-    if (/^[鼠牛虎兔龙蛇马羊猴鸡狗猪]$/.test(key)) {
-      return all.filter(n => zodiacOf(n) === key);
-    }
-    return [];
+    if (!/^[鼠牛虎兔龙蛇马羊猴鸡狗猪]$/.test(key)) return [];
+    return Array.from({ length: 49 }, (_, i) => i + 1).filter((n) => zodiacOf(n) === key);
+  }
+  /** 特码两面属性对应号码（不含 49，与和局规则一致） */
+  function ballNumsBySide(side) {
+    return Array.from({ length: 48 }, (_, i) => i + 1).filter((n) => matchSide(side, sideOfTema(n)));
   }
 
   /** 按当前已激活的快捷键，重算本玩法前缀下的选号（多选并集） */
@@ -3080,7 +3538,7 @@ $(function () {
     const qn = ballQuickKeys.size;
     const hintExtra = qn
       ? ` · 已开 ${qn} 个快捷 · 共选 ${nSel} 个`
-      : (nSel ? ` · 已选 ${nSel} 个` : ' · 快捷可多选，号码取并集');
+      : (nSel ? ` · 已选 ${nSel} 个` : ' · 生肖快捷可多选，号码取并集');
     $('#playHint').text((typeof cat.hint === 'function' ? cat.hint() : (cat.hint || '')) + hintExtra);
     $('#playSub').prop('hidden', false).removeClass('is-stack').addClass('is-ball-quick').html(
       `<div class="lhc-play-quick-grid">${BALL_QUICK.map(q =>
@@ -3091,12 +3549,13 @@ $(function () {
       const n = i + 1;
       const play = prefix + pad(n, 2);
       const on = isPlaySelected(play);
-      return `<button type="button" class="lhc-play-ball${on ? ' is-on' : ''}" data-num="${n}">
-        ${ballHtml(n, 'play')}
-        <small>1:${odds}</small>
+      return `<button type="button" class="lhc-play-ball lhc-play-ball--cell${on ? ' is-on' : ''}" data-num="${n}">
+        ${ballHtml(n, 'play')}<small>${odds}</small>
       </button>`;
     }).join('');
-    $('#playGrid').attr('class', 'lhc-play-panel__grid is-tema').html(balls);
+    $('#playGrid').attr('class', 'lhc-play-panel__grid is-sectioned').html(
+      `<div class="lhc-play-section"><div class="lhc-play-section__title">${cat.title || prefix}</div><div class="lhc-play-section__grid is-num3">${balls}</div></div>`
+    );
   }
 
   function lianmaMode() {
@@ -3117,7 +3576,9 @@ $(function () {
   }
   function lianmaMinPick() {
     const play = lianmaPlay();
-    return (play === '三全中' || play === '三中二') ? 3 : 2;
+    if (play === '四全中') return 4;
+    if (play === '三全中' || play === '三中二') return 3;
+    return 2;
   }
   function lianmaTogglePick(val, side) {
     const s = String(val);
@@ -3155,169 +3616,327 @@ $(function () {
       lianmaPickedB = [];
       lianmaPengSide = 'A';
     }
-    ensureLianmaPlayValid();
-    const mode = lianmaMode();
+    /* 官方连码盘面仅玩法页签 + 复式选号 */
+    lianmaModeIdx = 0;
     const play = lianmaPlay();
-    const plays = lianmaPlaysForMode(mode);
     const min = lianmaMinPick();
-    const danN = min - 1;
-    const betCount = expandLianmaCombos().length;
-    let hint = `${mode} · ${play}`;
-    if (mode === '复式') hint += ` · C(n,${min})`;
-    else if (mode === '拖头') hint += ` · 前${danN}胆+托`;
-    else if (mode === '任意对碰') hint += ' · 左A右B各选号';
-    else if (mode === '生肖对碰') hint += ' · 选2肖';
-    else if (mode === '尾数对碰') hint += ' · 选2尾';
-    else if (mode === '生尾对碰') hint += ' · 生肖×尾数';
-    if (LIANMA_DUIPENG_MODES.has(mode)) hint += ' · 仅二码';
-    if (betCount) hint += ` · 共${betCount}注`;
+    const oddsTxt = lianmaPlayOddsText(play);
+    let hint = '';
+    if (play === '三中二') hint = `三中二: ${ODDS.sanZhongEr} · 三全中: ${ODDS.sanZhongSan}`;
+    else if (play === '二中特') hint = `二全中: ${ODDS.erZhongTe} · 二中特: ${ODDS.erZhongTeTe}`;
+    else hint = `${play}: ${oddsTxt}`;
     $('#playHint').text(hint);
 
     setPlaySubBar(buildLmBar({
-      modes: LIANMA_MODES,
-      modeIdx: lianmaModeIdx,
-      modeRow: 'mode',
-      modeCols: 3,
-      plays,
+      plays: LIANMA_PLAYS,
       playRow: 'play',
-      playCols: plays.length === 3 ? 3 : 5,
+      playCols: 3,
       playDataIdx: (p) => LIANMA_PLAYS.indexOf(p),
       isPlayActive: (p) => LIANMA_PLAYS.indexOf(p) === lianmaPlayIdx,
     }));
 
-    let body = '';
-    let gridCls = 'lhc-play-panel__grid is-tema';
     const picked = new Set(lianmaPicked);
-
-    if (mode === '生肖对碰') {
-      gridCls = 'lhc-play-panel__grid is-lianma-block';
-      body = `<div class="lhc-lm-section">
-        <div class="lhc-lm-section__hd">选择 2 个生肖</div>
-        <div class="lhc-lm-section__grid is-zx">${LIANMA_ZODIAC.map(z =>
-          `<button type="button" class="lhc-play-item${picked.has(z) ? ' is-active' : ''}" data-lianma="${z}"><span>${z}</span></button>`
-        ).join('')}</div>
-      </div>`;
-    } else if (mode === '尾数对碰') {
-      gridCls = 'lhc-play-panel__grid is-lianma-block';
-      body = `<div class="lhc-lm-section">
-        <div class="lhc-lm-section__hd">选择 2 个尾数</div>
-        <div class="lhc-lm-section__grid is-tail">${Array.from({ length: 10 }, (_, i) => {
-          const t = String(i);
-          return `<button type="button" class="lhc-play-item${picked.has(t) ? ' is-active' : ''}" data-lianma="${t}"><span>${t}尾</span></button>`;
-        }).join('')}</div>
-      </div>`;
-    } else if (mode === '生尾对碰') {
-      gridCls = 'lhc-play-panel__grid is-lianma-block';
-      body = `<div class="lhc-lm-section">
-        <div class="lhc-lm-section__hd">生肖（可多选）</div>
-        <div class="lhc-lm-section__grid is-zx">${LIANMA_ZODIAC.map(z =>
-          `<button type="button" class="lhc-play-item${picked.has(z) ? ' is-active' : ''}" data-lianma="${z}"><span>${z}</span></button>`
-        ).join('')}</div>
-      </div>
-      <div class="lhc-lm-section">
-        <div class="lhc-lm-section__hd">尾数（可多选）</div>
-        <div class="lhc-lm-section__grid is-tail">${Array.from({ length: 10 }, (_, i) => {
-          const t = String(i);
-          return `<button type="button" class="lhc-play-item${picked.has(t) ? ' is-active' : ''}" data-lianma="${t}"><span>${t}尾</span></button>`;
-        }).join('')}</div>
-      </div>`;
-    } else if (mode === '复式' || mode === '拖头') {
-      body = Array.from({ length: 49 }, (_, i) => {
-        const n = i + 1;
-        const key = String(n);
-        const idx = lianmaPicked.indexOf(key);
-        const on = idx >= 0;
-        const role = mode === '拖头' && on ? (idx < danN ? ' is-on is-dan' : ' is-on is-tuo') : (on ? ' is-on' : '');
-        return `<button type="button" class="lhc-play-ball${role}" data-lianma="${key}">${ballHtml(n, 'play')}</button>`;
-      }).join('');
-    } else if (mode === '任意对碰') {
-      const setA = new Set(lianmaPickedA);
-      const setB = new Set(lianmaPickedB);
-      const mkBalls = (side, onSet) => Array.from({ length: 49 }, (_, i) => {
-        const n = i + 1;
-        const key = String(n);
-        const role = onSet.has(key) ? (side === 'A' ? ' is-on is-dan' : ' is-on is-tuo') : '';
-        return `<button type="button" class="lhc-play-ball${role}" data-lianma="${key}" data-side="${side}">${ballHtml(n, 'play')}</button>`;
-      }).join('');
-      gridCls = 'lhc-play-panel__grid is-lianma-block';
-      body = `<div class="lhc-lm-ab">
-        <div class="lhc-lm-ab__col is-a">
-          <div class="lhc-lm-ab__hd">A组（左）</div>
-          <div class="lhc-lm-ab__grid">${mkBalls('A', setA)}</div>
-        </div>
-        <div class="lhc-lm-ab__col is-b">
-          <div class="lhc-lm-ab__hd">B组（右）</div>
-          <div class="lhc-lm-ab__grid">${mkBalls('B', setB)}</div>
-        </div>
-      </div>`;
-    }
-
-    $('#playGrid').attr('class', gridCls).html(body);
+    const body = Array.from({ length: 49 }, (_, i) => {
+      const n = i + 1;
+      const key = String(n);
+      const on = picked.has(key);
+      return `<button type="button" class="lhc-play-ball lhc-play-ball--pick${on ? ' is-on' : ''}" data-lianma="${key}">${ballHtml(n, 'play')}</button>`;
+    }).join('');
+    $('#playGrid').attr('class', 'lhc-play-panel__grid is-sectioned').html(
+      sideSectionHtml(`${play}: ${oddsTxt || ''}`, body, 'is-num5')
+    );
     updatePlaySelected();
   }
+
+
+  /** 截图行内小球 */
+  function miniBallsHtml(nums) {
+    return `<span class="lhc-mini-balls">${(nums || []).map((n) => ballHtml(n, 'mini')).join('')}</span>`;
+  }
+  /** 分区格子单元格：标签 + 金色赔率（截图两列风格） */
+  function sideCellHtml(play, label, extraCls) {
+    const odds = playOddsLabel(play);
+    const active = isPlaySelected(play);
+    const cls = extraCls ? ` ${extraCls}` : '';
+    return `<button type="button" class="lhc-play-item lhc-play-item--side${cls}${active ? ' is-active' : ''}" data-play="${play}"><span>${label}</span>${odds ? `<small>${odds}</small>` : ''}</button>`;
+  }
+  function sideSectionHtml(title, itemsHtml, gridCls) {
+    return `<div class="lhc-play-section">${title ? `<div class="lhc-play-section__title">${title}</div>` : ''}<div class="lhc-play-section__grid ${gridCls || 'is-side'}">${itemsHtml}</div></div>`;
+  }
+  function renderSideSections(sections) {
+    return (sections || []).map((sec) => {
+      const cells = (sec.items || []).map((it) => sideCellHtml(it.play, it.label, it.cls || '')).join('');
+      return sideSectionHtml(sec.title || '', cells, sec.grid || 'is-side');
+    }).join('');
+  }
+  /** 整行：左标签+赔率，右小球（生肖/尾数/五行） */
+  function ballRowHtml(opts) {
+    const play = opts.play || '';
+    const label = opts.label || '';
+    const odds = opts.odds != null ? opts.odds : '';
+    const nums = opts.nums || [];
+    const active = !!opts.active;
+    const yearCls = opts.year ? ' is-year' : '';
+    const dataAttr = opts.dataAttr || (play ? `data-play="${play}"` : '');
+    const roleCls = opts.roleCls || '';
+    return `<button type="button" class="lhc-play-item lhc-play-item--row${yearCls}${roleCls}${active ? ' is-active' : ''}" ${dataAttr}><div class="lhc-side-main"><span>${label}</span>${odds !== '' && odds != null ? `<small>${odds}</small>` : ''}</div>${miniBallsHtml(nums)}</button>`;
+  }
+  function sxlRowOdds(z) {
+    return sxLianOdds(sxlMinPick(), true, [z]);
+  }
+  function wslRowOdds(tail) {
+    return wsLianOdds(wslMinPick(), true, [tail]);
+  }
+
 
   function renderZongshuPanel() {
     const sub = ZONGSHU_SUBS[zongshuSubIdx] || ZONGSHU_SUBS[0];
     const isMiss = sub === '尾数不中';
-    $('#playHint').text(`总数项 · ${sub}（0~9 尾，平特尾同）`);
-    setPlaySubBar(buildLmBar({
-      modes: ZONGSHU_SUBS,
-      modeIdx: zongshuSubIdx,
-      modeRow: 'zongshu',
-      modeCols: 2,
-    }));
-    $('#playGrid').attr('class', 'lhc-play-panel__grid is-lianma-block').html(
-      `<div class="lhc-lm-section">
-        <div class="lhc-lm-section__hd">${sub}</div>
-        <div class="lhc-lm-section__grid is-tail">${Array.from({ length: 10 }, (_, i) => {
-          const play = isMiss ? `${i}尾不中` : `${i}尾`;
-          const odds = playOddsLabel(play);
-          const active = isPlaySelected(play);
-          return `<button type="button" class="lhc-play-item${active ? ' is-active' : ''}" data-play="${play}"><span>${i}尾</span>${odds ? `<small>1:${odds}</small>` : ''}</button>`;
-        }).join('')}</div>
-      </div>`
+    $('#playHint').text('');
+    /* 官方平特尾数无子页；保留「尾数不中」作扩展时才显示子栏 */
+    if (ZONGSHU_SUBS.length > 1) {
+      setPlaySubBar(buildLmBar({
+        modes: ZONGSHU_SUBS,
+        modeIdx: zongshuSubIdx,
+        modeRow: 'zongshu',
+        modeCols: 2,
+      }));
+    } else {
+      $('#playSub').prop('hidden', true).empty();
+    }
+    const cells = Array.from({ length: 10 }, (_, i) => {
+      const play = isMiss ? `${i}尾不中` : `${i}尾`;
+      return ballRowHtml({
+        play,
+        label: `${i}尾`,
+        odds: playOddsLabel(play),
+        nums: numsOfTail(i),
+        active: isPlaySelected(play),
+      });
+    }).join('');
+    $('#playGrid').attr('class', 'lhc-play-panel__grid is-sectioned').html(
+      sideSectionHtml('平特尾数', cells, 'is-zx-row')
     );
+    updatePlaySelected();
   }
 
-  function renderTemaAttrPanel() {
-    const sub = TEMA_ATTR_SUBS[temaAttrSubIdx] || TEMA_ATTR_SUBS[0];
-    const items = TEMA_ATTR_ITEMS[sub] || [];
-    const hints = {
-      两面: `特码两面 · 两面 ${ODDS.side} · 组合 ${ODDS.comboSide}`,
-      色波: `色波 · 红 ${ODDS.colorRed} · 蓝 ${ODDS.colorBlue} · 绿 ${ODDS.colorGreen}`,
-      总和: `七码合计 · 赔率 ${ODDS.sumSide}`,
-      总尾: `七码合计尾数 · 赔率 ${ODDS.sumTail}`,
-    };
-    $('#playHint').text(hints[sub] || `特码属性 · ${sub}`);
-    setPlaySubBar(buildLmBar({
-      modes: TEMA_ATTR_SUBS,
-      modeIdx: temaAttrSubIdx,
-      modeRow: 'temaAttr',
-      modeCols: 4,
-    }));
+
+  function renderItemsPanel(cat) {
+    $('#playSub').prop('hidden', true).removeClass('is-stack is-lianma-sub is-ball-quick').empty();
+    $('#playHint').text('');
+    if (cat.layout === 'sideFlat') {
+      const items = (cat.sections || []).flatMap((s) => s.items || []);
+      const cells = items.map((it) => sideCellHtml(it.play, it.label, it.cls || '')).join('');
+      $('#playGrid').attr('class', 'lhc-play-panel__grid is-sectioned').html(
+        sideSectionHtml(cat.panelTitle || '', cells, 'is-side')
+      );
+      updatePlaySelected();
+      return;
+    }
+    if (cat.layout === 'sideSections' && Array.isArray(cat.sections)) {
+      $('#playGrid').attr('class', 'lhc-play-panel__grid is-sectioned').html(renderSideSections(cat.sections));
+      updatePlaySelected();
+      return;
+    }
+    if (cat.layout === 'wave') {
+      const items = Array.isArray(cat.items) ? cat.items : [];
+      const cells = items.map((it) => {
+        let cls = it.cls || '';
+        if (!cls) {
+          if (String(it.label).includes('红')) cls = 'is-red';
+          else if (String(it.label).includes('蓝')) cls = 'is-blue';
+          else if (String(it.label).includes('绿')) cls = 'is-green';
+        }
+        return sideCellHtml(it.play, it.label, cls);
+      }).join('');
+      $('#playGrid').attr('class', 'lhc-play-panel__grid is-sectioned').html(
+        sideSectionHtml(cat.panelTitle || '', cells, 'is-wave')
+      );
+      updatePlaySelected();
+      return;
+    }
+    const items = Array.isArray(cat.items) ? cat.items : [];
+    $('#playHint').text(typeof cat.hint === 'function' ? cat.hint() : (cat.hint || ''));
     $('#playGrid').attr('class', 'lhc-play-panel__grid').html(items.map(it => {
-      const play = it.play;
-      const label = it.label || play;
+      const play = typeof it === 'string' ? it : it.play;
+      const label = typeof it === 'string' ? it : (it.label || it.play);
       const odds = playOddsLabel(play);
       const active = isPlaySelected(play);
-      const cls = sub === '色波' && label.includes('红') ? ' is-red'
-        : sub === '色波' && label.includes('蓝') ? ' is-blue'
-        : sub === '色波' && label.includes('绿') ? ' is-green' : '';
-      return `<button type="button" class="lhc-play-item${cls}${active ? ' is-active' : ''}" data-play="${play}"><span>${label}</span>${odds ? `<small>1:${odds}</small>` : ''}</button>`;
+      return `<button type="button" class="lhc-play-item${active ? ' is-active' : ''}" data-play="${play}"><span>${label}</span>${odds ? `<small>${odds}</small>` : ''}</button>`;
     }).join(''));
     updatePlaySelected();
   }
 
-  function sxlMode() {
-    return SXL_MODES[sxlModeIdx] || SXL_MODES[0];
+  function renderZodiacBallsPanel(cat) {
+    const prefix = cat.playPrefix || '一肖';
+    const oddsFn = cat.oddsFn || pingTeOdds;
+    $('#playSub').prop('hidden', true).empty();
+    $('#playHint').text('');
+    const title = cat.title || '';
+    const cells = LIANMA_ZODIAC.map((z) => {
+      const play = prefix + z;
+      return ballRowHtml({
+        play,
+        label: z,
+        odds: oddsFn(z),
+        nums: numsOfZodiac(z),
+        active: isPlaySelected(play),
+        year: z === yearZodiac(),
+      });
+    }).join('');
+    $('#playGrid').attr('class', 'lhc-play-panel__grid is-sectioned').html(
+      sideSectionHtml(title, cells, 'is-zx-row')
+    );
+    updatePlaySelected();
   }
+
+  function renderZhengTePanel() {
+    const pos = zhengTePosIdx + 1;
+    const pCn = NUM_CN[pos] || String(pos);
+    const prefix = `正${pCn}特`;
+    $('#playHint').text('');
+    setPlaySubBar(buildLmBar({
+      modes: ZHENG_POS_TABS.map((t) => t + '特'),
+      modeIdx: zhengTePosIdx,
+      modeRow: 'zhengTe',
+      modeCols: 6,
+    }));
+    const body = Array.from({ length: 49 }, (_, i) => {
+      const n = i + 1;
+      const play = `${prefix}${pad(n, 2)}`;
+      const active = isPlaySelected(play);
+      return `<button type="button" class="lhc-play-ball lhc-play-ball--cell${active ? ' is-on' : ''}" data-play="${play}">${ballHtml(n, 'play')}<small>${ODDS.zhengTe}</small></button>`;
+    }).join('');
+    $('#playGrid').attr('class', 'lhc-play-panel__grid is-sectioned').html(
+      `<div class="lhc-play-section"><div class="lhc-play-section__title">正${pCn}特</div><div class="lhc-play-section__grid is-num3">${body}</div></div>`
+    );
+    updatePlaySelected();
+  }
+
+  function renderZheng16Panel() {
+    const pos = zheng16PosIdx + 1;
+    $('#playHint').text('');
+    setPlaySubBar(buildLmBar({
+      modes: ZHENG_POS_TABS.map((t, i) => '正码' + (i + 1)),
+      modeIdx: zheng16PosIdx,
+      modeRow: 'zheng16',
+      modeCols: 6,
+    }));
+    /* 官方：单标题「正码N」下扁平两列，无两面/组合/合数/尾数分组 */
+    const items = ZHENG16_SECTIONS(pos).flatMap((s) => s.items || []);
+    const cells = items.map((it) => sideCellHtml(it.play, it.label, it.cls || '')).join('');
+    $('#playGrid').attr('class', 'lhc-play-panel__grid is-sectioned').html(
+      sideSectionHtml(`正码${pos}`, cells, 'is-side')
+    );
+    updatePlaySelected();
+  }
+
+  function renderZhengBoPanel() {
+    const pos = zhengBoPosIdx + 1;
+    const pCn = NUM_CN[pos] || String(pos);
+    const colors = [
+      { label: '红', play: `正${pCn}红波`, cls: 'is-red' },
+      { label: '蓝', play: `正${pCn}蓝波`, cls: 'is-blue' },
+      { label: '绿', play: `正${pCn}绿波`, cls: 'is-green' },
+    ];
+    $('#playHint').text('');
+    setPlaySubBar(buildLmBar({
+      modes: ZHENG_POS_TABS.map((t, i) => '正码' + (i + 1)),
+      modeIdx: zhengBoPosIdx,
+      modeRow: 'zhengBo',
+      modeCols: 6,
+    }));
+    const cells = colors.map((it) => sideCellHtml(it.play, it.label, it.cls)).join('');
+    $('#playGrid').attr('class', 'lhc-play-panel__grid is-sectioned').html(
+      sideSectionHtml(`正码${pos}`, cells, 'is-wave')
+    );
+    updatePlaySelected();
+  }
+
+  function renderTemaTouWeiPanel() {
+    $('#playSub').prop('hidden', true).empty();
+    $('#playHint').text('');
+    const heads = [0, 1, 2, 3, 4].map((h) => {
+      const play = `${h}头`;
+      return sideCellHtml(play, `${h}头`);
+    }).join('');
+    const tails = Array.from({ length: 10 }, (_, i) => {
+      const play = `特${i}尾`;
+      return ballRowHtml({
+        play,
+        label: `${i}尾`,
+        odds: playOddsLabel(play),
+        nums: numsOfTail(i),
+        active: isPlaySelected(play),
+      });
+    }).join('');
+    $('#playGrid').attr('class', 'lhc-play-panel__grid is-sectioned').html(
+      sideSectionHtml('特码头数', heads, 'is-tou-head') +
+      sideSectionHtml('特码尾数', tails, 'is-zx-row')
+    );
+    updatePlaySelected();
+  }
+
+  function heXiaoTogglePick(z) {
+    const s = String(z);
+    const n = heXiaoTabIdx + 2;
+    const i = heXiaoPicked.indexOf(s);
+    if (i >= 0) heXiaoPicked.splice(i, 1);
+    else {
+      if (heXiaoPicked.length >= n) {
+        App.toast(`合肖${HEXIAO_TABS[heXiaoTabIdx]}需选 ${n} 个生肖`);
+        return;
+      }
+      heXiaoPicked.push(s);
+    }
+    renderHeXiaoPanel(false);
+  }
+  function renderHeXiaoPanel(resetPick) {
+    if (resetPick !== false) heXiaoPicked = [];
+    const n = heXiaoTabIdx + 2;
+    const tab = HEXIAO_TABS[heXiaoTabIdx] || HEXIAO_TABS[0];
+    const odds = ODDS.heXiao[n] || 1;
+    const picked = new Set(heXiaoPicked);
+    $('#playHint').text(`赔率: ${odds}`);
+    setPlaySubBar(buildLmBar({
+      modes: HEXIAO_TABS,
+      modeIdx: heXiaoTabIdx,
+      modeRow: 'heXiao',
+      modeCols: 4,
+    }));
+    const cells = LIANMA_ZODIAC.map((z) => ballRowHtml({
+      label: z,
+      nums: numsOfZodiac(z),
+      active: picked.has(z),
+      year: z === yearZodiac(),
+      dataAttr: `data-hexiao="${z}"`,
+    })).join('');
+    $('#playGrid').attr('class', 'lhc-play-panel__grid is-sectioned').html(
+      sideSectionHtml('', cells, 'is-zx-row')
+    );
+    updatePlaySelected();
+  }
+
+  function renderWuxingPanel() {
+    const list = ['金', '木', '水', '火', '土'];
+    $('#playSub').prop('hidden', true).empty();
+    $('#playHint').text('');
+    /* 官方五行盘面仅名称+赔率，不展示号码球 */
+    const cells = list.map((wx) => sideCellHtml('五行' + wx, wx)).join('');
+    $('#playGrid').attr('class', 'lhc-play-panel__grid is-sectioned').html(
+      sideSectionHtml('五行', cells, 'is-side')
+    );
+    updatePlaySelected();
+  }
+
   function sxlPlay() {
     return SXL_PLAYS[sxlPlayIdx] || SXL_PLAYS[0];
   }
   function sxlMinPick() {
-    const m = sxlPlay().match(/^[二三四五]/);
-    const map = { 二: 2, 三: 3, 四: 4, 五: 5 };
-    return m ? (map[m[0]] || 2) : 2;
+    return sxlPlayIdx + 2;
+  }
+  function sxlBetTag() {
+    return `${SXL_CN[sxlPlayIdx] || '二'}肖中`;
   }
   function sxlTogglePick(z) {
     const s = String(z);
@@ -3328,46 +3947,37 @@ $(function () {
   }
   function renderShengxiaolianPanel(resetPick) {
     if (resetPick !== false) sxlPicked = [];
-    const mode = sxlMode();
     const play = sxlPlay();
     const min = sxlMinPick();
-    const danN = min - 1;
-    const hint = mode === '拖头'
-      ? `生肖连 · 拖头 · ${play}（先选 ${danN} 胆再选托，注数=托数）`
-      : `生肖连 · 复式 · ${play}（C(n,${min})，单注金额×注数）`;
-    $('#playHint').text(hint);
+    $('#playHint').text('');
     setPlaySubBar(buildLmBar({
-      modes: SXL_MODES,
-      modeIdx: sxlModeIdx,
-      modeRow: 'sxl-mode',
-      modeCols: 2,
       plays: SXL_PLAYS,
       playIdx: sxlPlayIdx,
       playRow: 'sxl-play',
       playCols: 4,
     }));
-    $('#playGrid').attr('class', 'lhc-play-panel__grid is-lianma-block').html(
-      `<div class="lhc-lm-section">
-        <div class="lhc-lm-section__hd">${mode === '拖头' ? `先选 ${danN} 胆再选托肖` : `至少选 ${min} 个生肖`}</div>
-        <div class="lhc-lm-section__grid is-zx">${LIANMA_ZODIAC.map(z => {
-          const idx = sxlPicked.indexOf(z);
-          return `<button type="button" class="lhc-play-item${pickRoleClass(idx >= 0, idx, mode, min)}" data-sxl="${z}"><span>${z}</span></button>`;
-        }).join('')}</div>
-      </div>`
+    const cells = LIANMA_ZODIAC.map((z) => ballRowHtml({
+      label: z,
+      odds: sxlRowOdds(z),
+      nums: numsOfZodiac(z),
+      year: z === yearZodiac(),
+      active: sxlPicked.indexOf(z) >= 0,
+      dataAttr: `data-sxl="${z}"`,
+    })).join('');
+    $('#playGrid').attr('class', 'lhc-play-panel__grid is-sectioned').html(
+      sideSectionHtml(play, cells, 'is-zx-row')
     );
     updatePlaySelected();
   }
 
-  function wslMode() {
-    return WSL_MODES[wslModeIdx] || WSL_MODES[0];
-  }
   function wslPlay() {
     return WSL_PLAYS[wslPlayIdx] || WSL_PLAYS[0];
   }
   function wslMinPick() {
-    const m = wslPlay().match(/^[二三四]/);
-    const map = { 二: 2, 三: 3, 四: 4, 五: 5 };
-    return m ? (map[m[0]] || 2) : 2;
+    return wslPlayIdx + 2;
+  }
+  function wslBetTag() {
+    return `${WSL_CN[wslPlayIdx] || '二'}尾中`;
   }
   function wslTogglePick(t) {
     const s = String(t);
@@ -3378,33 +3988,27 @@ $(function () {
   }
   function renderWeishulianPanel(resetPick) {
     if (resetPick !== false) wslPicked = [];
-    const mode = wslMode();
     const play = wslPlay();
     const min = wslMinPick();
-    const danN = min - 1;
-    const hint = mode === '拖头'
-      ? `尾数连 · 拖头 · ${play}（先选 ${danN} 胆再选托，注数=托数）`
-      : `尾数连 · 复式 · ${play}（C(n,${min})，单注金额×注数）`;
-    $('#playHint').text(hint);
+    $('#playHint').text('');
     setPlaySubBar(buildLmBar({
-      modes: WSL_MODES,
-      modeIdx: wslModeIdx,
-      modeRow: 'wsl-mode',
-      modeCols: 2,
       plays: WSL_PLAYS,
       playIdx: wslPlayIdx,
       playRow: 'wsl-play',
-      playCols: 3,
+      playCols: 4,
     }));
-    $('#playGrid').attr('class', 'lhc-play-panel__grid is-lianma-block').html(
-      `<div class="lhc-lm-section">
-        <div class="lhc-lm-section__hd">${mode === '拖头' ? `先选 ${danN} 胆再选托尾` : `至少选 ${min} 个尾`}</div>
-        <div class="lhc-lm-section__grid is-tail">${Array.from({ length: 10 }, (_, i) => {
-          const t = String(i);
-          const idx = wslPicked.indexOf(t);
-          return `<button type="button" class="lhc-play-item${pickRoleClass(idx >= 0, idx, mode, min)}" data-wsl="${t}"><span>${t}尾</span></button>`;
-        }).join('')}</div>
-      </div>`
+    const cells = Array.from({ length: 10 }, (_, i) => {
+      const t = String(i);
+      return ballRowHtml({
+        label: `${i}尾`,
+        odds: wslRowOdds(i),
+        nums: numsOfTail(i),
+        active: wslPicked.indexOf(t) >= 0,
+        dataAttr: `data-wsl="${t}"`,
+      });
+    }).join('');
+    $('#playGrid').attr('class', 'lhc-play-panel__grid is-sectioned').html(
+      sideSectionHtml(play, cells, 'is-zx-row')
     );
     updatePlaySelected();
   }
@@ -3445,35 +4049,16 @@ $(function () {
     updatePlaySelected();
   }
 
-  function dxbzMode() {
-    return DXBZ_MODES[dxbzModeIdx] || DXBZ_MODES[0];
-  }
-  function dxbzPlay() {
-    return DXBZ_PLAYS[dxbzPlayIdx] || DXBZ_PLAYS[0];
-  }
-  function dxbzMinPick() {
-    const m = dxbzPlay().match(/^(十一|十二|五|六|七|八|九|十)/);
-    const map = { 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10, 十一: 11, 十二: 12 };
-    return m ? (map[m[1]] || 5) : 5;
-  }
   function dxbzTogglePick(num) {
     const s = String(num);
-    const k = dxbzMinPick();
     const i = dxbzPicked.indexOf(s);
-    if (i >= 0) {
-      dxbzPicked.splice(i, 1);
-    } else {
-      // 多组已封号码不可再选
-      if (dxbzMode() === '多组' && dxbzGroups.some(g => g.map(String).includes(s))) {
-        App.toast('该号已在已封组中');
+    if (i >= 0) dxbzPicked.splice(i, 1);
+    else {
+      if (dxbzPicked.length >= 12) {
+        App.toast('自选不中最多选 12 个号码');
         return;
       }
       dxbzPicked.push(s);
-      if (dxbzMode() === '多组' && dxbzPicked.length === k) {
-        dxbzGroups.push(dxbzPicked.map(Number));
-        dxbzPicked = [];
-        App.toast(`已封第 ${dxbzGroups.length} 组`);
-      }
     }
     renderDuoxuanPanel(false);
   }
@@ -3482,36 +4067,18 @@ $(function () {
       dxbzPicked = [];
       dxbzGroups = [];
     }
-    const mode = dxbzMode();
-    const play = dxbzPlay();
-    const min = dxbzMinPick();
+    const n = dxbzPicked.length;
+    const odds = n >= 5 && n <= 12 ? (ODDS.buZhong[n] || '') : '';
+    $('#playHint').text(odds ? `赔率: ${odds}` : '选 5～12 个号码');
+    $('#playSub').prop('hidden', true).empty();
     const picked = new Set(dxbzPicked);
-    const sealed = new Set(dxbzGroups.flatMap(g => g.map(String)));
-    const hint = mode === '多组'
-      ? `多选不中 · 多组 · ${play}（每满 ${min} 个自动封 1 组）`
-      : `多选不中 · 复式 · ${play}（C(n,${min})，单注金额×注数）`;
-    $('#playHint').text(hint);
-    setPlaySubBar(buildLmBar({
-      modes: DXBZ_MODES,
-      modeIdx: dxbzModeIdx,
-      modeRow: 'dxbz-mode',
-      modeCols: 2,
-      plays: DXBZ_PLAYS,
-      playIdx: dxbzPlayIdx,
-      playRow: 'dxbz-play',
-      playCols: 4,
-    }));
-    $('#playGrid').attr('class', 'lhc-play-panel__grid is-tema').html(
-      Array.from({ length: 49 }, (_, i) => {
-        const n = i + 1;
-        const key = String(n);
-        let role = '';
-        if (picked.has(key)) role = ' is-on';
-        else if (sealed.has(key)) role = ' is-on is-dan';
-        return `<button type="button" class="lhc-play-ball${role}" data-dxbz="${key}">
-          ${ballHtml(n, 'play')}
-        </button>`;
-      }).join('')
+    $('#playGrid').attr('class', 'lhc-play-panel__grid is-sectioned').html(
+      sideSectionHtml('自选不中', Array.from({ length: 49 }, (_, i) => {
+        const num = i + 1;
+        const key = String(num);
+        const on = picked.has(key);
+        return `<button type="button" class="lhc-play-ball lhc-play-ball--pick${on ? ' is-on' : ''}" data-dxbz="${key}">${ballHtml(num, 'play')}</button>`;
+      }).join(''), 'is-num5')
     );
     updatePlaySelected();
   }
@@ -3525,6 +4092,38 @@ $(function () {
       updatePlaySelected();
       return;
     }
+    if (cat.mode === 'items') {
+      renderItemsPanel(cat);
+      return;
+    }
+    if (cat.mode === 'zodiacBalls') {
+      renderZodiacBallsPanel(cat);
+      return;
+    }
+    if (cat.mode === 'zhengTe') {
+      renderZhengTePanel();
+      return;
+    }
+    if (cat.mode === 'zheng16') {
+      renderZheng16Panel();
+      return;
+    }
+    if (cat.mode === 'zhengBo') {
+      renderZhengBoPanel();
+      return;
+    }
+    if (cat.mode === 'temaTouWei') {
+      renderTemaTouWeiPanel();
+      return;
+    }
+    if (cat.mode === 'heXiao') {
+      renderHeXiaoPanel(doReset);
+      return;
+    }
+    if (cat.mode === 'wuxing') {
+      renderWuxingPanel();
+      return;
+    }
     if (cat.mode === 'lianma') {
       renderLianmaPanel(doReset);
       return;
@@ -3532,10 +4131,6 @@ $(function () {
     if (cat.mode === 'zongshu') {
       renderZongshuPanel();
       updatePlaySelected();
-      return;
-    }
-    if (cat.mode === 'temaAttr') {
-      renderTemaAttrPanel();
       return;
     }
     if (cat.mode === 'shengxiaolian') {
@@ -3555,29 +4150,19 @@ $(function () {
       return;
     }
     $('#playSub').prop('hidden', true).removeClass('is-stack is-lianma-sub is-ball-quick').empty();
-    $('#playHint').text(typeof cat.hint === 'function' ? cat.hint() : (cat.hint || ''));
-    $('#playGrid').attr('class', 'lhc-play-panel__grid');
-    const items = Array.isArray(cat.items) ? cat.items : [];
-    if (!items.length) {
-      $('#playGrid').html('<div class="lhc-play-panel__empty">具体玩法待添加</div>');
-      updatePlaySelected();
-      return;
-    }
-    $('#playGrid').html(items.map(it => {
-      const play = typeof it === 'string' ? it : it.play;
-      const label = typeof it === 'string' ? it : (it.label || it.play);
-      const odds = playOddsLabel(play);
-      const active = isPlaySelected(play);
-      return `<button type="button" class="lhc-play-item${active ? ' is-active' : ''}" data-play="${play}"><span>${label}</span>${odds ? `<small>1:${odds}</small>` : ''}</button>`;
-    }).join(''));
+    $('#playGrid').html('<div class="lhc-play-panel__empty">具体玩法待添加</div>');
     updatePlaySelected();
   }
 
   function initPlaySheet() {
     renderPlayNav();
-    $('#playAmountChips').html(AMOUNT_CHIPS.map(a =>
-      `<button type="button" class="lhc-play-foot__chip${a === 100 ? ' is-active' : ''}" data-amt="${a}">${a}</button>`
+    $('#playAmountChips').html(AMOUNT_CHIPS.map((c) =>
+      `<button type="button" class="lhc-play-foot__chip${c.amt === 100 ? ' is-active' : ''}" data-amt="${c.amt}" aria-label="${c.label}">` +
+        `<span class="lhc-play-foot__chip-glow" aria-hidden="true"></span>` +
+        `<img src="${CHIP_IMG(c.amt)}" alt="${c.label}" draggable="false">` +
+      `</button>`
     ).join(''));
+    syncPlayFootTotals();
     renderPlayPanel();
   }
 
@@ -4035,7 +4620,6 @@ $(function () {
 
   initKeypad();
   initPlaySheet();
-  seedMockNames();
   restoreBetBook();
   loadServerPayTable();
   startRoomChatPolling();
@@ -4095,83 +4679,209 @@ $(function () {
       return { issue: String(row.issueNo || ''), nums, gy: nums.length === 7 ? gyMeta(nums).text : '', lh: nums.length === 7 ? lhRow(nums) : '' };
     }).filter(r => r.issue && r.nums.length === 7);
   }
+
+  function isCeremonyHolding() {
+    try {
+      const phase = roomChat && roomChat.getPhase ? roomChat.getPhase() : '';
+      return phase === 'drawing' || phase === 'revealing' || phase === 'settled';
+    } catch (e) { return false; }
+  }
+  /** 开奖仪式中：顶栏用上一期；揭晓完再跟历史头 */
+  function pickDrawBarRow(rows) {
+    if (!rows || !rows.length) return null;
+    try {
+      const hold = roomChat && roomChat.getPhaseIssue ? String(roomChat.getPhaseIssue() || '') : '';
+      if (isCeremonyHolding() && hold && String(rows[0].issue) === hold) {
+        return rows[1] || null;
+      }
+    } catch (e) { /* ignore */ }
+    return rows[0];
+  }
+
   function syncServerSnapshot() {
     if (snapshotBusy || !App.fetchLotterySnapshot) return;
+    /* 父页 init 未到时发快照会被丢弃并卡 6s 超时，表现为一直「同步中」 */
+    if (window.parent !== window && !App._bridgeReady) return;
     snapshotBusy = true;
     App.fetchLotterySnapshot(SERVER_GAME).then(function (snapshot) {
-      /* 历史与当前期解耦：即使短暂没有 current，上期栏也要能刷新 */
-      const rows = parseServerHistory(snapshot && snapshot.history);
-      const headChanged = rows[0] && (!historyRows[0] || rows[0].issue !== historyRows[0].issue);
-      historyRows = rows;
-      if (rows.length) {
-        lastDraw = rows[0].nums.slice();
-        renderDrawBar(rows[0]);
-      } else if (typeof renderDrawBar === 'function') {
-        try { renderDrawBar(null); } catch (e) { /* ignore */ }
-      }
-      const current = snapshot && snapshot.current;
-      if (current && current.issueNo) {
-        serverCurrent = current;
-        serverSynced = true;
-        if (typeof tick === 'function') try { tick(); } catch (e) { /* ignore */ }
-      }
-      renderDrawTable();
-      if (serverCurrent && serverCurrent.issueNo) setIssueEl($('#curIssue'), serverCurrent.issueNo);
-      if (rows[0]) {
-        revealedIssues.add(rows[0].issue);
-        saveRevealedIssues();
-        historyHeadBootstrapped = true;
-      }
-      if ($('#longSheet').hasClass('is-open')) renderLongDragonPanel();
-      if ($('#predictSheet').hasClass('is-open')) renderPredictPanel();
+      /* 先标记已同步，避免后续渲染异常把整页永远钉在「同步中」 */
+      serverSynced = true;
+      App._lhcServerSynced = true;
+      syncServerSnapshot._fail = 0;
+      try {
+        const rows = parseServerHistory(snapshot && snapshot.history);
+        historyRows = rows;
+        if (rows.length) {
+          lastDraw = rows[0].nums.slice();
+          const barRow = pickDrawBarRow(rows);
+          if (barRow) {
+            try { renderDrawBar(barRow); } catch (eBar) { /* ignore */ }
+          }
+        } else if (typeof renderDrawBar === 'function') {
+          try { renderDrawBar(null); } catch (eBar2) { /* ignore */ }
+        }
+        const current = snapshot && snapshot.current;
+        if (current && current.issueNo) {
+          serverCurrent = current;
+          App._lhcServerCurrent = current;
+        } else if (serverCurrent) {
+          const _st = String(serverCurrent.status || '');
+          const _openAt = new Date(serverCurrent.openAt).getTime();
+          if (_st !== 'PENDING' && _st !== 'LOCKED' && Number.isFinite(_openAt) && Date.now() >= _openAt) {
+            serverCurrent = null;
+            App._lhcServerCurrent = null;
+          }
+        }
+        try { renderDrawTable(); } catch (eTbl) { /* ignore */ }
+        if (!isCeremonyHolding() && serverCurrent && serverCurrent.issueNo) {
+          try { setIssueEl($('#curIssue'), serverCurrent.issueNo); } catch (eIss) { /* ignore */ }
+        }
+        if (rows[0]) {
+          const holdIss = roomChat && roomChat.getPhaseIssue ? String(roomChat.getPhaseIssue() || '') : '';
+          if (!(isCeremonyHolding() && holdIss && String(rows[0].issue) === holdIss)) {
+            revealedIssues.add(rows[0].issue);
+            saveRevealedIssues();
+          }
+          historyHeadBootstrapped = true;
+        }
+        if ($('#longSheet').hasClass('is-open')) {
+          try { renderLongDragonPanel(); } catch (eLong) { /* ignore */ }
+        }
+        if ($('#predictSheet').hasClass('is-open')) {
+          try { renderPredictPanel(); } catch (ePred) { /* ignore */ }
+        }
+      } catch (e) { /* keep synced flag */ }
+      if (typeof tick === 'function') try { tick(); } catch (e2) { /* ignore */ }
     }).catch(function () {
-      /* Parent bridge can be unavailable when a static H5 is opened directly. */
+      /* 桥接失败：指数退避，避免打爆父页 */
+      if (!serverSynced) {
+        const fails = (syncServerSnapshot._fail = (syncServerSnapshot._fail || 0) + 1);
+        const wait = Math.min(8000, 800 * Math.pow(2, Math.min(fails, 3)));
+        setTimeout(function () {
+          if (!serverSynced && !snapshotBusy && typeof syncServerSnapshot === 'function') syncServerSnapshot();
+        }, wait);
+      }
     }).finally(function () { snapshotBusy = false; });
   }
 
   function tick() {
+    /* App 标记为权威：避免双闭包 / 异常路径导致本地 serverSynced 永远 false */
+    if (App._lhcServerSynced) serverSynced = true;
+    if (App._lhcServerCurrent) serverCurrent = App._lhcServerCurrent;
+    const phase = roomChat && roomChat.getPhase ? roomChat.getPhase() : '';
+    const lockMsNow = serverCurrent ? new Date(serverCurrent.lockAt).getTime() : NaN;
+    const serverBettingOpen =
+      !!(serverSynced &&
+        serverCurrent &&
+        String(serverCurrent.status || '') === 'PENDING' &&
+        Number.isFinite(lockMsNow) &&
+        Date.now() < lockMsNow);
+    /*
+     * 顶栏以服务端期状态为准：仍可投注时绝不能钉「开奖中」。
+     * 仪式 phase 卡死（缺开盘线 / reveal 未收尾）时也能恢复倒计时。
+     */
+    if (
+      !serverBettingOpen &&
+      (phase === 'drawing' || phase === 'revealing' || phase === 'settled')
+    ) {
+      const hold = roomChat.getPhaseIssue ? String(roomChat.getPhaseIssue() || '') : '';
+      if (hold) {
+        if (typeof setCurIssueDisplay === 'function') setCurIssueDisplay(hold);
+        else if (typeof setIssueEl === 'function') setIssueEl($('#curIssue'), hold);
+        else $('#curIssue').text(hold);
+      }
+      updateCountdownDrawing();
+      return;
+    }
     if (serverSynced && serverCurrent) {
       const lockAt = new Date(serverCurrent.lockAt).getTime();
-      const openAt = new Date(serverCurrent.openAt).getTime();
       const issueCur = String(serverCurrent.issueNo || '');
-      const open = serverCurrent.status === 'PENDING' && Date.now() < lockAt;
-      setIssueEl($('#curIssue'), issueCur);
-      updateCountdownUI(open
-        ? Math.max(0, (lockAt - Date.now()) / 1000) + PREP_SEC
-        : Math.max(0, (openAt - Date.now()) / 1000));
-      if (!open && issueCur && markIssueClosed(issueCur)) {
-        roomBetFrozen = true;
-        sealedIssueNo = issueCur;
-      }
-      /* unfreeze-if-next-pending */
-      if (roomBetFrozen && sealedIssueNo && issueCur && issueCur !== sealedIssueNo && open) {
-        /* 下一期已开盘：以服务端为准解冻（不强制等历史，避免漏推卡死） */
-        roomBetFrozen = false;
-        sealedIssueNo = '';
+      const status = String(serverCurrent.status || '');
+      const now = Date.now();
+      const open = status === 'PENDING' && now < lockAt;
+      setCurIssueDisplay(issueCur);
+      if (open) {
+        updateCountdownUI(Math.max(0, (lockAt - now) / 1000) + PREP_SEC);
+        if (roomBetFrozen && sealedIssueNo && issueCur && issueCur !== sealedIssueNo) {
+          roomBetFrozen = false;
+          sealedIssueNo = '';
+        }
+      } else if (status === 'LOCKED' || (status === 'PENDING' && now >= lockAt)) {
+        updateCountdownDrawing();
+        if (Number.isFinite(new Date(serverCurrent.openAt).getTime()) &&
+            now >= new Date(serverCurrent.openAt).getTime()) {
+          requestLotteryResync();
+        }
+      } else {
+        const $labelWait = $('#cdLabel');
+        if ($labelWait.length) $labelWait.text('等待开盘');
+        const $boxWait = $('#countdownBox').removeClass('is-preparing is-betting is-freeze is-urgent is-drawing').addClass('is-preparing');
+        $boxWait.attr('aria-label', '等待开盘');
+        if (typeof renderCountdownDigits === 'function') renderCountdownDigits(0);
+        $('#cdPrep').attr('hidden', true).hide();
+        $('#cdDigits').removeAttr('hidden').css('display', '').show();
+        requestLotteryResync();
       }
       return;
     }
-    /* 未同步服务端：禁止本地钟（期号会差 1），只显示同步中 */
+    if (serverSynced) {
+      if (typeof setCurIssueDisplay === 'function') setCurIssueDisplay('--------');
+      else if (typeof setIssueEl === 'function') setIssueEl($('#curIssue'), '--------');
+      else $('#curIssue').text('--------');
+      const $labelWait = $('#cdLabel');
+      if ($labelWait.length) $labelWait.text('等待开盘');
+      const $boxWait = $('#countdownBox').removeClass('is-preparing is-betting is-freeze is-urgent is-drawing').addClass('is-preparing');
+      $boxWait.attr('aria-label', '等待开盘');
+      if (typeof renderCountdownDigits === 'function') renderCountdownDigits(0);
+      return;
+    }
     if (typeof setCurIssueDisplay === 'function') setCurIssueDisplay('--------');
     else if (typeof setIssueEl === 'function') setIssueEl($('#curIssue'), '--------');
     else $('#curIssue').text('--------');
     const $label = $('#cdLabel');
     if ($label.length) $label.text('同步中');
-    const $box = $('#countdownBox').removeClass('is-preparing is-betting is-freeze').addClass('is-betting');
+    const $box = $('#countdownBox').removeClass('is-preparing is-betting is-freeze is-urgent is-drawing').addClass('is-betting');
     $box.attr('aria-label', '房间同步中');
     if (typeof renderCountdownDigits === 'function') renderCountdownDigits(0);
     $('#cdPrep').prop('hidden', true);
-    $('#cdDigits').prop('hidden', false);
+    $('#cdDigits').removeAttr('hidden').css('display', '').show();
   }
   setInterval(tick, 1000);
   restoreRevealedIssues();
   restoreClosedIssues();
   hydrateClosedFromChat();
   hydrateRevealedFromChat();
-  if (App.startAdaptiveInterval) App.startAdaptiveInterval(syncServerSnapshot, 2000, 5000); else { syncServerSnapshot(); setInterval(syncServerSnapshot, 2000); }
+  App.resyncLottery = function () {
+    snapshotBusy = false;
+    if (typeof syncServerSnapshot === 'function') syncServerSnapshot();
+  };
+  /* 父页 init 早于本文件时补拉；已 ready 则立刻同步（链式，保留 room-chat 的 ready） */
+  var _prevOnAssetsGameReady = App.onAssetsGameReady;
+  App.onAssetsGameReady = function (data) {
+    snapshotBusy = false;
+    if (typeof syncServerSnapshot === 'function') syncServerSnapshot();
+    if (typeof _prevOnAssetsGameReady === 'function') {
+      try { _prevOnAssetsGameReady(data); } catch (eReady) { /* ignore */ }
+    }
+  };
+  if (App._pendingResyncLottery || App._bridgeReady) {
+    App._pendingResyncLottery = false;
+    App.resyncLottery();
+  }
+  if (App.startAdaptiveInterval) {
+    App.startAdaptiveInterval(syncServerSnapshot, 2000, 5000, { runNow: !!App._bridgeReady });
+  } else {
+    if (App._bridgeReady) syncServerSnapshot();
+    setInterval(syncServerSnapshot, 2000);
+  }
   /* robot bets from server room chat */
 
   tick();
+
+  /* 用户首次交互解锁开奖音效（浏览器自动播放策略） */
+  $(document).one('pointerdown keydown', function () {
+    if (window.LhcAudio && LhcAudio.unlock) LhcAudio.unlock();
+  });
 
   // ===== 事件 =====
   $('#backBtn').on('click', () => {
@@ -4179,17 +4889,53 @@ $(function () {
     else App.go('../../client-app/pages/game-lobby/game-lobby.html' + q);
   });
 
+  layoutRail();
+  $(window).on('resize orientationchange', function () { layoutRail(); });
+  if (typeof ResizeObserver !== 'undefined') {
+    const roomEl = document.querySelector('.lhc-room');
+    if (roomEl) {
+      try {
+        new ResizeObserver(function () { layoutRail(); }).observe(roomEl);
+      } catch (e) { /* ignore */ }
+    }
+  }
   /* === chat-rail handlers (lhc) === */
 
-  function openRulesSheet(open) {
-    if (open) {
-      const o = ODDS;
-      const betSec = (typeof BET_SEC !== 'undefined') ? BET_SEC : (INTERVAL - PREP_SEC);
-      const html = `
+  /** 官方条文（V66 幸运六合彩游戏规则弹窗），只展示当前玩法 */
+  function playCatRulesHtml(cat) {
+    const id = (cat && cat.id) || '';
+    const map = {
+      tema: '● 特码：从49个号码中选择1个号码，所选号码与开奖的特码相同，即中奖。<br><br>投注【01】；开奖号码：*,*,*,*,*,*,01，特码为01，即中奖。',
+      temaSide: '● 特码两面：选择1个形态(大:25-48；小:01-24；单:个位数1,3,5,7,9；双:个位数0,2,4,6,8)，与开奖号码中特码的形态相同，即中奖。开出特码49时为和局，退还本金。<br><br>● 特码形态：大单/大双/小单/小双。开出特码49时为和局，退还本金。<br><br>● 特码合数：合大≥7、合小≤6、合单/合双。开出特码49时为和局，退还本金。<br><br>● 特码尾数：尾大5~9、尾小0~4。开出特码49时为和局，退还本金。',
+      temaColor: '● 特码色波：将49个号码划分为红、蓝、绿三种颜色，投注色波与特码颜色相同即中奖。<br><br>● 特码半波 / 半半波：色波与大小或单双组合；开出特码49时为和局，退还本金。',
+      texiao: '● 特码生肖：用十二生肖当年的年龄，对应1~49球号。选择1个生肖，当开奖特码在该生肖号码范围内，即中奖。本命年生肖号码较多，赔率较低。',
+      zhengma: '● 正码：当期开出的前六个号码为正码。选择1个号码，开奖正码包含投注号码即中奖。',
+      zhengTe: '● 正码特：开奖号码第1～第6个为正一特～正六特。选择一个正码位置与1个号码，所选号码与该位置开奖号码一致即中奖。',
+      zheng16: '● 正码1～6两面/形态/合数/尾数：选择正码位置与形态。该位置开出49时为和局，退还本金。',
+      zhengBo: '● 正波：选择一个正码位置与1个色波，与对应位置开出的正码波色相同即中奖。',
+      pingTe: '● 平特一肖：选择1个生肖，开奖7个号码所对应生肖包含该生肖即中奖。不论同生肖出现次数，派彩只派一次。',
+      pingWei: '● 平特尾数：选择1个尾数，开奖7个号码所对应尾数包含该尾数即中奖。不论同尾数出现次数，派彩只派一次。',
+      shengxiaolian: '● 连肖：二连肖～五连肖。复式组合，所选生肖须全部出现在开奖七码（含特码）中；含本命肖取本命赔率。',
+      weishulian: '● 连尾：二连尾～五连尾。复式组合，所选尾数须全部出现在开奖七码中；五连尾含0尾取更高赔率。',
+      lianma: '● 连码：四全中/三中二/三全中/二全中/二中特/特串。复式选号；三中二、二中特分两档派彩；特串须一正一特。',
+      sumSide: '● 总和两面：与当期开出的前六个号码总和形态相同即中奖。总和大≥150；总和小≤149；总和单双看总和个位。<br><br>● 总和尾数：以前六个号码总和个位数判断总尾大/小。',
+      temaTouWei: '● 特码头尾数：特码头数看十位0～4；特码尾数看个位0～9。当期开奖特码符合所选项即中奖。',
+      heXiao: '● 特码合肖：选择2～11个生肖为一组合，当开奖特码生肖在组合内即中奖。开出特码49时为和局，退还本金。',
+      wuxing: '● 五行：选择1个五行属性，开奖特码在投注的五行包含的号码范围内即中奖。',
+      zhengXiao: '● 正肖：当期开奖前6个正码（不含特码），其中任一球号在下注生肖范围即中奖。如超过1个正码落在同肖范围内，派彩将自动倍增。',
+      duoxuan: '● 自选不中：挑选5～12个号码为一注（选几个对应几不中赔率）。开奖7个号码都未落在所选号码中即中奖。',
+    };
+    const body = map[id] || '请在盘面点选投注项后确认投注；派彩以服务端为准。';
+    return `<div class="lhc-rules-sec"><p>${body}</p></div>`;
+  }
+
+  function fullRulesHtml() {
+    const o = ODDS;
+    return `
         <div class="lhc-rules-sec">
           <h3 class="lhc-rules-sec__title">一、开奖与时间</h3>
           <p>幸运六合彩每期开出 <b>7</b> 个号码：正码 1～6 + <b>特码</b>，号码范围 <b>01～49</b>。</p>
-          <p>每期共 <b>${INTERVAL} 秒</b>：可下注 <b>${betSec} 秒</b>，提前 <b>${PREP_SEC} 秒</b> 封盘。顶栏「距封盘 / 距开奖」；封盘后不可下注、不可取消。</p>
+          <p>每期共 <b>${INTERVAL} 秒</b>。顶栏「距封盘」；封盘后显示「开奖中」，不可下注、不可取消。</p>
           <p>开奖结果与派彩以服务端账本为准。本房间主要用「玩法」面板点选；输入框示例仅作口令参考。</p>
         </div>
         <div class="lhc-rules-sec">
@@ -4201,23 +4947,21 @@ $(function () {
         </div>
         <div class="lhc-rules-sec">
           <h3 class="lhc-rules-sec__title">三、玩法与赔率</h3>
-          <p>下列为当前房间常用玩法赔率（随后台更新；连肖/不中等见面板分档）。派彩 = 金额 × 赔率（向下取整）。</p>
+          <p>下列为当前房间常用玩法赔率（随后台更新；连肖/不中等见面板分档）。派彩 = 金额 × 赔率（四舍五入到两位小数）。</p>
           <table class="lhc-rules-table">
             <thead><tr><th>玩法</th><th>说明</th><th>赔率</th></tr></thead>
             <tbody>
-              <tr><td>特码</td><td>猜特码号码 01～49</td><td>${o.tema}</td></tr>
-              <tr><td>正码</td><td>猜正码六个号中出现指定号码</td><td>${o.zhengma}</td></tr>
-              <tr><td>两面 / 色波</td><td>特码大小单双、合数、红蓝绿波等</td><td>两面 ${o.side} · 红 ${o.colorRed}</td></tr>
-              <tr><td>一肖（总肖项）</td><td>七码任一出现该生肖即中；口令一肖X（平特X 同义）</td><td>平特 ${o.pingTe} · 本命 ${o.pingTeYear}</td></tr>
-              <tr><td>总和 / 总尾</td><td>七码总和大小单双；总和尾数大小</td><td>${o.sumSide} / ${o.sumTail}</td></tr>
-              <tr><td>六肖</td><td>从十二肖中选满 6 个猜中/不中</td><td>${o.liuxiao}</td></tr>
-              <tr><td>连肖 / 连尾</td><td>二～五肖连中或不中；二～四尾连中或不中</td><td>见玩法面板</td></tr>
-              <tr><td>连码</td><td>二全中 / 二中特 / 特串 / 三全中 / 三中二等</td><td>二全 ${o.erQuanZhong} · 三全 ${o.sanQuanZhong}</td></tr>
-              <tr><td>自选不中</td><td>选 5～12 个号码，开奖七码均未命中即中</td><td>五不中 ${o.buZhong[5]} 起</td></tr>
+              <tr><td>特码 / 正码</td><td>特码号码 / 正码六个号中出现</td><td>${o.tema} / ${o.zhengma}</td></tr>
+              <tr><td>特码两面 / 色波</td><td>两面、色波/半波/半半波</td><td>两面 ${o.side} · 红 ${o.colorRed} · 半波见盘面</td></tr>
+              <tr><td>特码生肖 / 正肖</td><td>特码肖 / 正码任一同肖</td><td>特肖 ${o.zodiac} · 正肖 ${o.zhengXiao}</td></tr>
+              <tr><td>正码特 / 正码1~6 / 正波</td><td>定位正码特、位两面、位色波</td><td>正码特 ${o.zhengTe} · 两面 ${o.zhengSide}</td></tr>
+              <tr><td>平特一肖 / 平特尾</td><td>七码任一肖/尾；口令一肖X、N尾</td><td>${o.pingTe} / 0尾 ${o.weiShu0}</td></tr>
+              <tr><td>连肖 / 连尾 / 连码</td><td>二～五连；连码含四全中等</td><td>见玩法面板 · 四全中 ${o.siQuanZhong}</td></tr>
+              <tr><td>特码头尾数 / 合肖 / 五行</td><td>特码头尾；合肖二~十一（49和）；五行</td><td>0头 ${o.temaTou0} · 三合肖 ${o.heXiao[3]}</td></tr>
+              <tr><td>总和两面 / 自选不中</td><td>前六正码总和（大≥150）；选 5～12 号全不中</td><td>${o.sumSide} · 五不中 ${o.buZhong[5]} 起</td></tr>
             </tbody>
           </table>
         </div>
-
         <div class="lhc-rules-sec">
           <h3 class="lhc-rules-sec__title">四、取消与结算</h3>
           <p>当期未封盘前可输入「取消」或点键盘「取消」，撤销本人本期未结算注单；封盘后不可取消。</p>
@@ -4232,6 +4976,21 @@ $(function () {
             <li>长龙 / 预测仅供走势参考，不构成投注建议</li>
           </ul>
         </div>`;
+  }
+
+  function openRulesSheet(open, opts) {
+    if (open) {
+      const mode = (opts && opts.mode) || 'full';
+      let title = '游戏规则';
+      let html;
+      if (mode === 'playCat') {
+        const cat = currentPlayCat();
+        title = cat.title || '玩法';
+        html = playCatRulesHtml(cat);
+      } else {
+        html = fullRulesHtml();
+      }
+      $('#rulesTitle').text(title);
       $('#rulesBody').html(html);
       $('#rulesMask').prop('hidden', false);
       $('#rulesSheet').prop('hidden', false).addClass('is-open');
@@ -4254,7 +5013,8 @@ $(function () {
   $('#btnCs').on('click', () => App.go('../../client-app/pages/cs/cs.html' + q));
 
   $('#btnExpand, #btnComposerPlay').on('click', () => openPlaySheet(true));
-  $('#btnRules').on('click', () => openRulesSheet(true));
+  $('#btnRules').on('click', () => openRulesSheet(true, { mode: 'full' }));
+  $('#playSheetRules').on('click', () => openRulesSheet(true, { mode: 'playCat' }));
   $('#rulesSheetClose, #rulesMask').on('click', () => openRulesSheet(false));
   $('#btnRecords').on('click', () => goBetRecords());
   $('#playSheetClose, #playMask').on('click', () => openPlaySheet(false));
@@ -4281,15 +5041,9 @@ $(function () {
     const row = String($btn.data('row') || '');
     const idx = +$btn.data('idx');
     if (cat.mode === 'lianma') {
-      if (row === 'mode') {
-        lianmaModeIdx = idx;
-        renderLianmaPanel(true);
-      } else if (row === 'play') {
+      if (row === 'play') {
         lianmaPlayIdx = idx;
-        renderLianmaPanel(false);
-      } else if (row === 'peng-side') {
-        lianmaPengSide = String($btn.data('side') || 'A') === 'B' ? 'B' : 'A';
-        renderLianmaPanel(false);
+        renderLianmaPanel(true);
       }
       return;
     }
@@ -4300,28 +5054,40 @@ $(function () {
       updatePlaySelected();
       return;
     }
-    if (cat.mode === 'temaAttr' && row === 'temaAttr') {
-      temaAttrSubIdx = idx;
-      renderTemaAttrPanel();
+    if (cat.mode === 'zhengTe' && row === 'zhengTe') {
+      zhengTePosIdx = idx;
+      playSelectedList = [];
+      renderZhengTePanel();
+      return;
+    }
+    if (cat.mode === 'zheng16' && row === 'zheng16') {
+      zheng16PosIdx = idx;
+      playSelectedList = [];
+      renderZheng16Panel();
+      return;
+    }
+    if (cat.mode === 'zhengBo' && row === 'zhengBo') {
+      zhengBoPosIdx = idx;
+      playSelectedList = [];
+      renderZhengBoPanel();
+      return;
+    }
+    if (cat.mode === 'heXiao' && row === 'heXiao') {
+      heXiaoTabIdx = idx;
+      renderHeXiaoPanel(true);
       return;
     }
     if (cat.mode === 'shengxiaolian') {
-      if (row === 'sxl-mode') {
-        sxlModeIdx = idx;
-        renderShengxiaolianPanel(true);
-      } else if (row === 'sxl-play') {
+      if (row === 'sxl-play') {
         sxlPlayIdx = idx;
-        renderShengxiaolianPanel(false);
+        renderShengxiaolianPanel(true);
       }
       return;
     }
     if (cat.mode === 'weishulian') {
-      if (row === 'wsl-mode') {
-        wslModeIdx = idx;
-        renderWeishulianPanel(true);
-      } else if (row === 'wsl-play') {
+      if (row === 'wsl-play') {
         wslPlayIdx = idx;
-        renderWeishulianPanel(false);
+        renderWeishulianPanel(true);
       }
       return;
     }
@@ -4329,15 +5095,6 @@ $(function () {
       liuxiaoSubIdx = idx;
       renderLiuxiaoPanel(true);
       return;
-    }
-    if (cat.mode === 'duoxuan') {
-      if (row === 'dxbz-mode') {
-        dxbzModeIdx = idx;
-        renderDuoxuanPanel(true);
-      } else if (row === 'dxbz-play') {
-        dxbzPlayIdx = idx;
-        renderDuoxuanPanel(false);
-      }
     }
   });
 
@@ -4349,6 +5106,12 @@ $(function () {
     togglePlaySelect(play);
     renderBallsPanel();
     updatePlaySelected();
+  });
+
+  $('#playGrid').on('click', '.lhc-play-ball[data-play]', function () {
+    const play = String($(this).data('play'));
+    togglePlaySelect(play);
+    renderZhengTePanel();
   });
 
   $('#playGrid').on('click', '[data-lianma]', function () {
@@ -4367,6 +5130,10 @@ $(function () {
     liuxiaoTogglePick($(this).data('lx'));
   });
 
+  $('#playGrid').on('click', '[data-hexiao]', function () {
+    heXiaoTogglePick($(this).data('hexiao'));
+  });
+
   $('#playGrid').on('click', '[data-dxbz]', function () {
     dxbzTogglePick($(this).data('dxbz'));
   });
@@ -4380,25 +5147,30 @@ $(function () {
 
   $('#playAmountChips').on('click', '.lhc-play-foot__chip', function () {
     const amt = +$(this).data('amt');
-    $('#playAmount').val(amt);
-    $('#playAmountChips .lhc-play-foot__chip').removeClass('is-active');
+    setPlayAmount(amt);
+    clearPlayAmountChipActive();
     $(this).addClass('is-active');
+    syncPlayFootTotals();
     updatePlaySelected();
   });
 
-  $('#playAmountMinus').on('click', () => {
-    const v = Math.max(1, (parseInt($('#playAmount').val(), 10) || 1) - 10);
-    $('#playAmount').val(v);
-    $('#playAmountChips .lhc-play-foot__chip').removeClass('is-active');
+  $('#playAmountAllin').on('click', function () {
+    playAllin = !playAllin;
+    syncPlayAmountUI();
+    syncPlayFootTotals();
     updatePlaySelected();
   });
-  $('#playAmountPlus').on('click', () => {
-    const v = (parseInt($('#playAmount').val(), 10) || 0) + 10;
-    $('#playAmount').val(v);
-    $('#playAmountChips .lhc-play-foot__chip').removeClass('is-active');
+
+  $('#playAmount').on('input change', function () {
+    if (playAllin) return;
+    const v = parseInt($(this).val(), 10);
+    clearPlayAmountChipActive();
+    if (v > 0) {
+      $(`#playAmountChips .lhc-play-foot__chip[data-amt="${v}"]`).addClass('is-active');
+    }
+    syncPlayFootTotals();
     updatePlaySelected();
   });
-  $('#playAmount').on('input change', () => updatePlaySelected());
 
   $('#playClear').on('click', clearPlaySelection);
   $('#playRepeat').on('click', fillLastBetsToInput);
@@ -4506,12 +5278,12 @@ $(function () {
   $('#menuMask').on('click', () => openPlusMenu(false));
 
     const LINKS = {
-    recharge: '../../client-app/pages/recharge/recharge.html',
-    'apply-records': '../../client-app/pages/apply-records/apply-records.html',
-    'bet-records': '../../client-app/pages/bet-records/bet-records.html',
-    rebate: '../../client-app/pages/rebate/rebate.html',
-    activities: '../../client-app/pages/activities/activities.html',
-    settings: '../../client-app/pages/profile/profile.html',
+    recharge: '/recharge',
+    'apply-records': '/apply-records',
+    'bet-records': '/bets',
+    rebate: '/rebate',
+    activities: '/activities',
+    settings: '/settings',
   };
 
   $('#plusMenu').on('click', 'button', function () {

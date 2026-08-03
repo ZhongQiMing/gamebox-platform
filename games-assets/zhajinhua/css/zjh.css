@@ -16,7 +16,7 @@ body.zjh-body {
   overflow: hidden;
   min-height: 0 !important;
   max-height: 100%;
-  background: #0a0806;
+  background: #0a0806 url('../assets/ui/stage-bg.jpg') center / cover no-repeat;
 }
 
 html.zjh-in-iframe,
@@ -34,7 +34,7 @@ html.zjh-in-iframe body.zjh-body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: #0a0806;
+  background: #0a0806 url('../assets/ui/stage-bg.jpg') center / cover no-repeat;
 }
 
 /* ---------- ??????/????????? ---------- */
@@ -153,13 +153,14 @@ html.zjh-in-iframe body.zjh-body {
 .zjh-stat .v.is-minus { color: #ff9aaa; }
 
 .zjh-stage {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  background: #0a0806;
+  background: transparent;
 }
 
 .zjh-room {
@@ -169,7 +170,7 @@ html.zjh-in-iframe body.zjh-body {
   flex-shrink: 0;
   transform: scale(var(--zjh-scale));
   transform-origin: center center;
-  background: url('../assets/ui/page-unified-v50.png') center top / 100% 100% no-repeat;
+  background: url('../assets/ui/page-unified-v51.png') center top / 100% 100% no-repeat;
   overflow: hidden;
 }
 
@@ -747,10 +748,9 @@ html.zjh-in-iframe body.zjh-body {
   box-sizing: border-box;
 }
 
-/* ????????? 7%????? */
-.zjh-bet-btn[data-bet="banker"]  { left: 6.37%; top: 32.80%; width: 26.52%; height: 13.68%; }
-.zjh-bet-btn[data-bet="tie"]     { left: 36.11%; top: 32.87%; width: 27.79%; height: 13.44%; }
-.zjh-bet-btn[data-bet="player"]  { left: 67.01%; top: 32.80%; width: 26.43%; height: 13.56%; }
+/* 上排仅庄/闲：铺满原三格宽度，中间留约 3% 缝 */
+.zjh-bet-btn[data-bet="banker"]  { left: 6.37%; top: 32.80%; width: 41.99%; height: 13.68%; }
+.zjh-bet-btn[data-bet="player"]  { left: 51.46%; top: 32.80%; width: 41.98%; height: 13.56%; }
 .zjh-bet-btn[data-bet="shunjin"] { left: 6.38%; top: 48.11%; width: 19.25%; height: 18.89%; }
 .zjh-bet-btn[data-bet="san2"]    { left: 28.12%; top: 47.82%; width: 20.62%; height: 9.45%; }
 .zjh-bet-btn[data-bet="san3"]    { left: 51.27%; top: 47.88%; width: 20.62%; height: 9.38%; }
@@ -1326,7 +1326,6 @@ html.zjh-in-iframe body.zjh-body {
 
 .zjh-action {
   position: absolute;
-  /* ????????????? */
   top: 68.5%;
   width: 8.2%;
   height: auto;
@@ -1338,6 +1337,7 @@ html.zjh-in-iframe body.zjh-body {
   background: transparent;
   cursor: pointer;
   pointer-events: auto;
+  z-index: 65;
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
   transition: none;
@@ -1608,15 +1608,17 @@ html.zjh-in-iframe body.zjh-body {
 }
 
 /* ================= 右侧快捷竖排按钮 ================= */
+/* 挂在 stage 内：相对牌桌区域上下边垂直居中 */
 .zjh-rail {
   position: absolute;
-  right: calc(6px + env(safe-area-inset-right, 0px));
+  right: calc(4px + env(safe-area-inset-right, 0px));
   top: 50%;
-  transform: translateY(-50%);
+  bottom: auto;
+  transform: translateY(calc(-50% - 70px));
   z-index: 60;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 6px;
   pointer-events: none;
 }
 
@@ -1627,7 +1629,7 @@ html.zjh-in-iframe body.zjh-body {
   align-items: center;
   justify-content: center;
   gap: 3px;
-  width: 48px;
+  width: 44px;
   height: auto;
   padding: 0;
   border: none;
@@ -1646,8 +1648,8 @@ html.zjh-in-iframe body.zjh-body {
 }
 
 .zjh-rail-ic {
-  width: 44px;
-  height: 44px;
+  width: 38px;
+  height: 38px;
   object-fit: contain;
   display: block;
   pointer-events: none;
@@ -1664,10 +1666,10 @@ html.zjh-in-iframe body.zjh-body {
   color: rgba(240, 220, 160, 0.9);
 }
 
-@media (max-height: 640px) {
-  .zjh-rail { gap: 8px; }
-  .zjh-rail-btn { width: 44px; height: auto; }
-  .zjh-rail-ic { width: 40px; height: 40px; }
+@media (max-height: 700px) {
+  .zjh-rail { gap: 5px; }
+  .zjh-rail-btn { width: 40px; height: auto; }
+  .zjh-rail-ic { width: 34px; height: 34px; }
   .zjh-rail-lb { font-size: 8px; }
 }
 
@@ -1857,13 +1859,6 @@ html.zjh-in-iframe body.zjh-body {
   background: linear-gradient(90deg, #b8862a, #e8c76a);
 }
 .zjh-switch.is-on::after { transform: translateX(22px); }
-
-/* 小屏幕收窄按钮 */
-@media (max-height: 640px) {
-  .zjh-rail-btn { width: 44px; height: auto; }
-  .zjh-rail-ic { width: 40px; height: 40px; }
-  .zjh-rail { gap: 8px; }
-}
 
 /* 主次：庄闲和用色差，边注金色降权 */
 .zjh-bet-btn--banker .zjh-bet-btn__name,

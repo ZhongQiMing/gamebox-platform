@@ -2,13 +2,11 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
+  <link rel="stylesheet" href="/fonts/gamebox-fonts.css">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>百家乐</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;700;900&family=Orbitron:wght@600;700&family=ZCOOL+QingKe+HuangYou&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="./css/bjl-table.css?v=15">
-  <link rel="stylesheet" href="/games-assets/_table-common/table-ui.css?v=1">
+<link rel="stylesheet" href="./css/bjl-table.css?v=23">
+  <link rel="stylesheet" href="/games-assets/_table-common/table-ui.css?v=6">
   <script>
     (function () {
       if (window.parent !== window) document.documentElement.classList.add('bjl-in-iframe');
@@ -241,13 +239,7 @@
         </button>
       </div>
     </div>
-  </div><!-- /.bjl-stage -->
-  <div class="bjl-payout-fly" id="payoutFlyLayer" aria-hidden="true"></div>
-  <div class="bjl-phase-banner" id="phaseBanner" aria-hidden="true">
-    <img class="bjl-phase-banner__img" id="phaseBannerImg" alt="" draggable="false">
-  </div>
-
-  <!-- 右侧快捷竖排：客服 / 历史 / 记录 / 玩法 / 设置 -->
+  <!-- 右侧快捷竖排：相对牌桌区域垂直居中 -->
   <aside class="bjl-rail" id="bjlRail" aria-label="快捷操作">
     <button type="button" class="bjl-rail-btn" id="railCs" title="客服">
       <img class="bjl-rail-ic" src="/images/table-rail/rail-cs.png?v=3" alt="" draggable="false">
@@ -270,6 +262,11 @@
       <span class="bjl-rail-lb">设置</span>
     </button>
   </aside>
+  </div><!-- /.bjl-stage -->
+  <div class="bjl-payout-fly" id="payoutFlyLayer" aria-hidden="true"></div>
+  <div class="bjl-phase-banner" id="phaseBanner" aria-hidden="true">
+    <img class="bjl-phase-banner__img" id="phaseBannerImg" alt="" draggable="false">
+  </div>
 
   <div class="bjl-sheet-mask" id="bjlSheetMask" hidden></div>
   <section class="bjl-sheet" id="bjlSheet" hidden aria-hidden="true" role="dialog" aria-modal="true">
@@ -281,8 +278,8 @@
   </section>
 </div>
 
-  <script src="/legacy/js/games-common.js?v=28"></script>
-  <script src="/games-assets/_table-common/table-shell.js?v=5"></script>
-  <script src="./js/bjl-table.js?v=23"></script>
+  <script src="/legacy/js/games-common.js?v=29"></script>
+  <script src="/games-assets/_table-common/table-shell.js?v=10"></script>
+  <script src="./js/bjl-table.js?v=28"></script>
 </body>
 </html>

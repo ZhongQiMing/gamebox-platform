@@ -14,7 +14,7 @@ body.bjl-body {
   overflow: hidden;
   min-height: 0 !important;
   max-height: 100%;
-  background: #0a0806;
+  background: #0a0806 url('../assets/ui/stage-bg.jpg') center / cover no-repeat;
 }
 
 html.bjl-in-iframe,
@@ -32,7 +32,7 @@ html.bjl-in-iframe body.bjl-body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: #0a0806;
+  background: #0a0806 url('../assets/ui/stage-bg.jpg') center / cover no-repeat;
 }
 
 /* ??????? viewport ????????????????????????? */
@@ -146,13 +146,14 @@ html.bjl-in-iframe body.bjl-body {
 }
 
 .bjl-stage {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  background: #0a0806;
+  background: transparent;
 }
 
 .bjl-room {
@@ -162,7 +163,7 @@ html.bjl-in-iframe body.bjl-body {
   flex-shrink: 0;
   transform: scale(var(--bjl-scale));
   transform-origin: center center;
-  background: url('../assets/ui/page-unified-v50.png?v=3') center top / 100% 100% no-repeat;
+  background: url('../assets/ui/page-unified-v51.png?v=1') center top / 100% 100% no-repeat;
   overflow: hidden;
 }
 
@@ -1147,7 +1148,6 @@ html.bjl-in-iframe body.bjl-body {
 
 .bjl-action {
   position: absolute;
-  /* ????????????? */
   top: 68.5%;
   width: 8.2%;
   height: auto;
@@ -1159,6 +1159,7 @@ html.bjl-in-iframe body.bjl-body {
   background: transparent;
   cursor: pointer;
   pointer-events: auto;
+  z-index: 65;
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
   transition: none;
@@ -1370,16 +1371,18 @@ html.bjl-in-iframe body.bjl-body {
 
 
 /* ===== right rail + sheet ===== */
+/* 挂在 stage 内：相对牌桌区域上下边垂直居中 */
 
 .bjl-rail {
   position: absolute;
-  right: calc(6px + env(safe-area-inset-right, 0px));
+  right: calc(4px + env(safe-area-inset-right, 0px));
   top: 50%;
-  transform: translateY(-50%);
+  bottom: auto;
+  transform: translateY(calc(-50% - 70px));
   z-index: 60;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 6px;
   pointer-events: none;
 }
 
@@ -1390,7 +1393,7 @@ html.bjl-in-iframe body.bjl-body {
   align-items: center;
   justify-content: center;
   gap: 3px;
-  width: 48px;
+  width: 44px;
   height: auto;
   padding: 0;
   border: none;
@@ -1409,8 +1412,8 @@ html.bjl-in-iframe body.bjl-body {
 }
 
 .bjl-rail-ic {
-  width: 44px;
-  height: 44px;
+  width: 38px;
+  height: 38px;
   object-fit: contain;
   display: block;
   pointer-events: none;
@@ -1427,14 +1430,14 @@ html.bjl-in-iframe body.bjl-body {
   color: rgba(240, 220, 160, 0.9);
 }
 
-@media (max-height: 640px) {
-  .bjl-rail { gap: 8px; }
-  .bjl-rail-btn { width: 44px; height: auto; }
-  .bjl-rail-ic { width: 40px; height: 40px; }
+@media (max-height: 700px) {
+  .bjl-rail { gap: 5px; }
+  .bjl-rail-btn { width: 40px; height: auto; }
+  .bjl-rail-ic { width: 34px; height: 34px; }
   .bjl-rail-lb { font-size: 8px; }
 }
 
-/* ================= ??????????????/?????================= */
+/* ================= 通用弹层（历史/玩法/设置） ================= */
 .bjl-sheet-mask {
   position: absolute;
   inset: 0;

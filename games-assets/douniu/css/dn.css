@@ -16,7 +16,7 @@ body.dn-body {
   overflow: hidden;
   min-height: 0 !important;
   max-height: 100%;
-  background: #0a0806;
+  background: #0a0806 url('../assets/ui/stage-bg.jpg') center / cover no-repeat;
 }
 
 html.dn-in-iframe,
@@ -34,7 +34,7 @@ html.dn-in-iframe body.dn-body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: #0a0806;
+  background: #0a0806 url('../assets/ui/stage-bg.jpg') center / cover no-repeat;
 }
 
 /* ---------- ??????/????????? ---------- */
@@ -153,13 +153,14 @@ html.dn-in-iframe body.dn-body {
 .dn-stat .v.is-minus { color: #ff9aaa; }
 
 .dn-stage {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  background: #0a0806;
+  background: transparent;
 }
 
 .dn-room {
@@ -169,7 +170,7 @@ html.dn-in-iframe body.dn-body {
   flex-shrink: 0;
   transform: scale(var(--dn-scale));
   transform-origin: center center;
-  background: url('../assets/ui/page-unified-v50.png?v=2') center top / 100% 100% no-repeat;
+  background: url('../assets/ui/page-unified-v51.png') center top / 100% 100% no-repeat;
   overflow: hidden;
 }
 
@@ -796,8 +797,9 @@ html.dn-in-iframe body.dn-body {
 }
 
 /* 上：庄 / 闲；下：五键同尺寸，弧度参考 download.png（中间最低） */
-.dn-bet-btn[data-bet="banker"] { left: 7.0312%; top: 33.0078%; width: 36.3281%; height: 14.5833%; }
-.dn-bet-btn[data-bet="player"] { left: 56.6406%; top: 33.0078%; width: 36.3281%; height: 14.5833%; }
+/* 上排庄/闲：铺满中间空隙，中间留约 3% 缝 */
+.dn-bet-btn[data-bet="banker"] { left: 7.03%; top: 33.0078%; width: 41.47%; height: 14.5833%; }
+.dn-bet-btn[data-bet="player"] { left: 51.50%; top: 33.0078%; width: 41.47%; height: 14.5833%; }
 /* 底五键：原图直放 x1.22，1左下/5右下贴红轨 */
 .dn-bet-btn[data-bet="small"] { left: 7.9102%; top: 48.8281%; width: 15.7227%; height: 17.3177%; }
 .dn-bet-btn[data-bet="niuniu"] { left: 25.1953%; top: 48.8281%; width: 15.332%; height: 18.099%; }
@@ -1033,14 +1035,16 @@ html.dn-in-iframe body.dn-body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 0.45em;
-  width: 82%;
+  gap: 0.28em;
+  width: 78%;
+  max-width: 78%;
   margin: 0;
   padding: 0;
   text-align: center;
   pointer-events: none;
   user-select: none;
   box-sizing: border-box;
+  overflow: hidden;
 }
 
 /* 五键顶边平行，文字统一居中（底弧在素材透明区，不再按抬升补偿） */
@@ -1082,11 +1086,15 @@ html.dn-in-iframe body.dn-body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-height: 2.55em;
-  font-size: 24cqw;
-  letter-spacing: 0.04em;
+  min-height: 2.35em;
+  width: 100%;
+  max-width: 100%;
+  font-size: min(17cqh, 20cqw);
+  letter-spacing: 0.02em;
   line-height: 1.1;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: clip;
   color: #b28640;
   -webkit-text-fill-color: #b28640;
   text-shadow:
@@ -1095,9 +1103,12 @@ html.dn-in-iframe body.dn-body {
 }
 
 .dn-bet-btn--gold .dn-bet-btn__odds {
-  font-size: 12cqw;
-  letter-spacing: 0.04em;
+  font-size: min(10cqh, 11cqw);
+  letter-spacing: 0.02em;
   line-height: 1;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
   color: #a67a38;
   -webkit-text-fill-color: #a67a38;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
@@ -1108,8 +1119,8 @@ html.dn-in-iframe body.dn-body {
 .dn-bet-btn--gold .dn-bet-btn__name.is-stack {
   gap: 0;
   white-space: normal;
-  font-size: 24cqw;
-  letter-spacing: 0.04em;
+  font-size: min(15cqh, 18cqw);
+  letter-spacing: 0.02em;
   line-height: 1;
 }
 
@@ -1482,13 +1493,12 @@ html.dn-in-iframe body.dn-body {
 .dn-actions {
   position: absolute;
   inset: 0;
-  z-index: 28;
+  z-index: 65; /* 高于右侧栏，避免续押被挡住点不到 */
   pointer-events: none;
 }
 
 .dn-action {
   position: absolute;
-  /* ????????????? */
   top: 68.5%;
   width: 8.2%;
   height: auto;
@@ -1500,6 +1510,7 @@ html.dn-in-iframe body.dn-body {
   background: transparent;
   cursor: pointer;
   pointer-events: auto;
+  z-index: 65;
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
   transition: none;
@@ -1770,15 +1781,17 @@ html.dn-in-iframe body.dn-body {
 }
 
 /* ================= 右侧快捷竖排按钮 ================= */
+/* 挂在 stage 内：相对牌桌区域上下边垂直居中 */
 .dn-rail {
   position: absolute;
-  right: calc(6px + env(safe-area-inset-right, 0px));
+  right: calc(4px + env(safe-area-inset-right, 0px));
   top: 50%;
-  transform: translateY(-50%);
+  bottom: auto;
+  transform: translateY(calc(-50% - 70px));
   z-index: 60;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 6px;
   pointer-events: none;
 }
 
@@ -1789,7 +1802,7 @@ html.dn-in-iframe body.dn-body {
   align-items: center;
   justify-content: center;
   gap: 3px;
-  width: 48px;
+  width: 44px;
   height: auto;
   padding: 0;
   border: none;
@@ -1808,8 +1821,8 @@ html.dn-in-iframe body.dn-body {
 }
 
 .dn-rail-ic {
-  width: 44px;
-  height: 44px;
+  width: 38px;
+  height: 38px;
   object-fit: contain;
   display: block;
   pointer-events: none;
@@ -2013,11 +2026,11 @@ html.dn-in-iframe body.dn-body {
 }
 .dn-switch.is-on::after { transform: translateX(22px); }
 
-/* 小屏幕收窄按钮 */
-@media (max-height: 640px) {
-  .dn-rail-btn { width: 44px; height: auto; }
-  .dn-rail-ic { width: 40px; height: 40px; }
-  .dn-rail { gap: 8px; }
+/* 小屏幕再压缩，确保不压续押 */
+@media (max-height: 700px) {
+  .dn-rail { gap: 5px; }
+  .dn-rail-btn { width: 40px; height: auto; }
+  .dn-rail-ic { width: 34px; height: 34px; }
   .dn-rail-lb { font-size: 8px; }
 }
 
@@ -2046,7 +2059,8 @@ html.dn-in-iframe body.dn-body {
   -webkit-text-fill-color: #9a7340;
   opacity: 0.9;
 }
+/* 单行短名（小牛/牛牛/五花牛）略大一点，仍限制在键宽内 */
 .dn-bet-btn--gold .dn-bet-btn__name:not(.is-stack) {
-  font-size: min(26cqh, 36cqw);
-  letter-spacing: 0.04em;
+  font-size: min(17cqh, 22cqw);
+  letter-spacing: 0.02em;
 }

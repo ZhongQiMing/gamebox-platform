@@ -308,7 +308,24 @@
       '</footer></div>';
   }
 
-  function bindStage(root, onDone) {
+  function setBallNum(el, n) {
+    if (!el) return;
+    el.setAttribute('data-n', String(n));
+    const img = el.querySelector('img');
+    if (img) {
+      img.src = BALLS + 'ball-' + String(n).padStart(2, '0') + '.png';
+      img.alt = String(n);
+    }
+  }
+
+  /**
+   * @param {HTMLElement} root
+   * @param {Function} [onDone]
+   * @param {{ durationMs?: number }} [opts] 直播仪式总时长（顶栏球滚动 + 颁奖台）；缺省为历史瞬落
+   */
+  function bindStage(root, onDone, opts) {
+    opts = opts || {};
+    const forced = Number(opts.durationMs) || 0;
     const card = root && root.classList && root.classList.contains('jsr-result-card')
       ? root : root && root.closest('.jsr-result-card');
     const canvas = card && card.querySelector('.jsr-rc-canvas');
@@ -321,16 +338,76 @@
       if (typeof onDone === 'function') onDone();
       return;
     }
-    const run = () => {
-      composeStage(canvas, nums).then(() => {
-        if (typeof onDone === 'function') onDone();
-      }).catch(() => {
+
+    if (forced <= 0) {
+      const run = function () {
+        composeStage(canvas, nums).then(function () {
+          if (typeof onDone === 'function') onDone();
+        }).catch(function () {
+          if (canvas.isConnected) canvas.outerHTML = '<div class="jsr-rc-fail">加载失败</div>';
+          if (typeof onDone === 'function') onDone();
+        });
+      };
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run);
+      else run();
+      return;
+    }
+
+    const durationMs = Math.max(2800, forced);
+    const ballEls = card.querySelectorAll('.jsr-rc-balls .jsr-ball');
+    const stage = card.querySelector('.jsr-rc-stage');
+    const foot = card.querySelector('.jsr-rc-foot');
+    card.classList.add('is-drawing');
+    card.classList.remove('is-reveal');
+    if (stage) stage.style.opacity = '0.28';
+    if (foot) foot.style.opacity = '0.35';
+
+    const rollUntil = Math.max(1200, durationMs - 900);
+    const t0 = performance.now();
+    let lastSwap = 0;
+    let finished = false;
+
+    function finish() {
+      if (finished) return;
+      finished = true;
+      ballEls.forEach(function (el, i) { setBallNum(el, nums[i]); });
+      const paint = composeStage(canvas, nums).then(function () {
+        if (stage) stage.style.opacity = '';
+        if (foot) foot.style.opacity = '';
+        card.classList.remove('is-drawing');
+        card.classList.add('is-reveal');
+      }).catch(function () {
         if (canvas.isConnected) canvas.outerHTML = '<div class="jsr-rc-fail">加载失败</div>';
-        if (typeof onDone === 'function') onDone();
+        if (stage) stage.style.opacity = '';
+        if (foot) foot.style.opacity = '';
+        card.classList.remove('is-drawing');
+        card.classList.add('is-reveal');
       });
-    };
-    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run);
-    else run();
+      function afterPaint() {
+        const left = Math.max(0, durationMs - (performance.now() - t0));
+        setTimeout(function () {
+          if (typeof onDone === 'function') onDone();
+        }, left);
+      }
+      paint.then(afterPaint, afterPaint);
+    }
+
+    function frame(now) {
+      if (now - lastSwap > 70) {
+        lastSwap = now;
+        ballEls.forEach(function (el) {
+          setBallNum(el, 1 + Math.floor(Math.random() * 10));
+        });
+      }
+      if (now - t0 >= rollUntil) {
+        finish();
+        return;
+      }
+      requestAnimationFrame(frame);
+    }
+
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(frame);
+    else finish();
   }
 
   global.JsrResultCard = { build: buildResultCardHtml, bindStage, ballHtml };

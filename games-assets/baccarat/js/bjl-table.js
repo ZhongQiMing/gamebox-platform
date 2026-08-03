@@ -97,8 +97,6 @@
   var roadStats = { banker: 0, player: 0, tie: 0 };
   var roadRoundNos = {};
   var ROAD_ROWS = 6;
-  var ROAD_MIN_COLS = 12;
-  var ROAD_MAX = 72;
   var ROAD_LABELS = { banker: '庄', player: '闲', tie: '和' };
   var ROAD_ALLOWED = { banker: 1, player: 1, tie: 1 };
   var SUITS = ['spade', 'heart', 'club', 'diamond'];
@@ -411,17 +409,33 @@
   var bgmAudio = null;
   var voiceAudio = null;
   var sfxLastAt = {};
-  var audioPref = { music: true, sfx: true };
-  try {
-    var apRaw = JSON.parse(localStorage.getItem('bjl_audio') || 'null');
-    if (apRaw && typeof apRaw === 'object') {
-      audioPref.music = apRaw.music !== false;
-      audioPref.sfx = apRaw.sfx !== false;
-    }
-  } catch (e) { /* ignore */ }
-
+  var AUDIO_PREF_KEY = 'bjl_audio';
+  var audioPref = window.TableShell
+    ? TableShell.loadAudioPref(AUDIO_PREF_KEY)
+    : { music: true, sfx: true };
   function saveAudioPref() {
-    try { localStorage.setItem('bjl_audio', JSON.stringify(audioPref)); } catch (e) { /* ignore */ }
+    if (window.TableShell) {
+      TableShell.saveAudioPref(AUDIO_PREF_KEY, audioPref);
+    } else {
+      try { localStorage.setItem(AUDIO_PREF_KEY, JSON.stringify(audioPref)); } catch (e) { /* ignore */ }
+    }
+  }
+  function applyAudioPrefSilent(pref) {
+    if (!pref) return;
+    audioPref.music = !!pref.music;
+    audioPref.sfx = !!pref.sfx;
+    if (audioPref.music) {
+      if (typeof ensureBgm === 'function') ensureBgm(true);
+    } else if (typeof bgmAudio !== 'undefined' && bgmAudio) {
+      try { bgmAudio.pause(); } catch (e) { /* ignore */ }
+    }
+    if (!audioPref.sfx && typeof voiceAudio !== 'undefined' && voiceAudio) {
+      try { voiceAudio.pause(); } catch (e) { /* ignore */ }
+      voiceAudio = null;
+    }
+  }
+  if (window.TableShell && TableShell.watchAppAudioPref) {
+    TableShell.watchAppAudioPref(AUDIO_PREF_KEY, applyAudioPrefSilent);
   }
   function audioUrl(name) { return AUDIO_BASE + name + '.mp3?v=' + AUDIO_V; }
   function unlockAudio() {
@@ -1393,17 +1407,42 @@
     grid.style.width = (cols * (cell + gap) - gap) + 'px';
   }
 
+  function measureRoadViewCols(scrollEl) {
+    if (window.TableShell && TableShell.measureRoadViewCols) {
+      return TableShell.measureRoadViewCols(scrollEl, ROAD_ROWS);
+    }
+    return 12;
+  }
+
+  function resetRoadForNewDay(roundNo) {
+    if (!roundNo || !window.TableShell) return;
+    var ymd = TableShell.roundNoYmd(roundNo);
+    if (!ymd) return;
+    var keys = Object.keys(roadRoundNos);
+    if (!keys.length) return;
+    var prev = TableShell.roundNoYmd(keys[0]);
+    if (prev && prev !== ymd) {
+      roadHistory = [];
+      roadRoundNos = {};
+      roadStats = { banker: 0, player: 0, tie: 0 };
+    }
+  }
+
   function renderBead() {
     if (!beadGrid) return;
-    var filledCols = Math.ceil(roadHistory.length / ROAD_ROWS) || 0;
-    var cols = Math.max(ROAD_MIN_COLS, filledCols + 1);
-    var lastIdx = roadHistory.length - 1;
+    var viewCols = measureRoadViewCols(beadScroll);
+    var viewSeq = window.TableShell
+      ? TableShell.roadBeadViewSeq(roadHistory, viewCols, ROAD_ROWS)
+      : roadHistory.slice();
+    var filledCols = Math.ceil(viewSeq.length / ROAD_ROWS) || 0;
+    var cols = viewCols;
+    var lastIdx = viewSeq.length - 1;
     var html = '';
     for (var c = 0; c < cols; c++) {
       for (var r = 0; r < ROAD_ROWS; r++) {
         var idx = c * ROAD_ROWS + r;
-        if (idx < roadHistory.length) {
-          var kind = roadHistory[idx];
+        if (idx < viewSeq.length) {
+          var kind = viewSeq[idx];
           var latest = idx === lastIdx ? ' is-latest' : '';
           html += '<span class="bjl-bead bjl-bead--' + kind + latest + '" role="listitem">' + ROAD_LABELS[kind] + '</span>';
         } else {
@@ -1413,15 +1452,20 @@
     }
     beadGrid.innerHTML = html;
     beadGrid.style.setProperty('--road-cols', String(cols));
+    beadGrid.setAttribute('data-filled-cols', String(filledCols));
     syncRoadGridWidth(beadGrid, cols);
+    if (beadScroll) beadScroll.scrollLeft = 0;
   }
 
   function renderBig() {
     if (!bigGrid) return;
+    var viewCols = measureRoadViewCols(bigScroll);
     var colsData = buildBigRoad(roadHistory);
-    var cols = Math.max(ROAD_MIN_COLS, colsData.length + 1);
+    if (window.TableShell) colsData = TableShell.roadBigViewCols(colsData, viewCols);
+    var filledCols = colsData.length;
+    var cols = viewCols;
     var html = '';
-    var lastCol = colsData.length - 1;
+    var lastCol = filledCols - 1;
     var lastRow = lastCol >= 0 ? colsData[lastCol].cells.length - 1 : -1;
     for (var c = 0; c < cols; c++) {
       var col = colsData[c];
@@ -1442,16 +1486,9 @@
     }
     bigGrid.innerHTML = html;
     bigGrid.style.setProperty('--road-cols', String(cols));
+    bigGrid.setAttribute('data-filled-cols', String(filledCols));
     syncRoadGridWidth(bigGrid, cols);
-  }
-
-  function scrollRoadToEnd() {
-    function go() {
-      if (beadScroll) beadScroll.scrollLeft = beadScroll.scrollWidth;
-      if (bigScroll) bigScroll.scrollLeft = bigScroll.scrollWidth;
-    }
-    go();
-    requestAnimationFrame(function () { go(); requestAnimationFrame(go); });
+    if (bigScroll) bigScroll.scrollLeft = 0;
   }
 
   function renderRoad() {
@@ -1465,20 +1502,15 @@
     setText('roadTpct', pct(roadStats.tie, total));
     renderBead();
     renderBig();
-    scrollRoadToEnd();
   }
 
   function pushRoad(result, roundNo) {
     if (!ROAD_LABELS[result]) return;
     if (roundNo && roadRoundNos[roundNo]) return;
+    resetRoadForNewDay(roundNo);
     if (roundNo) roadRoundNos[roundNo] = 1;
     if (roadStats[result] != null) roadStats[result] += 1;
     roadHistory.push(result);
-    if (roadHistory.length > ROAD_MAX) {
-      var over = roadHistory.length - ROAD_MAX;
-      over = Math.ceil(over / ROAD_ROWS) * ROAD_ROWS;
-      roadHistory = roadHistory.slice(over);
-    }
     renderRoad();
   }
 
@@ -1497,12 +1529,52 @@
     (packed.roundNos || []).forEach(function (rn) {
       if (rn) roadRoundNos[String(rn)] = 1;
     });
-    if (roadHistory.length > ROAD_MAX) {
-      var over = roadHistory.length - ROAD_MAX;
-      over = Math.ceil(over / ROAD_ROWS) * ROAD_ROWS;
-      roadHistory = roadHistory.slice(over);
-    }
     renderRoad();
+  }
+
+  function buildBeadCells(history) {
+    var cols = Math.max(1, Math.ceil(history.length / ROAD_ROWS));
+    var last = history.length - 1;
+    var html = '';
+    for (var c = 0; c < cols; c++) {
+      for (var r = 0; r < ROAD_ROWS; r++) {
+        var idx = c * ROAD_ROWS + r;
+        if (idx < history.length) {
+          var kind = history[idx];
+          var latest = idx === last ? ' is-latest' : '';
+          html += '<span class="bjl-bead bjl-bead--' + kind + latest + '">' + ROAD_LABELS[kind] + '</span>';
+        } else {
+          html += '<span class="bjl-bead bjl-bead--empty"></span>';
+        }
+      }
+    }
+    return html;
+  }
+
+  function buildBigCells(history) {
+    var data = buildBigRoad(history);
+    var cols = Math.max(1, data.length);
+    var lastCol = data.length - 1;
+    var lastRow = lastCol >= 0 ? data[lastCol].cells.length - 1 : -1;
+    var html = '';
+    for (var c = 0; c < cols; c++) {
+      var col = data[c];
+      for (var r = 0; r < ROAD_ROWS; r++) {
+        if (col && r < col.cells.length) {
+          var cell = col.cells[r];
+          var latest = (c === lastCol && r === lastRow) ? ' is-latest' : '';
+          var tie = '';
+          if (cell.ties > 0) {
+            var n = cell.ties > 9 ? 9 : cell.ties;
+            tie = '<i class="bjl-big__tie" data-n="' + n + '">' + (n > 1 ? String(n) : '') + '</i>';
+          }
+          html += '<span class="bjl-big bjl-big--' + cell.side + latest + '">' + tie + '</span>';
+        } else {
+          html += '<span class="bjl-big bjl-big--empty"></span>';
+        }
+      }
+    }
+    return html;
   }
 
   function setPhase(next) {
@@ -1512,6 +1584,14 @@
   }
 
   function tick() {
+    if (alignWaiting) {
+      if (Date.now() >= payoutDeadline || getBetRemainSec() > 0) {
+        startBet();
+        return;
+      }
+      paint(false);
+      return;
+    }
     if (phase === 'bet') {
       /* 每拍跟墙钟对齐，与大厅剩余秒一致 */
       left = Math.max(0, Math.ceil(getBetRemainSec()));
@@ -1655,7 +1735,7 @@
   if (backBtn) {
     backBtn.addEventListener('click', function () {
       if (window.App && App.go) App.go('../../client-app/pages/game-lobby/game-lobby.html' + q);
-      else if (window.parent !== window) window.parent.postMessage({ type: 'assets-game-nav', path: '/lobby' + q }, '*');
+      else if (window.parent !== window) window.parent.postMessage({ type: 'assets-game-nav', path: '/lobby' + q }, location.origin);
       else history.back();
     });
   }
@@ -1719,13 +1799,17 @@
   if (window.TableShell && TableShell.startSnapshotPoll) {
     window.__bjlSnapTimer = TableShell.startSnapshotPoll(SERVER_GAME, function (snap) {
       applyServerSnap(snap);
+      if (alignWaiting && snap.phase === 'BETTING' && Number(snap.secondsLeft) > 0) {
+        startBet();
+        return;
+      }
       if (phase === 'bet' && !roundBusy) {
         left = Math.max(0, Math.ceil(getBetRemainSec()));
         paint(false);
       }
     }, {
       intervalMs: 1500,
-      shouldPoll: function () { return phase === 'bet' && !roundBusy; },
+      shouldPoll: function () { return (phase === 'bet' && !roundBusy) || alignWaiting; },
     });
   }
 
@@ -1771,7 +1855,7 @@
     function nav(path) {
       if (window.App && App.go) App.go(path);
       else if (window.parent !== window) {
-        window.parent.postMessage({ type: 'assets-game-nav', path: path }, '*');
+        window.parent.postMessage({ type: 'assets-game-nav', path: path }, location.origin);
       }
     }
 
@@ -1794,71 +1878,81 @@
         '<span>闲 <b class="player">' + roadStats.player + '</b></span>' +
         '<span>和 <b class="tie">' + roadStats.tie + '</b></span>' +
         '<span>总局 <b>' + total + '</b></span></div>' +
-        '<div class="bjl-sheet-road__label">珠盘</div>' +
-        '<div class="bjl-sheet-road__scroll"><div class="bjl-sheet-road__grid" id="sheetBead"></div></div>' +
+        '<div class="bjl-sheet-road__label">珠盘路（今日 ' + roadHistory.length + ' 局）</div>' +
+        '<div class="bjl-sheet-road__scroll"><div class="bjl-sheet-road__grid">' + buildBeadCells(roadHistory) + '</div></div>' +
         '<div class="bjl-sheet-road__label">大路</div>' +
-        '<div class="bjl-sheet-road__scroll"><div class="bjl-sheet-road__grid" id="sheetBig"></div></div>';
+        '<div class="bjl-sheet-road__scroll"><div class="bjl-sheet-road__grid">' + buildBigCells(roadHistory) + '</div></div>';
       openSheet('历史记录', html);
-      var sb = document.getElementById('sheetBead');
-      var sg = document.getElementById('sheetBig');
-      if (sb) { var old = beadGrid; beadGrid = sb; renderBead(); beadGrid = old; }
-      if (sg) { var old2 = bigGrid; bigGrid = sg; renderBig(); bigGrid = old2; }
+      var scrolls = document.querySelectorAll('.bjl-sheet-road__scroll');
+      for (var i = 0; i < scrolls.length; i++) scrolls[i].scrollLeft = scrolls[i].scrollWidth;
     });
 
     var rulesBtn = document.getElementById('railRules');
     if (rulesBtn) rulesBtn.addEventListener('click', function () {
-      openSheet('玩法规则',
-        '<div class="bjl-rules">' +
-        '<p class="bjl-rules__intro">使用 8 副牌（无大小王）。庄、闲各先发两张，先闲后庄；点数只计个位，9 最大、0 最小。</p>' +
-        '<table class="bjl-rules__table"><thead><tr><th>投注</th><th>获胜条件</th><th>赔率</th></tr></thead><tbody>' +
-        '<tr><td>庄</td><td>庄点数大于闲</td><td class="odds">1 : ' + ODDS.banker + '</td></tr>' +
-        '<tr><td>闲</td><td>闲点数大于庄</td><td class="odds">1 : ' + ODDS.player + '</td></tr>' +
-        '<tr><td>和</td><td>庄闲点数相同</td><td class="odds">1 : ' + ODDS.tie + '</td></tr>' +
-        '<tr><td>庄对</td><td>庄前两张同点</td><td class="odds">1 : ' + ODDS.bankerPair + '</td></tr>' +
-        '<tr><td>闲对</td><td>闲前两张同点</td><td class="odds">1 : ' + ODDS.playerPair + '</td></tr>' +
-        '</tbody></table>' +
-        '<p class="bjl-rules__intro">庄与闲不可同时下注。和局时庄/闲本金返还；对子独立结算。</p>' +
-        '<p class="bjl-rules__intro"><b>天牌：</b>任一方起始 8 或 9，双方均不补牌。</p>' +
-        '<p class="bjl-rules__intro"><b>闲家补牌：</b>无天牌时，闲初始 0～5 补第三张，6～7 不补。</p>' +
-        '<p class="bjl-rules__intro"><b>庄家补牌：</b>按庄初始点与闲第三张点决定——庄 0～2 必补；庄 3 时闲第三张为 8 不补否则补；庄 4 时闲第三张为 0/1/8/9 不补否则补；庄 5 时闲第三张为 0/1/2/3/8/9 不补否则补；庄 6 时闲第三张为 6/7 才补；庄 7 不补。若闲不补，则庄 0～5 补、6～7 不补。</p>' +
-        '<p class="bjl-rules__intro">桌面飞入的「他人筹码」与人数仅为气氛展示，不代表真实在线投注。</p>' +
-        '<button type="button" class="bjl-verify-btn" id="bjlVerifyBtn" style="margin-top:10px;padding:8px 14px;border:0;border-radius:8px;background:#c9a227;color:#1a1208;font-weight:700;width:100%">公平验算</button>' +
-        '<div id="bjlVerifyBox" style="margin-top:8px"></div>' +
-        '</div>');
-      var vb = document.getElementById('bjlVerifyBtn');
-      if (vb) vb.addEventListener('click', function () {
-        var box = document.getElementById('bjlVerifyBox');
-        if (!box) return;
-        box.innerHTML = '<p class="bjl-rules__intro">验算中…</p>';
-        var req = (window.App && App.fetchTableVerify)
-          ? App.fetchTableVerify(SERVER_GAME, currentBetIssue || lastSettledRoundNo || undefined)
-          : Promise.reject(new Error('请从大厅进入游戏'));
-        req.then(function (info) {
-          if (window.TableShell) {
-            info.fairLine = TableShell.fairLine(info);
-            box.innerHTML = TableShell.buildVerifyHtml(info, 'bjl');
-          } else {
-            box.innerHTML = '<p class="bjl-rules__intro">hash: ' + (info.serverSeedHash || '—') + '</p>';
-          }
-        }).catch(function (e) {
-          box.innerHTML = '<p class="bjl-rules__intro">' + ((e && e.message) || '验算失败') + '</p>';
-        });
-      });
+      var html = window.TableShell
+        ? TableShell.buildFormalRulesHtml({
+            sections: [
+              {
+                title: '一、游戏简介',
+                paragraphs: [
+                  '本桌采用标准百家乐规则。使用八副扑克（不含大小王）。每局先闲后庄各发两张，按规则决定是否补第三张；点数只计个位，九点最大、零点最小。',
+                ],
+              },
+              {
+                title: '二、点数与天牌',
+                list: [
+                  'A 计 1 点；2～9 按面值；10、J、Q、K 计 0 点',
+                  '两张（或三张）点数相加后取个位为最终点数',
+                  '任一方起始点数为 8 或 9，称为天牌，双方均不再补牌',
+                ],
+              },
+              {
+                title: '三、补牌规则',
+                paragraphs: ['无天牌时，按下列规则补牌：'],
+                list: [
+                  '闲家：初始 0～5 点补第三张；6～7 点不补',
+                  '庄家：闲不补时，庄 0～5 补、6～7 不补',
+                  '庄家（闲已补）：庄 0～2 必补；庄 3 时闲第三张为 8 不补否则补；庄 4 时闲第三张为 0/1/8/9 不补否则补；庄 5 时闲第三张为 0/1/2/3/8/9 不补否则补；庄 6 时闲第三张为 6/7 才补；庄 7 不补',
+                ],
+              },
+              {
+                title: '四、结算说明',
+                list: [
+                  '庄与闲不可同时下注',
+                  '和局时，庄/闲注单本金返还；对子玩法独立结算',
+                  '路单展示本桌近期开奖走势，仅供参考',
+                ],
+              },
+            ],
+            oddsHeaders: ['玩法', '获胜条件', '赔率'],
+            oddsRows: [
+              ['庄', '庄点数大于闲', '1 : ' + ODDS.banker],
+              ['闲', '闲点数大于庄', '1 : ' + ODDS.player],
+              ['和', '庄闲点数相同', '1 : ' + ODDS.tie],
+              ['庄对', '庄前两张同点', '1 : ' + ODDS.bankerPair],
+              ['闲对', '闲前两张同点', '1 : ' + ODDS.playerPair],
+            ],
+            notes: [
+              '请理性投注，量力而行。',
+              '最终以当局开牌结果与系统结算为准。',
+            ],
+          })
+        : '<p>玩法规则加载失败，请刷新重试。</p>';
+      openSheet('玩法规则', html);
     });
 
     var setBtn = document.getElementById('railSettings');
     if (setBtn) setBtn.addEventListener('click', function () {
-      openSheet('设置',
-        '<div class="bjl-settings">' +
-        '<label class="bjl-settings__row"><span>背景音乐</span>' +
-        '<input type="checkbox" id="bjlMusicToggle"' + (audioPref.music ? ' checked' : '') + '></label>' +
-        '<label class="bjl-settings__row"><span>音效 / 语音</span>' +
-        '<input type="checkbox" id="bjlSfxToggle"' + (audioPref.sfx ? ' checked' : '') + '></label>' +
-        '</div>');
-      var m = document.getElementById('bjlMusicToggle');
-      var s = document.getElementById('bjlSfxToggle');
-      if (m) m.addEventListener('change', function () { unlockAudio(); setMusicOn(m.checked); });
-      if (s) s.addEventListener('change', function () { unlockAudio(); setSfxOn(s.checked); });
+      var html = window.TableShell
+        ? TableShell.buildAudioSettingsHtml(audioPref)
+        : '<p>设置加载失败</p>';
+      openSheet('设置', html);
+      if (window.TableShell) {
+        TableShell.bindAudioSettings({
+          onMusic: function (on) { if (typeof unlockAudio === 'function') unlockAudio(); setMusicOn(on); },
+          onSfx: function (on) { if (typeof unlockAudio === 'function') unlockAudio(); setSfxOn(on); },
+        });
+      }
     });
   })();
 

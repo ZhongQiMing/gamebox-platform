@@ -1,10 +1,10 @@
 /**
- * 四桌共享视觉降噪（顶栏 2×2 统计不在此文件改动）
- * 房间根节点加 .tb-room；下注/路单/人数加 .tb-bet / .tb-roadmap / .tb-players
- * 换筹码钮加 .tb-chip-more
+ * ??????????? 2x2 ??????????
+ * ?????? .tb-room???/??/??? .tb-bet / .tb-roadmap / .tb-players
+ * ????? .tb-chip-more
  */
 
-/* 下注阶段：路单标题/统计降权，珠子保持清晰 */
+/* ?????????/??????????? */
 .tb-room.is-live-bet .tb-roadmap [class*='roadmap__title'],
 .tb-room.is-live-bet .tb-roadmap [class*='roadmap__stats'] {
   opacity: 0.62;
@@ -14,7 +14,7 @@
   opacity: 0.88;
 }
 
-/* 开奖/派奖：压暗下注与路单，牌面做主戏 */
+/* ??/???????????????? */
 .tb-room.is-focus .tb-bet {
   opacity: 0.36;
   filter: saturate(0.5) brightness(0.92);
@@ -32,25 +32,20 @@
   pointer-events: none;
 }
 
-/* 死控件：真账不可撤，隐藏撤销钮 */
-.tb-room [data-action='undo'] {
-  display: none !important;
-}
-
-/* 气氛筹码降噪 */
+/* ?????? */
 .tb-room [data-owner='other'] {
   opacity: 0.52;
   filter: saturate(0.7);
 }
 
-/* 人数角标降为 meta */
+/* ?????? meta */
 .tb-room .tb-players {
   opacity: 0.72;
-  transform: scale(0.92);
+  transform: translate(-50%, -50%) scale(0.92);
   transform-origin: center center;
 }
 
-/* 换筹码页：加大触控 */
+/* ????????? */
 .tb-chip-more {
   width: 5.8% !important;
   height: 9.2% !important;
@@ -59,9 +54,124 @@
   width: 42% !important;
 }
 
-/* 局号短显略放大（标题下，不碰 2×2） */
+/* ???? */
 [class*='-head-round'] {
   font-size: 11px !important;
   letter-spacing: 0.04em !important;
   color: rgba(255, 230, 170, 0.88) !important;
 }
+
+/* ?????? */
+.tb-rules {
+  color: #e8e0d0;
+  font-size: 12px;
+  line-height: 1.65;
+  letter-spacing: 0.02em;
+}
+.tb-rules__sec + .tb-rules__sec {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(212, 175, 55, 0.18);
+}
+.tb-rules__title {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 800;
+  color: #f0d78c;
+  letter-spacing: 0.08em;
+}
+.tb-rules__p {
+  margin: 0 0 6px;
+  color: rgba(232, 224, 208, 0.92);
+}
+.tb-rules__p:last-child { margin-bottom: 0; }
+.tb-rules__list {
+  margin: 0;
+  padding: 0 0 0 1.15em;
+  color: rgba(232, 224, 208, 0.9);
+}
+.tb-rules__list li + li { margin-top: 4px; }
+.tb-rules__table-wrap {
+  margin-top: 8px;
+  overflow-x: auto;
+  border-radius: 8px;
+  border: 1px solid rgba(212, 175, 55, 0.28);
+  background: rgba(0, 0, 0, 0.22);
+}
+.tb-rules__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.tb-rules__table th,
+.tb-rules__table td {
+  padding: 8px 10px;
+  text-align: left;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  vertical-align: top;
+}
+.tb-rules__table th {
+  color: #f0d78c;
+  font-weight: 700;
+  background: rgba(212, 175, 55, 0.1);
+  white-space: nowrap;
+}
+.tb-rules__table tbody tr:last-child td { border-bottom: 0; }
+.tb-rules__table td.odds,
+.tb-rules__table th.odds {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: #ffe08a;
+  font-weight: 700;
+}
+.tb-rules__table th.odds { color: #f0d78c; }
+
+/* ?????????? */
+.tb-room .tb-roadmap [class*='roadmap__scroll'] {
+  overflow-x: hidden !important;
+  overscroll-behavior-x: none;
+}
+
+/* ????????? / ?????? */
+.tb-settings { padding: 4px 2px 8px; }
+.tb-settings__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 4px;
+  border-bottom: 1px solid rgba(212, 175, 55, 0.16);
+}
+.tb-settings__row:last-child { border-bottom: 0; }
+.tb-settings__label {
+  font-size: 15px;
+  color: #e8d9b0;
+  letter-spacing: 1px;
+}
+.tb-switch {
+  position: relative;
+  width: 50px;
+  height: 28px;
+  border-radius: 999px;
+  border: none;
+  background: rgba(120, 100, 60, 0.4);
+  cursor: pointer;
+  transition: background 0.2s ease;
+  flex-shrink: 0;
+}
+.tb-switch::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #f4ead0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  transition: transform 0.2s ease;
+}
+.tb-switch.is-on {
+  background: linear-gradient(90deg, #b8862a, #e8c76a);
+}
+.tb-switch.is-on::after { transform: translateX(22px); }

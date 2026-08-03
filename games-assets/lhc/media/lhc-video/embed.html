@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>幸运六合彩 · 开奖</title>
+  <link rel="stylesheet" href="css/embed.css?v=11" />
+  <link rel="preload" as="image" href="img/0001.png" />
+  <link rel="preload" as="image" href="img/222.png" />
+  <link rel="preload" as="image" href="img/status.gif" />
+  <link rel="preload" as="image" href="img/each.gif" />
+</head>
+<body>
+  <div class="loading">LOADING...</div>
+  <div id="stage">
+    <!-- 单层 view_box：机台精灵 + 遮罩 + 出号条（与官网结构一致） -->
+    <div class="view_box" id="die">
+      <img class="machine-sprite" id="machineGif" alt="" draggable="false" />
+      <div class="crust">
+        <div class="number_box">
+          <div class="number">
+            <ul id="numList">
+              <li data-slot="0" class="is-empty"><img class="ball-img" alt="" draggable="false" /></li>
+              <li data-slot="1" class="is-empty"><img class="ball-img" alt="" draggable="false" /></li>
+              <li data-slot="2" class="is-empty"><img class="ball-img" alt="" draggable="false" /></li>
+              <li data-slot="3" class="is-empty"><img class="ball-img" alt="" draggable="false" /></li>
+              <li data-slot="4" class="is-empty"><img class="ball-img" alt="" draggable="false" /></li>
+              <li data-slot="5" class="is-empty"><img class="ball-img" alt="" draggable="false" /></li>
+              <li data-slot="6" class="is-empty lastLi"><img class="ball-img" alt="" draggable="false" /></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script src="js/video-host.js?v=11"></script>
+</body>
+</html>

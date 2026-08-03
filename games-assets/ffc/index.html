@@ -2,11 +2,11 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
+  <link rel="stylesheet" href="/fonts/gamebox-fonts.css">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>1分时时彩</title>
   <link rel="stylesheet" href="/legacy/css/common.css">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@500;600;700&display=swap">
-  <link rel="stylesheet" href="./css/ffc.css?v=35">
+<link rel="stylesheet" href="./css/ffc.css?v=55">
   <script>
     /* 大厅 iframe 嵌入时标记，布局用 100% 跟随容器而非外层 100dvh */
     (function () {
@@ -164,7 +164,13 @@
   <div class="ffc-play-sheet" id="playSheet" hidden>
     <div class="ffc-play-sheet__head">
       <span>全部玩法</span>
-      <button type="button" id="playSheetClose">×</button>
+      <div class="ffc-play-sheet__head-actions">
+        <button type="button" class="ffc-play-sheet__rules" id="playSheetRules" title="游戏规则">
+          <span class="ffc-play-sheet__rules-ic" aria-hidden="true">i</span>
+          <span>游戏规则</span>
+        </button>
+        <button type="button" id="playSheetClose" aria-label="关闭">×</button>
+      </div>
     </div>
     <div class="ffc-play-sheet__main">
       <nav class="ffc-play-nav" id="playNav" aria-label="玩法分类"></nav>
@@ -175,29 +181,29 @@
       </div>
     </div>
     <footer class="ffc-play-sheet__foot">
-      <div class="ffc-play-foot__sel">
-        <div class="ffc-play-foot__sel-main">已选 <strong id="playSelected">—</strong> <span class="ffc-play-foot__hint">（可多选）</span></div>
+      <div class="ffc-play-foot__chiprow">
+        <div class="ffc-play-foot__chips" id="playAmountChips"></div>
+        <input type="number" class="ffc-play-foot__input" id="playAmount" value="100" min="1" inputmode="numeric" aria-label="单注金额">
+        <button type="button" class="ffc-play-foot__allin" id="playAmountAllin">梭哈</button>
+      </div>
+      <div class="ffc-play-foot__action">
         <button type="button" class="ffc-play-foot__clear" id="playClear">清空</button>
-      </div>
-      <div class="ffc-play-foot__meta">
-        <span class="ffc-play-foot__bal">余额 <strong id="playFootBalance">0</strong></span>
-      </div>
-      <div class="ffc-play-foot__chips" id="playAmountChips"></div>
-      <div class="ffc-play-foot__row">
-        <button type="button" class="ffc-play-foot__step" id="playAmountMinus" aria-label="减少">−</button>
-        <input type="number" class="ffc-play-foot__input" id="playAmount" value="100" min="1" inputmode="numeric">
-        <button type="button" class="ffc-play-foot__step" id="playAmountPlus" aria-label="增加">+</button>
+        <div class="ffc-play-foot__summary">
+          <div class="ffc-play-foot__total">投注金额: <strong id="playBetTotal">0</strong></div>
+          <div class="ffc-play-foot__bal">账户余额: <strong id="playFootBalance">0</strong></div>
+        </div>
         <button type="button" class="ffc-play-foot__repeat" id="playRepeat">重复</button>
         <button type="button" class="ffc-play-foot__submit" id="playSubmit">投注</button>
       </div>
+      <div class="ffc-play-foot__tip" id="playSelected" hidden></div>
     </footer>
   </div>
 
-  <!-- 游戏规则 -->
+  <!-- 游戏规则（底部金黑面板，与快乐时时彩同款） -->
   <div class="ffc-rules-mask" id="rulesMask" hidden></div>
   <div class="ffc-rules-sheet" id="rulesSheet" hidden>
     <div class="ffc-rules-sheet__head">
-      <span>游戏规则</span>
+      <span id="rulesTitle">游戏规则</span>
       <button type="button" id="rulesSheetClose" aria-label="关闭">×</button>
     </div>
     <div class="ffc-rules-sheet__body" id="rulesBody"></div>
@@ -245,9 +251,9 @@
 
 <script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
 <script src="/legacy/js/games-common.js?v=28"></script>
-<script src="/games-assets/_lottery-common/room-chat.js?v=21"></script>
-<script src="./js/ffc-audio.js?v=9"></script>
+<script src="/games-assets/_lottery-common/room-chat.js?v=22"></script>
+<script src="./js/ffc-audio.js?v=15"></script>
 <script src="./js/result-card.js?v=15"></script>
-<script src="./js/ffc.js?v=119"></script>
+<script src="./js/ffc.js?v=154"></script>
 </body>
 </html>

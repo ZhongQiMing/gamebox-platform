@@ -16,6 +16,10 @@
       .replace(/"/g, '&quot;');
   }
 
+  function fmtMoney2(n) {
+    return (Math.round((Number(n) || 0) * 100) / 100).toFixed(2);
+  }
+
   /** 注单核对卡 HTML（css 前缀区分皮肤，如 ssc / k3 / lhc） */
   LotteryRoomChat.buildBetVerifyHtml = function (prefix, p, helpers) {
     helpers = helpers || {};
@@ -37,7 +41,7 @@
         var me = u.name === userName ? ' is-me' : '';
         var tags = (u.tags || [])
           .map(function (t) {
-            return '<span class="' + px + '-bot-tag">' + t.play + '/' + t.amount + '</span>';
+            return '<span class="' + px + '-bot-tag">' + t.play + '/' + fmtMoney2(t.amount) + '</span>';
           })
           .join('');
         return (
@@ -45,7 +49,7 @@
           '<div class="' + px + '-bot-user__head"><span class="' + px + '-bot-user__name">' +
           escapeHtml(u.name) +
           '</span><span class="' + px + '-bot-user__sum">' +
-          (u.total || 0) +
+          fmtMoney2(u.total || 0) +
           '</span></div>' +
           '<div class="' + px + '-bot-user__tags">' +
           tags +
@@ -70,8 +74,8 @@
     var fmtProfit =
       helpers.fmtProfit ||
       function (n) {
-        var v = Number(n) || 0;
-        return (v >= 0 ? '+' : '') + v;
+        var v = Math.round((Number(n) || 0) * 100) / 100;
+        return (v >= 0 ? '+' : '') + v.toFixed(2);
       };
     var issue = String((p && p.issueNo) || '');
     var users = p && Array.isArray(p.users) ? p.users : [];
@@ -88,7 +92,7 @@
                 '<span class="' + px + '-bot-tag ' + px + '-bot-tag--win">' +
                 t.play +
                 '/' +
-                t.amount +
+                fmtMoney2(t.amount) +
                 '</span>'
               );
             })
@@ -111,7 +115,7 @@
             tags +
             '</div>' +
             '<div class="' + px + '-bot-user__sub">中奖 +' +
-            winAmount +
+            fmtMoney2(winAmount) +
             '</div></div>'
           );
         })
@@ -288,13 +292,17 @@
     var lastBetVerifyAt = 0;
     var pendingLiveResult = null;
     var pendingLiveResultTimer = null;
+    /** 结算后等开盘线的空转次数；超限则强制回 betting，避免顶栏永久「开奖中」 */
+    var openMissTries = 0;
 
     var RESULT_AFTER_BET_VERIFY_MS = 1000;
     var OPEN_AFTER_SETTLED_MS = 200;
     var OPEN_WAIT_MS = 3000;
+    var OPEN_MISS_MAX = 3;
     var WIN_ARRIVE_WAIT_MS = 3500;
-    var HOLD_MAX_MS = 22000;
-    var REVEAL_HARD_MAX_MS = 20000;
+    /* 北京赛车等完整竞速动画约 28s+，硬上限需盖住整场，避免提前 flush 中奖核对 */
+    var HOLD_MAX_MS = 40000;
+    var REVEAL_HARD_MAX_MS = 40000;
 
     /** 揭晓期间暂停「自动滚到底」：卡片仍在聊天流里，不是钉死；用户手滑即解除 */
     var autoScrollPaused = false;
@@ -395,7 +403,7 @@
       var iss = trimIssue(issue);
       holdMaxTimer = setTimeout(function () {
         holdMaxTimer = null;
-        if (phaseIssue === iss && phase !== PHASE_BETTING) markRevealReady(iss);
+        if (phaseIssue === iss && phase !== PHASE_BETTING) markRevealReady(iss, true);
       }, HOLD_MAX_MS);
     }
 
@@ -519,20 +527,29 @@
       if (phase !== PHASE_SETTLED || !winFlushed || finished) return;
       clearOpenWait();
       if (pendingOpen) {
+        openMissTries = 0;
         openWaitTimer = setTimeout(function () {
           openWaitTimer = null;
           finishToBetting();
         }, OPEN_AFTER_SETTLED_MS);
         return;
       }
-      /* 开盘线未到：继续等，顶栏保持开奖中（settled） */
+      /* 开盘线未到：有限次重试；超时仍强制回 betting，避免永久卡「开奖中」 */
       openWaitTimer = setTimeout(function () {
         openWaitTimer = null;
-        if (phase === PHASE_SETTLED && pendingOpen) finishToBetting();
-        else if (phase === PHASE_SETTLED) {
-          /* 仍无开盘：再等一拍 */
-          tryFinishToBetting();
+        if (phase !== PHASE_SETTLED || finished) return;
+        if (pendingOpen) {
+          openMissTries = 0;
+          finishToBetting();
+          return;
         }
+        openMissTries += 1;
+        if (openMissTries >= OPEN_MISS_MAX) {
+          openMissTries = 0;
+          finishToBetting();
+          return;
+        }
+        tryFinishToBetting();
       }, OPEN_WAIT_MS);
     }
 
@@ -547,23 +564,16 @@
         winFlushed = true;
         return true;
       } catch (e) {
-        pendingWin = pending;
+        /* 渲染失败也视为已刷出，避免 revealDone 后永远无法 settled */
+        winFlushed = true;
         if (typeof console !== 'undefined' && console.warn) {
           console.warn('[LotteryRoomChat] onFlushWinVerify failed', e);
         }
-        return false;
+        return true;
       }
     }
 
     function settleAfterReveal() {
-      if (revealDone) {
-        if (phase === PHASE_SETTLED) tryFinishToBetting();
-        return;
-      }
-      if (phase !== PHASE_REVEALING && phase !== PHASE_DRAWING) return;
-      revealDone = true;
-      clearRevealTimer();
-
       function afterWin() {
         if (phase !== PHASE_BETTING) {
           phase = PHASE_SETTLED;
@@ -572,37 +582,54 @@
         tryFinishToBetting();
       }
 
-      if (winFlushed) {
-        afterWin();
-        return;
-      }
-      if (pendingWin) {
-        if (flushPendingWinVerify()) afterWin();
-        return;
-      }
-      var waited = 0;
-      var step = 120;
-      clearWinWait();
-      winWaitTimer = setInterval(function () {
-        waited += step;
-        if (pendingWin) {
-          clearWinWait();
-          if (flushPendingWinVerify()) afterWin();
+      function ensureWinThenSettle() {
+        if (winFlushed) {
+          afterWin();
           return;
         }
-        if (waited >= WIN_ARRIVE_WAIT_MS) {
-          clearWinWait();
-          pendingWin = { issueNo: phaseIssue, users: [], empty: true };
+        if (pendingWin) {
           if (flushPendingWinVerify()) afterWin();
+          else afterWin();
+          return;
         }
-      }, step);
+        var waited = 0;
+        var step = 120;
+        clearWinWait();
+        winWaitTimer = setInterval(function () {
+          waited += step;
+          if (pendingWin) {
+            clearWinWait();
+            flushPendingWinVerify();
+            afterWin();
+            return;
+          }
+          if (waited >= WIN_ARRIVE_WAIT_MS) {
+            clearWinWait();
+            pendingWin = { issueNo: phaseIssue, users: [], empty: true };
+            flushPendingWinVerify();
+            afterWin();
+          }
+        }, step);
+      }
+
+      if (revealDone) {
+        /* 上次 flush 失败 / 定时器打断时补推进，避免永久卡在 revealing */
+        if (phase === PHASE_SETTLED) tryFinishToBetting();
+        else if (phase === PHASE_REVEALING || phase === PHASE_DRAWING) ensureWinThenSettle();
+        return;
+      }
+      if (phase !== PHASE_REVEALING && phase !== PHASE_DRAWING) return;
+      revealDone = true;
+      clearRevealTimer();
+      ensureWinThenSettle();
     }
 
-    function markRevealReady(issue) {
+    function markRevealReady(issue, force) {
       issue = trimIssue(issue);
       if (!issue || (phaseIssue && issue !== phaseIssue)) return;
-      /* scheduleRevealReady 未到期：忽略 bindReveal 瞬时 onDone */
-      if (revealTimer) return;
+      /* scheduleRevealReady 未到期：忽略 bindReveal 瞬时 onDone；硬上限可 force */
+      if (revealTimer && !force) return;
+      if (revealTimer) clearRevealTimer();
       settleAfterReveal();
     }
 
@@ -709,6 +736,7 @@
       winFlushed = false;
       revealDone = false;
       finished = false;
+      openMissTries = 0;
       lastBetVerifyAt = 0;
       resumeAutoScroll();
     }
@@ -719,6 +747,7 @@
       finished = false;
       revealDone = false;
       winFlushed = false;
+      openMissTries = 0;
       pendingWin = null;
       phaseIssue = issue;
       phase = PHASE_DRAWING;
@@ -993,7 +1022,12 @@
         };
       }
       if (App) {
-        App.onAssetsGameReady = function () {
+        /* 链式挂载，避免覆盖游戏侧（如 lhc 快照重拉）的 onAssetsGameReady */
+        var prevReady = App.onAssetsGameReady;
+        App.onAssetsGameReady = function (data) {
+          if (typeof prevReady === 'function') {
+            try { prevReady(data); } catch (ePrev) { /* ignore */ }
+          }
           if (!feedReady) sync(true);
           else sync(false);
         };

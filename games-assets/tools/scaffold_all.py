@@ -31,7 +31,6 @@ CHAT_GAMES = [
 ]
 
 SLOT_GAMES = [
-    {'dir': 'mahjong', 'pfx': 'mj', 'name': '麻将胡了', 'title_spaced': '麻 将 胡 了'},
     {'dir': 'queen', 'pfx': 'qn', 'name': '赏金女王', 'title_spaced': '赏 金 女 王'},
     {'dir': 'slots', 'pfx': 'slt', 'name': '老虎机', 'title_spaced': '老 虎 机'},
     {'dir': 'longhu', 'pfx': 'lhd', 'name': '龙虎斗', 'title_spaced': '龙 虎 斗'},
@@ -247,7 +246,7 @@ SLOT_JS = '''$(function(){
   const user=App.getUser();
   const params=new URLSearchParams(location.search);
   const q=params.get('roomNo')?('?roomNo='+encodeURIComponent(params.get('roomNo'))):'';
-  const SYMBOLS={mahjong:'🀄中 🀅發 🀆白'.split(' '),queen:'👑 💎 🏺 ⚔️ 🌙'.split(' '),slots:'7️⃣ 🍒 🔔 ⭐ 💎'.split(' ')}['{{pfx}}'.replace('mj','mahjong').replace('qn','queen').replace('slt','slots')]||['★','◆','●'];
+  const SYMBOLS={queen:'👑 💎 🏺 ⚔️ 🌙'.split(' '),slots:'7️⃣ 🍒 🔔 ⭐ 💎'.split(' ')}['{{pfx}}'.replace('qn','queen').replace('slt','slots')]||['★','◆','●'];
   function refresh(){$('#statBalance').text(App.getBalance(user.uid).toLocaleString('en-US'));}
   refresh();
   $('#backBtn').on('click',()=>App.go('../../client-app/pages/game-lobby/game-lobby.html'+q));

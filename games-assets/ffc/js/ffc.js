@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 游戏类型: digit5
  *
  * 1分时时彩 · 聊天投注房
@@ -8,9 +8,10 @@
 $(function () {
   const GAME_TYPE = 'digit5';
 
-  // 总周期 55s = 45s 可下注 + 10s 封盘准备（与服务端 lockAt = openAt - 10s 一致）
+  // 总周期 55s = 41s 可下注 + 14s 封盘准备（与服务端 lockAt = openAt - 14s 一致）
   const INTERVAL = 55;
-  const PREP_SEC = 10;
+  /** 开奖中窗口：盖住滚号 6s + 出号约 3.2s（与 shared lotteryPrepSec('ffc') 对齐） */
+  const PREP_SEC = 14;
   const BET_SEC = INTERVAL - PREP_SEC;
 
   function fixAvatar(url) {
@@ -81,7 +82,6 @@ $(function () {
     }
   }
 
-
   const SIDE_TO_SERVER = { '大': 'big', '小': 'small', '单': 'odd', '双': 'even' };
 
   /** H5 玩法 → 大脑 { betType, betValue? } */
@@ -102,7 +102,7 @@ $(function () {
       case 'group6':
         return { betType: 'group6', betValue: parsed.seg + ':' + parsed.digits.join(',') };
       case 'lhh':
-        return { betType: 'lhh', betValue: parsed.pick };
+        return { betType: 'lhh', betValue: parsed.a + ':' + parsed.b + ':' + parsed.pick };
       case 'niu':
         return { betType: 'niu', betValue: String(parsed.val) };
       case 'niuSide':
@@ -142,7 +142,7 @@ $(function () {
     /* 开奖中只留三字；class + hide，避免 display:flex 盖掉 [hidden] */
     $('#cdDigits').attr('hidden', true).hide();
     $('#cdPrep').attr('hidden', true).hide();
-    if (window.FfcAudio && FfcAudio.onDrawing) FfcAudio.onDrawing();
+    /* 铃声只走 armCountdown / onPhaseChange，避免 tick 每帧重播长铃 */
   }
   function requestLotteryResync() {
     const now = Date.now();
@@ -168,25 +168,37 @@ $(function () {
   /** 当期注单：issue -> { 玩家名: [{ play, amount }] } */
   const issueBetBook = {};
 
-  /* ================= 官方玩法 · 赔率（仅服务端 /pay-table，无本地默认） ================= */
+  /* ================= 官方玩法 · 赔率（本地兜底 = server sscFfcPayTable；/pay-table 覆盖） ================= */
   const ODDS = {
-    sumSide: null,
-    ballSide: null,
-    position: null,
-    anyDigit: null,
-    group3: null,
-    group6: null,
-    dragon: null,
-    tiger: null,
-    tie: null,
-    noNiu: null,
-    niu: null,
-    niuSide: null
+    sumSide: 1.995,
+    ballSide: 1.995,
+    position: 9.95,
+    anyDigit: 3.6,
+    group3: 260,
+    group6: 125,
+    dragon: 1.99,
+    tiger: 1.99,
+    tie: 9,
+    noNiu: 2.02,
+    niu: 9.22,
+    niuSide: 1.98
   };
 
   const POS = { 万: 0, 千: 1, 百: 2, 十: 3, 个: 4 };
   const SEG = { 前三: [0, 3], 中三: [1, 4], 后三: [2, 5] };
-  const SHAPE_ODDS = { 豹子: null, 顺子: null, 对子: null, 半顺: null, 杂六: null };
+  /** 龙虎和全部对阵（球位 0-4），口令用 几/几龙，如 1/2龙 */
+  const LHH_PAIRS = [];
+  for (let a = 0; a < 5; a++) {
+    for (let b = a + 1; b < 5; b++) LHH_PAIRS.push([a, b]);
+  }
+  const SHAPE_ODDS = { 豹子: 75, 顺子: 14.5, 对子: 3.3, 半顺: 2.5, 杂六: 3 };
+
+  function lhhPickOdds(pick) {
+    return pick === '和' ? ODDS.tie : (pick === '虎' ? ODDS.tiger : ODDS.dragon);
+  }
+  function lhhPlayOf(a, b, pick) {
+    return (a + 1) + '/' + (b + 1) + pick;
+  }
 
   function applyServerPayTable(pt) {
     if (!pt) return;
@@ -240,10 +252,22 @@ $(function () {
     if ((m = t.match(/^(前三|中三|后三)([0-9])$/))) {
       return { type: 'anyDigit', seg: m[1], digit: +m[2], odds: ODDS.anyDigit };
     }
-    // 正统龙虎和：仅万位 vs 个位
+    // 龙虎和：1/2龙（主口令）· 1vs2龙（兼容）
+    if ((m = t.match(/^([1-5])\/([1-5])(龙|虎|和)$/))) {
+      const a = +m[1] - 1;
+      const b = +m[2] - 1;
+      if (a >= b) return null;
+      return { type: 'lhh', a, b, pick: m[3], odds: lhhPickOdds(m[3]) };
+    }
+    if ((m = t.match(/^([1-5])(?:vs|v)([1-5])(龙|虎|和)$/i))) {
+      const a = +m[1] - 1;
+      const b = +m[2] - 1;
+      if (a >= b) return null;
+      return { type: 'lhh', a, b, pick: m[3], odds: lhhPickOdds(m[3]) };
+    }
+    // 裸 龙/虎/和 = 1/5（万 vs 个）
     if (t === '龙' || t === '虎' || t === '和') {
-      const odds = t === '和' ? ODDS.tie : (t === '虎' ? ODDS.tiger : ODDS.dragon);
-      return { type: 'lhh', a: 0, b: 4, pick: t, odds };
+      return { type: 'lhh', a: 0, b: 4, pick: t, odds: lhhPickOdds(t) };
     }
     if (t === '无牛') return { type: 'niu', val: -1, odds: ODDS.noNiu };
     if (t === '牛牛') return { type: 'niu', val: 10, odds: ODDS.niu };
@@ -393,14 +417,27 @@ $(function () {
     return pad(d.getHours(), 2) + ':' + pad(d.getMinutes(), 2) + ':' + pad(d.getSeconds(), 2);
   }
 
+  function nextOpenAtMs(now) {
+    const intervalMs = INTERVAL * 1000;
+    const t = now != null ? now : Date.now();
+    return Math.ceil(t / intervalMs) * intervalMs;
+  }
+  function fmtIssueFromOpenAt(openAtMs) {
+    const intervalMs = INTERVAL * 1000;
+    const p = shanghaiYmdParts(new Date(openAtMs));
+    const dayStart = Date.parse(p.y + '-' + p.m + '-' + p.d + 'T00:00:00+08:00');
+    const seq = Math.floor((openAtMs - dayStart) / intervalMs) + 1;
+    return '' + p.m + p.d + pad(Math.max(1, seq), 6);
+  }
   function getRoundRemain() {
-    const elapsed = (Date.now() - todayStartMs()) / 1000;
-    return INTERVAL - (elapsed % INTERVAL);
+    const openAt = nextOpenAtMs();
+    let r = (openAt - Date.now()) / 1000;
+    if (r <= 0) r = INTERVAL;
+    return r;
   }
   function getCurrentIssue() {
     if (serverSynced && serverCurrent && serverCurrent.issueNo) return String(serverCurrent.issueNo);
-    const elapsed = (Date.now() - todayStartMs()) / 1000;
-    return fmtIssue(Math.floor(elapsed / INTERVAL) + 1);
+    return fmtIssueFromOpenAt(nextOpenAtMs());
   }
   function isBettingOpen() {
     if (!serverSynced || !serverCurrent) return false;
@@ -540,6 +577,22 @@ $(function () {
     return plays;
   }
 
+  /** 胶连多对：1/2龙1/3虎、1/2龙3/5和 */
+  function expandLhhFromGlued(t) {
+    const plays = [];
+    const re = /([1-5])\/([1-5])(龙|虎|和)/g;
+    let m;
+    let consumed = '';
+    while ((m = re.exec(t)) !== null) {
+      const play = m[1] + '/' + m[2] + m[3];
+      if (!parsePlay(play)) return null;
+      plays.push(play);
+      consumed += m[0];
+    }
+    if (!plays.length || consumed !== t) return null;
+    return plays;
+  }
+
   /** 解析玩法段 → 玩法名数组 */
   function expandPlayPart(playPart) {
     const t = String(playPart || '').replace(/\s+/g, '');
@@ -570,6 +623,12 @@ $(function () {
         if (parsePlay(c)) plays.push(c);
       }
       if (plays.length) return plays;
+    }
+
+    // 多对龙虎胶连：1/2龙1/3虎
+    {
+      const lhGlued = expandLhhFromGlued(t);
+      if (lhGlued) return lhGlued;
     }
 
     // 多选牛两面：牛大牛小
@@ -734,7 +793,6 @@ $(function () {
     return lines.map(l => `${l.play}/${l.amount}`).join(' ');
   }
 
-
   /** 梭哈/发送前去掉末尾金额；保留定位胆 万千百十个/5 的选号 / */
   function stripComposerAmount(part) {
     const raw = String(part || '').trim();
@@ -814,7 +872,6 @@ $(function () {
     App.toast('梭哈已分配 · ' + lines.length + '注 · 合计' + total);
     return true;
   }
-
 
   function parseBet(text) {
     const lines = parseBetLines(text);
@@ -929,8 +986,12 @@ $(function () {
     if (!lines) return false;
     return recordBetLines(name, lines, opts);
   }
+  function fmtMoney2(n) {
+    return (Math.round((Number(n) || 0) * 100) / 100).toFixed(2);
+  }
   function fmtProfit(n) {
-    return (n >= 0 ? '+' : '') + n;
+    const v = Math.round((Number(n) || 0) * 100) / 100;
+    return (v >= 0 ? '+' : '') + v.toFixed(2);
   }
   function buildBetListVerifyFromServer(issue, list) {
     const scoped = App.filterLotteryBetsByIssue ? App.filterLotteryBetsByIssue(list, issue) : (Array.isArray(list) ? list : []);
@@ -942,15 +1003,15 @@ $(function () {
     const total = bets.reduce(function (s, b) { return s + (Number(b.amount) || 0); }, 0);
     const groups = App.groupLotteryBetsByType(bets);
     const tags = groups.map(function (g) {
-      return '<span class="ffc-bot-tag">' + g.label + '×' + g.count + '/' + g.amount + '</span>';
+      return '<span class="ffc-bot-tag">' + g.label + '×' + g.count + '/' + fmtMoney2(g.amount) + '</span>';
     }).join('');
     let detail = '';
     if (bets.length <= 8) {
       detail = '<div class="ffc-bot-user__tags" style="margin-top:6px">' + bets.map(function (b) {
-        return '<span class="ffc-bot-tag">' + App.labelLotteryBet(b) + '/' + b.amount + '</span>';
+        return '<span class="ffc-bot-tag">' + App.labelLotteryBet(b) + '/' + fmtMoney2(b.amount) + '</span>';
       }).join('') + '</div>';
     }
-    const userBlock = '<div class="ffc-bot-user is-me"><div class="ffc-bot-user__head"><span class="ffc-bot-user__name">我</span><span class="ffc-bot-user__sum">' + total + '</span></div><div class="ffc-bot-user__tags">' + tags + '</div>' + detail + '</div>';
+    const userBlock = '<div class="ffc-bot-user is-me"><div class="ffc-bot-user__head"><span class="ffc-bot-user__name">我</span><span class="ffc-bot-user__sum">' + fmtMoney2(total) + '</span></div><div class="ffc-bot-user__tags">' + tags + '</div>' + detail + '</div>';
     return '<div class="ffc-bot-card ffc-bot-card--bets"><div class="ffc-bot-card__head"><span class="ffc-bot-card__title">注单核对</span><span class="ffc-bot-card__issue">' + issue + '</span></div><div class="ffc-bot-card__body is-full">' + userBlock + '</div></div>';
   }
   /** 用服务端账本生成「您本期」行（氛围卡主体仍用本地 settled） */
@@ -961,7 +1022,7 @@ $(function () {
     const myProfit = bets.reduce(function (sum, b) { return sum + serverBetProfit(b); }, 0);
     const myWin = bets.reduce(function (sum, b) { return sum + (Number(b.payout) || 0); }, 0);
     const profitCls = myProfit >= 0 ? 'pos' : 'neg';
-    const winText = myWin > 0 ? ('中奖 +' + myWin) : '未中奖';
+    const winText = myWin > 0 ? ('中奖 +' + fmtMoney2(myWin)) : '未中奖';
     return '<div class="ffc-bot-mine-line ' + profitCls + '">' +
       '<span class="ffc-bot-mine-line__label">您本期</span>' +
       '<span class="ffc-bot-mine-line__win">' + winText + '</span>' +
@@ -987,10 +1048,10 @@ $(function () {
     const users = names.map(name => {
       const bets = book[name];
       const total = bets.reduce((s, b) => s + b.amount, 0);
-      const tags = bets.map(b => `<span class="ffc-bot-tag">${b.play}/${b.amount}</span>`).join('');
+      const tags = bets.map(b => `<span class="ffc-bot-tag">${b.play}/${fmtMoney2(b.amount)}</span>`).join('');
       const me = name === user.name ? ' is-me' : '';
       return `<div class="ffc-bot-user${me}">
-        <div class="ffc-bot-user__head"><span class="ffc-bot-user__name">${name}</span><span class="ffc-bot-user__sum">${total}</span></div>
+        <div class="ffc-bot-user__head"><span class="ffc-bot-user__name">${name}</span><span class="ffc-bot-user__sum">${fmtMoney2(total)}</span></div>
         <div class="ffc-bot-user__tags">${tags}</div>
       </div>`;
     }).join('');
@@ -1028,7 +1089,7 @@ $(function () {
         const totalWin = winRows.reduce((s, r) => s + r.winAmount, 0);
         const totalProfit = settled[name].reduce((s, r) => s + r.profit, 0);
         const tags = winRows.map(r =>
-          `<span class="ffc-bot-tag ffc-bot-tag--win">${r.play}/${r.amount}</span>`
+          `<span class="ffc-bot-tag ffc-bot-tag--win">${r.play}/${fmtMoney2(r.amount)}</span>`
         ).join('');
         const profitCls = totalProfit >= 0 ? 'pos' : 'neg';
         return `<div class="ffc-bot-user">
@@ -1037,7 +1098,7 @@ $(function () {
             <span class="ffc-bot-user__profit ${profitCls}">${fmtProfit(totalProfit)}</span>
           </div>
           <div class="ffc-bot-user__tags">${tags}</div>
-          <div class="ffc-bot-user__sub">中奖 +${totalWin}</div>
+          <div class="ffc-bot-user__sub">中奖 +${fmtMoney2(totalWin)}</div>
         </div>`;
       }).join('');
     } else {
@@ -1049,7 +1110,7 @@ $(function () {
       const myProfit = myRows.reduce((s, r) => s + r.profit, 0);
       const myWin = myRows.reduce((s, r) => s + r.winAmount, 0);
       const profitCls = myProfit >= 0 ? 'pos' : 'neg';
-      const winText = myWin > 0 ? `中奖 +${myWin}` : '未中奖';
+      const winText = myWin > 0 ? `中奖 +${fmtMoney2(myWin)}` : '未中奖';
       mine = `<div class="ffc-bot-mine-line ${profitCls}">
         <span class="ffc-bot-mine-line__label">您本期</span>
         <span class="ffc-bot-mine-line__win">${winText}</span>
@@ -1063,15 +1124,20 @@ $(function () {
     </div>`;
   }
 
+  /** 正版开奖动画：滚号 mid + 出号约 3.2s（对齐 video-host play）；挂牌 1分时时彩 */
+  const FFC_VIDEO_SRC = './media/ssc-video/xyssx_index.html?v=17&embed=1&logo=yf&mute=1';
+  /** 滚号 6s 后出号；出号后约 3.2s（over→回待机 BGM） */
+  const FFC_VIDEO_MID_MS = 6000;
+  const FFC_VIDEO_AFTER_MS = 3200;
   /** 开奖仪式跳动时长：占满封盘准备窗（扣掉核对后 1s + 钉底 1s） */
   function ceremonyRevealMs() {
     return Math.max(5000, ((typeof PREP_SEC === 'number' ? PREP_SEC : 10) - 2) * 1000);
   }
   function resultRevealDurationMs() {
-    if (window.FfcResultCard && typeof FfcResultCard.revealDurationMs === 'function') {
-      return FfcResultCard.revealDurationMs(5, ceremonyRevealMs());
-    }
-    return ceremonyRevealMs();
+    return FFC_VIDEO_MID_MS + FFC_VIDEO_AFTER_MS;
+  }
+  function ffcVideoOrderStr(nums) {
+    return (nums || []).map(function (n) { return String(Number(n)); }).join(',');
   }
 
   function closeNoticeHtml(issue) {
@@ -1134,8 +1200,164 @@ $(function () {
       <td class="cell-dt">${r.dt || dragonTigerOf(r.nums)}</td>
       <td class="cell-lh">${r.lh}</td></tr>`).join(''));
   }
-  function resultCardHtml(nums, issue) {
-    return FfcResultCard.build(nums, issue);
+  function resultCardHtml(nums, issue, opts) {
+    opts = opts || {};
+    const meta = gyMeta(nums);
+    const sideText = String(meta.text || '').replace(/^\d+\s*/, '').replace(/\s+/g, '');
+    const order = ffcVideoOrderStr(nums);
+    const issueShow = String(issue || '').trim();
+    let srcQ = FFC_VIDEO_SRC;
+    if (issueShow) srcQ += '&issue=' + encodeURIComponent(issueShow);
+    if (order) srcQ += '&order=' + encodeURIComponent(order);
+    if (opts.settle) srcQ += '&settle=1';
+    return (
+      '<div class="ffc-video-card ffc-bot-card--result is-reveal" data-issue="' + issueShow +
+        '" data-nums="' + order + '" data-sum="' + meta.sum + '">' +
+        '<div class="ffc-video-card__stage">' +
+          '<iframe class="ffc-video-card__frame" title="1分时时彩开奖动画" src="' + srcQ +
+            '" data-nums="' + order + '" data-issue="' + issueShow +
+            '" allow="autoplay" loading="eager"></iframe>' +
+        '</div>' +
+        '<footer class="ffc-video-card__foot">' +
+          '<div class="ffc-video-card__pill"><span class="k">和值</span><span class="v">' + meta.sum + '</span></div>' +
+          '<div class="ffc-video-card__pill"><span class="k">双面</span><span class="v">' + sideText + '</span></div>' +
+          '<div class="ffc-video-card__pill"><span class="k">龙虎</span><span class="v">' + dragonTigerOf(nums) + '</span></div>' +
+          '<div class="ffc-video-card__pill"><span class="k">斗牛</span><span class="v">' + lhRow(nums) + '</span></div>' +
+        '</footer>' +
+      '</div>'
+    );
+  }
+
+  function postToFfcVideoFrame(frame, payload) {
+    if (!frame || !frame.contentWindow) return false;
+    try {
+      frame.contentWindow.postMessage(
+        Object.assign({ source: 'ssc-video' }, payload || {}), location.origin);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function whenFfcVideoReady(frame, cb) {
+    if (!frame) {
+      if (typeof cb === 'function') cb(false);
+      return;
+    }
+    let done = false;
+    let pollTimer = null;
+    const finish = function (ok) {
+      if (done) return;
+      done = true;
+      if (pollTimer) clearInterval(pollTimer);
+      window.removeEventListener('message', onMsg);
+      if (typeof cb === 'function') cb(!!ok);
+    };
+    const hasApi = function () {
+      try {
+        return !!(frame.contentWindow && frame.contentWindow.SscVideo);
+      } catch (e) {
+        return false;
+      }
+    };
+    const onMsg = function (ev) {
+      const d = ev && ev.data;
+      if (!d || d.source !== 'ssc-video') return;
+      if (d.action === 'ready' && ev.source === frame.contentWindow) finish(true);
+    };
+    window.addEventListener('message', onMsg);
+    if (hasApi()) {
+      finish(true);
+      return;
+    }
+    frame.addEventListener('load', function () {
+      setTimeout(function () { finish(true); }, 80);
+    });
+    let n = 0;
+    pollTimer = setInterval(function () {
+      n += 1;
+      if (hasApi() || n >= 40) finish(!!hasApi() || n >= 40);
+    }, 50);
+  }
+
+  function playFfcVideoCard(card, nums, opts) {
+    opts = opts || {};
+    const frame = card && card.querySelector('.ffc-video-card__frame');
+    const order = ffcVideoOrderStr(nums);
+    const issue = String((opts.issue != null && String(opts.issue).trim())
+      || (card && card.getAttribute('data-issue')) || '').trim();
+    if (!frame || !order) {
+      if (typeof opts.onDone === 'function') opts.onDone(false);
+      return;
+    }
+    /* 标记播放中，防止 snapshot 的 settleRestored 把 iframe 强制 settle 掉 */
+    card.classList.add('is-playing');
+    card.setAttribute('data-playing', '1');
+    whenFfcVideoReady(frame, function () {
+      const doneWrap = function (ok) {
+        card.classList.remove('is-playing');
+        card.removeAttribute('data-playing');
+        if (window.FfcAudio && FfcAudio.endDrawCeremony) FfcAudio.endDrawCeremony();
+        else if (window.FfcAudio && FfcAudio.onRevealDone) FfcAudio.onRevealDone();
+        if (typeof opts.onDone === 'function') opts.onDone(ok);
+      };
+      if (window.FfcAudio) {
+        if (FfcAudio.unlock) FfcAudio.unlock();
+        if (FfcAudio.startDrawCeremony) {
+          FfcAudio.startDrawCeremony({ midMs: FFC_VIDEO_MID_MS });
+        }
+      }
+      const w = frame.contentWindow;
+      if (w && w.SscVideo && typeof w.SscVideo.play === 'function') {
+        /* iframe 静音，音效由父页 FfcAudio 播，避免双轨与自动播放拦截 */
+        w.SscVideo.play(order, {
+          issue: issue,
+          midMs: FFC_VIDEO_MID_MS,
+          muted: true,
+          onDone: doneWrap,
+        });
+        return;
+      }
+      postToFfcVideoFrame(frame, {
+        action: 'play',
+        order: order,
+        issue: issue,
+        midMs: FFC_VIDEO_MID_MS,
+        muted: true,
+      });
+      setTimeout(function () { doneWrap(true); }, resultRevealDurationMs());
+    });
+  }
+
+  function settleFfcVideoCard(card, nums) {
+    if (card && (card.classList.contains('is-playing') || card.getAttribute('data-playing') === '1')) {
+      return; /* 滚号中禁止改 src / settle */
+    }
+    const frame = card && card.querySelector('.ffc-video-card__frame');
+    let order = '';
+    if (Array.isArray(nums) && nums.length === 5) order = ffcVideoOrderStr(nums);
+    else order = String((card && card.getAttribute('data-nums')) || (frame && frame.getAttribute('data-nums')) || '').trim();
+    const issue = String((card && card.getAttribute('data-issue')) || '').trim();
+    if (!frame || !order) return;
+    try {
+      const cur = String(frame.getAttribute('src') || '');
+      if (cur && cur.indexOf('settle=1') < 0) {
+        let next = cur;
+        if (next.indexOf('order=') < 0) next += '&order=' + encodeURIComponent(order);
+        if (issue && next.indexOf('issue=') < 0) next += '&issue=' + encodeURIComponent(issue);
+        next += '&settle=1';
+        frame.setAttribute('src', next);
+        return;
+      }
+    } catch (e) { /* fall through */ }
+    whenFfcVideoReady(frame, function () {
+      const w = frame.contentWindow;
+      if (w && w.SscVideo && typeof w.SscVideo.settle === 'function') {
+        w.SscVideo.settle(order, { issue: issue, muted: true });
+        return;
+      }
+      postToFfcVideoFrame(frame, { action: 'settle', order: order, issue: issue, muted: true });
+    });
   }
   const HISTORY_SHOW = 10;
   const POS_LABELS = ['万', '千', '百', '十', '个'];
@@ -1148,6 +1370,8 @@ $(function () {
     if (sum) return sum[1];
     if (/^[万千百十个][大小单双]$/.test(name)) return name;
     if (/^[万千百十个][0-9]$/.test(name)) return name;
+    if (/^[1-5]\/[1-5](龙|虎|和)$/.test(name)) return name;
+    if (/^[1-5]vs[1-5](龙|虎|和)$/.test(name)) return name;
     if (name === '龙' || name === '虎' || name === '和') return name;
     if (name === '无牛' || name.startsWith('牛')) return name;
     if (/^(前三|中三|后三)/.test(name)) return name;
@@ -1169,6 +1393,7 @@ $(function () {
   function roadLabelsForTab(tab) {
     const rows = historyRows.filter(r => Array.isArray(r.nums) && r.nums.length === 5).slice(0, ROAD_WINDOW);
     if (tab === 'lhh') {
+      /* 路珠默认看 1vs5（万vs个），与大厅龙虎摘要一致 */
       return rows.map(r => {
         const x = r.nums[0];
         const y = r.nums[4];
@@ -1231,11 +1456,14 @@ $(function () {
       pushLongDim(side, pos + '位单双', ballMeta.map(m => (m.odd ? '单' : '双')), pos);
     });
 
-    pushLongDim(lhh, '万vs个', rows.map(r => {
-      const x = r.nums[0];
-      const y = r.nums[4];
-      return x > y ? '龙' : (x < y ? '虎' : '和');
-    }));
+    LHH_PAIRS.forEach(([a, b]) => {
+      const title = (a + 1) + '/' + (b + 1);
+      pushLongDim(lhh, title, rows.map(r => {
+        const x = r.nums[a];
+        const y = r.nums[b];
+        return x > y ? '龙' : (x < y ? '虎' : '和');
+      }), title);
+    });
 
     pushLongDim(niu, '有无斗牛', rows.map(r => (niuValue(r.nums) === -1 ? '无牛' : '有牛')));
     pushLongDim(niu, '斗牛大小', rows.map(r => {
@@ -1263,8 +1491,12 @@ $(function () {
     if (pos) return { group: pos[1] + '位', tag: pos[2], full: name };
     const sum = name.match(/^总(.+)$/);
     if (sum) return { group: '总和', tag: sum[1], full: name };
+    const lhhSlash = name.match(/^([1-5]\/[1-5])(龙|虎|和)$/);
+    if (lhhSlash) return { group: '龙虎', tag: lhhSlash[2], full: `${lhhSlash[1]} · ${lhhSlash[2]}` };
+    const lhhVs = name.match(/^([1-5]vs[1-5])(龙|虎|和)$/);
+    if (lhhVs) return { group: '龙虎', tag: lhhVs[2], full: `${lhhVs[1]} · ${lhhVs[2]}` };
     if (name === '龙' || name === '虎' || name === '和') {
-      return { group: '龙虎', tag: name, full: `万vs个 · ${name}` };
+      return { group: '龙虎', tag: name, full: `1/5 · ${name}` };
     }
     if (name === '无牛' || name.startsWith('牛')) return { group: '斗牛', tag: name, full: name };
     return { group: '形态', tag: name, full: name };
@@ -1602,19 +1834,6 @@ $(function () {
     }
   }
 
-  function settleIssue(issue, nums) {
-    const book = issueBetBook[issue];
-    if (!book || !Object.keys(book).length) return {};
-    const out = {};
-    Object.keys(book).forEach(name => {
-      out[name] = book[name].map(b => {
-        const r = settleBet(b.play, b.amount, nums);
-        return { play: b.play, amount: b.amount, ...r };
-      });
-    });
-    return out;
-  }
-
   /** 用服务端派彩校正顶部输赢/流水（以服务端为准） */
   function refineUserStatsFromServer(issue, list) {
     const id = String(issue || '');
@@ -1704,6 +1923,7 @@ $(function () {
     $wl.toggleClass('is-plus', s.winloss > 0).toggleClass('is-minus', s.winloss < 0);
     $('#statRebate').text((Math.round(s.rebate * 100) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
     $('#playFootBalance').text(bal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+    if (typeof syncPlayFootTotals === 'function') syncPlayFootTotals();
   }
   function hasLastDraw() {
     return Array.isArray(lastDraw) && lastDraw.length > 0;
@@ -1905,9 +2125,26 @@ $(function () {
     afterResultAppended: function (ctx) {
       const nums = Array.isArray(ctx.payload.nums) ? ctx.payload.nums.map(Number) : [];
       const issue = ctx.issue;
-      const card = $('#chatDock .ffc-bot-card--result, #chatFeed .ffc-bot-card--result').last()[0];
+      const card = $('#chatDock .ffc-video-card, #chatFeed .ffc-video-card, #chatDock .ffc-bot-card--result, #chatFeed .ffc-bot-card--result').last()[0];
       const readyMs = resultRevealDurationMs() + 1000 + 400;
-      if (card && nums.length === 5 && window.FfcResultCard) {
+      if (card && nums.length === 5 && card.classList.contains('ffc-video-card')) {
+        if (ctx.animate && ctx.live) {
+          ctx.setRevealPending(issue);
+          playFfcVideoCard(card, nums, {
+            issue: issue,
+            onDone: function () {
+              setTimeout(function () {
+                if (typeof persistBotCardHtml === 'function') persistBotCardHtml(card);
+              }, 400);
+            },
+          });
+          ctx.scheduleRevealReady(issue, readyMs);
+        } else {
+          settleFfcVideoCard(card, nums);
+          ctx.setRevealReadyFlag(issue, true);
+        }
+      } else if (card && nums.length === 5 && window.FfcResultCard) {
+        /* 兼容旧版球卡历史消息 */
         if (ctx.animate && ctx.live && FfcResultCard.bindReveal) {
           ctx.setRevealPending(issue);
           if (window.FfcAudio && FfcAudio.startRoll) FfcAudio.startRoll();
@@ -1915,7 +2152,6 @@ $(function () {
             if (window.FfcAudio && FfcAudio.onRevealDone) FfcAudio.onRevealDone();
             setTimeout(function () {
               if (typeof persistBotCardHtml === 'function') persistBotCardHtml(card);
-              /* 揭晓时刻以 scheduleRevealReady 为准，这里只落盘 */
             }, 1000);
           }, { durationMs: resultRevealDurationMs() });
           ctx.scheduleRevealReady(issue, readyMs);
@@ -1954,16 +2190,29 @@ $(function () {
     roomChat.startPolling();
   }
 
-  /** 滚号落定后把最终 HTML 写回 chatLog，避免下次进房仍是占位 0 */
+  /** 滚号落定后把最终 HTML 写回 chatLog，避免下次进房仍是占位动画 */
   function persistBotCardHtml(card) {
     if (!card || !chatLog.length) return;
-    const issueEl = card.querySelector('.ffc-bot-card__issue');
-    const issue = issueEl ? String(issueEl.textContent || '').trim() : '';
+    const issue = String(
+      card.getAttribute('data-issue') ||
+      ($(card).find('.ffc-bot-card__issue').first().text() || '')
+    ).trim();
+    /* 历史重载时用 settle=1，避免再次自动滚号 */
+    if (card.classList.contains('ffc-video-card')) {
+      const frame = card.querySelector('.ffc-video-card__frame');
+      if (frame) {
+        let src = String(frame.getAttribute('src') || '');
+        if (src && src.indexOf('settle=1') < 0) {
+          src += '&settle=1';
+          frame.setAttribute('src', src);
+        }
+      }
+    }
     const html = card.outerHTML;
     for (let i = chatLog.length - 1; i >= 0; i--) {
       const m = chatLog[i];
       if (!m || !m.robot) continue;
-      if (!/ffc-bot-card--result/.test(String(m.html || ''))) continue;
+      if (!/ffc-bot-card--result|ffc-video-card/.test(String(m.html || ''))) continue;
       if (issue && String(m.html).indexOf(issue) < 0) continue;
       m.html = html;
       saveChatLog();
@@ -1971,10 +2220,39 @@ $(function () {
     }
   }
 
-  /** 进房/同步后：把仍显示 0 的开奖卡按 data-nums 或历史期号落定 */
+  /** 进房/同步后：正版动画卡 settle；兼容旧球卡 */
   function settleRestoredResultCards() {
+    const holdIssue = (roomChat && typeof roomChat.getCeremonyHoldIssue === 'function')
+      ? String(roomChat.getCeremonyHoldIssue() || '').trim()
+      : '';
+    const phaseIssue = (roomChat && typeof roomChat.getPhaseIssue === 'function')
+      ? String(roomChat.getPhaseIssue() || '').trim()
+      : '';
+    $('#chatFeed .ffc-video-card').each(function () {
+      const card = this;
+      if (card.classList.contains('is-playing') || card.getAttribute('data-playing') === '1') return;
+      const issue = String(card.getAttribute('data-issue') || '').trim();
+      /* 当期开奖仪式中的卡：交给 playFfcVideoCard，禁止被 snapshot 强制 settle */
+      if (issue && ((holdIssue && issue === holdIssue) || (phaseIssue && issue === phaseIssue))) {
+        if (isCeremonyHolding && isCeremonyHolding()) return;
+      }
+      let nums = null;
+      const raw = card.getAttribute('data-nums') || '';
+      if (raw) {
+        const arr = raw.split(',').map(Number);
+        if (arr.length === 5 && arr.every(function (n) { return !Number.isNaN(n) && n >= 0 && n <= 9; })) {
+          nums = arr;
+        }
+      }
+      if (!nums) {
+        const row = historyRows.find(function (r) { return String(r.issue) === issue; });
+        if (row && row.nums && row.nums.length === 5) nums = row.nums;
+      }
+      if (!nums) return;
+      settleFfcVideoCard(card, nums);
+    });
     if (!window.FfcResultCard || !FfcResultCard.settle) return;
-    $('#chatFeed .ffc-bot-card--result').each(function () {
+    $('#chatFeed .ffc-bot-card--result').not('.ffc-video-card').each(function () {
       const card = this;
       if (card.querySelector('.ffc-bot-result__ball-roll.is-rolling')) return;
       let nums = null;
@@ -2001,7 +2279,6 @@ $(function () {
       persistBotCardHtml(card);
     });
   }
-
 
   /* ================= 键盘 ================= */
   function initKeypad() {
@@ -2312,13 +2589,28 @@ $(function () {
     }
   }
 
-
-  /** 右侧栏顶对齐开奖条单行下沿（不跟展开历史表下移） */
+  /** 右侧栏顶对齐开奖条单行下沿；短屏压缩并保证不压住底部输入 */
   function layoutRail() {
     const room = document.querySelector('.ffc-room');
+    const rail = room && room.querySelector('.ffc-rail');
     const anchor = document.getElementById('drawToggle') || document.getElementById('drawBar');
+    const composer = document.querySelector('.ffc-composer');
     if (!room || !anchor) return;
-    const top = Math.max(8, Math.ceil(anchor.getBoundingClientRect().bottom - room.getBoundingClientRect().top + 6));
+    const roomRect = room.getBoundingClientRect();
+    const preferTop = Math.max(
+      8,
+      Math.ceil(anchor.getBoundingClientRect().bottom - roomRect.top + 6)
+    );
+    /* 先按期望 top 写上，再量真实栈高做夹紧 */
+    room.style.setProperty('--rail-top', preferTop + 'px');
+    const shortH = roomRect.height > 0 && roomRect.height < 700;
+    room.classList.toggle('is-rail-compact', shortH);
+    const stackH = rail ? Math.max(rail.offsetHeight, shortH ? 168 : 210) : (shortH ? 168 : 210);
+    const composerTop = composer
+      ? composer.getBoundingClientRect().top - roomRect.top
+      : roomRect.height - 56;
+    const maxTop = Math.max(8, Math.floor(composerTop - stackH - 6));
+    const top = Math.min(preferTop, maxTop);
     room.style.setProperty('--rail-top', top + 'px');
   }
 
@@ -2359,24 +2651,42 @@ $(function () {
   }
 
   /* ================= 玩法面板：左分类 · 右选项 · 底投注 ================= */
-  const AMOUNT_CHIPS = [10, 20, 50, 100, 200, 500];
+  /** 共用筹码图：client-app/public/images/chips（与斗牛同源；1W/5W 为万面额） */
+  const AMOUNT_CHIPS = [
+    { amt: 1, label: '1' },
+    { amt: 10, label: '10' },
+    { amt: 100, label: '100' },
+    { amt: 500, label: '500' },
+    { amt: 1000, label: '1000' },
+    { amt: 5000, label: '5000' },
+    { amt: 10000, label: '1W' },
+    { amt: 50000, label: '5W' }
+  ];
+  const CHIP_IMG = (amt) => `/images/chips/chip-${amt}.png?v=4`;
   const PLAY_CATEGORIES = [
     {
       id: 'twoSide',
       title: '两面',
       hint: () => `总和≥23为大 · 单球≥5为大 · 赔率 ${fmtOdds(ODDS.sumSide)}`,
       subs: null,
-      sideGroups: () => [
-        { label: '总和', prefix: '', odds: ODDS.sumSide },
-        ...Object.keys(POS).map(p => ({ label: p + '位', prefix: p, odds: ODDS.ballSide }))
-      ]
+      sideGroups: () => {
+        const ballLabs = ['第一球', '第二球', '第三球', '第四球', '第五球'];
+        return [
+          { label: '总和', prefix: '总', odds: ODDS.sumSide },
+          ...Object.keys(POS).map((p, i) => ({
+            label: ballLabs[i] || p + '位',
+            prefix: p,
+            odds: ODDS.ballSide
+          }))
+        ];
+      }
     },
     {
       id: 'position',
       title: '定位胆',
       hint: () => `选位置与号码 · 赔率 ${fmtOdds(ODDS.position)}`,
-      subs: Object.keys(POS),
-      mode: 'positionDigit',
+      subs: null,
+      mode: 'positionAll',
       odds: () => ODDS.position
     },
     {
@@ -2408,15 +2718,8 @@ $(function () {
     {
       id: 'lhh',
       title: '龙虎和',
-      hint: () => `万位 vs 个位 · 龙/虎 ${fmtOdds(ODDS.dragon)} · 和 ${fmtOdds(ODDS.tie)} · 口令：龙100 或 龙/100`,
-      subs: null,
-      items() {
-        return [
-          { play: '龙', label: '龙', odds: ODDS.dragon, tip: '万>个' },
-          { play: '虎', label: '虎', odds: ODDS.tiger, tip: '万<个' },
-          { play: '和', label: '和', odds: ODDS.tie, tip: '万=个' }
-        ];
-      }
+      hint: () => `任意两球比大小 · 龙/虎 ${fmtOdds(ODDS.dragon)} · 和 ${fmtOdds(ODDS.tie)} · 口令：1/2龙/100`,
+      subs: null
     },
     {
       id: 'niu',
@@ -2435,8 +2738,8 @@ $(function () {
       id: 'shape',
       title: '前中后',
       hint: () => `豹子${fmtOdds(SHAPE_ODDS['豹子'])} 顺子${fmtOdds(SHAPE_ODDS['顺子'])} 对子${fmtOdds(SHAPE_ODDS['对子'])} 半顺${fmtOdds(SHAPE_ODDS['半顺'])} 杂六${fmtOdds(SHAPE_ODDS['杂六'])}`,
-      subs: Object.keys(SEG),
-      mode: 'shape',
+      subs: null,
+      mode: 'shapeAll',
       shapes: ['豹子', '顺子', '对子', '半顺', '杂六']
     }
   ];
@@ -2446,6 +2749,32 @@ $(function () {
   /** @type {string[]} 已选玩法（可多选） */
   let playSelectedList = [];
   let playPickedDigits = [];
+  /** 玩法脚金额栏是否处于梭哈 */
+  let playAllin = false;
+
+  function clearPlayAmountChipActive() {
+    $('#playAmountChips .ffc-play-foot__chip').removeClass('is-active');
+  }
+
+  function syncPlayAmountUI() {
+    const $in = $('#playAmount');
+    if (playAllin) {
+      $in.attr('type', 'text').prop('readonly', true).val('梭哈').addClass('is-allin');
+      $('#playAmountAllin').addClass('is-active');
+      clearPlayAmountChipActive();
+    } else {
+      $in.attr('type', 'number').prop('readonly', false).removeClass('is-allin');
+      $('#playAmountAllin').removeClass('is-active');
+      if (!$in.val() || $in.val() === '梭哈') $in.val(100);
+    }
+  }
+
+  function setPlayAmount(val) {
+    playAllin = false;
+    $('#playAmount').attr('type', 'number').prop('readonly', false).removeClass('is-allin');
+    $('#playAmountAllin').removeClass('is-active');
+    $('#playAmount').val(Math.max(1, val));
+  }
 
   function currentPlayCat() {
     return PLAY_CATEGORIES[playCatIdx];
@@ -2455,16 +2784,177 @@ $(function () {
     return cat.subs ? cat.subs[playSubIdx] : '';
   }
 
+  function samePlay(a, b) {
+    if (a === b) return true;
+    const pa = parsePlay(a);
+    const pb = parsePlay(b);
+    if (!pa || !pb || pa.type !== pb.type) return false;
+    if (pa.type === 'lhh') {
+      return pa.a === pb.a && pa.b === pb.b && pa.pick === pb.pick;
+    }
+    return false;
+  }
+
   function togglePlaySelect(play) {
     if (!play || !parsePlay(play)) return;
-    const idx = playSelectedList.indexOf(play);
+    const idx = playSelectedList.findIndex((p) => samePlay(p, play));
     if (idx >= 0) playSelectedList.splice(idx, 1);
     else playSelectedList.push(play);
   }
 
   function isPlaySelected(play) {
-    return playSelectedList.indexOf(play) >= 0;
+    return playSelectedList.some((p) => samePlay(p, play));
   }
+
+
+  const BALL_POS_LABELS = ['第一球', '第二球', '第三球', '第四球', '第五球'];
+  const POS_KEYS = Object.keys(POS);
+
+  function playBallBtn(opts) {
+    const prefix = opts.clsPrefix || 'ffc';
+    const active = opts.active ? ' is-active' : '';
+    const picked = opts.picked ? ' is-picked' : '';
+    const digitAttr = opts.digitAttr ? ' data-digit="1"' : '';
+    const oddsHtml = opts.odds != null && opts.odds !== ''
+      ? `<small>${opts.odds}</small>`
+      : '';
+    return `<button type="button" class="${prefix}-play-ball${active}${picked}" data-play="${opts.play}"${digitAttr}><span class="${prefix}-play-ball__num">${opts.label}</span>${oddsHtml}</button>`;
+  }
+
+  function playTextCell(opts) {
+    const prefix = opts.clsPrefix || 'ffc';
+    const active = opts.active ? ' is-active' : '';
+    const wide = opts.wide ? ` ${prefix}-play-item--wide` : '';
+    const odds = opts.odds != null ? `<small>${opts.odds}</small>` : '';
+    return `<button type="button" class="${prefix}-play-item ${prefix}-play-item--cell${wide}${active}" data-play="${opts.play}"><span>${opts.label}</span>${odds}</button>`;
+  }
+
+  function renderPosBallSections(prefix, odds) {
+    const show = fmtOdds(odds);
+    return POS_KEYS.map((p, i) => {
+      const cells = Array.from({ length: 10 }, (_, d) => {
+        const play = p + d;
+        return playBallBtn({
+          clsPrefix: prefix,
+          play: play,
+          label: String(d),
+          odds: show,
+          active: isPlaySelected(play)
+        });
+      }).join('');
+      return `<div class="${prefix}-play-section"><div class="${prefix}-play-section__title">${BALL_POS_LABELS[i] || p}</div><div class="${prefix}-play-section__grid is-balls">${cells}</div></div>`;
+    }).join('');
+  }
+
+  function renderSegDigitPanel(prefix, cat, liveOdds) {
+    const sub = currentPlaySub();
+    const show = fmtOdds(liveOdds);
+    const cells = Array.from({ length: 10 }, (_, d) => {
+      const playStr = sub + d;
+      return playBallBtn({
+        clsPrefix: prefix,
+        play: String(d),
+        label: String(d),
+        odds: show,
+        active: isPlaySelected(playStr),
+        digitAttr: true
+      });
+    }).join('');
+    return `<div class="${prefix}-play-section"><div class="${prefix}-play-section__title">${sub}</div><div class="${prefix}-play-section__grid is-balls">${cells}</div></div>`;
+  }
+
+  function renderGroupDigitPanel(prefix, cat, liveOdds) {
+    const show = fmtOdds(liveOdds);
+    const cells = Array.from({ length: 10 }, (_, d) => {
+      const picking = playPickedDigits.indexOf(d) >= 0;
+      return playBallBtn({
+        clsPrefix: prefix,
+        play: String(d),
+        label: String(d),
+        odds: '',
+        picked: picking,
+        digitAttr: true
+      });
+    }).join('');
+    return `<div class="${prefix}-play-odds-line">赔率: <em>${show}</em></div><div class="${prefix}-play-section__grid is-balls is-group">${cells}</div>`;
+  }
+
+  function renderNiuPanel(prefix) {
+    const mains = [{ play: '无牛', label: '无牛', odds: ODDS.noNiu }];
+    for (let i = 1; i <= 9; i++) mains.push({ play: '牛' + i, label: '牛' + i, odds: ODDS.niu });
+    const mainHtml = mains.map((it) => playTextCell({
+      clsPrefix: prefix,
+      play: it.play,
+      label: it.label,
+      odds: fmtOdds(it.odds),
+      active: isPlaySelected(it.play)
+    })).join('');
+    const niuNiu = playTextCell({
+      clsPrefix: prefix,
+      play: '牛牛',
+      label: '牛牛',
+      odds: fmtOdds(ODDS.niu),
+      active: isPlaySelected('牛牛'),
+      wide: true
+    });
+    const sides = ['牛大', '牛小', '牛单', '牛双'].map((x) => playTextCell({
+      clsPrefix: prefix,
+      play: x,
+      label: x,
+      odds: fmtOdds(ODDS.niuSide),
+      active: isPlaySelected(x)
+    })).join('');
+    return `<div class="${prefix}-play-section"><div class="${prefix}-play-section__title">斗牛</div><div class="${prefix}-play-section__grid is-text">${mainHtml}</div>${niuNiu}</div><div class="${prefix}-play-section"><div class="${prefix}-play-section__title">斗牛两面</div><div class="${prefix}-play-section__grid is-text">${sides}</div></div>`;
+  }
+
+  function renderLhhPanel(prefix) {
+    const picks = [
+      { pick: '龙', odds: ODDS.dragon },
+      { pick: '和', odds: ODDS.tie },
+      { pick: '虎', odds: ODDS.tiger }
+    ];
+    return LHH_PAIRS.map(([a, b]) => {
+      const title = `${a + 1}/${b + 1}`;
+      const cells = picks.map(({ pick, odds }) => {
+        const play = lhhPlayOf(a, b, pick);
+        return playTextCell({
+          clsPrefix: prefix,
+          play,
+          label: pick,
+          odds: fmtOdds(odds),
+          active: isPlaySelected(play)
+        });
+      }).join('');
+      return `<div class="${prefix}-play-section"><div class="${prefix}-play-section__title">${title}</div><div class="${prefix}-play-section__grid is-text is-lhh">${cells}</div></div>`;
+    }).join('');
+  }
+
+  function renderShapeAllPanel(prefix) {
+    const shapesMain = ['豹子', '顺子', '对子', '半顺'];
+    return Object.keys(SEG).map((seg) => {
+      const cells = shapesMain.map((sh) => {
+        const play = seg + sh;
+        return playTextCell({
+          clsPrefix: prefix,
+          play: play,
+          label: sh,
+          odds: fmtOdds(SHAPE_ODDS[sh]),
+          active: isPlaySelected(play)
+        });
+      }).join('');
+      const zaPlay = seg + '杂六';
+      const za = playTextCell({
+        clsPrefix: prefix,
+        play: zaPlay,
+        label: '杂六',
+        odds: fmtOdds(SHAPE_ODDS['杂六']),
+        active: isPlaySelected(zaPlay),
+        wide: true
+      });
+      return `<div class="${prefix}-play-section"><div class="${prefix}-play-section__title">${seg}</div><div class="${prefix}-play-section__grid is-text">${cells}</div>${za}</div>`;
+    }).join('');
+  }
+
 
   function digitItems(odds) {
     const show = fmtOdds(odds);
@@ -2512,8 +3002,32 @@ $(function () {
     return 0;
   }
 
+  function currentPlayBetCount() {
+    const cat = currentPlayCat();
+    if ((cat.mode === 'group3' || cat.mode === 'group6') && playPickedDigits.length) {
+      return groupDuplexBetCount(cat, playPickedDigits.length);
+    }
+    return playSelectedList.length;
+  }
+
+  function syncPlayFootTotals() {
+    const n = currentPlayBetCount();
+    let total = 0;
+    if (playAllin) {
+      const bal = Math.floor(App.getBalance(user.uid) || 0);
+      if (n >= 1 && bal >= 1) total = n === 1 ? bal : Math.floor(bal / n) * n;
+    } else {
+      const unit = Math.max(0, parseInt($('#playAmount').val(), 10) || 0);
+      total = n * unit;
+    }
+    $('#playBetTotal').text(total.toLocaleString('en-US'));
+    const hasPick = !!(playSelectedList.length || playPickedDigits.length);
+    $('#playClear').prop('disabled', !hasPick);
+  }
+
   function updatePlaySelected() {
     const cat = currentPlayCat();
+    const $tip = $('#playSelected');
     if ((cat.mode === 'group3' || cat.mode === 'group6') && playPickedDigits.length) {
       const n = playPickedDigits.length;
       const bets = groupDuplexBetCount(cat, n);
@@ -2521,23 +3035,22 @@ $(function () {
       const codes = playPickedDigits.slice().sort((a, b) => a - b).join('');
       const name = cat.mode === 'group3' ? '组三' : '组六';
       if (n < minPick) {
-        $('#playSelected').text(`${currentPlaySub()}${name} 已选${codes || '—'}（还需${minPick - n}个号）`);
-        $('#playClear').prop('disabled', !(n || playSelectedList.length));
-        return;
+        $tip.prop('hidden', false).text(`${currentPlaySub()}${name} 已选${codes || '—'}（还需${minPick - n}个号）`);
+      } else {
+        $tip.prop('hidden', false).text(`${currentPlaySub()}${name}${codes} · ${bets}注复式`);
       }
-      $('#playSelected').text(`${currentPlaySub()}${name}${codes} · ${bets}注复式`);
-      $('#playClear').prop('disabled', false);
+      syncPlayFootTotals();
       return;
     }
     if (!playSelectedList.length) {
-      $('#playSelected').text('—');
-      $('#playClear').prop('disabled', true);
+      $tip.prop('hidden', true).text('');
+      syncPlayFootTotals();
       return;
     }
     const n = playSelectedList.length;
-    const preview = playSelectedList.slice(0, 4).join('、');
-    $('#playSelected').text(n > 4 ? `${preview}… 共${n}项` : (n > 1 ? `${preview}（${n}项）` : preview));
-    $('#playClear').prop('disabled', false);
+    const list = playSelectedList.join('、');
+    $tip.prop('hidden', false).text(n > 1 ? `${list}（共${n}项）` : list);
+    syncPlayFootTotals();
   }
 
   function resetPlayPick(clearAll) {
@@ -2557,12 +3070,16 @@ $(function () {
       `<button type="button" class="ffc-play-nav__item${i === playCatIdx ? ' is-active' : ''}" data-idx="${i}">${c.title}</button>`
     ).join(''));
 
-    $('#playAmountChips').html(AMOUNT_CHIPS.map(a =>
-      `<button type="button" class="ffc-play-foot__chip${a === 100 ? ' is-active' : ''}" data-amt="${a}">${a}</button>`
+    $('#playAmountChips').html(AMOUNT_CHIPS.map((c) =>
+      `<button type="button" class="ffc-play-foot__chip${c.amt === 100 ? ' is-active' : ''}" data-amt="${c.amt}" aria-label="${c.label}">` +
+        `<span class="ffc-play-foot__chip-glow" aria-hidden="true"></span>` +
+        `<img src="${CHIP_IMG(c.amt)}" alt="${c.label}" draggable="false">` +
+      `</button>`
     ).join(''));
+    syncPlayFootTotals();
   }
 
-  /** 副玩法栏（蓝胶囊等宽，对齐 LHC） */
+  /** 副玩法栏（前三/中三/后三） */
   function renderPlaySubBar(cat) {
     const $sub = $('#playSub');
     if (!cat.subs || !cat.subs.length) {
@@ -2573,78 +3090,60 @@ $(function () {
     const modeHtml = cat.subs.map((s, i) =>
       `<button type="button" class="ffc-lm-mode${i === playSubIdx ? ' is-active' : ''}" data-sub="${i}">${s}</button>`
     ).join('');
-    let playRow = '';
-    if (cat.mode === 'shape' && cat.shapes && cat.shapes.length) {
-      const playHtml = cat.shapes.map((shape) => {
-        const play = currentPlaySub() + shape;
-        const active = isPlaySelected(play);
-        return `<button type="button" class="ffc-lm-play${active ? ' is-active' : ''}" data-shape="${shape}"><span>${shape}</span><small>${fmtOdds(SHAPE_ODDS[shape])}</small></button>`;
-      }).join('');
-      playRow = `<div class="ffc-lm-row">
-        <span class="ffc-lm-row__lab is-play">玩法</span>
-        <div class="ffc-lm-plays is-n${Math.min(cat.shapes.length, 5)}">${playHtml}</div>
-      </div>`;
-    }
-    const subLab = cat.mode === 'positionDigit' ? '位置' : '副玩法';
     $sub.removeClass('is-hidden').prop('hidden', false).html(
-      `<div class="ffc-lm-bar">
-        <div class="ffc-lm-row">
-          <span class="ffc-lm-row__lab is-mode">${subLab}</span>
-          <div class="ffc-lm-modes is-n${n}">${modeHtml}</div>
-        </div>
-        ${playRow}
+      `<div class="ffc-lm-bar ffc-lm-bar--compact">
+        <div class="ffc-lm-modes is-n${n}">${modeHtml}</div>
       </div>`
     );
   }
 
   function renderPlayPanel() {
     const cat = currentPlayCat();
-    $('#playHint').text(typeof cat.hint === 'function' ? cat.hint() : cat.hint);
+    const prefix = 'ffc';
+    const hintText = typeof cat.hint === 'function' ? cat.hint() : cat.hint;
+    const hideHint = cat.id === 'twoSide' || cat.id === 'position' || cat.id === 'niu' || cat.id === 'shape'
+      || cat.id === 'lhh' || cat.mode === 'segDigit' || cat.mode === 'group3' || cat.mode === 'group6';
+    if (hideHint) $('#playHint').text('').hide();
+    else $('#playHint').show().text(hintText || '');
     renderPlaySubBar(cat);
 
     const $grid = $('#playGrid');
     let html = '';
-    let isDigits = false;
     const liveOdds = typeof cat.odds === 'function' ? cat.odds() : cat.odds;
     const sideGroups = typeof cat.sideGroups === 'function' ? cat.sideGroups() : cat.sideGroups;
 
-    if (cat.mode === 'positionDigit' || cat.mode === 'segDigit') {
-      isDigits = true;
-      const sub = currentPlaySub();
-      html = digitItems(liveOdds).map(it => {
-        const playStr = sub + it.play;
-        const picked = isPlaySelected(playStr);
-        return `<button type="button" class="ffc-play-item${picked ? ' is-active' : ''}" data-play="${it.play}" data-digit="1"><span>${it.label}</span><small>${it.odds}</small></button>`;
-      }).join('');
+    if (cat.id === 'position') {
+      html = renderPosBallSections(prefix, liveOdds);
+    } else if (cat.mode === 'segDigit') {
+      html = renderSegDigitPanel(prefix, cat, liveOdds);
     } else if (cat.mode === 'group3' || cat.mode === 'group6') {
-      isDigits = true;
       const nPick = playPickedDigits.length;
       const bets = groupDuplexBetCount(cat, nPick);
       const minPick = cat.minPick || (cat.mode === 'group3' ? 2 : 3);
       const name = cat.mode === 'group3' ? '组三' : '组六';
       if (nPick > 0) {
-        $('#playHint').text(
+        $('#playHint').show().text(
           nPick < minPick
             ? `已选${nPick}码 · 至少选${minPick}个 · ${name}复式 · 赔率 ${fmtOdds(liveOdds)}`
             : `已选${nPick}码 · ${name}复式 ${bets}注 · 每注金额见下方 · 赔率 ${fmtOdds(liveOdds)}`
         );
       }
-      html = digitItems(liveOdds).map(it => {
-        const picking = playPickedDigits.indexOf(+it.play) >= 0;
-        return `<button type="button" class="ffc-play-item${picking ? ' is-picked' : ''}" data-play="${it.play}" data-digit="1"><span>${it.label}</span></button>`;
-      }).join('');
-    } else if (cat.mode === 'shape') {
-      // 形态已放在副玩法栏「玩法」行，下方给简短提示
-      html = `<div class="ffc-play-panel__empty">先选副玩法（前/中/后三），再点上方形态下注</div>`;
+      html = renderGroupDigitPanel(prefix, cat, liveOdds);
+    } else if (cat.id === 'shape') {
+      html = renderShapeAllPanel(prefix);
     } else if (cat.id === 'twoSide' && sideGroups) {
       html = sideGroups.map(g => {
         const cells = ['大', '小', '单', '双'].map(s => {
           const play = g.prefix + s;
           const active = isPlaySelected(play);
-          return `<button type="button" class="ffc-play-item ffc-play-item--side${active ? ' is-active' : ''}" data-play="${play}"><span>${play}</span><small>${fmtOdds(g.odds)}</small></button>`;
+          return `<button type="button" class="ffc-play-item ffc-play-item--side${active ? ' is-active' : ''}" data-play="${play}"><span>${s}</span><small>${fmtOdds(g.odds)}</small></button>`;
         }).join('');
-        return `<div class="ffc-play-section"><div class="ffc-play-section__grid">${cells}</div></div>`;
+        return `<div class="ffc-play-section"><div class="ffc-play-section__title">${g.label}</div><div class="ffc-play-section__grid">${cells}</div></div>`;
       }).join('');
+    } else if (cat.id === 'lhh') {
+      html = renderLhhPanel(prefix);
+    } else if (cat.id === 'niu') {
+      html = renderNiuPanel(prefix);
     } else if (typeof cat.items === 'function') {
       html = cat.items().map(it => {
         const active = isPlaySelected(it.play);
@@ -2653,7 +3152,15 @@ $(function () {
       }).join('');
     }
 
-    $grid.toggleClass('is-digits', isDigits).toggleClass('is-two-side', cat.id === 'twoSide').html(html);
+    $grid
+      .removeClass('is-digits is-two-side is-ball-panel is-niu-panel is-shape-panel is-group-panel is-lhh-panel')
+      .toggleClass('is-two-side', cat.id === 'twoSide')
+      .toggleClass('is-ball-panel', cat.id === 'position' || cat.mode === 'segDigit' || cat.mode === 'group3' || cat.mode === 'group6')
+      .toggleClass('is-group-panel', cat.mode === 'group3' || cat.mode === 'group6')
+      .toggleClass('is-niu-panel', cat.id === 'niu')
+      .toggleClass('is-shape-panel', cat.id === 'shape')
+      .toggleClass('is-lhh-panel', cat.id === 'lhh')
+      .html(html);
     $grid.scrollTop(0);
     updatePlaySelected();
   }
@@ -2672,25 +3179,35 @@ $(function () {
       toastBetBlocked('bet');
       return;
     }
-    const amount = Math.max(1, parseInt($('#playAmount').val(), 10) || 0);
-    if (!amount) {
-      App.toast('请输入有效金额');
-      return;
-    }
     const validPlays = playSelectedList.filter(p => parsePlay(p));
     if (!validPlays.length) {
       App.toast('玩法无效，请重新选择');
       return;
     }
-    const lines = validPlays.map(p => ({ play: p, amount: amount }));
+    let lines;
+    if (playAllin) {
+      lines = resolveBetAmounts(validPlays, '梭哈');
+      if (!lines) { App.toast('余额不足，无法梭哈'); return; }
+    } else {
+      const amount = Math.max(1, parseInt($('#playAmount').val(), 10) || 0);
+      if (!amount) {
+        App.toast('请输入有效金额');
+        return;
+      }
+      lines = resolveBetAmounts(validPlays, String(amount));
+      if (!lines) {
+        App.toast('请输入有效金额');
+        return;
+      }
+      const bal = App.getBalance(user.uid);
+      const total = lines.reduce((s, l) => s + l.amount, 0);
+      if (total > bal) { App.toast('余额不足'); return; }
+    }
     const mapped = mapLinesToServerBets(lines);
     if (mapped.unsupported.length || !mapped.bets.length) {
       App.toast('格式错误');
       return;
     }
-    const bal = App.getBalance(user.uid);
-    const total = lines.reduce((s, l) => s + l.amount, 0);
-    if (total > bal) { App.toast('余额不足'); return; }
     if (!App.placeLotteryBets) {
       App.toast('请从大厅进入游戏');
       return;
@@ -2703,6 +3220,8 @@ $(function () {
       lastBetText = lines.map(l => l.play + '/' + l.amount).join(' ');
       playSelectedList = [];
       playPickedDigits = [];
+      playAllin = false;
+      syncPlayAmountUI();
       openPlaySheet(false);
       App.toast(`投注成功 · ${lines.length}注`);
       syncRoomChat(false);
@@ -2735,7 +3254,7 @@ $(function () {
       updatePlaySelected();
     });
 
-    $('#playGrid').on('click', '.ffc-play-item', function () {
+    $('#playGrid').on('click', '.ffc-play-item, .ffc-play-ball', function () {
       const cat = currentPlayCat();
       const play = String($(this).data('play'));
       const isDigit = $(this).data('digit');
@@ -2751,7 +3270,7 @@ $(function () {
         return;
       }
 
-      if (isDigit && (cat.mode === 'positionDigit' || cat.mode === 'segDigit')) {
+      if (isDigit && cat.mode === 'segDigit') {
         const playStr = currentPlaySub() + play;
         togglePlaySelect(playStr);
         $(this).toggleClass('is-active', isPlaySelected(playStr));
@@ -2766,20 +3285,26 @@ $(function () {
 
     $('#playAmountChips').on('click', '.ffc-play-foot__chip', function () {
       const amt = +$(this).data('amt');
-      $('#playAmount').val(amt);
-      $('#playAmountChips .ffc-play-foot__chip').removeClass('is-active');
+      setPlayAmount(amt);
+      clearPlayAmountChipActive();
       $(this).addClass('is-active');
+      syncPlayFootTotals();
     });
 
-    $('#playAmountMinus').on('click', () => {
-      const v = Math.max(1, (parseInt($('#playAmount').val(), 10) || 1) - 10);
-      $('#playAmount').val(v);
-      $('#playAmountChips .ffc-play-foot__chip').removeClass('is-active');
+    $('#playAmountAllin').on('click', function () {
+      playAllin = !playAllin;
+      syncPlayAmountUI();
+      syncPlayFootTotals();
     });
-    $('#playAmountPlus').on('click', () => {
-      const v = (parseInt($('#playAmount').val(), 10) || 0) + 10;
-      $('#playAmount').val(v);
-      $('#playAmountChips .ffc-play-foot__chip').removeClass('is-active');
+
+    $('#playAmount').on('input change', function () {
+      if (playAllin) return;
+      const v = parseInt($(this).val(), 10);
+      clearPlayAmountChipActive();
+      if (v > 0) {
+        $(`#playAmountChips .ffc-play-foot__chip[data-amt="${v}"]`).addClass('is-active');
+      }
+      syncPlayFootTotals();
     });
 
     $('#playSubmit').on('click', submitPlayBet);
@@ -2930,8 +3455,23 @@ $(function () {
 
   function tick() {
     const phase = roomChat && roomChat.getPhase ? roomChat.getPhase() : '';
-    if (phase === 'drawing' || phase === 'revealing' || phase === 'settled') {
-      const hold = roomChat.getPhaseIssue ? roomChat.getPhaseIssue() : '';
+    const hold = roomChat && roomChat.getPhaseIssue ? roomChat.getPhaseIssue() : '';
+    const ceremony = phase === 'drawing' || phase === 'revealing' || phase === 'settled';
+    /* 仪式未收干净时，若服务端已进入更新一期可下注，顶栏立即跟 serverCurrent，避免卡在上期 00:00/等待开盘 */
+    let releaseCeremonyHold = false;
+    if (ceremony && hold && serverSynced && serverCurrent) {
+      const nextIssue = String(serverCurrent.issueNo || '');
+      const nextLock = new Date(serverCurrent.lockAt).getTime();
+      const nextOpen = new Date(serverCurrent.openAt).getTime();
+      const nowHold = Date.now();
+      const nextBetting = String(serverCurrent.status || '') === 'PENDING'
+        && Number.isFinite(nextLock) && nowHold < nextLock;
+      if (nextIssue && nextIssue !== hold && (nextBetting || (Number.isFinite(nextOpen) && nowHold >= nextOpen))) {
+        releaseCeremonyHold = true;
+        if (typeof requestLotteryResync === 'function') requestLotteryResync();
+      }
+    }
+    if (ceremony && !releaseCeremonyHold) {
       if (hold) {
         if (typeof setCurIssueDisplay === 'function') setCurIssueDisplay(hold);
         else if (typeof setIssueEl === 'function') setIssueEl($('#curIssue'), hold);
@@ -3014,21 +3554,79 @@ $(function () {
     else App.go('../../client-app/pages/game-lobby/game-lobby.html' + q);
   });
 
-
   layoutRail();
   $(window).on('resize orientationchange', function () { layoutRail(); });
+  if (typeof ResizeObserver !== 'undefined') {
+    const roomEl = document.querySelector('.ffc-room');
+    if (roomEl) {
+      try {
+        new ResizeObserver(function () { layoutRail(); }).observe(roomEl);
+      } catch (e) { /* ignore */ }
+    }
+  }
   /* === chat-rail handlers (ffc) === */
 
-  function openRulesSheet(open) {
-    if (open) {
-      const o = ODDS;
-      const so = SHAPE_ODDS;
-      const betSec = (typeof BET_SEC !== 'undefined') ? BET_SEC : (INTERVAL - PREP_SEC);
-      const html = `
+  function playCatRulesHtml(cat) {
+    const id = (cat && cat.id) || '';
+    /* 文案对照官方 1分时时彩 NumberGame（gameId=284）规则弹窗 */
+    const map = {
+      twoSide:
+        '● 总和两面：<br><br>选择1个形态(大:≥23；小:≤22；单:个位数1,3,5,7,9；双:个位数0,2,4,6,8)，与开奖号码之和的形态相同，即中奖。<br><br>' +
+        '投注总和【大】；开奖号码：9,9,9,9,9，即中奖。<br><br>' +
+        '● 第一球~第五球两面：<br><br>在第一球~第五球中的任意位置上选择1个形态(大:≥5；小:≤4；单:个位数1,3,5,7,9；双:个位数0,2,4,6,8)，与该位置的开奖号码形态相同，即中奖。<br><br>' +
+        '投注第一球【小】；开奖号码：3,*,*,*,*，即中奖。',
+      position:
+        '● 定位胆：<br><br>在第一球～第五球中的任意位置上选择1个号码，与对应位置上的开奖号码一致，即中奖。<br><br>' +
+        '投注第一球【3】；开奖号码：3,*,*,*,*，即中奖。',
+      anyDigit:
+        '● 不定位：<br><br>前三：[第一球、第二球、第三球]<br>中三：[第二球、第三球、第四球]<br>後三：[第三球、第四球、第五球]<br><br>' +
+        '选择1个号码，开奖号码对应位置的3个数字包括所选号码，不限位置，即为中奖。<br><br>' +
+        '投注前三【3】；开奖号码：1,3,2,*,*，即中奖。',
+      group3:
+        '● 三星组三：<br><br>前三：[第一球、第二球、第三球]<br>中三：[第二球、第三球、第四球]<br>後三：[第三球、第四球、第五球]<br><br>' +
+        '选择2个号码组成2注，任意1个号码在开奖号码对应位置的3个数字上出现2次，另外1个号码出现1次（顺序不限），即中奖。<br><br>' +
+        '投注前三【1,3】；开奖号码：1,3,1,*,*，即中奖。',
+      group6:
+        '● 三星组六：<br><br>前三：[第一球、第二球、第三球]<br>中三：[第二球、第三球、第四球]<br>後三：[第三球、第四球、第五球]<br><br>' +
+        '选择3个号码组成1注。所选号码与开奖号码对应位置的3个数字相同(顺序不限)，即中奖。<br><br>' +
+        '投注前三【1,2,3】；开奖号码：1,3,2,*,*，即中奖。',
+      lhh:
+        '● 龙虎和：<br><br>两个位置的开奖号码进行比较(0最小，9最大)，前大于后为“龙”，反之为“虎”，号码相同则为和。<br><br>' +
+        '1vs2龙虎和：第一球号大于第二球号视为【龙】中奖、反之为【虎】中奖，号码相同则为【和】中奖，以此类推。<br><br>' +
+        '投注1vs5龙虎和【龙】；开奖号码：1,*,*,*,0，即中奖。',
+      niu:
+        '● 斗牛：<br><br>选择1个形态为1注，所选形态与开奖形态相同，即中奖。<br><br>' +
+        '无牛：开奖号码中任意3位数相加都无法是0或10的倍数；<br>' +
+        '牛牛：开奖号码中任意3位数相加可以为0或10的倍数，另外2个数字相加的个位数为0；<br>' +
+        '牛1~牛9：开奖号码中任意3位数相加可以为0或10的倍数，另外2个数字相加的个位数为所选号码；<br><br>' +
+        '备注：99253为牛8；02818为牛9；68628、23500皆为牛10俗称牛牛；26378、15286称为无牛。<br>' +
+        '当五个号码相同时，只有00000视为牛牛，其它11111，66666等皆视为无牛。<br><br>' +
+        '投注【牛1】；开奖号码：9,0,1,1,0，即中奖。<br><br>' +
+        '● 斗牛两面：<br><br>选择1个形态为1注，所选形态与开奖形态相同，即中奖。<br><br>' +
+        '牛大：牛牛，牛9、牛8、牛7、牛6；<br>牛小：牛5、牛4、牛3、牛2、牛1；<br>' +
+        '牛单：牛1、牛3、牛5、牛7、牛9；<br>牛双：牛2、牛4、牛6、牛8、牛牛<br><br>' +
+        '若开出结果为无牛。投注牛大、牛小、牛单、牛双皆为不中奖。<br><br>' +
+        '投注【牛小】；开奖号码：9,0,1,1,0，即中奖。',
+      shape:
+        '● 前中后：<br><br>选择1个形态为1注，所选形态和开奖号码对应位置的3个数字的形态相同，顺序不限，即中奖。<br><br>' +
+        '豹子：3个相同的号码。<br>投注前三【豹子】；开奖号码2,2,2,*,*，即中奖。<br><br>' +
+        '顺子：3个相连的号码，顺序不限。9与0相连，0与1相连。<br>投注前三【顺子】；开奖号码9,0,1,*,*，即中奖。<br><br>' +
+        '对子：3个数字中有1个数字出现2次，另1个数字出现1次，不包括豹子但顺序不限。<br>投注前三【对子】；开奖号码0,0,1,*,*，即中奖。<br><br>' +
+        '半顺：3个数字各不相同，且其中只有2个数字相连，不包括顺子、对子但顺序不限。<br>投注前三【半顺】；开奖号码1,2,5,*,*，即中奖。如开奖号码为：123、901、556、233...视为不中奖。<br><br>' +
+        '杂六：3个数字各不相同且互不相连，不包括豹子、顺子、对子、半顺的所有开奖号码形态。<br>投注前三【杂六】；开奖号码1,5,7,*,*，即中奖。',
+    };
+    const body = map[id] || '请在盘面点选投注项后确认投注；派彩以服务端为准。';
+    return `<div class="ffc-rules-sec"><p>${body}</p></div>`;
+  }
+
+  function fullRulesHtml() {
+    const o = ODDS;
+    const so = SHAPE_ODDS;
+    return `
         <div class="ffc-rules-sec">
           <h3 class="ffc-rules-sec__title">一、开奖与时间</h3>
-          <p>1分时时彩每期开出 <b>5</b> 个号码（万、千、百、十、个），每位为 <b>0～9</b>。</p>
-          <p>每期共 <b>${INTERVAL} 秒</b>：可下注 <b>${betSec} 秒</b>，提前 <b>${PREP_SEC} 秒</b> 封盘并准备开奖。顶栏显示「距封盘」；封盘后显示「开奖中」，不可下注、不可取消。</p>
+          <p>1分时时彩每期开出 <b>5</b> 个号码（第一球～第五球），每位为 <b>0～9</b>。</p>
+          <p>每期共 <b>${INTERVAL} 秒</b>。顶栏显示「距封盘」；封盘后显示「开奖中」，不可下注、不可取消。</p>
           <p>开奖结果、历史栏与核对派彩均以服务端账本为准。</p>
         </div>
         <div class="ffc-rules-sec">
@@ -3048,23 +3646,21 @@ $(function () {
           <h3 class="ffc-rules-sec__title">三、玩法与赔率</h3>
           <p>下列为当前房间赔率（会随后台赔率表更新）。中奖派彩 = 投注金额 × 赔率（四舍五入到分）。</p>
           <table class="ffc-rules-table">
-            <thead><tr><th>玩法</th><th>说明</th><th>赔率</th></tr></thead>
+            <thead><tr><th>玩法</th><th>赔率</th><th>说明</th></tr></thead>
             <tbody>
-              <tr><td>总和两面</td><td>五星和值：≥23 大，≤22 小；奇单偶双</td><td>${fmtOdds(o.sumSide)}</td></tr>
-              <tr><td>定位两面</td><td>万/千/百/十/个 + 大(≥5)/小(≤4)/单/双</td><td>${fmtOdds(o.ballSide)}</td></tr>
-              <tr><td>定位胆</td><td>指定某一位为某数字，如「万5」「个0」</td><td>${fmtOdds(o.position)}</td></tr>
-              <tr><td>不定位</td><td>前三/中三/后三中出现指定数字（不限位置）</td><td>${fmtOdds(o.anyDigit)}</td></tr>
-              <tr><td>三星组三</td><td>前/中/后三开出对子形态，且两枚选号都出现</td><td>${fmtOdds(o.group3)}</td></tr>
-              <tr><td>三星组六</td><td>前/中/后三三个不同号，且三枚选号都出现</td><td>${fmtOdds(o.group6)}</td></tr>
-              <tr><td>龙 / 虎</td><td>万位 vs 个位：万&gt;个为龙，万&lt;个为虎</td><td>${fmtOdds(o.dragon)} / ${fmtOdds(o.tiger)}</td></tr>
-              <tr><td>和</td><td>万位 = 个位</td><td>${fmtOdds(o.tie)}</td></tr>
-              <tr><td>斗牛</td><td>任三张和为 10 倍数则有牛；余两码和个位为牛几（0=牛牛）</td><td>无牛 ${fmtOdds(o.noNiu)} · 牛 ${fmtOdds(o.niu)}</td></tr>
-              <tr><td>牛两面</td><td>牛大(6～牛牛)/牛小(1～5)/牛单/牛双；开无牛判输</td><td>${fmtOdds(o.niuSide)}</td></tr>
-              <tr><td>前中后形态</td><td>豹子 / 顺子 / 对子 / 半顺 / 杂六（含 9-0、0-1）</td><td>豹${fmtOdds(so['豹子'])} 顺${fmtOdds(so['顺子'])} 对${fmtOdds(so['对子'])} 半${fmtOdds(so['半顺'])} 杂${fmtOdds(so['杂六'])}</td></tr>
+              <tr><td>总和两面</td><td>${fmtOdds(o.sumSide)}</td><td>五星和值：≥23 大，≤22 小；奇单偶双</td></tr>
+              <tr><td>第一~五球两面</td><td>${fmtOdds(o.ballSide)}</td><td>大(≥5)/小(≤4)/单/双</td></tr>
+              <tr><td>定位胆</td><td>${fmtOdds(o.position)}</td><td>指定某一位为某数字</td></tr>
+              <tr><td>不定位</td><td>${fmtOdds(o.anyDigit)}</td><td>前三/中三/後三中出现指定数字</td></tr>
+              <tr><td>三星组三</td><td>${fmtOdds(o.group3)}</td><td>前/中/後三对子形态，两枚选号都出现</td></tr>
+              <tr><td>三星组六</td><td>${fmtOdds(o.group6)}</td><td>前/中/後三三个不同号且与选号相同</td></tr>
+              <tr><td>龙虎和</td><td>龙/虎 ${fmtOdds(o.dragon)}<br>和 ${fmtOdds(o.tie)}</td><td>两球比大小；相同为和</td></tr>
+              <tr><td>斗牛</td><td>无牛 ${fmtOdds(o.noNiu)}<br>牛 ${fmtOdds(o.niu)}</td><td>任三和为10倍数则有牛；五同号仅00000为牛牛</td></tr>
+              <tr><td>斗牛两面</td><td>${fmtOdds(o.niuSide)}</td><td>牛大(牛牛/9~6)/牛小(5~1)/单双；无牛不中</td></tr>
+              <tr><td>前中后</td><td>豹 ${fmtOdds(so['豹子'])}<br>顺 ${fmtOdds(so['顺子'])}<br>对 ${fmtOdds(so['对子'])}<br>半 ${fmtOdds(so['半顺'])}<br>杂 ${fmtOdds(so['杂六'])}</td><td>豹子/顺子/对子/半顺/杂六（9-0、0-1相连）</td></tr>
             </tbody>
           </table>
         </div>
-
         <div class="ffc-rules-sec">
           <h3 class="ffc-rules-sec__title">四、取消与结算</h3>
           <p>当期未封盘前可输入「取消」或点键盘「取消」，撤销本人本期未结算注单；封盘后不可取消。</p>
@@ -3079,6 +3675,21 @@ $(function () {
             <li>长龙 / 预测仅供走势参考，不构成投注建议</li>
           </ul>
         </div>`;
+  }
+
+  function openRulesSheet(open, opts) {
+    if (open) {
+      const mode = (opts && opts.mode) || 'full';
+      let title = '游戏规则';
+      let html;
+      if (mode === 'playCat') {
+        const cat = currentPlayCat();
+        title = (cat && cat.title) || '玩法';
+        html = playCatRulesHtml(cat);
+      } else {
+        html = fullRulesHtml();
+      }
+      $('#rulesTitle').text(title);
       $('#rulesBody').html(html);
       $('#rulesMask').prop('hidden', false);
       $('#rulesSheet').prop('hidden', false).addClass('is-open');
@@ -3088,7 +3699,6 @@ $(function () {
       setTimeout(() => { if (!$('#rulesSheet').hasClass('is-open')) $('#rulesSheet').prop('hidden', true); }, 280);
     }
   }
-
   function goBetRecords() {
     const sep = q.includes('?') ? '&' : '?';
     App.go('../../client-app/pages/bet-records/bet-records.html' + q + sep + 'game=ffc');
@@ -3101,7 +3711,8 @@ $(function () {
   $('#btnCs').on('click', () => App.go('../../client-app/pages/cs/cs.html' + q));
 
   $('#btnExpand, #btnComposerPlay').on('click', () => openPlaySheet(true));
-  $('#btnRules').on('click', () => openRulesSheet(true));
+  $('#btnRules').on('click', () => openRulesSheet(true, { mode: 'full' }));
+  $('#playSheetRules').on('click', () => openRulesSheet(true, { mode: 'playCat' }));
   $('#rulesSheetClose, #rulesMask').on('click', () => openRulesSheet(false));
   $('#btnRecords').on('click', () => goBetRecords());
   $('#playSheetClose, #playMask').on('click', () => openPlaySheet(false));

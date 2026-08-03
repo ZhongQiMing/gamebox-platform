@@ -1,11 +1,11 @@
-﻿/**
+/**
  * 1分快三 · 聊天投注房
- * 3 颗骰子 · 55s 一期（45s 下注 + 10s 准备中，与服务端 lockAt 对齐）
- * BUILD 51 — 与 index.html ?v= 保持一致
+ * 3 颗骰子 · 55s 一期（41s 下注 + 14s 准备中，与服务端 lockAt 对齐）
+ * BUILD 53 — 与 index.html ?v= 保持一致
  */
 $(function () {
   const INTERVAL = 55;
-  const PREP_SEC = 10;
+  const PREP_SEC = 14;
 
   function fixAvatar(url) {
     const fallback = '/images/avatars/001.jpg';
@@ -31,13 +31,6 @@ $(function () {
     }
     if (url.startsWith('/')) return url;
     return fallback;
-  }
-
-  /** 头像池：001~162（022/078/086 为 png） */
-  function avatarFromPool(seed) {
-    const n = 1 + (Math.abs(Number(seed) || 0) % 162);
-    const ext = (n === 22 || n === 78 || n === 86) ? 'png' : 'jpg';
-    return `/images/avatars/${String(n).padStart(3, '0')}.${ext}`;
   }
 
   function avatarHtml(name, seed) {
@@ -83,12 +76,30 @@ $(function () {
     }
   }
 
-
   let historyRows = [];
   let lastDraw = [];
   let serverCurrent = null;
   let serverSynced = false;
   let snapshotBusy = false;
+  /** 开奖点后催快照节流 */
+  let openAtResyncAt = 0;
+  function updateCountdownDrawing() {
+    const $box = $('#countdownBox').removeClass('is-preparing is-betting is-freeze is-urgent').addClass('is-drawing');
+    const $label = $('#cdLabel');
+    if ($label.length) $label.text('开奖中');
+    $box.attr('aria-label', '开奖中');
+    /* 开奖中只留三字；class + hide，避免 display:flex 盖掉 [hidden] */
+    $('#cdDigits').attr('hidden', true).hide();
+    $('#cdPrep').attr('hidden', true).hide();
+  }
+  function requestLotteryResync() {
+    const now = Date.now();
+    if (openAtResyncAt && now - openAtResyncAt < 800) return;
+    openAtResyncAt = now;
+    snapshotBusy = false;
+    if (typeof App.resyncLottery === 'function') App.resyncLottery();
+    else if (typeof syncServerSnapshot === 'function') syncServerSnapshot();
+  }
   const REVEALED_STORAGE_KEY = 'k3_revealed_v1';
   const CLOSED_STORAGE_KEY = 'k3_closed_v1';
   let revealedIssues = new Set();
@@ -101,25 +112,27 @@ $(function () {
   /** 封盘后冻结下注，开奖核对展示完再解冻（避免下一期过早冒注） */
   let roomBetFrozen = false;
   let sealedIssueNo = '';
-  const MOCK_NAMES = [];
   const issueBetBook = {};
-  const ROBOT_COUNT = 10;
 
+  /* 本地兜底须与 server kuai3PayTable 同值；启动后由 /pay-table 覆盖 */
   const ODDS = {
-    side: 1.98,
-    sum: 6.5, // 兜底；实际按 SUM_ODDS 分档
-    dice: 2.0, // 出现 1 次基准；结算按出现次数 2/3/4
-    pairN: 10,
-    tripletN: 150,
-    tripletAny: 24,
-    straight: 8,
-    alldiff: 1.95,
-    long: 5.8,
+    side: 1.995,
+    sum: 5,
+    dice: 2.3,
+    dice2: 3.5,
+    dice3: 4.5,
+    pairN: 11,
+    tripletN: 168,
+    tripletAny: 26,
+    straight: 7.5,
+    straightN: 28.5,
+    alldiff: 2.16,
+    alldiffN: 26,
+    long: 5,
   };
-  /** 和值分档赔率（含本返还） */
   const SUM_ODDS = {
-    4: 50, 5: 18, 6: 14, 7: 12, 8: 8, 9: 6.5, 10: 6,
-    11: 6, 12: 6.5, 13: 8, 14: 12, 15: 14, 16: 18, 17: 50,
+    3: 168, 4: 58, 5: 21, 6: 18, 7: 12.5, 8: 9, 9: 7, 10: 5,
+    11: 5, 12: 7, 13: 9, 14: 12.5, 15: 18, 16: 21, 17: 58, 18: 168,
   };
 
   function applyServerPayTable(pt) {
@@ -127,81 +140,23 @@ $(function () {
     ODDS.side = mulOf(pt, 'big', ODDS.side);
     ODDS.sum = mulOf(pt, 'sum', ODDS.sum);
     ODDS.dice = mulOf(pt, 'dice1', ODDS.dice);
+    ODDS.dice2 = mulOf(pt, 'dice2', ODDS.dice2);
+    ODDS.dice3 = mulOf(pt, 'dice3', ODDS.dice3);
     ODDS.pairN = mulOf(pt, 'pair', ODDS.pairN);
     ODDS.tripletN = mulOf(pt, 'tripletN', ODDS.tripletN);
     ODDS.tripletAny = mulOf(pt, 'triplet', ODDS.tripletAny);
     ODDS.straight = mulOf(pt, 'straight', ODDS.straight);
+    ODDS.straightN = mulOf(pt, 'straightN', ODDS.straightN);
     ODDS.alldiff = mulOf(pt, 'alldiff', ODDS.alldiff);
+    ODDS.alldiffN = mulOf(pt, 'alldiffN', ODDS.alldiffN);
     ODDS.long = mulOf(pt, 'long', ODDS.long);
-    for (let n = 4; n <= 17; n++) {
+    for (let n = 3; n <= 18; n++) {
       SUM_ODDS[n] = mulOf(pt, 'sum_' + n, SUM_ODDS[n]);
     }
   }
   const SUOHA_WORDS = new Set(['梭哈', '全下', 'allin']);
   const SIDE_CHARS = '大小单双';
   const DICE_CHARS = '123456';
-
-  function pickOne(arr) {
-    return arr[Math.floor(Math.random() * arr.length)];
-  }
-
-  /** 各种金额都可能出现，不刻意凑整十/整百 */
-  function pickAmt() {
-    const w = Math.random();
-    if (w < 0.4) return 10 + Math.floor(Math.random() * 90);
-    if (w < 0.75) return 20 + Math.floor(Math.random() * 180);
-    if (w < 0.92) return 50 + Math.floor(Math.random() * 250);
-    return 100 + Math.floor(Math.random() * 400);
-  }
-
-  function randomMockBetText() {
-    const amt = pickAmt();
-    const roll = Math.random();
-    if (roll < 0.24) return `${pickOne(['大', '小', '单', '双'])}/${amt}`;
-    if (roll < 0.4) return `和${pickOne([4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17])}/${amt}`;
-    if (roll < 0.55) return `三军${1 + Math.floor(Math.random() * 6)}/${amt}`;
-    if (roll < 0.68) return `二同${1 + Math.floor(Math.random() * 6)}/${amt}`;
-    if (roll < 0.8) return `${pickOne(['三同号', '三连号', '三不同号'])}/${amt}`;
-    if (roll < 0.9) {
-      const pairs = longPairs();
-      const p = pairs[Math.floor(Math.random() * pairs.length)];
-      return `${p.play}/${amt}`;
-    }
-    const side = pickOne(['大', '小', '单', '双']);
-    const dice = `三军${1 + Math.floor(Math.random() * 6)}`;
-    const a = Math.max(10, Math.min(amt - 1, Math.floor(amt * (0.35 + Math.random() * 0.25))));
-    const b = Math.max(1, amt - a);
-    return `${side}/${a}<br>${dice}/${b}`;
-  }
-
-  function seedMockNames() {
-    const names = App.NAME_PREFIX || ['黄金', '银河', '夜行', '闪电', '深海', '炽焰', '疾风', '幻影'];
-    const suffix = App.NAME_SUFFIX || ['猎手', '行者', '骑士', '大师', '旅人', '王者', '武士', '侠客'];
-    MOCK_NAMES.length = 0;
-    const used = new Set();
-    let i = 0;
-    while (MOCK_NAMES.length < ROBOT_COUNT && i < 64) {
-      const name = names[i % names.length] + suffix[(i * 3 + 1) % suffix.length];
-      i += 1;
-      if (used.has(name)) continue;
-      used.add(name);
-      MOCK_NAMES.push({ name, avatar: avatarFromPool(11 + MOCK_NAMES.length * 17) });
-    }
-    while (MOCK_NAMES.length < ROBOT_COUNT) {
-      const idx = MOCK_NAMES.length + 1;
-      MOCK_NAMES.push({ name: '玩家' + idx, avatar: avatarFromPool(30 + idx * 9) });
-    }
-  }
-
-  function recordMockBetLines(name, betText, opts) {
-    const o = Object.assign({ mock: true }, opts || {});
-    let ok = false;
-    String(betText || '').split(/<br\s*\/?>/i).forEach((line) => {
-      const t = String(line || '').trim();
-      if (t && recordBet(name, t, o)) ok = true;
-    });
-    return ok;
-  }
 
   function isTriplet(nums) {
     return nums[0] === nums[1] && nums[1] === nums[2];
@@ -265,7 +220,7 @@ $(function () {
     const t = String(raw || '').replace(/\s+/g, '');
     let m;
     if ((m = t.match(/^(大|小|单|双)$/))) return { type: 'side', side: m[1], odds: ODDS.side };
-    if ((m = t.match(/^和(?:值)?([4-9]|1[0-7])$/))) {
+    if ((m = t.match(/^和(?:值)?([3-9]|1[0-8])$/))) {
       const sum = +m[1];
       return { type: 'sum', sum, odds: SUM_ODDS[sum] || ODDS.sum };
     }
@@ -274,7 +229,7 @@ $(function () {
     if ((m = t.match(/^二同(?:号)?([1-6])$/))) return { type: 'pairN', num: +m[1], odds: ODDS.pairN };
     if ((m = t.match(/^三同([1-6])$/))) return { type: 'tripletN', num: +m[1], odds: ODDS.tripletN };
     if ((m = t.match(/^三同号([1-6])$/))) return { type: 'tripletN', num: +m[1], odds: ODDS.tripletN };
-    if (t === '三同' || t === '三同号' || t === '豹子' || t === '豹') {
+    if (t === '三同' || t === '三同号' || t === '豹子' || t === '豹' || t === '三同号通选') {
       return { type: 'tripletAny', odds: ODDS.tripletAny };
     }
     if ((m = t.match(/^三连([1-6]{3})$/))) {
@@ -282,11 +237,26 @@ $(function () {
       const b = +m[1][1];
       const c = +m[1][2];
       if (a + 1 === b && b + 1 === c) {
-        return { type: 'straightN', a, b, c, odds: ODDS.straight };
+        return { type: 'straightN', a, b, c, odds: ODDS.straightN };
       }
       return null;
     }
-    if (t === '三连号' || t === '顺子' || t === '三连') return { type: 'straight', odds: ODDS.straight };
+    if (t === '三连号' || t === '顺子' || t === '三连' || t === '三连号通选') {
+      return { type: 'straight', odds: ODDS.straight };
+    }
+    if ((m = t.match(/^三不同(?:号)?([1-6]{3})$/))) {
+      const digits = m[1].split('').map(Number);
+      const sorted = digits.slice().sort((a, b) => a - b);
+      if (new Set(sorted).size !== 3) return null;
+      return {
+        type: 'alldiffN',
+        a: sorted[0],
+        b: sorted[1],
+        c: sorted[2],
+        digits: sorted.join(''),
+        odds: ODDS.alldiffN,
+      };
+    }
     if (t === '三不同号' || t === '三不同' || t === '杂六') return { type: 'alldiff', odds: ODDS.alldiff };
     if ((m = t.match(/^长牌([1-6])([1-6])$/))) {
       const a = +m[1];
@@ -314,6 +284,7 @@ $(function () {
     if (p.type === 'straight') return { betType: 'straight', betValue: 'any' };
     if (p.type === 'straightN') return { betType: 'straight', betValue: String(p.a) + String(p.b) + String(p.c) };
     if (p.type === 'alldiff') return { betType: 'alldiff' };
+    if (p.type === 'alldiffN') return { betType: 'alldiff', betValue: p.digits || (String(p.a) + String(p.b) + String(p.c)) };
     if (p.type === 'long') return { betType: 'long', betValue: p.a + ':' + p.b };
     return null;
   }
@@ -354,8 +325,8 @@ $(function () {
       case 'dice': {
         const c = countOf(nums, p.num);
         if (c <= 0) return { winAmount: 0, profit: -amount, hit: '' };
-        const diceOdds = c === 1 ? 2 : (c === 2 ? 3 : 4);
-        const winAmount = Math.floor(amount * diceOdds);
+        const diceOdds = c === 1 ? ODDS.dice : (c === 2 ? ODDS.dice2 : ODDS.dice3);
+        const winAmount = Math.round(amount * diceOdds * 100) / 100;
         return { winAmount, profit: winAmount - amount, hit: play };
       }
       case 'pairN':
@@ -378,12 +349,17 @@ $(function () {
       case 'alldiff':
         win = isSanButong(nums);
         break;
+      case 'alldiffN': {
+        const got = [...new Set(nums)].sort((a, b) => a - b);
+        win = got.length === 3 && got[0] === p.a && got[1] === p.b && got[2] === p.c;
+        break;
+      }
       case 'long':
         win = nums.includes(p.a) && nums.includes(p.b);
         break;
     }
     if (!win) return { winAmount: 0, profit: -amount, hit: '' };
-    const winAmount = Math.floor(amount * p.odds);
+    const winAmount = Math.round(amount * p.odds * 100) / 100;
     return { winAmount, profit: winAmount - amount, hit: play };
   }
 
@@ -438,6 +414,21 @@ $(function () {
     return plays.length ? plays : null;
   }
 
+  function expandAllDiffCombo(digitStr) {
+    const digits = uniqueDiceDigits(digitStr).sort((a, b) => a - b);
+    if (digits.length < 3) return null;
+    const plays = [];
+    for (let i = 0; i < digits.length; i++) {
+      for (let j = i + 1; j < digits.length; j++) {
+        for (let k = j + 1; k < digits.length; k++) {
+          const play = '三不同' + digits[i] + digits[j] + digits[k];
+          if (parsePlay(play)) plays.push(play);
+        }
+      }
+    }
+    return plays.length ? plays : null;
+  }
+
   function expandPlayPart(playPart) {
     const t0 = String(playPart || '').trim();
     const t = t0.replace(/\s+/g, '');
@@ -448,7 +439,7 @@ $(function () {
       const mSum = t0.match(/^和(?:值)?\s*([0-9]+(?:\s*[\/\s]\s*[0-9]+)*)$/)
         || t.match(/^和(?:值)?([0-9/]+)$/);
       if (mSum) {
-        const nums = String(mSum[1]).split(/[\/\s]+/).map(Number).filter((n) => n >= 4 && n <= 17);
+        const nums = String(mSum[1]).split(/[\/\s]+/).map(Number).filter((n) => n >= 3 && n <= 18);
         const plays = [];
         const seen = new Set();
         nums.forEach((n) => {
@@ -487,6 +478,8 @@ $(function () {
     if (m) return expandStraightCombo(m[1]);
     if (t === '三连' || t === '三连号' || t === '顺子') return ['三连号'];
 
+    m = t.match(/^三不同(?:号)?\/?([1-6]+)$/);
+    if (m) return expandAllDiffCombo(m[1]);
     if (t === '三不同' || t === '三不同号' || t === '杂六') return ['三不同'];
 
     m = t.match(/^长牌\/?([1-6]{2,})$/);
@@ -509,14 +502,15 @@ $(function () {
     if (plays.length === 1) return [{ play: plays[0], amount: bal }];
     const base = Math.floor(bal / plays.length);
     if (base < 1) return null;
-    const rem = bal - base * plays.length;
-    return plays.map((play, i) => ({ play, amount: base + (i === 0 ? rem : 0) }));
+    /* 余数不下注，留在余额里 */
+    return plays.map((play) => ({ play, amount: base }));
   }
 
   function requiresSlashPlayPart(playPart) {
     const t = String(playPart || '');
     if (/^(三军|二同|独)/.test(t)) return true;
     if (/^三连(?:号)?\/?[1-6]{3,}$/.test(t)) return true;
+    if (/^三不同(?:号)?[1-6]{3,}$/.test(t)) return true;
     if (/^长牌/.test(t)) return true;
     return false;
   }
@@ -687,9 +681,8 @@ $(function () {
       App.toast('房间同步中，请稍候');
       return;
     }
-    App.toast(kind === 'cancel' ? '封盘中，无法取消' : '封盘中，无法下注');
+    App.toast(kind === 'cancel' ? '当前期无可取消注单' : '封盘中，无法下注');
   }
-
 
   /** 玩法与金额之间：没有 / 就补上；已有 / 或 各 则不再加 */
   function joinPlayAmount(play, amount) {
@@ -772,7 +765,6 @@ $(function () {
     App.toast('梭哈已均分 · ' + allPlays.length + '注 · 每注约' + per);
     return true;
   }
-
 
   function betLogKey() { return 'k3_bet_log_' + user.uid; }
 
@@ -903,7 +895,13 @@ $(function () {
     } catch (e) { /* ignore */ }
   }
 
-  function fmtProfit(n) { return (n >= 0 ? '+' : '') + n; }
+  function fmtMoney2(n) {
+    return (Math.round((Number(n) || 0) * 100) / 100).toFixed(2);
+  }
+  function fmtProfit(n) {
+    const v = Math.round((Number(n) || 0) * 100) / 100;
+    return (v >= 0 ? '+' : '') + v.toFixed(2);
+  }
 
   function realBetBook(issue) {
     const book = issueBetBook[issue];
@@ -927,15 +925,15 @@ $(function () {
     const total = bets.reduce(function (s, b) { return s + (Number(b.amount) || 0); }, 0);
     const groups = App.groupLotteryBetsByType(bets);
     const tags = groups.map(function (g) {
-      return '<span class="k3-bot-tag">' + g.label + '×' + g.count + '/' + g.amount + '</span>';
+      return '<span class="k3-bot-tag">' + g.label + '×' + g.count + '/' + fmtMoney2(g.amount) + '</span>';
     }).join('');
     let detail = '';
     if (bets.length <= 8) {
       detail = '<div class="k3-bot-user__tags" style="margin-top:6px">' + bets.map(function (b) {
-        return '<span class="k3-bot-tag">' + App.labelLotteryBet(b) + '/' + b.amount + '</span>';
+        return '<span class="k3-bot-tag">' + App.labelLotteryBet(b) + '/' + fmtMoney2(b.amount) + '</span>';
       }).join('') + '</div>';
     }
-    const userBlock = '<div class="k3-bot-user is-me"><div class="k3-bot-user__head"><span class="k3-bot-user__name">我</span><span class="k3-bot-user__sum">' + total + '</span></div><div class="k3-bot-user__tags">' + tags + '</div>' + detail + '</div>';
+    const userBlock = '<div class="k3-bot-user is-me"><div class="k3-bot-user__head"><span class="k3-bot-user__name">我</span><span class="k3-bot-user__sum">' + fmtMoney2(total) + '</span></div><div class="k3-bot-user__tags">' + tags + '</div>' + detail + '</div>';
     return '<div class="k3-bot-card k3-bot-card--bets"><div class="k3-bot-card__head"><span class="k3-bot-card__title">注单核对</span><span class="k3-bot-card__issue">' + issue + '</span></div><div class="k3-bot-card__body is-full">' + userBlock + '</div></div>';
   }
   function buildMineLineHtmlFromServer(issue, list) {
@@ -945,7 +943,7 @@ $(function () {
     const myProfit = bets.reduce(function (sum, b) { return sum + serverBetProfit(b); }, 0);
     const myWin = bets.reduce(function (sum, b) { return sum + (Number(b.payout) || 0); }, 0);
     const profitCls = myProfit >= 0 ? 'pos' : 'neg';
-    const winText = myWin > 0 ? ('中奖 +' + myWin) : '未中奖';
+    const winText = myWin > 0 ? ('中奖 +' + fmtMoney2(myWin)) : '未中奖';
     return '<div class="k3-bot-mine-line ' + profitCls + '">' +
       '<span class="k3-bot-mine-line__label">您本期</span>' +
       '<span class="k3-bot-mine-line__win">' + winText + '</span>' +
@@ -968,8 +966,8 @@ $(function () {
     const users = names.map(name => {
       const bets = book[name];
       const total = bets.reduce((s, b) => s + b.amount, 0);
-      const tags = bets.map(b => `<span class="k3-bot-tag">${b.play}/${b.amount}</span>`).join('');
-      return `<div class="k3-bot-user${name === user.name ? ' is-me' : ''}"><div class="k3-bot-user__head"><span class="k3-bot-user__name">${name}</span><span class="k3-bot-user__sum">${total}</span></div><div class="k3-bot-user__tags">${tags}</div></div>`;
+      const tags = bets.map(b => `<span class="k3-bot-tag">${b.play}/${fmtMoney2(b.amount)}</span>`).join('');
+      return `<div class="k3-bot-user${name === user.name ? ' is-me' : ''}"><div class="k3-bot-user__head"><span class="k3-bot-user__name">${name}</span><span class="k3-bot-user__sum">${fmtMoney2(total)}</span></div><div class="k3-bot-user__tags">${tags}</div></div>`;
     }).join('');
     return `<div class="k3-bot-card k3-bot-card--bets"><div class="k3-bot-card__head"><span class="k3-bot-card__title">注单核对</span><span class="k3-bot-card__issue">${issue}</span></div><div class="k3-bot-card__body is-full">${users}</div></div>`;
   }
@@ -983,7 +981,7 @@ $(function () {
     let body = winners.length ? winners.map(name => {
       const winRows = settled[name].filter(r => r.winAmount > 0);
       const totalProfit = settled[name].reduce((s, r) => s + r.profit, 0);
-      const tags = winRows.map(r => `<span class="k3-bot-tag k3-bot-tag--win">${r.play}/${r.amount}</span>`).join('');
+      const tags = winRows.map(r => `<span class="k3-bot-tag k3-bot-tag--win">${r.play}/${fmtMoney2(r.amount)}</span>`).join('');
       return `<div class="k3-bot-user"><div class="k3-bot-user__head"><span class="k3-bot-user__name">${name}</span><span class="k3-bot-user__profit ${totalProfit >= 0 ? 'pos' : 'neg'}">${fmtProfit(totalProfit)}</span></div><div class="k3-bot-user__tags">${tags}</div></div>`;
     }).join('') : '<div class="k3-bot-empty">本期暂无中奖</div>';
     let mine = '';
@@ -992,69 +990,32 @@ $(function () {
       const myProfit = myRows.reduce((s, r) => s + r.profit, 0);
       const myWin = myRows.reduce((s, r) => s + r.winAmount, 0);
       const profitCls = myProfit >= 0 ? 'pos' : 'neg';
-      const winText = myWin > 0 ? `中奖 +${myWin}` : '未中奖';
+      const winText = myWin > 0 ? `中奖 +${fmtMoney2(myWin)}` : '未中奖';
       mine = `<div class="k3-bot-mine-line ${profitCls}"><span class="k3-bot-mine-line__label">您本期</span><span class="k3-bot-mine-line__win">${winText}</span><span class="k3-bot-mine-line__profit">输赢 ${fmtProfit(myProfit)}</span></div>`;
     }
     return `<div class="k3-bot-card k3-bot-card--win"><div class="k3-bot-card__head"><span class="k3-bot-card__title">中奖核对</span><span class="k3-bot-card__issue">${issue}</span></div><div class="k3-bot-card__body is-full">${body}</div>${mine}</div>`;
   }
 
-  function settleIssue(issue, nums) {
-    const book = issueBetBook[issue];
-    if (!book || !Object.keys(book).length) return {};
-    const out = {};
-    Object.keys(book).forEach(name => {
-      out[name] = book[name].map(b => ({ play: b.play, amount: b.amount, ...settleBet(b.play, b.amount, nums) }));
-    });
-    return out;
-  }
-
-  function applyUserSettle(issue, settled, nums) {
-    const rows = settled[user.name];
-    if (rows) {
-      let profit = 0;
-      let turnover = 0;
-      rows.forEach(r => {
-        profit += r.profit;
-        turnover += r.amount;
-        // 真派彩只由 server 账本完成；此处不再 setBalance
-      });
-      const stats = getStats(user.uid);
-      stats.winloss += profit;
-      stats.turnover += turnover;
-      stats.rebate = (stats.rebate || 0) + Math.floor(turnover * 0.005);
-      saveStats(user.uid, stats);
-      if (App.refreshBalance) {
-        App.refreshBalance().then(function () { refreshStats(); });
-      } else {
-        refreshStats();
-      }
-    }
-    settleUserBetLog(issue, nums || lastDraw, rows);
-  }
-
-
+  /** 用服务端派彩校正顶部输赢/流水（按期号去重后直接累加） */
   function refineUserStatsFromServer(issue, list) {
+    const id = String(issue || '');
+    if (!id) return;
     const bets = (list || []).filter(function (b) { return b && b.status !== 'CANCELLED' && b.status !== 'PENDING'; });
     if (!bets.length) return;
+    const storeKey = 'k3_stats_applied_' + (user && user.uid ? user.uid : 'guest');
+    let applied = [];
+    try { applied = JSON.parse(localStorage.getItem(storeKey) || '[]'); } catch (e) { applied = []; }
+    if (!Array.isArray(applied)) applied = [];
+    if (applied.indexOf(id) >= 0) return;
+    applied.push(id);
+    if (applied.length > 120) applied = applied.slice(-120);
+    try { localStorage.setItem(storeKey, JSON.stringify(applied)); } catch (e) { /* ignore */ }
     const serverProfit = bets.reduce(function (s, b) { return s + serverBetProfit(b); }, 0);
     const serverTurnover = bets.reduce(function (s, b) { return s + (Number(b.amount) || 0); }, 0);
-    const localRows = (issueBetBook[issue] && issueBetBook[issue][user.name]) || [];
-    const localReal = localRows.filter(function (b) { return !b.mock; });
-    let localProfit = 0;
-    let localTurnover = 0;
-    const nums = lastDraw || [];
-    localReal.forEach(function (b) {
-      const r = settleBet(b.play, b.amount, nums);
-      localProfit += r.profit;
-      localTurnover += b.amount;
-    });
-    const dProfit = serverProfit - localProfit;
-    const dTurnover = serverTurnover - localTurnover;
-    if (!dProfit && !dTurnover) return;
     const stats = getStats(user.uid);
-    stats.winloss += dProfit;
-    stats.turnover += dTurnover;
-    stats.rebate = (stats.rebate || 0) - Math.floor(localTurnover * 0.005) + Math.floor(serverTurnover * 0.005);
+    stats.winloss += serverProfit;
+    stats.turnover += serverTurnover;
+    stats.rebate = (stats.rebate || 0) + Math.round(serverTurnover * 0.005 * 100) / 100;
     saveStats(user.uid, stats);
     refreshStats();
   }
@@ -1078,24 +1039,24 @@ $(function () {
   }
 
   function updateCountdownUI(r) {
-    const $box = $('#countdownBox').removeClass('is-freeze is-preparing is-betting');
-    const betRemain = r - PREP_SEC;
-    let displaySec = Math.max(0, Math.ceil(betRemain));
-    const inPrep = r <= PREP_SEC || displaySec <= 0;
-    const $label = $('#cdLabel');
-    if (inPrep) {
-      $box.addClass('is-preparing');
-      displaySec = Math.max(0, Math.ceil(Math.min(r, PREP_SEC)));
-      if ($label.length) $label.text('距开奖');
-      $box.attr('aria-label', '封盘中，距开奖 ' + fmtMmss(displaySec));
-    } else {
-      $box.addClass('is-betting');
-      if ($label.length) $label.text('距封盘');
-      $box.attr('aria-label', '距封盘 ' + fmtMmss(displaySec));
+    /* 只保留：距封盘；封盘后 → 开奖中（不再显示距开奖） */
+    const remainToOpen = Math.max(0, Number(r) || 0);
+    const betRemain = remainToOpen - PREP_SEC;
+    const displaySec = Math.max(0, Math.ceil(betRemain));
+    if (remainToOpen <= PREP_SEC || displaySec <= 0) {
+      updateCountdownDrawing();
+      return;
     }
-    $('#cdDigits').prop('hidden', false).attr('aria-label', $box.attr('aria-label'));
+    const $box = $('#countdownBox').removeClass('is-freeze is-preparing is-betting is-urgent is-drawing').addClass('is-betting');
+    if (displaySec <= 5) $box.addClass('is-urgent');
+    const $label = $('#cdLabel');
+    if ($label.length) $label.text('距封盘');
+    $box.attr('aria-label', '距封盘 ' + fmtMmss(displaySec));
+    $('#cdDigits').removeAttr('hidden').css('display', '').show().attr('aria-label', $box.attr('aria-label'));
     $('#cdPrep').prop('hidden', true);
     renderCountdownDigits(displaySec);
+    /* 铃声只走 armCountdown；此处仅作 3 秒补开 */
+    if (window.K3Audio && K3Audio.onCountdownSec) K3Audio.onCountdownSec(displaySec);
   }
 
   function getStats(uid) {
@@ -1107,30 +1068,29 @@ $(function () {
   function refreshStats() {
     const bal = App.getBalance(user.uid);
     const s = getStats(user.uid);
-    $('#statBalance').text(bal.toLocaleString('en-US'));
-    $('#statTurnover').text(Math.round(s.turnover).toLocaleString('en-US'));
-    const $wl = $('#statWinloss').text((s.winloss >= 0 ? '+' : '') + Math.round(s.winloss).toLocaleString('en-US'));
+    $('#statBalance').text(bal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+    $('#statTurnover').text((Math.round(s.turnover * 100) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+    const $wl = $('#statWinloss').text((s.winloss >= 0 ? '+' : '') + (Math.round(s.winloss * 100) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
     $wl.toggleClass('is-plus', s.winloss > 0).toggleClass('is-minus', s.winloss < 0);
-    $('#statRebate').text(Math.round(s.rebate).toLocaleString('en-US'));
-    $('#playFootBalance').text(bal.toLocaleString('en-US'));
+    $('#statRebate').text((Math.round(s.rebate * 100) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+    $('#playFootBalance').text(bal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+    if (typeof syncPlayFootTotals === 'function') syncPlayFootTotals();
   }
 
   const HISTORY_SHOW = 10;
-
-  function barSummaryHtml(row) {
-    return `${row.gy.replace(/\s+/g, '')}<span class="sep">·</span>${row.lh}`;
-  }
 
   function renderDrawBar(row) {
     if (!row) {
       $('#barIssue').text('--------');
       $('#barBalls').html('');
-      $('#barSummary').html('等待开奖');
+      $('#barGy').text('等待');
+      $('#barLh').text('开奖');
       return;
     }
     $('#barIssue').text(row.issue);
     $('#barBalls').html(row.nums.map(n => diceHtml(n, 'xs')).join(''));
-    $('#barSummary').html(barSummaryHtml(row));
+    $('#barGy').text(String(row.gy || '').replace(/\s+/g, ''));
+    $('#barLh').text(row.lh || '---');
   }
 
   function flashDrawBarReveal() {
@@ -1148,18 +1108,303 @@ $(function () {
       <td class="cell-gy">${r.gy.replace(/\s+/g, '')}</td><td class="cell-lh">${r.lh}</td></tr>`).join(''));
   }
 
-  function resultCardHtml(nums, issue) {
-    const meta = sumMeta(nums);
-    const shape = shapeRow(nums);
-    return K3ResultCard.build(nums, issue, meta, shape);
+  /** 正版开奖动画：倒计时 3s → 摇骰 5s → 出号 */
+  const K3_VIDEO_SRC = './media/kuai3-video/Kuai3_jisu.html?v=16&embed=1&mute=1';
+  const K3_VIDEO_COUNTDOWN_MS = 3000;
+  const K3_VIDEO_MID_MS = 5000;
+  /** 正版 stopGame：第 3 骰 1600ms 落地，顶栏/底栏此时揭晓 */
+  const K3_VIDEO_LAND_MS = 1600;
+  /** 正版 stopGame 后等 2s 再收尾（盖住交错出号） */
+  const K3_VIDEO_AFTER_MS = 2000;
+
+  function k3VideoOrderStr(nums) {
+    return (nums || []).map(function (n) { return String(Number(n)); }).join(',');
   }
 
-  /** 骰子滚动大致时长（ms）；中奖核对兜底 = 此值 + 余量 */
+  function k3IssueNext(issue) {
+    const s = String(issue || '').replace(/\D/g, '');
+    if (!s) return '';
+    if (s.length >= 10) {
+      const head = s.slice(0, -6);
+      const seq = parseInt(s.slice(-6), 10) + 1;
+      return head + pad(Math.max(1, isFinite(seq) ? seq : 1), 6);
+    }
+    try { return String(BigInt(s) + 1n); } catch (e) { return s; }
+  }
+
+  /** 由期号反推开奖点（上海日 + 序号 × INTERVAL） */
+  function k3OpenAtFromIssue(issue) {
+    const s = String(issue || '').replace(/\D/g, '');
+    if (s.length < 10) return Date.now();
+    const md = s.slice(0, 4);
+    const seq = parseInt(s.slice(4), 10);
+    if (!isFinite(seq) || seq < 1) return Date.now();
+    const m = md.slice(0, 2);
+    const d = md.slice(2, 4);
+    const y = shanghaiYmdParts(new Date()).y;
+    const dayStart = Date.parse(y + '-' + m + '-' + d + 'T00:00:00+08:00');
+    if (!isFinite(dayStart)) return Date.now();
+    return dayStart + (seq - 1) * INTERVAL * 1000;
+  }
+
+  function resultCardHtml(nums, issue, opts) {
+    opts = opts || {};
+    const meta = sumMeta(nums);
+    const shape = shapeRow(nums);
+    const sideText = meta.text.replace(/^\d+\s*/, '');
+    const order = k3VideoOrderStr(nums);
+    const issueShow = String(issue || '').trim();
+    const nextIssue = k3IssueNext(issueShow);
+    const drawAt = k3OpenAtFromIssue(issueShow);
+    const settled = !!opts.settle;
+    let srcQ = K3_VIDEO_SRC;
+    if (issueShow) srcQ += '&issue=' + encodeURIComponent(issueShow);
+    if (nextIssue) srcQ += '&nextIssue=' + encodeURIComponent(nextIssue);
+    if (order) srcQ += '&order=' + encodeURIComponent(order);
+    if (drawAt) srcQ += '&drawAt=' + encodeURIComponent(String(drawAt));
+    if (settled) srcQ += '&settle=1';
+    /* 直播揭晓前底部不露号，等动画结束再填 */
+    const sumV = settled ? meta.sum : '—';
+    const sideV = settled ? sideText : '—';
+    const shapeV = settled ? shape : '—';
+    return (
+      '<div class="k3-video-card k3-bot-card--result is-reveal' +
+        (settled ? ' is-result-shown is-frame-ready' : '') +
+        '" data-issue="' + issueShow +
+        '" data-nums="' + order + '" data-next="' + nextIssue + '" data-draw-at="' + drawAt +
+        '" data-sum="' + meta.sum +
+        '" data-side="' + sideText +
+        '" data-shape="' + shape + '">' +
+        '<div class="k3-video-card__stage">' +
+          '<iframe class="k3-video-card__frame" title="1分快3开奖动画" src="' + srcQ +
+            '" data-nums="' + order + '" data-issue="' + issueShow +
+            '" allow="autoplay" loading="eager"></iframe>' +
+        '</div>' +
+        '<footer class="k3-video-card__foot">' +
+          '<div class="k3-video-card__pill" data-k="sum"><span class="k">和值</span><span class="v">' + sumV + '</span></div>' +
+          '<div class="k3-video-card__pill" data-k="side"><span class="k">双面</span><span class="v">' + sideV + '</span></div>' +
+          '<div class="k3-video-card__pill" data-k="shape"><span class="k">形态</span><span class="v">' + shapeV + '</span></div>' +
+        '</footer>' +
+      '</div>'
+    );
+  }
+
+  /** 动画收尾后揭晓底部三格（与顶栏出号同步意图） */
+  function revealK3VideoCardFoot(card) {
+    if (!card || card.classList.contains('is-result-shown')) return;
+    const sum = card.getAttribute('data-sum') || '—';
+    const side = card.getAttribute('data-side') || '—';
+    const shape = card.getAttribute('data-shape') || '—';
+    const setV = function (key, val) {
+      const el = card.querySelector('.k3-video-card__pill[data-k="' + key + '"] .v');
+      if (el) el.textContent = val;
+    };
+    setV('sum', sum);
+    setV('side', side);
+    setV('shape', shape);
+    card.classList.add('is-result-shown');
+  }
+
   function resultRevealDurationMs() {
-    return 1400;
+    /* 倒计时 3s + 摇骰 5s + 出号收尾 2s */
+    return K3_VIDEO_COUNTDOWN_MS + K3_VIDEO_MID_MS + K3_VIDEO_AFTER_MS;
+  }
+
+  /** 把聊天记录里的视频卡标记为 settle，下次进房不再重播；不改直播 iframe.src（避免闪一下） */
+  function persistK3VideoSettled(card) {
+    if (!card) return;
+    const issue = String(card.getAttribute('data-issue') || '').trim();
+    card.setAttribute('data-settled', '1');
+    try {
+      chatLog.forEach(function (m) {
+        if (!m || !m.html || m.html.indexOf('k3-video-card') < 0) return;
+        if (issue && m.html.indexOf('data-issue="' + issue + '"') < 0) return;
+        if (m.html.indexOf('settle=1') >= 0) return;
+        m.html = m.html.replace(
+          /(k3-video-card__frame[^>]*src="[^"]+)/,
+          function (s) { return s.indexOf('settle=1') >= 0 ? s : (s + '&settle=1'); }
+        );
+      });
+      saveChatLog();
+    } catch (e) { /* ignore */ }
+  }
+
+  function postToK3VideoFrame(frame, payload) {
+    if (!frame || !frame.contentWindow) return false;
+    try {
+      frame.contentWindow.postMessage(
+        Object.assign({ source: 'kuai3-video' }, payload || {}), location.origin);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function whenK3VideoReady(frame, cb) {
+    if (!frame) {
+      if (typeof cb === 'function') cb(false);
+      return;
+    }
+    let done = false;
+    let pollTimer = null;
+    const finish = function (ok) {
+      if (done) return;
+      done = true;
+      if (pollTimer) clearInterval(pollTimer);
+      window.removeEventListener('message', onMsg);
+      try {
+        const card = frame.closest && frame.closest('.k3-video-card');
+        if (card) card.classList.add('is-frame-ready');
+      } catch (e) { /* ignore */ }
+      if (typeof cb === 'function') cb(!!ok);
+    };
+    const hasApi = function () {
+      try {
+        return !!(frame.contentWindow && frame.contentWindow.K3Video);
+      } catch (e) {
+        return false;
+      }
+    };
+    const onMsg = function (ev) {
+      const d = ev && ev.data;
+      if (!d || d.source !== 'kuai3-video') return;
+      if (d.action === 'ready' && ev.source === frame.contentWindow) finish(true);
+    };
+    window.addEventListener('message', onMsg);
+    if (hasApi()) {
+      finish(true);
+      return;
+    }
+    frame.addEventListener('load', function () {
+      setTimeout(function () { finish(true); }, 80);
+    });
+    let n = 0;
+    pollTimer = setInterval(function () {
+      n += 1;
+      if (hasApi() || n >= 40) finish(!!hasApi() || n >= 40);
+    }, 50);
+  }
+
+  function playK3VideoCard(card, nums, opts) {
+    opts = opts || {};
+    const frame = card && card.querySelector('.k3-video-card__frame');
+    const order = k3VideoOrderStr(nums);
+    const issue = String((opts.issue != null && String(opts.issue).trim())
+      || (card && card.getAttribute('data-issue')) || '').trim();
+    const nextIssue = String((card && card.getAttribute('data-next')) || k3IssueNext(issue)).trim();
+    const drawAt = Number((card && card.getAttribute('data-draw-at')) || k3OpenAtFromIssue(issue));
+    if (!frame || !order) {
+      if (typeof opts.onDone === 'function') opts.onDone(false);
+      return;
+    }
+    card.classList.add('is-playing');
+    card.setAttribute('data-playing', '1');
+    whenK3VideoReady(frame, function () {
+      /* 与 iframe 顶栏同步：倒计时+摇骰+最后一骰落地后再揭底栏 */
+      const footRevealAt = K3_VIDEO_COUNTDOWN_MS + K3_VIDEO_MID_MS + K3_VIDEO_LAND_MS;
+      const footTimer = setTimeout(function () { revealK3VideoCardFoot(card); }, footRevealAt);
+      const doneWrap = function (ok) {
+        clearTimeout(footTimer);
+        revealK3VideoCardFoot(card);
+        card.classList.remove('is-playing');
+        card.removeAttribute('data-playing');
+        /* 禁止改 iframe.src（整页重载会闪一下）；只写 chatLog */
+        persistK3VideoSettled(card);
+        if (window.K3Audio && K3Audio.endDrawCeremony) K3Audio.endDrawCeremony();
+        else if (window.K3Audio && K3Audio.onRevealDone) K3Audio.onRevealDone();
+        if (typeof opts.onDone === 'function') opts.onDone(ok);
+      };
+      if (window.K3Audio) {
+        if (K3Audio.unlock) K3Audio.unlock();
+        if (K3Audio.startDrawCeremony) {
+          K3Audio.startDrawCeremony({
+            countdownMs: K3_VIDEO_COUNTDOWN_MS,
+            midMs: K3_VIDEO_MID_MS,
+            afterMs: K3_VIDEO_AFTER_MS,
+          });
+        }
+      }
+      const w = frame.contentWindow;
+      if (w && w.K3Video && typeof w.K3Video.play === 'function') {
+        /* iframe 静音，音效由父页 K3Audio 播 */
+        w.K3Video.play(order, {
+          issue: issue,
+          nextIssue: nextIssue,
+          drawAt: drawAt,
+          countdownMs: K3_VIDEO_COUNTDOWN_MS,
+          midMs: K3_VIDEO_MID_MS,
+          afterMs: K3_VIDEO_AFTER_MS,
+          muted: true,
+          onDone: doneWrap,
+        });
+        return;
+      }
+      postToK3VideoFrame(frame, {
+        action: 'play',
+        order: order,
+        issue: issue,
+        nextIssue: nextIssue,
+        drawAt: drawAt,
+        countdownMs: K3_VIDEO_COUNTDOWN_MS,
+        midMs: K3_VIDEO_MID_MS,
+        afterMs: K3_VIDEO_AFTER_MS,
+        muted: true,
+      });
+      setTimeout(function () { doneWrap(true); }, resultRevealDurationMs());
+    });
+  }
+
+  function settleK3VideoCard(card, nums) {
+    if (card && (card.classList.contains('is-playing') || card.getAttribute('data-playing') === '1')) {
+      return;
+    }
+    const frame = card && card.querySelector('.k3-video-card__frame');
+    let order = '';
+    if (Array.isArray(nums) && nums.length === 3) order = k3VideoOrderStr(nums);
+    else order = String((card && card.getAttribute('data-nums')) || (frame && frame.getAttribute('data-nums')) || '').trim();
+    const issue = String((card && card.getAttribute('data-issue')) || '').trim();
+    const nextIssue = String((card && card.getAttribute('data-next')) || k3IssueNext(issue)).trim();
+    const drawAt = Number((card && card.getAttribute('data-draw-at')) || k3OpenAtFromIssue(issue));
+    if (!frame || !order) return;
+    try {
+      const cur = String(frame.getAttribute('src') || '');
+      if (cur && cur.indexOf('settle=1') < 0) {
+        let next = cur;
+        if (next.indexOf('order=') < 0) next += '&order=' + encodeURIComponent(order);
+        if (issue && next.indexOf('issue=') < 0) next += '&issue=' + encodeURIComponent(issue);
+        if (nextIssue && next.indexOf('nextIssue=') < 0) next += '&nextIssue=' + encodeURIComponent(nextIssue);
+        if (isFinite(drawAt) && next.indexOf('drawAt=') < 0) next += '&drawAt=' + encodeURIComponent(String(drawAt));
+        next += '&settle=1';
+        frame.setAttribute('src', next);
+        return;
+      }
+    } catch (e) { /* fall through */ }
+    whenK3VideoReady(frame, function () {
+      const w = frame.contentWindow;
+      if (w && w.K3Video && typeof w.K3Video.settle === 'function') {
+        w.K3Video.settle(order, {
+          issue: issue,
+          nextIssue: nextIssue,
+          drawAt: drawAt,
+          muted: true,
+          resumeCountdown: false,
+        });
+        return;
+      }
+      postToK3VideoFrame(frame, {
+        action: 'settle',
+        order: order,
+        issue: issue,
+        nextIssue: nextIssue,
+        drawAt: drawAt,
+        muted: true,
+      });
+    });
   }
 
   function scrollChat() {
+    /* 揭晓期间只暂停自动滚（停留），不钉死；用户手滑后 room-chat 会解除 */
+    if (roomChat && roomChat.isAutoScrollPaused && roomChat.isAutoScrollPaused()) return;
     const el = document.getElementById('chatFeed');
     if (el) el.scrollTop = el.scrollHeight;
   }
@@ -1199,7 +1444,13 @@ $(function () {
     const html = isSelf
       ? `<div class="k3-msg is-self"><div class="k3-msg__top">${metaSelf}${avatar}</div>${bubble}</div>`
       : `<div class="k3-msg${isRobot ? ' is-robot' : ''}">${avatar}<div class="k3-msg__body">${metaOther}${bubble}</div></div>`;
-    $('#chatFeed').append(html);
+    if (opts.dock) {
+      const $dock = $('#chatDock');
+      if ($dock.length) { $dock.prop('hidden', false).append(html); }
+      else $('#chatFeed').append(html);
+    } else {
+      $('#chatFeed').append(html);
+    }
     if (!opts.skipPersist) {
       chatLog.push({
         name: opts.name,
@@ -1217,9 +1468,28 @@ $(function () {
     if (feed) {
       const cards = feed.querySelectorAll('.k3-result-card.is-settled:not([data-laid="1"])');
       const settled = cards[cards.length - 1];
-      if (settled) K3ResultCard.initSettled(settled);
+      if (settled && window.K3ResultCard && K3ResultCard.initSettled) K3ResultCard.initSettled(settled);
     }
     scrollChat();
+  }
+
+  /** 进房/恢复：历史视频卡补 settle，跳过正在播的 */
+  function settleRestoredK3VideoCards() {
+    $('#chatFeed .k3-video-card').each(function () {
+      const card = this;
+      if (card.classList.contains('is-playing') || card.getAttribute('data-playing') === '1') return;
+      const frame = card.querySelector('.k3-video-card__frame');
+      const src = frame ? String(frame.getAttribute('src') || '') : '';
+      if (src && src.indexOf('settle=1') >= 0) {
+        card.classList.add('is-frame-ready', 'is-result-shown');
+        return;
+      }
+      if (card.getAttribute('data-settled') === '1') {
+        card.classList.add('is-frame-ready');
+        return;
+      }
+      settleK3VideoCard(card);
+    });
   }
 
   function restoreChat() {
@@ -1253,6 +1523,7 @@ $(function () {
       });
     });
     saveChatLog();
+    settleRestoredK3VideoCards();
     scrollChat();
     return chatLog.length > 0;
   }
@@ -1305,16 +1576,18 @@ $(function () {
     buildBetHtml: function (p) {
       return (typeof escapeHtml === 'function') ? escapeHtml(String(p.text || '')) : String(p.text || '');
     },
+    buildOpenHtml: function (issue) {
+      return (typeof openNoticeHtml === 'function') ? openNoticeHtml(issue) : ('开盘 ' + issue);
+    },
     buildCloseHtml: function (issue) {
       return (typeof closeNoticeHtml === 'function') ? closeNoticeHtml(issue) : ('封盘 ' + issue);
     },
     buildResultHtml: function (p, msg, o) {
       const nums = Array.isArray(p.nums) ? p.nums.map(Number) : [];
       const issue = String(p.issueNo || msg.issueNo || '');
-      if (o && o.animate && o.live && window.K3ResultCard && K3ResultCard.buildRolling) {
-        return K3ResultCard.buildRolling(issue);
+      if (typeof resultCardHtml === 'function') {
+        return resultCardHtml(nums, issue, { settle: !(o && o.animate && o.live) });
       }
-      if (typeof resultCardHtml === 'function') return resultCardHtml(nums, issue);
       return '开奖 ' + issue;
     },
     buildBetVerifyHtml: function (p) { return buildBetVerifyFromPayload(p); },
@@ -1322,10 +1595,12 @@ $(function () {
     buildWinVerifyCalculatingHtml: function (issue) {
       return buildWinListVerifyHtml(issue, null);
     },
-    onClose: function (issue) {
-      roomBetFrozen = true;
+    onClose: function (issue, p, msg, ctx) {
       sealedIssueNo = String(issue || '');
-      if (typeof closedIssues !== 'undefined' && closedIssues.add) closedIssues.add(sealedIssueNo);
+      closedIssues.add(sealedIssueNo);
+      /* 仅直播封盘禁注；phase 由 room-chat 推进 */
+      if (ctx && ctx.live === false) return;
+      roomBetFrozen = true;
     },
     onResultMeta: function (p, msg) {
       const nums = Array.isArray(p.nums) ? p.nums.map(Number) : [];
@@ -1334,8 +1609,7 @@ $(function () {
       if (nums.length) lastDraw = nums.slice();
     },
     onWinVerifyUnlocked: function () {
-      roomBetFrozen = false;
-      sealedIssueNo = '';
+      /* 解冻只在开盘线刷出（onCeremonyComplete），仪式中禁止下注 */
     },
     onWinVerifyShown: function (issue) {
       applyRoomWinVerifyMineLine(issue);
@@ -1349,30 +1623,62 @@ $(function () {
         appendMsg: appendMsg,
         robotName: (typeof ROBOT !== 'undefined' && ROBOT.name) ? ROBOT.name : '机器人',
       });
-      roomBetFrozen = false;
-      sealedIssueNo = '';
       applyRoomWinVerifyMineLine(issue);
     },
+    onPhaseChange: function (phase) {
+      if (phase === 'betting') {
+        roomBetFrozen = false;
+        sealedIssueNo = '';
+        if (window.K3Audio && K3Audio.onBetting) K3Audio.onBetting();
+        if (typeof requestLotteryResync === 'function') requestLotteryResync();
+        else if (typeof syncServerSnapshot === 'function') syncServerSnapshot();
+        if (typeof tick === 'function') try { tick(); } catch (e) { /* ignore */ }
+      } else if (phase === 'drawing' || phase === 'revealing' || phase === 'settled') {
+        roomBetFrozen = true;
+        if (window.K3Audio && K3Audio.onDrawing) K3Audio.onDrawing();
+        if (typeof tick === 'function') try { tick(); } catch (e) { /* ignore */ }
+      }
+    },
+    onCeremonyComplete: function () {
+      roomBetFrozen = false;
+      sealedIssueNo = '';
+      /* 开盘线已出：立刻拉下一期快照，避免顶栏继续卡在上一期「开奖中」 */
+      if (typeof requestLotteryResync === 'function') requestLotteryResync();
+      else if (typeof syncServerSnapshot === 'function') syncServerSnapshot();
+      if (typeof tick === 'function') try { tick(); } catch (e) { /* ignore */ }
+    },
+
     afterResultAppended: function (ctx) {
       const nums = Array.isArray(ctx.payload.nums) ? ctx.payload.nums.map(Number) : [];
       const issue = ctx.issue;
-      const card = $('#chatFeed .k3-result-card, #chatFeed .k3-bot-card--result').last()[0];
-      if (card && window.K3ResultCard) {
+      const card = $('#chatDock .k3-video-card, #chatDock .k3-result-card, #chatDock .k3-bot-card--result, #chatFeed .k3-video-card, #chatFeed .k3-result-card, #chatFeed .k3-bot-card--result').last()[0];
+      const readyMs = resultRevealDurationMs() + 400;
+      if (card && card.classList.contains('k3-video-card')) {
+        if (ctx.animate && ctx.live) {
+          ctx.setRevealPending(issue);
+          playK3VideoCard(card, nums, { issue: issue });
+          ctx.scheduleRevealReady(issue, readyMs);
+        } else {
+          settleK3VideoCard(card, nums);
+          ctx.setRevealReadyFlag(issue, true);
+        }
+      } else if (card && window.K3ResultCard) {
+        /* 兼容旧 Canvas 卡（历史 localStorage） */
         if (ctx.animate && ctx.live && K3ResultCard.startRoll) {
           ctx.setRevealPending(issue);
-          const rollMs = resultRevealDurationMs();
           const meta = (typeof sumMeta === 'function') ? sumMeta(nums) : null;
           const shape = (typeof shapeRow === 'function') ? shapeRow(nums) : '';
-          K3ResultCard.startRoll(card, nums, issue, meta, shape, rollMs, function () {
-            ctx.markRevealReady(issue);
-          });
-          ctx.scheduleRevealReady(issue, rollMs + 300);
+          K3ResultCard.startRoll(card, nums, issue, meta, shape, resultRevealDurationMs());
+          ctx.scheduleRevealReady(issue, readyMs);
         } else if (K3ResultCard.initSettled) {
           K3ResultCard.initSettled(card);
           ctx.setRevealReadyFlag(issue, true);
         } else {
           ctx.setRevealReadyFlag(issue, true);
         }
+      } else if (ctx.live && ctx.animate) {
+        ctx.setRevealPending(issue);
+        ctx.scheduleRevealReady(issue, readyMs);
       } else {
         ctx.setRevealReadyFlag(issue, true);
       }
@@ -1398,20 +1704,18 @@ $(function () {
     roomChat.startPolling();
   }
 
-
   function closeNoticeHtml(issue) {
     return `<div class="k3-bot-close-line"><div class="k3-bot-close-line__bar"><span class="k3-bot-close-line__deco"></span><span class="k3-bot-close-line__text">封 盘 线</span><span class="k3-bot-close-line__deco"></span></div><div class="k3-bot-close-line__sub">第 <span class="k3-bot-close-line__issue">${issue}</span> 期 · 停止下注 · 即将开奖</div></div>`;
   }
-
-
-  function seedChat() {
-    seedMockNames();
-    for (let i = 0; i < ROBOT_COUNT; i++) {
-      const n = MOCK_NAMES[i];
-      const betText = randomMockBetText();
-      appendMsg({ name: n.name, avatar: n.avatar, html: betText });
-      recordMockBetLines(n.name, betText);
-    }
+  function openNoticeHtml(issue) {
+    return `<div class="k3-bot-open-line">
+      <div class="k3-bot-open-line__bar">
+        <span class="k3-bot-open-line__deco"></span>
+        <span class="k3-bot-open-line__text">开 盘 线</span>
+        <span class="k3-bot-open-line__deco"></span>
+      </div>
+      <div class="k3-bot-open-line__sub">第 <span class="k3-bot-open-line__issue">${issue}</span> 期 · 开始下注</div>
+    </div>`;
   }
 
   function initKeypad() {
@@ -1513,12 +1817,16 @@ $(function () {
       clearUserPendingBetLog(issue);
       const refunded = res && res.refunded != null ? res.refunded : 0;
       const count = res && res.count != null ? res.count : 0;
-      appendMsg({ name: user.name, avatar: fixAvatar(user.avatar), self: true, html: '已取消本期注单' });
+      appendMsg({ name: user.name, avatar: fixAvatar(user.avatar), self: true, html: '本期注单已取消' });
       $('#chatInput').val('');
       updateComposerAction();
       showKeypad(false);
-      App.toast(count ? `已取消 ${count} 注，退回 ${refunded}` : '已取消本期注单');
-    }).catch(function (e) { App.toast((e && e.message) || '取消失败'); });
+      App.toast(count ? ('本期注单已取消 · ' + count + ' 注 · 退回 ' + refunded) : '本期注单已取消');
+    }).catch(function (e) {
+      var msg = (e && e.message) || '';
+      if (/取消|封盘|无可/.test(msg)) App.toast('当前期无可取消注单');
+      else App.toast(msg || '取消失败');
+    });
     return true;
   }
   function trySendTopup(text) {
@@ -1631,6 +1939,8 @@ $(function () {
   function setDrawPanelOpen(open) {
     drawPanelOpen = !!open;
     $('#drawBar').toggleClass('is-open', drawPanelOpen);
+    layoutRail();
+    setTimeout(layoutRail, 360);
     $('#drawToggle').attr('aria-expanded', drawPanelOpen);
   }
 
@@ -1638,34 +1948,36 @@ $(function () {
     setDrawPanelOpen(!drawPanelOpen);
   }
 
-  function pushRandomBet() {
-    if (!MOCK_NAMES.length || !isBettingOpen()) return;
-    const n = MOCK_NAMES[Math.floor(Math.random() * MOCK_NAMES.length)];
-    const betText = randomMockBetText();
-    appendMsg({ name: n.name, avatar: n.avatar, html: betText });
-    recordMockBetLines(n.name, betText);
-  }
-
   /* ================= 玩法面板 ================= */
-  const AMOUNT_CHIPS = [10, 20, 50, 100, 200, 500];
+  const AMOUNT_CHIPS = [
+    { amt: 1, label: '1' },
+    { amt: 10, label: '10' },
+    { amt: 100, label: '100' },
+    { amt: 500, label: '500' },
+    { amt: 1000, label: '1000' },
+    { amt: 5000, label: '5000' },
+    { amt: 10000, label: '1W' },
+    { amt: 50000, label: '5W' }
+  ];
+  const CHIP_IMG = (amt) => `/images/chips/chip-${amt}.png?v=4`;
   const PLAY_CATEGORIES = [
     {
       id: 'sideSum',
-      title: '和值两面',
-      hint: () => `两面：4-10 小 · 11-17 大 · 豹子通杀 · ${ODDS.side}｜和值：猜总和 4-17 · ${ODDS.sum}`,
+      title: '和值',
+      hint: '',
       subs: null,
-      sideItems: ['大', '小', '单', '双'].map(p => ({ play: p, label: p, odds: ODDS.side })),
-      sumItems: Array.from({ length: 14 }, (_, i) => {
-        const sum = i + 4;
+      sideItems: () => ['大', '小', '单', '双'].map(p => ({ play: p, label: p, odds: ODDS.side })),
+      sumItems: () => Array.from({ length: 16 }, (_, i) => {
+        const sum = i + 3;
         return { play: '和' + sum, label: String(sum), odds: SUM_ODDS[sum] || ODDS.sum };
       }),
     },
     {
       id: 'dice',
       title: '三军',
-      hint: () => `指定点数至少出现 1 次 · 赔率 ${ODDS.dice}`,
+      hint: '',
       subs: null,
-      items: Array.from({ length: 6 }, (_, i) => {
+      items: () => Array.from({ length: 6 }, (_, i) => {
         const n = i + 1;
         return { play: '三军' + n, label: '三军' + n, odds: ODDS.dice };
       }),
@@ -1673,9 +1985,9 @@ $(function () {
     {
       id: 'pair',
       title: '二同号',
-      hint: () => `指定点数恰好出现 2 次（非豹子）· 赔率 ${ODDS.pairN}`,
+      hint: '',
       subs: null,
-      items: Array.from({ length: 6 }, (_, i) => {
+      items: () => Array.from({ length: 6 }, (_, i) => {
         const n = i + 1;
         return { play: '二同' + n, label: String(n) + String(n), odds: ODDS.pairN };
       }),
@@ -1683,38 +1995,45 @@ $(function () {
     {
       id: 'triplet',
       title: '三同号',
-      hint: () => `指定豹子点数 · 单号 ${ODDS.tripletN}｜任意豹子输入三同号 · ${ODDS.tripletAny}`,
+      hint: '',
       subs: null,
-      items: [
-        { play: '三同号', label: '任意', odds: ODDS.tripletAny },
+      items: () => [
         ...Array.from({ length: 6 }, (_, i) => {
           const n = i + 1;
           return { play: '三同' + n, label: String(n).repeat(3), odds: ODDS.tripletN };
         }),
+        { play: '三同号', label: '三同号通选', odds: ODDS.tripletAny, wide: true },
       ],
     },
     {
       id: 'straight',
       title: '三连号',
-      hint: () => `三颗骰子为连续点数 123 / 234 / 345 / 456 · 赔率 ${ODDS.straight}`,
+      hint: '',
       subs: null,
-      items: [{ play: '三连号', label: '三连号', odds: ODDS.straight }],
+      items: () => [
+        { play: '三连123', label: '123', odds: ODDS.straightN },
+        { play: '三连234', label: '234', odds: ODDS.straightN },
+        { play: '三连345', label: '345', odds: ODDS.straightN },
+        { play: '三连456', label: '456', odds: ODDS.straightN },
+        { play: '三连号', label: '三连号通选', odds: ODDS.straight, wide: true },
+      ],
     },
     {
       id: 'alldiff',
       title: '三不同号',
-      hint: () => `三颗点数互不相同且不成顺子 · 赔率 ${ODDS.alldiff}`,
+      hint: '',
+      mode: 'alldiffPick',
       subs: null,
-      items: [{ play: '三不同号', label: '三不同', odds: ODDS.alldiff }],
     },
     {
       id: 'long',
       title: '长牌',
-      hint: () => `两个不同点数各至少出现 1 次 · 赔率 ${ODDS.long}`,
+      hint: '',
       subs: null,
-      items: longPairs().map(p => ({
+      items: () => longPairs().map(p => ({
         play: p.play,
-        label: p.a + '·' + p.b,
+        a: p.a,
+        b: p.b,
         odds: ODDS.long,
       })),
     },
@@ -1723,6 +2042,7 @@ $(function () {
   let playCatIdx = 0;
   let playSubIdx = 0;
   let playSelectedList = [];
+  let playPickedDigits = [];
   let playAllin = false;
 
   function playAmountStep(val) {
@@ -1767,20 +2087,49 @@ $(function () {
 
   function isPlaySelected(play) { return playSelectedList.indexOf(play) >= 0; }
 
+  function syncAllDiffPickSelection() {
+    playSelectedList = playSelectedList.filter((p) => {
+      const parsed = parsePlay(p);
+      return !(parsed && parsed.type === 'alldiffN');
+    });
+    if (playPickedDigits.length !== 3) return;
+    const sorted = playPickedDigits.slice().sort((a, b) => a - b);
+    const play = '三不同' + sorted.join('');
+    if (parsePlay(play)) playSelectedList.push(play);
+  }
+
+  function syncPlayFootTotals() {
+    const n = playSelectedList.length;
+    let total = 0;
+    if (playAllin) {
+      const bal = Math.floor(App.getBalance(user.uid) || 0);
+      if (n >= 1 && bal >= 1) total = n === 1 ? bal : Math.floor(bal / n) * n;
+    } else {
+      const unit = Math.max(0, parseInt($('#playAmount').val(), 10) || 0);
+      total = n * unit;
+    }
+    $('#playBetTotal').text(total.toLocaleString('en-US'));
+    const hasPick = playSelectedList.length > 0 || playPickedDigits.length > 0;
+    $('#playClear').prop('disabled', !hasPick);
+  }
+
   function updatePlaySelected() {
+    const $tip = $('#playSelected');
     if (!playSelectedList.length) {
-      $('#playSelected').text('—');
-      $('#playClear').prop('disabled', true);
+      $tip.prop('hidden', true).text('');
+      syncPlayFootTotals();
       return;
     }
-    $('#playClear').prop('disabled', false);
-    const preview = playSelectedList.slice(0, 3).join('、');
-    $('#playSelected').text(playSelectedList.length > 3 ? `${preview}… 共${playSelectedList.length}项` : preview);
+    const n = playSelectedList.length;
+    const list = playSelectedList.join('、');
+    $tip.prop('hidden', false).text(n > 1 ? `${list}（共${n}项）` : list);
+    syncPlayFootTotals();
   }
 
   function clearPlaySelection() {
-    if (!playSelectedList.length) return;
+    if (!playSelectedList.length && !playPickedDigits.length) return;
     playSelectedList = [];
+    playPickedDigits = [];
     renderPlayPanel();
     updatePlaySelected();
   }
@@ -1789,9 +2138,13 @@ $(function () {
     $('#playNav').html(PLAY_CATEGORIES.map((c, i) =>
       `<button type="button" class="k3-play-nav__item${i === playCatIdx ? ' is-active' : ''}" data-idx="${i}">${c.title}</button>`
     ).join(''));
-    $('#playAmountChips').html(AMOUNT_CHIPS.map(a =>
-      `<button type="button" class="k3-play-foot__chip${a === 100 ? ' is-active' : ''}" data-amt="${a}">${a}</button>`
+    $('#playAmountChips').html(AMOUNT_CHIPS.map((c) =>
+      `<button type="button" class="k3-play-foot__chip${c.amt === 100 ? ' is-active' : ''}" data-amt="${c.amt}" aria-label="${c.label}">` +
+        `<span class="k3-play-foot__chip-glow" aria-hidden="true"></span>` +
+        `<img src="${CHIP_IMG(c.amt)}" alt="${c.label}" draggable="false">` +
+      `</button>`
     ).join(''));
+    syncPlayFootTotals();
   }
 
   function playItemHtml(play, label, odds, extraCls) {
@@ -1800,53 +2153,116 @@ $(function () {
     return `<button type="button" class="${cls}" data-play="${play}"><span>${label}</span>${oddsHtml}</button>`;
   }
 
+  function playSectionHtml(title, gridCls, cellsHtml) {
+    return `<div class="k3-play-section"><div class="k3-play-section__title">${title}</div><div class="k3-play-section__grid ${gridCls}">${cellsHtml}</div></div>`;
+  }
+
+  function playDiceBtn(play, diceInner, odds, extraCls, diceCls) {
+    const cls = ['k3-play-item', 'k3-play-item--dice-img', extraCls, isPlaySelected(play) ? 'is-active' : ''].filter(Boolean).join(' ');
+    const dCls = ['k3-play-item__dice', diceCls].filter(Boolean).join(' ');
+    return `<button type="button" class="${cls}" data-play="${play}"><span class="${dCls}">${diceInner}</span><small>${odds}</small></button>`;
+  }
+
   function renderPlayPanel() {
     const cat = currentPlayCat();
     const $grid = $('#playGrid');
-    $('#playHint').text(typeof cat.hint === 'function' ? cat.hint() : cat.hint);
+    const hint = typeof cat.hint === 'function' ? cat.hint() : (cat.hint || '');
+    $('#playHint').text(hint).toggle(!!hint);
     $('#playSub').addClass('is-hidden').prop('hidden', true).empty();
     let html = '';
-    let gridMode = '';
+    let gridMode = 'is-sectioned';
+    const itemsOf = (c) => (typeof c.items === 'function' ? c.items() : (c.items || []));
+
     if (cat.id === 'sideSum') {
-      gridMode = 'is-side-sum';
-      const sideHtml = cat.sideItems.map(it => playItemHtml(it.play, it.label, it.odds, 'k3-play-item--side')).join('');
-      const sumHtml = cat.sumItems.map(it => playItemHtml(it.play, it.label, it.odds, 'k3-play-item--sum')).join('');
-      html = `<div class="k3-play-section"><div class="k3-play-section__title">两面</div><div class="k3-play-section__grid is-gy-side">${sideHtml}</div></div>`
-        + `<div class="k3-play-section"><div class="k3-play-section__title">和值</div><div class="k3-play-section__grid is-digits">${sumHtml}</div></div>`;
+      const sideItems = typeof cat.sideItems === 'function' ? cat.sideItems() : cat.sideItems;
+      const sumItems = typeof cat.sumItems === 'function' ? cat.sumItems() : cat.sumItems;
+      const sideHtml = sideItems.map(it => playItemHtml(it.play, it.label, it.odds, 'k3-play-item--side')).join('');
+      const sumHtml = sumItems.map(it => playItemHtml(it.play, it.label, it.odds, 'k3-play-item--sum')).join('');
+      html = playSectionHtml('和值两面', 'is-side', sideHtml)
+        + playSectionHtml('和值', 'is-text is-gy-sum', sumHtml);
     } else if (cat.id === 'dice') {
-      gridMode = 'is-dice-grid';
-      html = cat.items.map(it => {
+      const cells = itemsOf(cat).map(it => {
         const n = +String(it.play).replace('三军', '');
-        const cls = ['k3-play-item', 'k3-play-item--dice-img', isPlaySelected(it.play) ? 'is-active' : ''].filter(Boolean).join(' ');
-        return `<button type="button" class="${cls}" data-play="${it.play}"><span class="k3-play-item__dice">${diceHtml(n, 'play')}</span><small>${it.odds}</small></button>`;
+        return playDiceBtn(it.play, diceHtml(n, 'play'), it.odds);
       }).join('');
+      html = playSectionHtml('三军', 'is-dice', cells);
     } else if (cat.id === 'pair') {
-      gridMode = 'is-dice-grid';
-      html = cat.items.map(it => {
+      const cells = itemsOf(cat).map(it => {
         const n = +String(it.play).replace('二同', '');
-        const cls = ['k3-play-item', 'k3-play-item--dice-img', isPlaySelected(it.play) ? 'is-active' : ''].filter(Boolean).join(' ');
-        return `<button type="button" class="${cls}" data-play="${it.play}"><span class="k3-play-item__dice k3-play-item__dice--pair">${diceHtml(n, 'play')}${diceHtml(n, 'play')}</span><small>${it.odds}</small></button>`;
+        return playDiceBtn(it.play, diceHtml(n, 'play') + diceHtml(n, 'play'), it.odds, '', 'k3-play-item__dice--pair');
       }).join('');
+      html = playSectionHtml('二同号', 'is-dice', cells);
     } else if (cat.id === 'triplet') {
-      gridMode = 'is-triplet-grid';
-      html = cat.items.map(it => {
-        if (it.play === '三同号') {
-          return playItemHtml(it.play, it.label, it.odds, 'k3-play-item--tri-any');
+      const cells = itemsOf(cat).map(it => {
+        if (it.wide || it.play === '三同号') {
+          return playItemHtml(it.play, it.label, it.odds, 'k3-play-item--tri-any k3-play-item--wide');
         }
         const n = +String(it.play).replace('三同', '');
-        const cls = ['k3-play-item', 'k3-play-item--dice-img', isPlaySelected(it.play) ? 'is-active' : ''].filter(Boolean).join(' ');
-        return `<button type="button" class="${cls}" data-play="${it.play}"><span class="k3-play-item__dice k3-play-item__dice--tri">${diceHtml(n, 'play')}${diceHtml(n, 'play')}${diceHtml(n, 'play')}</span><small>${it.odds}</small></button>`;
+        return playDiceBtn(
+          it.play,
+          diceHtml(n, 'play') + diceHtml(n, 'play') + diceHtml(n, 'play'),
+          it.odds,
+          '',
+          'k3-play-item__dice--tri'
+        );
       }).join('');
+      html = playSectionHtml('三同号', 'is-dice is-gy-sum', cells);
+    } else if (cat.id === 'straight') {
+      const cells = itemsOf(cat).map(it => {
+        if (it.wide || it.play === '三连号') {
+          return playItemHtml(it.play, it.label, it.odds, 'k3-play-item--wide');
+        }
+        const digits = String(it.play).replace('三连', '');
+        const diceInner = digits.split('').map((d) => diceHtml(+d, 'play')).join('');
+        return playDiceBtn(it.play, diceInner, it.odds);
+      }).join('');
+      html = playSectionHtml('三连号', 'is-dice is-gy-sum', cells);
+    } else if (cat.id === 'alldiff' || cat.mode === 'alldiffPick') {
+      const cells = Array.from({ length: 6 }, (_, i) => {
+        const n = i + 1;
+        const picking = playPickedDigits.indexOf(n) >= 0;
+        const cls = ['k3-play-item', 'k3-play-item--dice-img', 'k3-play-item--pick', picking ? 'is-picked is-active' : ''].filter(Boolean).join(' ');
+        return `<button type="button" class="${cls}" data-pick-digit="${n}"><span class="k3-play-item__dice">${diceHtml(n, 'play')}</span></button>`;
+      }).join('');
+      html = `<div class="k3-play-section"><div class="k3-play-section__title">三不同号 <small>${ODDS.alldiffN}</small></div><div class="k3-play-section__grid is-dice is-pick">${cells}</div></div>`;
     } else if (cat.id === 'long') {
-      gridMode = 'is-long-grid';
-      html = cat.items.map(it => playItemHtml(it.play, it.label, it.odds, 'k3-play-item--long')).join('');
+      const cells = itemsOf(cat).map(it => {
+        const cls = ['k3-play-item', 'k3-play-item--dice-img', 'k3-play-item--long', isPlaySelected(it.play) ? 'is-active' : ''].filter(Boolean).join(' ');
+        return `<button type="button" class="${cls}" data-play="${it.play}"><span class="k3-play-item__dice k3-play-item__dice--pair">${diceHtml(it.a, 'play')}${diceHtml(it.b, 'play')}</span><small>${it.odds}</small></button>`;
+      }).join('');
+      html = playSectionHtml('长牌', 'is-dice is-gy-sum', cells);
     } else {
-      html = cat.items.map(it => playItemHtml(it.play, it.label, it.odds)).join('');
+      gridMode = '';
+      html = itemsOf(cat).map(it => playItemHtml(it.play, it.label, it.odds)).join('');
     }
     $grid.attr('class', `k3-play-panel__grid${gridMode ? ' ' + gridMode : ''}`).html(html);
     $grid.scrollTop(0);
   }
 
+  /** 右侧栏顶对齐开奖条单行下沿；短屏压缩并保证不压住底部输入 */
+  function layoutRail() {
+    const room = document.querySelector('.k3-room');
+    const rail = room && room.querySelector('.k3-rail');
+    const anchor = document.getElementById('drawToggle') || document.getElementById('drawBar');
+    const composer = document.querySelector('.k3-composer');
+    if (!room || !anchor) return;
+    const roomRect = room.getBoundingClientRect();
+    const preferTop = Math.max(
+      8,
+      Math.ceil(anchor.getBoundingClientRect().bottom - roomRect.top + 6)
+    );
+    /* 先按期望 top 写上，再量真实栈高做夹紧 */
+    room.style.setProperty('--rail-top', preferTop + 'px');
+    const shortH = roomRect.height > 0 && roomRect.height < 700;
+    room.classList.toggle('is-rail-compact', shortH);
+    const stackH = rail ? Math.max(rail.offsetHeight, shortH ? 168 : 210) : (shortH ? 168 : 210);
+    const composerTop = composer
+      ? composer.getBoundingClientRect().top - roomRect.top
+      : roomRect.height - 56;
+    const maxTop = Math.max(8, Math.floor(composerTop - stackH - 6));
+    const top = Math.min(preferTop, maxTop);
+    room.style.setProperty('--rail-top', top + 'px');
+  }
 
   /** 玩法面板顶边对齐历史开奖栏下沿，盖住聊天区、露出倒计时 */
   function layoutPlayOverlay() {
@@ -1872,6 +2288,7 @@ $(function () {
       playCatIdx = catIdx >= 0 ? catIdx : 0;
       playSubIdx = 0;
       playSelectedList = [];
+      playPickedDigits = [];
       playAllin = false;
       $('#playAmount').val(100);
       syncPlayAmountUI();
@@ -1893,6 +2310,7 @@ $(function () {
   }
 
   $(window).on('resize orientationchange', () => {
+    layoutRail();
     if ($('#playSheet').hasClass('is-open')) layoutPlayOverlay();
   });
 
@@ -1925,38 +2343,63 @@ $(function () {
     $('#playNav').on('click', '.k3-play-nav__item', function () {
       playCatIdx = +$(this).data('idx');
       playSubIdx = 0;
+      /* 仅清点选态，保留已选三不同注单 */
+      playPickedDigits = [];
+      const keep = playSelectedList.find((p) => {
+        const parsed = parsePlay(p);
+        return parsed && parsed.type === 'alldiffN';
+      });
+      if (keep) {
+        const m = String(keep).match(/([1-6]{3})$/);
+        if (m) playPickedDigits = m[1].split('').map(Number);
+      }
       $('#playNav .k3-play-nav__item').removeClass('is-active');
       $(this).addClass('is-active');
       renderPlayPanel();
+      updatePlaySelected();
     });
     $('#playGrid').on('click', '.k3-play-item', function () {
+      const pickRaw = $(this).attr('data-pick-digit');
+      if (pickRaw != null && pickRaw !== '') {
+        const d = +pickRaw;
+        const idx = playPickedDigits.indexOf(d);
+        if (idx >= 0) playPickedDigits.splice(idx, 1);
+        else if (playPickedDigits.length < 3) playPickedDigits.push(d);
+        syncAllDiffPickSelection();
+        renderPlayPanel();
+        updatePlaySelected();
+        return;
+      }
       const play = $(this).data('play');
+      if (!play) return;
       togglePlaySelect(play);
       $(this).toggleClass('is-active', isPlaySelected(play));
       updatePlaySelected();
     });
     $('#playAmountChips').on('click', '.k3-play-foot__chip', function () {
-      setPlayAmount(+$(this).data('amt'));
+      const amt = +$(this).data('amt');
+      setPlayAmount(amt);
       clearPlayAmountChipActive();
       $(this).addClass('is-active');
+      syncPlayFootTotals();
     });
-    $('#playAmountMinus').on('click', () => {
-      const cur = parseInt($('#playAmount').val(), 10) || 100;
-      setPlayAmount(cur - playAmountStep(cur));
-      clearPlayAmountChipActive();
-    });
-    $('#playAmountPlus').on('click', () => {
-      const cur = parseInt($('#playAmount').val(), 10) || 0;
-      setPlayAmount(cur + playAmountStep(cur));
-      clearPlayAmountChipActive();
+    $('#playAmountAllin').on('click', function () {
+      playAllin = !playAllin;
+      syncPlayAmountUI();
+      syncPlayFootTotals();
     });
     $('#playRepeat').on('click', () => {
       openPlaySheet(false);
       repeatLastBet();
     });
-    $('#playAmount').on('input', () => {
+    $('#playAmount').on('input change', function () {
       if (playAllin) return;
+      const v = parseInt($(this).val(), 10);
       clearPlayAmountChipActive();
+      if (v > 0) {
+        $(`#playAmountChips .k3-play-foot__chip[data-amt="${v}"]`).addClass('is-active');
+      }
+      syncPlayFootTotals();
     });
     $('#playClear').on('click', clearPlaySelection);
     $('#playSubmit').on('click', submitPlayBet);
@@ -2400,7 +2843,6 @@ $(function () {
   initKeypad();
   initPlaySheet();
   initPlaySheetEvents();
-  seedMockNames();
   restoreBetBook();
   loadServerPayTable();
   startRoomChatPolling();
@@ -2436,7 +2878,7 @@ $(function () {
     /* 聊天里已有开奖/中奖卡 → 进房不再重推动画与二次结算 */
     chatLog.forEach(function (m) {
       const html = String(m.html || '');
-      if (!/(result-card|bot-card--result|bot-card--win|is-reveal|is-settled|is-drawing)/.test(html)) return;
+      if (!/(result-card|video-card|bot-card--result|bot-card--win|is-reveal|is-settled|is-drawing)/.test(html)) return;
       let hit = html.match(/data-issue="([^"]+)"/);
       if (!hit) hit = html.match(/bot-card__issue[^>]*>([^<]+)</);
       if (!hit) hit = html.match(/result-card__issue[^>]*>([^<]+)</);
@@ -2466,6 +2908,25 @@ $(function () {
       };
     }).filter(r => r.issue && r.nums.length === 3);
   }
+
+  function isCeremonyHolding() {
+    try {
+      const phase = roomChat && roomChat.getPhase ? roomChat.getPhase() : '';
+      return phase === 'drawing' || phase === 'revealing' || phase === 'settled';
+    } catch (e) { return false; }
+  }
+  /** 开奖仪式中：顶栏用上一期；揭晓完再跟历史头 */
+  function pickDrawBarRow(rows) {
+    if (!rows || !rows.length) return null;
+    try {
+      const hold = roomChat && roomChat.getPhaseIssue ? String(roomChat.getPhaseIssue() || '') : '';
+      if (isCeremonyHolding() && hold && String(rows[0].issue) === hold) {
+        return rows[1] || null;
+      }
+    } catch (e) { /* ignore */ }
+    return rows[0];
+  }
+
   function syncServerSnapshot() {
     if (snapshotBusy || !App.fetchLotterySnapshot) return;
     snapshotBusy = true;
@@ -2476,70 +2937,124 @@ $(function () {
       historyRows = rows;
       if (rows.length) {
         lastDraw = rows[0].nums.slice();
-        renderDrawBar(rows[0]);
+        /* 仪式未结束前顶栏仍显示上一期，避免比结果卡更早露号 */
+        const barRow = pickDrawBarRow(rows);
+        if (barRow) renderDrawBar(barRow);
       } else if (typeof renderDrawBar === 'function') {
         try { renderDrawBar(null); } catch (e) { /* ignore */ }
       }
       const current = snapshot && snapshot.current;
+      /* 快照成功即视为桥已通；无 current 时显示等待开盘，而不是永久「同步中」 */
+      serverSynced = true;
       if (current && current.issueNo) {
         serverCurrent = current;
-        serverSynced = true;
-        if (typeof tick === 'function') try { tick(); } catch (e) { /* ignore */ }
+      } else if (serverCurrent) {
+        const _st = String(serverCurrent.status || '');
+        const _openAt = new Date(serverCurrent.openAt).getTime();
+        /* 无新 current 且旧期已开完才清空；LOCKED/PENDING 仍保留给 tick 显示开奖中 */
+        if (_st !== 'PENDING' && _st !== 'LOCKED' && Number.isFinite(_openAt) && Date.now() >= _openAt) {
+          serverCurrent = null;
+        }
       }
+      if (typeof tick === 'function') try { tick(); } catch (e) { /* ignore */ }
       renderDrawTable();
-      if (serverCurrent && serverCurrent.issueNo) setCurIssueDisplay(serverCurrent.issueNo);
+      /* 仪式中期号由 tick/phase 接管，勿被快照 current 盖掉 */
+      if (!isCeremonyHolding() && serverCurrent && serverCurrent.issueNo) setCurIssueDisplay(serverCurrent.issueNo);
       if (rows[0]) {
-        revealedIssues.add(rows[0].issue);
-        saveRevealedIssues();
+        const holdIss = roomChat && roomChat.getPhaseIssue ? String(roomChat.getPhaseIssue() || '') : '';
+        if (!(isCeremonyHolding() && holdIss && String(rows[0].issue) === holdIss)) {
+          revealedIssues.add(rows[0].issue);
+          saveRevealedIssues();
+        }
         historyHeadBootstrapped = true;
       }
       if ($('#longSheet').hasClass('is-open')) renderLongDragonPanel();
       if ($('#predictSheet').hasClass('is-open')) renderPredictPanel();
     }).catch(function () {
-      /* Parent bridge can be unavailable when a static H5 is opened directly. */
+      /* 桥接失败不卡死：松开 busy 后尽快再拉 */
+      if (!serverSynced) {
+        setTimeout(function () {
+          if (!serverSynced && !snapshotBusy && typeof syncServerSnapshot === 'function') syncServerSnapshot();
+        }, 600);
+      }
     }).finally(function () { snapshotBusy = false; });
   }
 
   function tick() {
+    const phase = roomChat && roomChat.getPhase ? roomChat.getPhase() : '';
+    if (phase === 'drawing' || phase === 'revealing' || phase === 'settled') {
+      const hold = roomChat.getPhaseIssue ? roomChat.getPhaseIssue() : '';
+      if (hold) {
+        if (typeof setCurIssueDisplay === 'function') setCurIssueDisplay(hold);
+        else if (typeof setIssueEl === 'function') setIssueEl($('#curIssue'), hold);
+        else $('#curIssue').text(hold);
+      }
+      updateCountdownDrawing();
+      return;
+    }
     if (serverSynced && serverCurrent) {
       const lockAt = new Date(serverCurrent.lockAt).getTime();
-      const openAt = new Date(serverCurrent.openAt).getTime();
       const issueCur = String(serverCurrent.issueNo || '');
-      const open = serverCurrent.status === 'PENDING' && Date.now() < lockAt;
+      const status = String(serverCurrent.status || '');
+      const now = Date.now();
+      const open = status === 'PENDING' && now < lockAt;
       setCurIssueDisplay(issueCur);
-      updateCountdownUI(open
-        ? Math.max(0, (lockAt - Date.now()) / 1000) + PREP_SEC
-        : Math.max(0, (openAt - Date.now()) / 1000));
-      if (!open && issueCur && markIssueClosed(issueCur)) {
-        roomBetFrozen = true;
-        sealedIssueNo = issueCur;
-      }
-      /* unfreeze-if-next-pending */
-      if (roomBetFrozen && sealedIssueNo && issueCur && issueCur !== sealedIssueNo && open) {
-        /* 下一期已开盘：以服务端为准解冻（不强制等历史，避免漏推卡死） */
-        roomBetFrozen = false;
-        sealedIssueNo = '';
+      if (open) {
+        updateCountdownUI(Math.max(0, (lockAt - now) / 1000) + PREP_SEC);
+        if (window.K3Audio && K3Audio.armCountdown) K3Audio.armCountdown(lockAt);
+        if (roomBetFrozen && sealedIssueNo && issueCur && issueCur !== sealedIssueNo) {
+          roomBetFrozen = false;
+          sealedIssueNo = '';
+        }
+      } else if (status === 'LOCKED' || (status === 'PENDING' && now >= lockAt)) {
+        updateCountdownDrawing();
+        if (Number.isFinite(new Date(serverCurrent.openAt).getTime()) &&
+            now >= new Date(serverCurrent.openAt).getTime()) {
+          requestLotteryResync();
+        }
+      } else {
+        const $labelWait = $('#cdLabel');
+        if ($labelWait.length) $labelWait.text('等待开盘');
+        const $boxWait = $('#countdownBox').removeClass('is-preparing is-betting is-freeze is-urgent is-drawing').addClass('is-preparing');
+        $boxWait.attr('aria-label', '等待开盘');
+        if (typeof renderCountdownDigits === 'function') renderCountdownDigits(0);
+        $('#cdPrep').attr('hidden', true).hide();
+        $('#cdDigits').removeAttr('hidden').css('display', '').show();
+        requestLotteryResync();
       }
       return;
     }
-    /* 未同步服务端：禁止本地钟（期号会差 1），只显示同步中 */
+    if (serverSynced) {
+      if (typeof setCurIssueDisplay === 'function') setCurIssueDisplay('--------');
+      else if (typeof setIssueEl === 'function') setIssueEl($('#curIssue'), '--------');
+      else $('#curIssue').text('--------');
+      const $labelWait = $('#cdLabel');
+      if ($labelWait.length) $labelWait.text('等待开盘');
+      const $boxWait = $('#countdownBox').removeClass('is-preparing is-betting is-freeze is-urgent is-drawing').addClass('is-preparing');
+      $boxWait.attr('aria-label', '等待开盘');
+      if (typeof renderCountdownDigits === 'function') renderCountdownDigits(0);
+      return;
+    }
     if (typeof setCurIssueDisplay === 'function') setCurIssueDisplay('--------');
     else if (typeof setIssueEl === 'function') setIssueEl($('#curIssue'), '--------');
     else $('#curIssue').text('--------');
     const $label = $('#cdLabel');
     if ($label.length) $label.text('同步中');
-    const $box = $('#countdownBox').removeClass('is-preparing is-betting is-freeze').addClass('is-betting');
+    const $box = $('#countdownBox').removeClass('is-preparing is-betting is-freeze is-urgent is-drawing').addClass('is-betting');
     $box.attr('aria-label', '房间同步中');
     if (typeof renderCountdownDigits === 'function') renderCountdownDigits(0);
     $('#cdPrep').prop('hidden', true);
-    $('#cdDigits').prop('hidden', false);
+    $('#cdDigits').removeAttr('hidden').css('display', '').show();
   }
-
   setInterval(tick, 1000);
   restoreRevealedIssues();
   restoreClosedIssues();
   hydrateClosedFromChat();
   hydrateRevealedFromChat();
+  App.resyncLottery = function () {
+    snapshotBusy = false;
+    if (typeof syncServerSnapshot === 'function') syncServerSnapshot();
+  };
   if (App.startAdaptiveInterval) App.startAdaptiveInterval(syncServerSnapshot, 2000, 5000); else { syncServerSnapshot(); setInterval(syncServerSnapshot, 2000); }
   /* robot bets from server room chat */
 
@@ -2549,17 +3064,60 @@ $(function () {
     if (App.backToLobby) App.backToLobby();
     else App.go('../../client-app/pages/game-lobby/game-lobby.html' + q);
   });
+
+  layoutRail();
+  $(window).on('resize orientationchange', function () { layoutRail(); });
+  if (typeof ResizeObserver !== 'undefined') {
+    const roomEl = document.querySelector('.k3-room');
+    if (roomEl) {
+      try {
+        new ResizeObserver(function () { layoutRail(); }).observe(roomEl);
+      } catch (e) { /* ignore */ }
+    }
+  }
   /* === chat-rail handlers (k3) === */
 
-  function openRulesSheet(open) {
-    if (open) {
-      const o = ODDS;
-      const betSec = INTERVAL - PREP_SEC;
-      const html = `
+  function playCatRulesHtml(cat) {
+    const id = (cat && cat.id) || '';
+    const map = {
+      sideSum:
+        '● 和值两面：<br>选择1个形态(大:11-17；小:4-10；单:个位数1,3,5,7,9；双:个位数0,2,4,6,8)，与开奖号码之和的形态相同，即中奖。(不含豹子)<br><br>' +
+        '投注【小】；开奖号码：1,2,3，即中奖。<br><br>' +
+        '● 和值：<br>选择1个数值，与开奖号码之和相同，即中奖。<br><br>' +
+        '投注【11】；开奖号码：2,3,6，即中奖。',
+      dice:
+        '● 三军：<br><br>选择1个号码形成1注，开奖号码包含所选号码，即中奖。<br><br>' +
+        '投注【1】；开奖号码：1,1,2，即中奖。',
+      pair:
+        '● 二同号：<br><br>选择1个二同号形成1注，所选二同号在开奖号码中出现2次或以上，即中奖。<br><br>' +
+        '投注【11】；开奖号码：1,1,2，即中奖。(不含豹子)',
+      triplet:
+        '● 三同号：<br><br>选择1个组合形成1注，所选组合与开奖号码相同，即中奖。<br><br>' +
+        '投注【111】；开奖号码：1,1,1，即中奖；<br><br>' +
+        '投注【三同号通选】；开奖号码：111, 222, 333, 444, 555, 666 中的任一组合，即中奖。',
+      straight:
+        '● 三连号：<br><br>选择1个组合形成1注，所选组合与开奖号码相同，即中奖。<br><br>' +
+        '投注【123】；开奖号码：1,2,3，即中奖。<br><br>' +
+        '投注【三连号通选】；开奖号码：123, 234, 345, 456 中的任一组合，即中奖。',
+      alldiff:
+        '● 三不同号：<br><br>开奖号码全部不相同，即为不同号；选择3个号码形成1注，所选组合与开奖号码相同，即中奖。<br><br>' +
+        '投注【123】；开奖号码：1,2,3，即中奖。',
+      long:
+        '● 长牌：<br><br>任选一长牌组合、当开奖结果任2码与所选组合相同时，即为中奖。<br><br>' +
+        '投注【12】【23】【13】；开奖号码：1,2,3，均中奖。',
+    };
+    const body = map[id] || '请在盘面点选投注项后确认投注；派彩以服务端为准。';
+    return `<div class="k3-rules-sec"><p>${body}</p></div>`;
+  }
+
+  function fullRulesHtml() {
+    const o = ODDS;
+    const betSec = INTERVAL - PREP_SEC;
+    return `
         <div class="k3-rules-sec">
           <h3 class="k3-rules-sec__title">一、开奖与时间</h3>
           <p>1分快三每期开出 <b>3</b> 颗骰子，点数各为 <b>1～6</b>。</p>
-          <p>每期共 <b>${INTERVAL} 秒</b>：可下注 <b>${betSec} 秒</b>，提前 <b>${PREP_SEC} 秒</b> 封盘。顶栏「距封盘 / 距开奖」；封盘后不可下注、不可取消。</p>
+          <p>每期共 <b>${INTERVAL} 秒</b>。顶栏「距封盘」；封盘后显示「开奖中」，不可下注、不可取消。</p>
           <p>开奖结果与派彩以服务端账本为准。</p>
         </div>
         <div class="k3-rules-sec">
@@ -2571,27 +3129,26 @@ $(function () {
             <li>键盘快捷：上分、取消、梭哈、重复、下分</li>
           </ul>
           <span class="k3-rules-ex">大/100　和11/50　三军3/100</span>
-          <span class="k3-rules-ex">二同5/50　三同号/20　长牌12/100　三连号/80</span>
+          <span class="k3-rules-ex">二同5/50　三同号/20　长牌12/100　三连123/80　三不同123/50</span>
           <p>「梭哈」按余额均分；玩法脚「重复」可跟上一笔。底部「+」含上下分、申请记录、竞猜报表等入口。</p>
         </div>
         <div class="k3-rules-sec">
           <h3 class="k3-rules-sec__title">三、玩法与赔率</h3>
-          <p>下列为当前房间赔率（随后台更新）。派彩 = 金额 × 赔率（向下取整）。</p>
+          <p>下列为当前房间赔率（随后台更新）。派彩 = 金额 × 赔率（四舍五入到两位小数）。</p>
           <table class="k3-rules-table">
             <thead><tr><th>玩法</th><th>说明</th><th>赔率</th></tr></thead>
             <tbody>
               <tr><td>两面</td><td>三骰和值：4～10 小，11～17 大；奇单偶双。开出豹子通杀</td><td>${o.side}</td></tr>
-              <tr><td>和值</td><td>猜总和 4～17，各点数赔率不同（面板可见）</td><td>约 ${o.sum} 起</td></tr>
+              <tr><td>和值</td><td>猜总和 3～18，各点数赔率不同（面板可见）</td><td>约 ${o.sum} 起</td></tr>
               <tr><td>三军 / 独</td><td>指定点数至少出现 1 次（出现越多派彩规则按服务端）</td><td>${o.dice}</td></tr>
               <tr><td>二同号</td><td>指定点数恰好出现 2 次（非豹子）</td><td>${o.pairN}</td></tr>
-              <tr><td>三同号</td><td>指定豹子点数；「三同号」为任意豹子</td><td>单号 ${o.tripletN} · 任意 ${o.tripletAny}</td></tr>
-              <tr><td>三连号</td><td>三颗为连续点数 123/234/345/456</td><td>${o.straight}</td></tr>
-              <tr><td>三不同</td><td>三颗互不相同且不成顺子</td><td>${o.alldiff}</td></tr>
+              <tr><td>三同号</td><td>指定豹子点数；「三同号」为通选</td><td>单号 ${o.tripletN} · 通选 ${o.tripletAny}</td></tr>
+              <tr><td>三连号</td><td>单选 123/234/345/456；通选任意顺子</td><td>单选 ${o.straightN} · 通选 ${o.straight}</td></tr>
+              <tr><td>三不同</td><td>指定三点（如三不同123）；「三不同号」为杂六形态</td><td>指定 ${o.alldiffN} · 形态 ${o.alldiff}</td></tr>
               <tr><td>长牌</td><td>两个不同点数各至少出现 1 次，如「长牌12」</td><td>${o.long}</td></tr>
             </tbody>
           </table>
         </div>
-
         <div class="k3-rules-sec">
           <h3 class="k3-rules-sec__title">四、取消与结算</h3>
           <p>当期未封盘前可输入「取消」或点键盘「取消」，撤销本人本期未结算注单；封盘后不可取消。</p>
@@ -2606,6 +3163,21 @@ $(function () {
             <li>长龙 / 预测仅供走势参考，不构成投注建议</li>
           </ul>
         </div>`;
+  }
+
+  function openRulesSheet(open, opts) {
+    if (open) {
+      const mode = (opts && opts.mode) || 'full';
+      let title = '游戏规则';
+      let html;
+      if (mode === 'playCat') {
+        const cat = currentPlayCat();
+        title = (cat && cat.title) || '玩法';
+        html = playCatRulesHtml(cat);
+      } else {
+        html = fullRulesHtml();
+      }
+      $('#rulesTitle').text(title);
       $('#rulesBody').html(html);
       $('#rulesMask').prop('hidden', false);
       $('#rulesSheet').prop('hidden', false).addClass('is-open');
@@ -2627,7 +3199,8 @@ $(function () {
 
   $('#btnCs').on('click', () => App.go('../../client-app/pages/cs/cs.html' + q));
   $('#btnExpand, #btnComposerPlay').on('click', () => openPlaySheet(true));
-  $('#btnRules').on('click', () => openRulesSheet(true));
+  $('#btnRules').on('click', () => openRulesSheet(true, { mode: 'full' }));
+  $('#playSheetRules').on('click', () => openRulesSheet(true, { mode: 'playCat' }));
   $('#rulesSheetClose, #rulesMask').on('click', () => openRulesSheet(false));
   $('#btnRecords').on('click', () => goBetRecords());
   $('#playSheetClose, #playMask').on('click', () => openPlaySheet(false));
@@ -2714,12 +3287,12 @@ $('#btnLong').on('click', () => openLongSheet(true));
   });
   $('#menuMask').on('click', () => openPlusMenu(false));
     const LINKS = {
-    recharge: '../../client-app/pages/recharge/recharge.html',
-    'apply-records': '../../client-app/pages/apply-records/apply-records.html',
-    'bet-records': '../../client-app/pages/bet-records/bet-records.html',
-    rebate: '../../client-app/pages/rebate/rebate.html',
-    activities: '../../client-app/pages/activities/activities.html',
-    settings: '../../client-app/pages/profile/profile.html',
+    recharge: '/recharge',
+    'apply-records': '/apply-records',
+    'bet-records': '/bets',
+    rebate: '/rebate',
+    activities: '/activities',
+    settings: '/settings',
   };
 
   $('#plusMenu').on('click', 'button', function () {

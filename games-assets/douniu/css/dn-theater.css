@@ -1,0 +1,779 @@
+/* ========================================================
+   斗牛「一张赌桌」竖屏构图
+   不是功能条竖叠，而是：绿毡桌面 → 下注岛 → 珠沿 → 木边
+   ======================================================== */
+
+.dn-theater-layout {
+  --dn-wood: #3a2616;
+  --dn-wood-mid: #2a1a10;
+  --dn-wood-deep: #140c08;
+  --dn-felt: #0c3a24;
+  --dn-felt-lit: #145032;
+  --dn-felt-deep: #062016;
+  --dn-gold: #f0d078;
+  --dn-gold-dim: rgba(240, 208, 120, 0.38);
+  --dn-line: rgba(240, 208, 120, 0.22);
+  height: 100%;
+  height: 100dvh;
+  max-height: 100dvh;
+  background: var(--dn-wood-deep);
+}
+
+html:has(.dn-theater-layout),
+html:has(.dn-theater-layout) body.dn-body {
+  height: 100%;
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
+  background: var(--dn-wood-deep);
+}
+
+/* ---------- L1 顶栏：保持原结构 ---------- */
+.dn-theater-layout .dn-head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: calc(8px + env(safe-area-inset-top, 0px)) 12px 8px;
+  background: linear-gradient(180deg, #2c1c10 0%, #1a100a 100%);
+  border-bottom: 1px solid var(--dn-gold-dim);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  z-index: 60;
+}
+
+.dn-theater-layout .dn-head__brand {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+.dn-theater-layout .dn-stats {
+  margin-left: auto;
+  flex-shrink: 0;
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-columns: repeat(2, max-content);
+  grid-template-rows: auto auto;
+  gap: 5px 16px;
+  padding: 2px 0;
+  justify-items: end;
+}
+
+/* ---------- 舞台 ---------- */
+.dn-theater-layout .dn-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+  background: transparent;
+}
+
+/*
+  房间三层家具：绿毡桌面 → 珠沿板 → 木边
+*/
+.dn-theater-layout .dn-room {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  flex: 1;
+  transform: none;
+  min-height: 0;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: minmax(0, 1.35fr) minmax(78px, 0.32fr) auto;
+  gap: 0;
+  padding: 0;
+  box-sizing: border-box;
+  background:
+    radial-gradient(70% 40% at 50% 0%, rgba(80, 50, 20, 0.35), transparent 55%),
+    linear-gradient(180deg, #1a120c 0%, var(--dn-wood-deep) 100%);
+}
+
+.dn-theater-layout .dn-band {
+  position: relative;
+  min-height: 0;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+/* ========================================================
+   绿毡桌面：发牌 / 下注岛 / 珠沿 同属一张桌
+   ======================================================== */
+.dn-theater-layout .dn-table {
+  position: relative;
+  min-height: 0;
+  display: grid;
+  grid-template-rows:
+    minmax(0, 0.95fr)
+    minmax(0, 1.35fr);
+  margin: 8px 10px 0;
+  padding: 10px 10px 12px;
+  border-radius: 28px 28px 8px 8px / 36px 36px 10px 10px;
+  background:
+    radial-gradient(95% 55% at 50% 18%, rgba(255, 220, 140, 0.07), transparent 50%),
+    radial-gradient(80% 70% at 50% 78%, rgba(0, 0, 0, 0.28), transparent 65%),
+    linear-gradient(165deg, var(--dn-felt-lit) 0%, var(--dn-felt) 42%, var(--dn-felt-deep) 100%);
+  border: 2px solid rgba(180, 130, 60, 0.45);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 230, 160, 0.14),
+    inset 0 -20px 36px rgba(0, 0, 0, 0.22),
+    0 0 0 5px rgba(42, 26, 14, 0.92),
+    0 0 0 7px rgba(200, 150, 70, 0.28),
+    0 12px 28px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+}
+
+.dn-theater-layout .dn-table::before {
+  content: '';
+  position: absolute;
+  inset: 7px;
+  border-radius: inherit;
+  border: 1px solid rgba(240, 208, 120, 0.12);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.dn-theater-layout .dn-room.is-phase-draw .dn-table {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 230, 160, 0.2),
+    inset 0 -28px 48px rgba(0, 0, 0, 0.28),
+    0 0 0 5px rgba(42, 26, 14, 0.92),
+    0 0 0 7px rgba(240, 200, 90, 0.45),
+    0 0 36px rgba(240, 180, 60, 0.22),
+    0 18px 40px rgba(0, 0, 0, 0.45);
+}
+
+/* ---------- 发牌区：嵌在毡面上，不再单独成卡 ---------- */
+.dn-theater-layout .dn-theater {
+  margin: 0;
+  padding: 26px 4px 4px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  z-index: 2;
+}
+
+.dn-theater-layout .dn-timer {
+  position: absolute;
+  left: 50%;
+  top: 4px;
+  transform: translateX(-50%);
+  z-index: 30;
+  min-width: 72px;
+  height: 28px;
+  padding: 0 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid rgba(240, 208, 120, 0.55);
+  background: linear-gradient(180deg, #4a3420, #1c120a);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 230, 160, 0.2);
+  container-type: size;
+  pointer-events: none;
+}
+
+.dn-theater-layout .dn-timer__time {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+.dn-theater-layout .dn-timer.is-draw .dn-timer__time,
+.dn-theater-layout .dn-timer.is-payout .dn-timer__time {
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  text-indent: 0.16em;
+}
+
+.dn-theater-layout .dn-vs {
+  position: absolute;
+  left: 50%;
+  top: 56%;
+  transform: translate(-50%, -50%);
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.dn-theater-layout .dn-vs span {
+  font-family: "Orbitron", "DIN Alternate", sans-serif;
+  font-size: clamp(14px, 3.8vw, 20px);
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  color: rgba(255, 226, 150, 0.78);
+  text-shadow:
+    0 0 18px rgba(255, 190, 70, 0.45),
+    0 2px 4px rgba(0, 0, 0, 0.7);
+}
+
+.dn-theater-layout .dn-vs i {
+  display: block;
+  width: clamp(28px, 10vw, 48px);
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(240, 208, 120, 0.55), transparent);
+}
+
+.dn-theater-layout .dn-shoe {
+  left: 4px;
+  top: 30px;
+  width: 40px;
+  height: 30px;
+  z-index: 28;
+}
+
+.dn-theater-layout .dn-players {
+  left: auto;
+  right: 4px;
+  top: 30px;
+  width: 38px;
+  transform: none;
+  z-index: 28;
+}
+
+.dn-theater-layout .dn-room.tb-room .tb-players {
+  transform: none;
+}
+
+.dn-theater-layout .dn-deal {
+  position: absolute;
+  inset: 30px 2px 2px;
+  z-index: 22;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px;
+  pointer-events: none;
+}
+
+.dn-theater-layout .dn-hand {
+  position: relative;
+  inset: auto;
+  width: 46%;
+  height: 100%;
+}
+
+.dn-theater-layout .dn-hand--banker .dn-card:nth-child(n),
+.dn-theater-layout .dn-hand--player .dn-card:nth-child(n) {
+  top: 4%;
+  width: auto;
+  height: 90%;
+  aspect-ratio: 5 / 7;
+  max-width: 23%;
+}
+
+.dn-theater-layout .dn-hand--banker .dn-card:nth-child(1) { left: 2%;  z-index: 1; }
+.dn-theater-layout .dn-hand--banker .dn-card:nth-child(2) { left: 16%; z-index: 2; }
+.dn-theater-layout .dn-hand--banker .dn-card:nth-child(3) { left: 30%; z-index: 3; }
+.dn-theater-layout .dn-hand--banker .dn-card:nth-child(4) { left: 44%; z-index: 4; }
+.dn-theater-layout .dn-hand--banker .dn-card:nth-child(5) { left: 58%; z-index: 5; }
+
+.dn-theater-layout .dn-hand--player .dn-card:nth-child(1) { left: 16%; z-index: 1; }
+.dn-theater-layout .dn-hand--player .dn-card:nth-child(2) { left: 30%; z-index: 2; }
+.dn-theater-layout .dn-hand--player .dn-card:nth-child(3) { left: 44%; z-index: 3; }
+.dn-theater-layout .dn-hand--player .dn-card:nth-child(4) { left: 58%; z-index: 4; }
+.dn-theater-layout .dn-hand--player .dn-card:nth-child(5) { left: 72%; z-index: 5; }
+
+.dn-theater-layout .dn-hand--banker.is-split .dn-card:nth-child(1) { left: 0%; }
+.dn-theater-layout .dn-hand--banker.is-split .dn-card:nth-child(2) { left: 12%; }
+.dn-theater-layout .dn-hand--banker.is-split .dn-card:nth-child(3) { left: 24%; }
+.dn-theater-layout .dn-hand--banker.is-split .dn-card:nth-child(4) { left: 46%; }
+.dn-theater-layout .dn-hand--banker.is-split .dn-card:nth-child(5) { left: 58%; }
+
+.dn-theater-layout .dn-hand--player.is-split .dn-card:nth-child(1) { left: 12%; }
+.dn-theater-layout .dn-hand--player.is-split .dn-card:nth-child(2) { left: 24%; }
+.dn-theater-layout .dn-hand--player.is-split .dn-card:nth-child(3) { left: 36%; }
+.dn-theater-layout .dn-hand--player.is-split .dn-card:nth-child(4) { left: 58%; }
+.dn-theater-layout .dn-hand--player.is-split .dn-card:nth-child(5) { left: 70%; }
+
+.dn-theater-layout .dn-hand-type {
+  top: 2%;
+  font-size: clamp(18px, 4.8vw, 28px);
+}
+
+/* ========================================================
+   下注岛：嵌在毡面中央的一块台面（不是上下两排卡片）
+   ======================================================== */
+.dn-theater-layout .dn-wager {
+  z-index: 3;
+  display: flex;
+  min-height: 0;
+  padding: 0 4px 2px;
+}
+
+/* 注台：轻微凹进毡面，不要再套一层「卡片边框」 */
+.dn-theater-layout .dn-wager-plate {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1.08fr) minmax(0, 0.92fr);
+  gap: 8px;
+  padding: 6px 4px 4px;
+  border-radius: 0;
+  background:
+    radial-gradient(75% 70% at 50% 35%, rgba(0, 0, 0, 0.22), transparent 70%);
+  border: none;
+  box-shadow: none;
+}
+
+.dn-theater-layout .dn-bet {
+  position: relative;
+  inset: auto;
+  z-index: 24;
+  display: contents;
+  pointer-events: none;
+}
+
+.dn-theater-layout .dn-bet__primary .dn-bet-btn,
+.dn-theater-layout .dn-bet__side .dn-bet-btn {
+  pointer-events: auto;
+}
+
+/* 庄闲：对峙盾牌，中间留呼吸，不是两个方块并排 */
+.dn-theater-layout .dn-bet__primary {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: clamp(10px, 3.5vw, 18px);
+  min-height: 0;
+  pointer-events: none;
+  align-items: stretch;
+}
+
+.dn-theater-layout .dn-bet__primary .dn-bet-btn--banker {
+  border-radius: 18px 8px 28px 14px / 22px 10px 34px 16px;
+  transform: perspective(420px) rotateY(4deg);
+}
+
+.dn-theater-layout .dn-bet__primary .dn-bet-btn--player {
+  border-radius: 8px 18px 14px 28px / 10px 22px 16px 34px;
+  transform: perspective(420px) rotateY(-4deg);
+}
+
+/* 五键：围住庄闲的扇形弧，不是等宽横排 */
+.dn-theater-layout .dn-bet__side {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 4px;
+  min-height: 0;
+  pointer-events: none;
+  align-items: end;
+  padding: 0 6px 2px;
+  perspective: 520px;
+}
+
+.dn-theater-layout .dn-bet__side .dn-bet-btn:nth-child(1) {
+  height: 82%;
+  border-radius: 12px 8px 18px 22px;
+  transform: rotate(-7deg) translateY(6px);
+}
+
+.dn-theater-layout .dn-bet__side .dn-bet-btn:nth-child(2) {
+  height: 92%;
+  border-radius: 12px 10px 16px 16px;
+  transform: rotate(-3deg) translateY(2px);
+}
+
+.dn-theater-layout .dn-bet__side .dn-bet-btn:nth-child(3) {
+  height: 100%;
+  border-radius: 14px 14px 18px 18px;
+  transform: none;
+}
+
+.dn-theater-layout .dn-bet__side .dn-bet-btn:nth-child(4) {
+  height: 92%;
+  border-radius: 10px 12px 16px 16px;
+  transform: rotate(3deg) translateY(2px);
+}
+
+.dn-theater-layout .dn-bet__side .dn-bet-btn:nth-child(5) {
+  height: 82%;
+  border-radius: 8px 12px 22px 18px;
+  transform: rotate(7deg) translateY(6px);
+}
+
+.dn-theater-layout .dn-bet-btn {
+  position: relative;
+  left: auto !important;
+  top: auto !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0;
+  padding: 6px 4px;
+  overflow: hidden;
+  container-type: size;
+}
+
+.dn-theater-layout .dn-bet-btn--span {
+  padding: 6px 2px 8px;
+}
+
+.dn-theater-layout .dn-bet-btn__name {
+  font-size: clamp(18px, 7.5cqh, 28px) !important;
+}
+
+.dn-theater-layout .dn-bet-btn--banker .dn-bet-btn__name,
+.dn-theater-layout .dn-bet-btn--player .dn-bet-btn__name {
+  font-size: clamp(22px, 9cqh, 32px) !important;
+}
+
+.dn-theater-layout .dn-bet-btn__odds {
+  font-size: clamp(10px, 3.2cqh, 13px) !important;
+}
+
+.dn-theater-layout .dn-bet-btn--span .dn-bet-btn__name {
+  font-size: clamp(11px, 4.2cqw, 15px) !important;
+  white-space: nowrap;
+}
+
+.dn-theater-layout .dn-bet-btn--span .dn-bet-btn__odds {
+  font-size: clamp(9px, 3.2cqw, 12px) !important;
+  white-space: nowrap;
+}
+
+.dn-theater-layout .dn-bet-btn__hot {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  z-index: 5;
+  padding: 1px 5px;
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 800;
+  color: #3a1208;
+  background: linear-gradient(180deg, #ffe0a0, #e08a2a);
+  pointer-events: none;
+}
+
+.dn-theater-layout .dn-bet-btn__stake {
+  font-size: 11px;
+  bottom: 5px;
+}
+
+/* ========================================================
+   珠沿板：嵌在绿毡与木边之间的木制记分条
+   ======================================================== */
+.dn-theater-layout .dn-bead-rail {
+  z-index: 4;
+  min-height: 0;
+  margin: 0 8px;
+  padding: 0;
+  display: flex;
+  position: relative;
+}
+
+.dn-theater-layout .dn-bead-rail::before {
+  content: '';
+  position: absolute;
+  left: 6%;
+  right: 6%;
+  top: -6px;
+  height: 10px;
+  border-radius: 0 0 40% 40%;
+  background: linear-gradient(180deg, rgba(12, 58, 36, 0.9), transparent);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.dn-theater-layout .dn-roadmap {
+  position: relative;
+  left: auto;
+  top: auto;
+  width: 100%;
+  height: 100%;
+  border-radius: 0 0 8px 8px;
+  border: 1px solid rgba(200, 150, 70, 0.32);
+  border-top: none;
+  background:
+    linear-gradient(180deg, #3a2818 0%, #1c120c 55%, #120c08 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 230, 160, 0.1),
+    inset 0 8px 16px rgba(0, 0, 0, 0.35),
+    0 4px 12px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+  pointer-events: auto;
+}
+
+.dn-theater-layout .dn-roadmap__inner {
+  position: absolute;
+  inset: 4px 6px 4px;
+  gap: 2px;
+}
+
+.dn-theater-layout .dn-roadmap__title {
+  font-size: 13px;
+  letter-spacing: 0.14em;
+  text-indent: 0.14em;
+}
+
+.dn-theater-layout .dn-roadmap__pill {
+  font-size: 10px;
+}
+
+.dn-theater-layout .dn-roadmap__stat b {
+  font-size: 11px;
+}
+
+/* ========================================================
+   木边：一整块桌沿家具（工具 + 筹码嵌同一木面）
+   ======================================================== */
+.dn-theater-layout .dn-apron {
+  display: grid;
+  grid-template-rows: auto auto;
+  gap: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  background:
+    linear-gradient(180deg, #6a4a28 0%, #3a2616 18%, #24160e 55%, #120c08 100%);
+  border-top: 2px solid rgba(240, 208, 120, 0.42);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 230, 160, 0.18),
+    0 -12px 28px rgba(0, 0, 0, 0.35);
+  z-index: 50;
+}
+
+.dn-theater-layout .dn-apron__tools {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  align-items: center;
+  gap: 4px;
+  padding: 8px 10px 2px;
+  background: transparent;
+  border: none;
+}
+
+.dn-theater-layout .dn-apron__tools .dn-rail-btn {
+  pointer-events: auto;
+  width: auto;
+  height: auto;
+  gap: 2px;
+  padding: 4px 0 2px;
+  border-radius: 10px;
+  background: radial-gradient(80% 120% at 50% 0%, rgba(255, 220, 140, 0.08), transparent 60%);
+}
+
+.dn-theater-layout .dn-apron__tools .dn-rail-ic {
+  width: 28px;
+  height: 28px;
+}
+
+.dn-theater-layout .dn-apron__tools .dn-rail-lb {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: rgba(242, 217, 138, 0.88);
+}
+
+.dn-theater-layout .dn-apron__tray {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 10px calc(8px + env(safe-area-inset-bottom, 0px));
+  padding: 7px 8px;
+  min-height: 58px;
+  border-radius: 16px;
+  background:
+    linear-gradient(180deg, rgba(0, 0, 0, 0.38), rgba(0, 0, 0, 0.18));
+  border: 1px solid rgba(240, 208, 120, 0.18);
+  box-shadow:
+    inset 0 2px 10px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 220, 140, 0.06);
+}
+
+.dn-theater-layout .dn-actions {
+  position: relative;
+  inset: auto;
+  display: flex;
+  gap: 6px;
+  pointer-events: none;
+  z-index: 50;
+}
+
+.dn-theater-layout .dn-action {
+  position: relative;
+  top: auto;
+  left: auto !important;
+  width: 46px;
+  height: 46px;
+  transform: none;
+  pointer-events: auto;
+}
+
+.dn-theater-layout .dn-action:active,
+.dn-theater-layout .dn-action.is-pressed {
+  transform: translateY(2px) scale(0.94);
+}
+
+.dn-theater-layout .dn-action.is-disabled:active,
+.dn-theater-layout .dn-action.is-disabled.is-pressed {
+  transform: none;
+}
+
+.dn-theater-layout .dn-chips {
+  position: relative;
+  inset: auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-evenly;
+  gap: 2px;
+  min-width: 0;
+  padding: 0 2px;
+  pointer-events: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.dn-theater-layout .dn-chip,
+.dn-theater-layout .dn-chip-more {
+  position: relative;
+  top: auto;
+  left: auto !important;
+  width: clamp(42px, 11vw, 52px);
+  height: auto;
+  aspect-ratio: 1;
+  transform: none;
+  flex: 0 0 auto;
+  pointer-events: auto;
+}
+
+.dn-theater-layout .dn-chip-more {
+  width: 26px;
+  height: 40px;
+  aspect-ratio: auto;
+}
+
+/* 旧右侧绝对定位栏：彻底关掉 */
+.dn-theater-layout .dn-rail:not(.dn-apron__tools):not(.dn-dock__tools),
+.dn-theater-layout aside.dn-rail {
+  display: none !important;
+}
+
+/* ---------- 阶段灯光 ---------- */
+.dn-theater-layout .dn-room.is-phase-draw .dn-wager,
+.dn-theater-layout .dn-room.is-phase-payout .dn-wager {
+  opacity: 0.42;
+  filter: saturate(0.55) brightness(0.92);
+  pointer-events: none;
+}
+
+.dn-theater-layout .dn-room.is-phase-draw .dn-bead-rail,
+.dn-theater-layout .dn-room.is-phase-payout .dn-bead-rail {
+  opacity: 0.4;
+  filter: saturate(0.55);
+}
+
+.dn-theater-layout .dn-room.is-focus .dn-apron,
+.dn-theater-layout .dn-room.is-focus .dn-actions {
+  opacity: 1;
+  pointer-events: auto;
+  filter: none;
+}
+
+.dn-theater-layout .dn-room.is-focus .tb-bet {
+  opacity: 1;
+  filter: none;
+}
+
+/* ========================================================
+   线框模式：看得见结构，不靠旧素材图
+   ======================================================== */
+.dn-wireframe .dn-bet-btn__frame {
+  display: none !important;
+}
+
+.dn-wireframe .dn-shoe,
+.dn-wireframe .dn-players {
+  opacity: 0.4;
+  filter: saturate(0.65);
+}
+
+.dn-wireframe .dn-card {
+  opacity: 0.28 !important;
+  visibility: visible !important;
+  border: 1px solid rgba(240, 208, 120, 0.35);
+  background:
+    linear-gradient(145deg, rgba(70, 40, 20, 0.7), rgba(25, 14, 8, 0.85));
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35);
+  border-radius: 6px;
+}
+
+.dn-wireframe .dn-card.is-dealt {
+  opacity: 1 !important;
+  border-color: transparent;
+  background: transparent;
+}
+
+.dn-wireframe .dn-card img {
+  opacity: 0;
+}
+
+.dn-wireframe .dn-card.is-dealt img {
+  opacity: 1;
+}
+
+.dn-wireframe .dn-bet-btn {
+  border: 1.5px solid rgba(240, 208, 120, 0.45);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 240, 200, 0.12),
+    0 8px 18px rgba(0, 0, 0, 0.28);
+}
+
+.dn-wireframe .dn-bet-btn--banker {
+  background:
+    radial-gradient(120% 80% at 50% 0%, rgba(255, 120, 100, 0.22), transparent 55%),
+    linear-gradient(180deg, #6a221c 0%, #3a100e 100%);
+  border-color: rgba(255, 150, 130, 0.55);
+}
+
+.dn-wireframe .dn-bet-btn--player {
+  background:
+    radial-gradient(120% 80% at 50% 0%, rgba(120, 180, 255, 0.22), transparent 55%),
+    linear-gradient(180deg, #1c3a6a 0%, #0e1c3a 100%);
+  border-color: rgba(140, 190, 255, 0.55);
+}
+
+.dn-wireframe .dn-bet-btn--gold {
+  background:
+    radial-gradient(120% 80% at 50% 0%, rgba(255, 220, 140, 0.16), transparent 55%),
+    linear-gradient(180deg, #4a3518 0%, #24180c 100%);
+  border-color: rgba(240, 208, 120, 0.55);
+}
+
+.dn-wireframe .dn-bet-btn--gold::before {
+  content: '';
+  position: absolute;
+  left: 10%;
+  right: 10%;
+  top: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgba(255, 220, 140, 0.75), transparent);
+  pointer-events: none;
+}
+
+.dn-wireframe .dn-bet-btn__name,
+.dn-wireframe .dn-bet-btn__odds,
+.dn-wireframe .dn-bet-btn--gold .dn-bet-btn__name,
+.dn-wireframe .dn-bet-btn--gold .dn-bet-btn__odds {
+  color: #f7e7b4 !important;
+  -webkit-text-fill-color: #f7e7b4 !important;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.75);
+}
+
+.dn-wireframe .dn-roadmap {
+  border-style: solid;
+}
+
+/* 不再贴分区文字标签，避免「拼盘标注」感 */
+.dn-wireframe .dn-theater::after,
+.dn-wireframe .dn-wager::after,
+.dn-wireframe .dn-table-core::after {
+  content: none;
+}

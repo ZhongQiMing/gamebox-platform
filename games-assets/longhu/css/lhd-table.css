@@ -14,7 +14,7 @@ body.lhd-body {
   overflow: hidden;
   min-height: 0 !important;
   max-height: 100%;
-  background: #0a0806;
+  background: #0a0806 url('../assets/ui/stage-bg.jpg') center / cover no-repeat;
 }
 
 html.lhd-in-iframe,
@@ -32,7 +32,7 @@ html.lhd-in-iframe body.lhd-body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: #0a0806;
+  background: #0a0806 url('../assets/ui/stage-bg.jpg') center / cover no-repeat;
 }
 
 /* ??????? viewport ????????????????????????? */
@@ -146,13 +146,14 @@ html.lhd-in-iframe body.lhd-body {
 }
 
 .lhd-stage {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  background: #0a0806;
+  background: transparent;
 }
 
 .lhd-room {
@@ -162,7 +163,7 @@ html.lhd-in-iframe body.lhd-body {
   flex-shrink: 0;
   transform: scale(var(--lhd-scale));
   transform-origin: center center;
-  background: url('../assets/ui/page-unified-v50.png?v=4') center top / 100% 100% no-repeat;
+  background: url('../assets/ui/page-unified-v51.png?v=2') center top / 100% 100% no-repeat;
   overflow: hidden;
 }
 
@@ -1129,7 +1130,6 @@ html.lhd-in-iframe body.lhd-body {
 
 .lhd-action {
   position: absolute;
-  /* ????????????? */
   top: 68.5%;
   width: 8.2%;
   height: auto;
@@ -1141,6 +1141,7 @@ html.lhd-in-iframe body.lhd-body {
   background: transparent;
   cursor: pointer;
   pointer-events: auto;
+  z-index: 65;
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
   transition: none;
@@ -1352,16 +1353,18 @@ html.lhd-in-iframe body.lhd-body {
 
 
 /* ===== right rail + sheet ===== */
+/* 挂在 stage 内：相对牌桌区域上下边垂直居中 */
 
 .lhd-rail {
   position: absolute;
-  right: calc(6px + env(safe-area-inset-right, 0px));
+  right: calc(4px + env(safe-area-inset-right, 0px));
   top: 50%;
-  transform: translateY(-50%);
+  bottom: auto;
+  transform: translateY(calc(-50% - 70px));
   z-index: 60;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 6px;
   pointer-events: none;
 }
 
@@ -1372,7 +1375,7 @@ html.lhd-in-iframe body.lhd-body {
   align-items: center;
   justify-content: center;
   gap: 3px;
-  width: 48px;
+  width: 44px;
   height: auto;
   padding: 0;
   border: none;
@@ -1391,8 +1394,8 @@ html.lhd-in-iframe body.lhd-body {
 }
 
 .lhd-rail-ic {
-  width: 44px;
-  height: 44px;
+  width: 38px;
+  height: 38px;
   object-fit: contain;
   display: block;
   pointer-events: none;
@@ -1409,14 +1412,14 @@ html.lhd-in-iframe body.lhd-body {
   color: rgba(240, 220, 160, 0.9);
 }
 
-@media (max-height: 640px) {
-  .lhd-rail { gap: 8px; }
-  .lhd-rail-btn { width: 44px; height: auto; }
-  .lhd-rail-ic { width: 40px; height: 40px; }
+@media (max-height: 700px) {
+  .lhd-rail { gap: 5px; }
+  .lhd-rail-btn { width: 40px; height: auto; }
+  .lhd-rail-ic { width: 34px; height: 34px; }
   .lhd-rail-lb { font-size: 8px; }
 }
 
-/* ================= ??????????????/?????================= */
+/* ================= 通用弹层（历史/玩法/设置） ================= */
 .lhd-sheet-mask {
   position: absolute;
   inset: 0;

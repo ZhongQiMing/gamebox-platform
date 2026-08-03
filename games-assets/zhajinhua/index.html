@@ -2,13 +2,11 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
+  <link rel="stylesheet" href="/fonts/gamebox-fonts.css">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>炸金花</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Serif+SC:wght@600;700;900&family=Orbitron:wght@600;700&family=ZCOOL+QingKe+HuangYou&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="./css/zjh.css?v=289">
-  <link rel="stylesheet" href="/games-assets/_table-common/table-ui.css?v=1">
+<link rel="stylesheet" href="./css/zjh.css?v=299">
+  <link rel="stylesheet" href="/games-assets/_table-common/table-ui.css?v=6">
   <script>
     (function () {
       if (window.parent !== window) document.documentElement.classList.add('zjh-in-iframe');
@@ -113,65 +111,58 @@
   <!-- 下注区：抠图按钮叠在底图上，文字叠在按钮上 -->
   <div class="zjh-bet zjh-bet--hotspot tb-bet" id="betArea" aria-label="下注区">
     <button type="button" class="zjh-bet-btn zjh-bet-btn--banker" data-bet="banker">
-      <img class="zjh-bet-btn__frame" src="./assets/ui/bet-btns/banker.png?v=8" alt="" draggable="false">
+      <img class="zjh-bet-btn__frame" src="./assets/ui/bet-btns/banker.png?v=9" alt="" draggable="false">
       <span class="zjh-bet-btn__name">庄</span>
       <span class="zjh-bet-btn__odds">1:0.95</span>
       <span class="zjh-bet-btn__chips" aria-hidden="true"></span>
       <span class="zjh-bet-btn__stake" hidden>0</span>
     </button>
-    <button type="button" class="zjh-bet-btn zjh-bet-btn--tie" data-bet="tie">
-      <img class="zjh-bet-btn__frame" src="./assets/ui/bet-btns/tie.png?v=8" alt="" draggable="false">
-      <span class="zjh-bet-btn__name">和</span>
-      <span class="zjh-bet-btn__odds">1:860</span>
-      <span class="zjh-bet-btn__chips" aria-hidden="true"></span>
-      <span class="zjh-bet-btn__stake" hidden>0</span>
-    </button>
     <button type="button" class="zjh-bet-btn zjh-bet-btn--player" data-bet="player">
-      <img class="zjh-bet-btn__frame" src="./assets/ui/bet-btns/player.png?v=8" alt="" draggable="false">
+      <img class="zjh-bet-btn__frame" src="./assets/ui/bet-btns/player.png?v=9" alt="" draggable="false">
       <span class="zjh-bet-btn__name">闲</span>
-      <span class="zjh-bet-btn__odds">1:0.95</span>
+      <span class="zjh-bet-btn__odds">1:1</span>
       <span class="zjh-bet-btn__chips" aria-hidden="true"></span>
       <span class="zjh-bet-btn__stake" hidden>0</span>
     </button>
     <button type="button" class="zjh-bet-btn zjh-bet-btn--span zjh-bet-btn--gold" data-bet="shunjin">
       <img class="zjh-bet-btn__frame" src="./assets/ui/bet-btns/shunjin.png?v=8" alt="" draggable="false">
       <span class="zjh-bet-btn__name">顺金</span>
-      <span class="zjh-bet-btn__odds">1:218</span>
+      <span class="zjh-bet-btn__odds">1:100</span>
       <span class="zjh-bet-btn__chips" aria-hidden="true"></span>
       <span class="zjh-bet-btn__stake" hidden>0</span>
     </button>
     <button type="button" class="zjh-bet-btn zjh-bet-btn--sub zjh-bet-btn--gold" data-bet="san2">
       <img class="zjh-bet-btn__frame" src="./assets/ui/bet-btns/san2.png?v=8" alt="" draggable="false">
       <span class="zjh-bet-btn__name">散牌</span>
-      <span class="zjh-bet-btn__odds">1:0.72</span>
+      <span class="zjh-bet-btn__odds">1:0.75</span>
       <span class="zjh-bet-btn__chips" aria-hidden="true"></span>
       <span class="zjh-bet-btn__stake" hidden>0</span>
     </button>
     <button type="button" class="zjh-bet-btn zjh-bet-btn--sub zjh-bet-btn--gold" data-bet="san3">
       <img class="zjh-bet-btn__frame" src="./assets/ui/bet-btns/san3.png?v=8" alt="" draggable="false">
       <span class="zjh-bet-btn__name">对子</span>
-      <span class="zjh-bet-btn__odds">1:2.45</span>
+      <span class="zjh-bet-btn__odds">1:2</span>
       <span class="zjh-bet-btn__chips" aria-hidden="true"></span>
       <span class="zjh-bet-btn__stake" hidden>0</span>
     </button>
     <button type="button" class="zjh-bet-btn zjh-bet-btn--span zjh-bet-btn--gold" data-bet="baozi">
       <img class="zjh-bet-btn__frame" src="./assets/ui/bet-btns/baozi.png?v=8" alt="" draggable="false">
       <span class="zjh-bet-btn__name">豹子</span>
-      <span class="zjh-bet-btn__odds">1:200</span>
+      <span class="zjh-bet-btn__odds">1:120</span>
       <span class="zjh-bet-btn__chips" aria-hidden="true"></span>
       <span class="zjh-bet-btn__stake" hidden>0</span>
     </button>
     <button type="button" class="zjh-bet-btn zjh-bet-btn--sub zjh-bet-btn--gold" data-bet="san6">
       <img class="zjh-bet-btn__frame" src="./assets/ui/bet-btns/san6.png?v=8" alt="" draggable="false">
       <span class="zjh-bet-btn__name">顺子</span>
-      <span class="zjh-bet-btn__odds">1:14.7</span>
+      <span class="zjh-bet-btn__odds">1:7</span>
       <span class="zjh-bet-btn__chips" aria-hidden="true"></span>
       <span class="zjh-bet-btn__stake" hidden>0</span>
     </button>
     <button type="button" class="zjh-bet-btn zjh-bet-btn--sub zjh-bet-btn--gold" data-bet="san7">
       <img class="zjh-bet-btn__frame" src="./assets/ui/bet-btns/san7.png?v=8" alt="" draggable="false">
       <span class="zjh-bet-btn__name">金花</span>
-      <span class="zjh-bet-btn__odds">1:8.95</span>
+      <span class="zjh-bet-btn__odds">1:8</span>
       <span class="zjh-bet-btn__chips" aria-hidden="true"></span>
       <span class="zjh-bet-btn__stake" hidden>0</span>
     </button>
@@ -195,11 +186,6 @@
           <span class="zjh-roadmap__pill"><i></i>闲</span>
             <b id="roadP">0</b>
             <em id="roadPpct">0%</em>
-          </div>
-          <div class="zjh-roadmap__stat zjh-roadmap__stat--tie">
-          <span class="zjh-roadmap__pill"><i></i>和</span>
-            <b id="roadT">0</b>
-            <em id="roadTpct">0%</em>
           </div>
           <div class="zjh-roadmap__stat zjh-roadmap__stat--total">
             <span class="zjh-roadmap__pill zjh-roadmap__pill--mute">总局</span>
@@ -278,13 +264,7 @@
     </button>
   </div>
 </div><!-- /.zjh-room -->
-</div><!-- /.zjh-stage -->
-  <div class="zjh-payout-fly" id="payoutFlyLayer" aria-hidden="true"></div>
-  <div class="zjh-phase-banner" id="phaseBanner" aria-hidden="true">
-    <img class="zjh-phase-banner__img" id="phaseBannerImg" alt="" draggable="false">
-  </div>
-
-  <!-- 右侧快捷竖排：客服 / 历史 / 记录 / 玩法 / 设置 -->
+  <!-- 右侧快捷竖排：相对牌桌区域垂直居中 -->
   <aside class="zjh-rail" id="zjhRail" aria-label="快捷操作">
     <button type="button" class="zjh-rail-btn" id="railCs" title="客服">
       <img class="zjh-rail-ic" src="/images/table-rail/rail-cs.png?v=3" alt="" draggable="false">
@@ -307,6 +287,11 @@
       <span class="zjh-rail-lb">设置</span>
     </button>
   </aside>
+</div><!-- /.zjh-stage -->
+  <div class="zjh-payout-fly" id="payoutFlyLayer" aria-hidden="true"></div>
+  <div class="zjh-phase-banner" id="phaseBanner" aria-hidden="true">
+    <img class="zjh-phase-banner__img" id="phaseBannerImg" alt="" draggable="false">
+  </div>
 
   <!-- 通用弹层：历史 / 玩法 / 设置 -->
   <div class="zjh-sheet-mask" id="zjhSheetMask" hidden></div>
@@ -319,8 +304,8 @@
   </section>
 </div><!-- /.zjh-viewport -->
 
-<script src="/legacy/js/games-common.js?v=28"></script>
-<script src="/games-assets/_table-common/table-shell.js?v=5"></script>
+<script src="/legacy/js/games-common.js?v=29"></script>
+<script src="/games-assets/_table-common/table-shell.js?v=10"></script>
 <script>
 (function () {
   /* 防重复注入：先清旧定时器；成功跑完再打标 */
@@ -433,16 +418,33 @@
   var voiceAudio = null;
   var sfxLastAt = {};
   /* 音频开关（设置弹层控制）：music=背景音乐，sfx=音效+语音 */
-  var audioPref = { music: true, sfx: true };
-  try {
-    var apRaw = JSON.parse(localStorage.getItem('zjh_audio') || 'null');
-    if (apRaw && typeof apRaw === 'object') {
-      audioPref.music = apRaw.music !== false;
-      audioPref.sfx = apRaw.sfx !== false;
-    }
-  } catch (e) { /* ignore */ }
+  var AUDIO_PREF_KEY = 'zjh_audio';
+  var audioPref = window.TableShell
+    ? TableShell.loadAudioPref(AUDIO_PREF_KEY)
+    : { music: true, sfx: true };
   function saveAudioPref() {
-    try { localStorage.setItem('zjh_audio', JSON.stringify(audioPref)); } catch (e) { /* ignore */ }
+    if (window.TableShell) {
+      TableShell.saveAudioPref(AUDIO_PREF_KEY, audioPref);
+    } else {
+      try { localStorage.setItem(AUDIO_PREF_KEY, JSON.stringify(audioPref)); } catch (e) { /* ignore */ }
+    }
+  }
+  function applyAudioPrefSilent(pref) {
+    if (!pref) return;
+    audioPref.music = !!pref.music;
+    audioPref.sfx = !!pref.sfx;
+    if (audioPref.music) {
+      if (typeof ensureBgm === 'function') ensureBgm(true);
+    } else if (typeof bgmAudio !== 'undefined' && bgmAudio) {
+      try { bgmAudio.pause(); } catch (e) { /* ignore */ }
+    }
+    if (!audioPref.sfx && typeof voiceAudio !== 'undefined' && voiceAudio) {
+      try { voiceAudio.pause(); } catch (e) { /* ignore */ }
+      voiceAudio = null;
+    }
+  }
+  if (window.TableShell && TableShell.watchAppAudioPref) {
+    TableShell.watchAppAudioPref(AUDIO_PREF_KEY, applyAudioPrefSilent);
   }
   function setMusicOn(on) {
     audioPref.music = !!on;
@@ -568,11 +570,9 @@
     return playVoice(key, 1);
   }
 
-  /* 庄→闲→庄赢/闲赢/和，按真实语音时长串行 */
+  /* 庄→闲→庄赢/闲赢，按真实语音时长串行 */
   function announceShowdown(bt, pt, result) {
-    var resultKey = result === 'banker' ? 'voice/banker-win'
-      : result === 'player' ? 'voice/player-win'
-      : 'voice/tie';
+    var resultKey = result === 'player' ? 'voice/player-win' : 'voice/banker-win';
     return playHandVoice(bt.type)
       .then(function () { return playHandVoice(pt.type); })
       .then(function () { return playVoice(resultKey, 1); });
@@ -585,14 +585,13 @@
   /* 兜底值，须与 packages/shared table-paytable 保持一致；启动后由 /pay-table 覆盖 */
   var BET_ODDS = {
     banker: 0.95,
-    player: 0.95,
-    tie: 860,
-    shunjin: 218,
-    baozi: 200,
-    san2: 0.72,
-    san3: 2.45,
-    san6: 14.7,
-    san7: 8.95
+    player: 1,
+    shunjin: 100,
+    baozi: 120,
+    san2: 0.75,
+    san3: 2,
+    san6: 7,
+    san7: 8
   };
   if (window.TableShell) TableShell.loadPayTable(SERVER_GAME, { odds: BET_ODDS, domRoot: document.getElementById('betArea') });
   // 发牌顺序：庄3 → 闲1 → 庄2 → 闲2 → 庄1 → 闲3
@@ -689,12 +688,55 @@
     return { type: 'high', label: '散牌', score: 1, vals: vals };
   }
 
-  function compareHands(a, b) {
+  var SUIT_POWER = { spade: 4, heart: 3, club: 2, diamond: 1 };
+
+  function valToRankNum(v) { return v === 1 ? 14 : v; }
+
+  function bestSuitAtValue(cards, val) {
+    var best = 0;
+    for (var i = 0; i < cards.length; i++) {
+      if (cardValue(cards[i].rank) === val) {
+        var p = SUIT_POWER[cards[i].suit] || 0;
+        if (p > best) best = p;
+      }
+    }
+    return best;
+  }
+
+  function compareBySuit(aCards, bCards, evalA) {
+    if (evalA.type === 'pair') {
+      var pairVal = evalA.vals[0];
+      var kicker = evalA.vals[1];
+      var pa = bestSuitAtValue(aCards, pairVal);
+      var pb = bestSuitAtValue(bCards, pairVal);
+      if (pa !== pb) return pa > pb ? 1 : -1;
+      var ka = bestSuitAtValue(aCards, kicker);
+      var kb = bestSuitAtValue(bCards, kicker);
+      if (ka !== kb) return ka > kb ? 1 : -1;
+      return 0;
+    }
+    for (var i = 0; i < 3; i++) {
+      var v = evalA.vals[i];
+      if (!v) continue;
+      var rv = valToRankNum(v);
+      var sa = bestSuitAtValue(aCards, rv);
+      var sb = bestSuitAtValue(bCards, rv);
+      if (sa !== sb) return sa > sb ? 1 : -1;
+    }
+    return 0;
+  }
+
+  /** 点数相同比花色（黑桃>红心>梅花>方块），保证无和局 */
+  function compareHands(a, b, aCards, bCards) {
     if (a.score !== b.score) return a.score > b.score ? 1 : -1;
     for (var i = 0; i < 3; i++) {
       if (a.vals[i] !== b.vals[i]) return a.vals[i] > b.vals[i] ? 1 : -1;
     }
-    return 0;
+    if (aCards && bCards) {
+      var bySuit = compareBySuit(aCards, bCards, a);
+      if (bySuit !== 0) return bySuit;
+    }
+    return 1;
   }
 
   function resetCardSlots() {
@@ -830,13 +872,12 @@
     var pt = (serverOutcome && serverOutcome.playerType && serverOutcome.playerType.label)
       ? serverOutcome.playerType
       : evalHand(player);
-    var result = 'tie';
-    if (serverOutcome && (serverOutcome.result === 'banker' || serverOutcome.result === 'player' || serverOutcome.result === 'tie')) {
+    var result = 'banker';
+    if (serverOutcome && (serverOutcome.result === 'banker' || serverOutcome.result === 'player')) {
       result = serverOutcome.result;
     } else {
-      var cmp = compareHands(bt, pt);
-      if (cmp > 0) result = 'banker';
-      else if (cmp < 0) result = 'player';
+      var cmp = compareHands(bt, pt, banker, player);
+      result = cmp >= 0 ? 'banker' : 'player';
     }
     if (bankerHand) bankerHand.classList.remove('is-winner', 'is-loser');
     if (playerHand) playerHand.classList.remove('is-winner', 'is-loser');
@@ -873,7 +914,7 @@
     };
   }
 
-  /** 牌型副注：只认赢方牌型；和局时任一方出现即中 */
+  /** 牌型副注：只认赢方牌型 */
   function sideBetHit(key, bt, pt, result) {
     var need = null;
     if (key === 'baozi') need = 'leopard';
@@ -885,12 +926,12 @@
     if (!need) return false;
     if (result === 'banker') return bt.type === need;
     if (result === 'player') return pt.type === need;
-    return bt.type === need || pt.type === need;
+    return false;
   }
 
   /* ---------- 下注注单日志（供“下注记录”页 /bets?game=zhajinhua 读取） ---------- */
   var PLAY_LABELS = {
-    banker: '庄', player: '闲', tie: '和',
+    banker: '庄', player: '闲',
     shunjin: '顺金', baozi: '豹子',
     san2: '散牌', san3: '对子', san6: '顺子', san7: '金花'
   };
@@ -958,7 +999,7 @@
     if (!group || group.settled) return;
     var bt = evalHand(bankerCards);
     var pt = evalHand(playerCards);
-    var resName = result === 'banker' ? '庄赢' : (result === 'player' ? '闲赢' : '和局');
+    var resName = result === 'player' ? '闲赢' : '庄赢';
     group.drawSummary = '庄 ' + bt.label + ' · 闲 ' + pt.label + ' · ' + resName;
     var totalProfit = 0;
     for (var i = 0; i < group.bets.length; i++) {
@@ -968,15 +1009,12 @@
       var win = false;
       if (key === 'banker') win = result === 'banker';
       else if (key === 'player') win = result === 'player';
-      else if (key === 'tie') win = result === 'tie';
       else win = sideBetHit(key, bt, pt, result);
       var ret = 0;
       if (win && typeof odds === 'number') ret = b.amount + Math.floor(b.amount * odds);
-      if (result === 'tie' && (key === 'banker' || key === 'player')) ret += b.amount;
       b.winAmount = ret;
       b.profit = ret - b.amount;
       if (win) { b.status = 'WON'; b.hit = (PLAY_LABELS[key] || '') + ' 中'; }
-      else if (ret > 0) { b.status = 'WON'; b.hit = '和 · 退本'; }
       else { b.status = 'LOST'; b.hit = ''; }
       totalProfit += b.profit;
     }
@@ -1002,13 +1040,8 @@
       var win = false;
       if (key === 'banker') win = result === 'banker';
       else if (key === 'player') win = result === 'player';
-      else if (key === 'tie') win = result === 'tie';
       else win = sideBetHit(key, bt, pt, result);
       if (win) returnTotal += stake + Math.floor(stake * odds);
-      /* 庄闲和：和局时庄闲退本 */
-      if (result === 'tie' && (key === 'banker' || key === 'player')) {
-        returnTotal += stake;
-      }
     }
     return {
       stakeTotal: stakeTotal,
@@ -1104,8 +1137,7 @@
       var win;
       if (key === 'banker') win = result === 'banker';
       else if (key === 'player') win = result === 'player';
-      else if (key === 'tie') win = result === 'tie';
-      else win = sideBetHit(key, bt, pt, result);
+            else win = sideBetHit(key, bt, pt, result);
       if (win) {
         var btn = betBtn(key);
         if (btn) btn.classList.add('is-win');
@@ -1122,25 +1154,21 @@
   function getWinLoseKeys(result) {
     var bt = lastHands ? evalHand(lastHands.banker) : { type: '' };
     var pt = lastHands ? evalHand(lastHands.player) : { type: '' };
-    var all = ['banker', 'player', 'tie', 'shunjin', 'baozi', 'san2', 'san3', 'san6', 'san7'];
+    var all = ['banker', 'player', 'shunjin', 'baozi', 'san2', 'san3', 'san6', 'san7'];
     var win = [];
     var lose = [];
     /* 主胜区始终作为飞入目标（即使该区暂无筹码） */
     if (result === 'banker') win.push('banker');
     else if (result === 'player') win.push('player');
-    else if (result === 'tie') win.push('tie');
     for (var i = 0; i < all.length; i++) {
       var k = all[i];
       var has = chipsOn(k).length > 0;
       var isWin = false;
       if (k === 'banker') isWin = result === 'banker';
       else if (k === 'player') isWin = result === 'player';
-      else if (k === 'tie') isWin = result === 'tie';
       else isWin = sideBetHit(k, bt, pt, result);
-      /* 和局：庄闲退本，当作赢方区（不再被收走） */
-      if (result === 'tie' && (k === 'banker' || k === 'player')) isWin = true;
       if (isWin) {
-        if (win.indexOf(k) < 0 && (has || k === 'banker' || k === 'player' || k === 'tie')) win.push(k);
+        if (win.indexOf(k) < 0 && (has || k === 'banker' || k === 'player')) win.push(k);
       } else if (has) {
         lose.push(k);
       }
@@ -1274,7 +1302,7 @@
 
         return Promise.all(phase2).then(function () {
           /* 清空桌面筹码视觉，结算只计自己 */
-          var allKeys = ['banker', 'player', 'tie', 'shunjin', 'baozi', 'san2', 'san3', 'san6', 'san7'];
+          var allKeys = ['banker', 'player', 'shunjin', 'baozi', 'san2', 'san3', 'san6', 'san7'];
           for (var a = 0; a < allKeys.length; a++) clearBetVisual(allKeys[a]);
           if (settlement && settlement.returnTotal > 0) sfx('win', { vol: 0.85 });
           applySettlement(settlement);
@@ -1517,6 +1545,10 @@
     }
     if (phase === 'payout' || alignWaiting) {
       payoutLeft = Math.max(0, Math.ceil((payoutDeadline - now) / 1000));
+      if (alignWaiting && (now >= payoutDeadline || getBetRemainSec() > 0)) {
+        startBetRound();
+        return;
+      }
       if (!alignWaiting && payoutLeft <= 0) {
         startBetRound();
         return;
@@ -1578,9 +1610,9 @@
     [1000, 2000, 3000, 4000, 5000, 10000]
   ];
   var chipPage = 0;
-  /* 落点数量：庄/和/闲/顺金/豹子=20，散牌/对子/顺子/金花=10 */
+  /* 落点数量：庄/闲/顺金/豹子=20，散牌/对子/顺子/金花=10 */
   var SLOT_COUNT = {
-    banker: 20, tie: 20, player: 20, shunjin: 20, baozi: 20,
+    banker: 20, player: 20, shunjin: 20, baozi: 20,
     san2: 10, san3: 10, san6: 10, san7: 10
   };
   var selectedChip = 1;
@@ -1907,7 +1939,7 @@
   }
 
   /* ---------- 本房间其他人：从人数图标飞出下注 ---------- */
-  var OTHER_BET_KEYS = ['banker', 'player', 'tie', 'shunjin', 'baozi', 'san2', 'san3', 'san6', 'san7'];
+  var OTHER_BET_KEYS = ['banker', 'player', 'shunjin', 'baozi', 'san2', 'san3', 'san6', 'san7'];
   var OTHER_CHIP_VALUES = [1, 5, 10, 50, 100, 500, 1000, 2000];
   var otherBetTimer = null;
 
@@ -2041,19 +2073,15 @@
 
   syncActionButtons();
 
-
   /* ---------- 路单：珠盘路 + 大路 ---------- */
   var ROAD_ROWS = 6;
-  /* 上限取整列（6 的倍数）：满了只按整列裁剪，避免每局全体上移 */
-  var ROAD_MAX = 360;
-  var ROAD_MIN_COLS = 20;
-  var ROAD_LABELS = { banker: '庄', player: '闲', tie: '和' };
-  var ROAD_NAMES = { banker: '庄', player: '闲', tie: '和' };
-  var ROAD_ALLOWED = { banker: 1, player: 1, tie: 1 };
+  var ROAD_LABELS = { banker: '庄', player: '闲' };
+  var ROAD_NAMES = { banker: '庄', player: '闲' };
+  var ROAD_ALLOWED = { banker: 1, player: 1 };
   var roadHistory = [];
   var roadRoundNos = {};
   /* 统计以服务端 history 为准；本会话内随开奖累加 */
-  var roadStats = { banker: 0, player: 0, tie: 0 };
+  var roadStats = { banker: 0, player: 0 };
   var beadGrid = document.getElementById('beadGrid');
   var bigGrid = document.getElementById('bigGrid');
   var beadScroll = document.getElementById('beadScroll');
@@ -2061,7 +2089,7 @@
 
   function loadRoad() {
     roadHistory = [];
-    roadStats = { banker: 0, player: 0, tie: 0 };
+    roadStats = { banker: 0, player: 0 };
     roadRoundNos = {};
     if (window.TableShell && TableShell.hydrateRoad) {
       TableShell.hydrateRoad(SERVER_GAME, ROAD_ALLOWED, function (packed) {
@@ -2078,7 +2106,7 @@
     var incoming = packed.seq || [];
     if (roadHistory.length > incoming.length) return;
     roadHistory = incoming.slice();
-    roadStats = { banker: 0, player: 0, tie: 0 };
+    roadStats = { banker: 0, player: 0 };
     var st = packed.stats || {};
     Object.keys(roadStats).forEach(function (k) {
       roadStats[k] = st[k] || 0;
@@ -2087,16 +2115,11 @@
     (packed.roundNos || []).forEach(function (rn) {
       if (rn) roadRoundNos[String(rn)] = 1;
     });
-    if (roadHistory.length > ROAD_MAX) {
-      var over = roadHistory.length - ROAD_MAX;
-      over = Math.ceil(over / ROAD_ROWS) * ROAD_ROWS;
-      roadHistory = roadHistory.slice(over);
-    }
     renderRoad();
   }
 
   function countRoad(hist) {
-    var c = { banker: 0, player: 0, tie: 0 };
+    var c = { banker: 0, player: 0 };
     for (var i = 0; i < hist.length; i++) {
       if (c[hist[i]] != null) c[hist[i]] += 1;
     }
@@ -2105,10 +2128,7 @@
 
   function rollRoundResult() {
     /* 保留备用；正式开奖已改为比牌结果 pushRoad */
-    var r = Math.random();
-    if (r < 0.46) return 'banker';
-    if (r < 0.92) return 'player';
-    return 'tie';
+    return Math.random() < 0.5 ? 'banker' : 'player';
   }
 
   function pct(n, total) {
@@ -2161,18 +2181,42 @@
     return cols;
   }
 
+  function measureRoadViewCols(scrollEl) {
+    if (window.TableShell && TableShell.measureRoadViewCols) {
+      return TableShell.measureRoadViewCols(scrollEl, ROAD_ROWS);
+    }
+    return 12;
+  }
+
+  function resetRoadForNewDay(roundNo) {
+    if (!roundNo || !window.TableShell) return;
+    var ymd = TableShell.roundNoYmd(roundNo);
+    if (!ymd) return;
+    var keys = Object.keys(roadRoundNos);
+    if (!keys.length) return;
+    var prev = TableShell.roundNoYmd(keys[0]);
+    if (prev && prev !== ymd) {
+      roadHistory = [];
+      roadRoundNos = {};
+      roadStats = { banker: 0, player: 0 };
+    }
+  }
+
   function renderBead() {
     if (!beadGrid) return;
-    var filledCols = Math.ceil(roadHistory.length / ROAD_ROWS) || 0;
-    /* 末尾只留 1 列空白，最新一颗贴近右缘；写满后向右延伸靠滚动看最新 */
-    var cols = Math.max(ROAD_MIN_COLS, filledCols + 1);
-    var lastIdx = roadHistory.length - 1;
+    var viewCols = measureRoadViewCols(beadScroll);
+    var viewSeq = window.TableShell
+      ? TableShell.roadBeadViewSeq(roadHistory, viewCols, ROAD_ROWS)
+      : roadHistory.slice();
+    var filledCols = Math.ceil(viewSeq.length / ROAD_ROWS) || 0;
+    var cols = viewCols;
+    var lastIdx = viewSeq.length - 1;
     var html = '';
     for (var c = 0; c < cols; c++) {
       for (var r = 0; r < ROAD_ROWS; r++) {
         var idx = c * ROAD_ROWS + r;
-        if (idx < roadHistory.length) {
-          var kind = roadHistory[idx];
+        if (idx < viewSeq.length) {
+          var kind = viewSeq[idx];
           var latest = idx === lastIdx ? ' is-latest' : '';
           html += '<span class="zjh-bead zjh-bead--' + kind + latest + '" role="listitem" title="' + ROAD_NAMES[kind] + '" aria-label="' + ROAD_NAMES[kind] + '">' +
             ROAD_LABELS[kind] + '</span>';
@@ -2183,15 +2227,20 @@
     }
     beadGrid.innerHTML = html;
     beadGrid.style.setProperty('--road-cols', String(cols));
+    beadGrid.setAttribute('data-filled-cols', String(filledCols));
     syncRoadGridWidth(beadGrid, cols);
+    if (beadScroll) beadScroll.scrollLeft = 0;
   }
 
   function renderBig() {
     if (!bigGrid) return;
+    var viewCols = measureRoadViewCols(bigScroll);
     var colsData = buildBigRoad(roadHistory);
-    var cols = Math.max(ROAD_MIN_COLS, colsData.length + 1);
+    if (window.TableShell) colsData = TableShell.roadBigViewCols(colsData, viewCols);
+    var filledCols = colsData.length;
+    var cols = viewCols;
     var html = '';
-    var lastCol = colsData.length - 1;
+    var lastCol = filledCols - 1;
     var lastRow = lastCol >= 0 ? colsData[lastCol].cells.length - 1 : -1;
 
     for (var c = 0; c < cols; c++) {
@@ -2215,17 +2264,18 @@
     }
     bigGrid.innerHTML = html;
     bigGrid.style.setProperty('--road-cols', String(cols));
+    bigGrid.setAttribute('data-filled-cols', String(filledCols));
     syncRoadGridWidth(bigGrid, cols);
+    if (bigScroll) bigScroll.scrollLeft = 0;
   }
 
-  /** 按列数写死宽度，保证超出可视区后一定能横向滚动 */
+  /** 按列数写死宽度 */
   function syncRoadGridWidth(grid, cols) {
     if (!grid || !cols) return;
     var sample = grid.querySelector('.zjh-bead, .zjh-big');
     var gap = 2;
     var cell = sample ? sample.getBoundingClientRect().width : 0;
     if (!(cell > 4)) {
-      /* 布局未完成时用容器高度估算（与 CSS --cell 一致） */
       var sc = grid.closest('.zjh-roadmap__scroll');
       var h = sc ? sc.clientHeight : 0;
       cell = h > 8 ? (h - 6 - 5 * gap) / 6 : 22;
@@ -2233,45 +2283,24 @@
     grid.style.width = (cols * (cell + gap) - gap) + 'px';
   }
 
-  function scrollRoadToEnd() {
-    function go() {
-      if (beadScroll) beadScroll.scrollLeft = beadScroll.scrollWidth;
-      if (bigScroll) bigScroll.scrollLeft = bigScroll.scrollWidth;
-    }
-    go();
-    requestAnimationFrame(function () {
-      go();
-      requestAnimationFrame(go);
-    });
-    setTimeout(go, 48);
-  }
-
   function renderRoad() {
-    /* 统计用累计值（只增不减），珠盘/大路仍用裁剪后的 roadHistory */
-    var total = roadStats.banker + roadStats.player + roadStats.tie;
+    var total = roadStats.banker + roadStats.player;
     setText('roadB', String(roadStats.banker));
     setText('roadP', String(roadStats.player));
-    setText('roadT', String(roadStats.tie));
     setText('roadN', String(total));
     setText('roadBpct', pct(roadStats.banker, total));
     setText('roadPpct', pct(roadStats.player, total));
-    setText('roadTpct', pct(roadStats.tie, total));
     renderBead();
     renderBig();
-    scrollRoadToEnd();
   }
 
   function pushRoad(result, roundNo) {
     if (!ROAD_LABELS[result]) return;
     if (roundNo && roadRoundNos[roundNo]) return;
+    resetRoadForNewDay(roundNo);
     if (roundNo) roadRoundNos[roundNo] = 1;
     if (roadStats[result] != null) roadStats[result] += 1;
     roadHistory.push(result);
-    if (roadHistory.length > ROAD_MAX) {
-      var over = roadHistory.length - ROAD_MAX;
-      over = Math.ceil(over / ROAD_ROWS) * ROAD_ROWS;
-      roadHistory = roadHistory.slice(over);
-    }
     renderRoad();
   }
 
@@ -2314,7 +2343,7 @@
       if (window.App && App.go) {
         App.go('../../client-app/pages/game-lobby/game-lobby.html' + q);
       } else if (window.parent !== window) {
-        window.parent.postMessage({ type: 'assets-game-nav', path: '/lobby' + q }, '*');
+        window.parent.postMessage({ type: 'assets-game-nav', path: '/lobby' + q }, location.origin);
       } else {
         history.back();
       }
@@ -2351,7 +2380,7 @@
 
     function nav(path) {
       if (window.App && App.go) App.go(path);
-      else if (window.parent !== window) window.parent.postMessage({ type: 'assets-game-nav', path: path }, '*');
+      else if (window.parent !== window) window.parent.postMessage({ type: 'assets-game-nav', path: path }, location.origin);
     }
 
     var csBtn = document.getElementById('railCs');
@@ -2412,15 +2441,14 @@
     }
     var histBtn = document.getElementById('railHistory');
     if (histBtn) histBtn.addEventListener('click', function () {
-      var total = roadStats.banker + roadStats.player + roadStats.tie;
+      var total = roadStats.banker + roadStats.player;
       var html =
         '<div class="zjh-sheet-road__stats">' +
           '<span class="banker">庄 <b>' + roadStats.banker + '</b></span>' +
           '<span class="player">闲 <b>' + roadStats.player + '</b></span>' +
-          '<span class="tie">和 <b>' + roadStats.tie + '</b></span>' +
           '<span>总局 <b>' + total + '</b></span>' +
         '</div>' +
-        '<div class="zjh-sheet-road__label">珠盘路（当前 ' + roadHistory.length + ' 局）</div>' +
+        '<div class="zjh-sheet-road__label">珠盘路（今日 ' + roadHistory.length + ' 局）</div>' +
         '<div class="zjh-sheet-road__scroll"><div class="zjh-sheet-road__grid">' + buildBeadCells(roadHistory) + '</div></div>' +
         '<div class="zjh-sheet-road__label">大路</div>' +
         '<div class="zjh-sheet-road__scroll"><div class="zjh-sheet-road__grid">' + buildBigCells(roadHistory) + '</div></div>';
@@ -2432,71 +2460,75 @@
     /* 玩法规则 */
     var rulesBtn = document.getElementById('railRules');
     if (rulesBtn) rulesBtn.addEventListener('click', function () {
-      var rows = [
-        ['庄 / 闲', '押中牌型更大的一方', '1 : ' + BET_ODDS.banker],
-        ['和', '庄闲牌型比点相同', '1 : ' + BET_ODDS.tie],
-        ['顺金', '赢方牌型为同花顺（和局时任一方）', '1 : ' + BET_ODDS.shunjin],
-        ['豹子', '赢方牌型为三条/豹子（和局时任一方）', '1 : ' + BET_ODDS.baozi],
-        ['顺子', '赢方牌型为顺子（和局时任一方）', '1 : ' + BET_ODDS.san6],
-        ['金花', '赢方牌型为同花（和局时任一方）', '1 : ' + BET_ODDS.san7],
-        ['对子', '赢方牌型为对子（和局时任一方）', '1 : ' + BET_ODDS.san3],
-        ['散牌', '赢方牌型为散牌（和局时任一方）', '1 : ' + BET_ODDS.san2]
-      ];
-      var body = '';
-      for (var i = 0; i < rows.length; i++) {
-        body += '<tr><td>' + rows[i][0] + '</td><td>' + rows[i][1] + '</td><td class="odds">' + rows[i][2] + '</td></tr>';
-      }
-      var html =
-        '<p class="zjh-rules__intro">庄闲各发三张牌，牌型由大到小：豹子 &gt; 顺金 &gt; 金花 &gt; 顺子 &gt; 对子 &gt; 散牌。押注庄/闲比牌型大小，也可对单独牌型玩法下注。</p>' +
-        '<table class="zjh-rules__table"><thead><tr><th>玩法</th><th>说明</th><th class="odds">赔率</th></tr></thead><tbody>' + body + '</tbody></table>' +
-        '<p class="zjh-rules__intro">桌面飞入的「他人筹码」与人数仅为气氛展示，不代表真实在线投注。路单来自本桌服务端最近开奖记录。</p>' +
-        '<button type="button" id="zjhVerifyBtn" style="margin-top:10px;padding:8px 14px;border:0;border-radius:8px;background:#c9a227;color:#1a1208;font-weight:700;width:100%">公平验算</button>' +
-        '<div id="zjhVerifyBox" style="margin-top:8px"></div>';
+      var html = window.TableShell
+        ? TableShell.buildFormalRulesHtml({
+            sections: [
+              {
+                title: '一、游戏简介',
+                paragraphs: [
+                  '本桌为三张牌比大小玩法。每局为庄、闲各发三张牌，比牌后确定胜负；玩家可押庄或闲，亦可对赢方牌型单独投注。',
+                ],
+              },
+              {
+                title: '二、牌型等级',
+                paragraphs: ['牌型由大到小依次为：'],
+                list: [
+                  '豹子：三张同点',
+                  '顺金：同花且连续（如黑桃 A、K、Q）',
+                  '金花：三张同花色、非顺子',
+                  '顺子：三张连续、非同花',
+                  '对子：两张同点',
+                  '散牌：其余牌型',
+                ],
+              },
+              {
+                title: '三、比牌规则',
+                list: [
+                  '先比牌型等级，高等级胜出',
+                  '牌型相同则比点数；点数再相同则比最大单牌花色',
+                  '花色大小：黑桃 &gt; 红心 &gt; 梅花 &gt; 方块',
+                  '本玩法无和局，每局必有一方胜出',
+                ],
+              },
+              {
+                title: '四、结算说明',
+                paragraphs: [
+                  '下注期内可投注；封盘后停止接受注单，开牌后按结果结算。',
+                  '路单展示本桌近期开奖走势，仅供参考。',
+                ],
+              },
+            ],
+            oddsRows: [
+              ['庄 / 闲', '押中牌型更大的一方', '1 : ' + BET_ODDS.banker],
+              ['顺金', '赢方牌型为同花顺', '1 : ' + BET_ODDS.shunjin],
+              ['豹子', '赢方牌型为豹子', '1 : ' + BET_ODDS.baozi],
+              ['顺子', '赢方牌型为顺子', '1 : ' + BET_ODDS.san6],
+              ['金花', '赢方牌型为同花', '1 : ' + BET_ODDS.san7],
+              ['对子', '赢方牌型为对子', '1 : ' + BET_ODDS.san3],
+              ['散牌', '赢方牌型为散牌', '1 : ' + BET_ODDS.san2],
+            ],
+            notes: [
+              '请理性投注，量力而行。',
+              '最终以当局开牌结果与系统结算为准。',
+            ],
+          })
+        : '<p>玩法规则加载失败，请刷新重试。</p>';
       openSheet('玩法规则', html);
-      var vb = document.getElementById('zjhVerifyBtn');
-      if (vb) vb.addEventListener('click', function () {
-        var box = document.getElementById('zjhVerifyBox');
-        if (!box) return;
-        box.innerHTML = '<p class="zjh-rules__intro">验算中…</p>';
-        var req = (window.App && App.fetchTableVerify)
-          ? App.fetchTableVerify(SERVER_GAME, currentBetIssue || lastSettledRoundNo || undefined)
-          : Promise.reject(new Error('请从大厅进入游戏'));
-        req.then(function (info) {
-          if (window.TableShell) {
-            info.fairLine = TableShell.fairLine(info);
-            box.innerHTML = TableShell.buildVerifyHtml(info, 'zjh');
-          } else {
-            box.innerHTML = '<p class="zjh-rules__intro">hash: ' + (info.serverSeedHash || '—') + '</p>';
-          }
-        }).catch(function (e) {
-          box.innerHTML = '<p class="zjh-rules__intro">' + ((e && e.message) || '验算失败') + '</p>';
-        });
-      });
     });
 
     /* 设置：背景音乐 / 音效开关 */
     var setBtn = document.getElementById('railSettings');
     if (setBtn) setBtn.addEventListener('click', function () {
-      var html =
-        '<div class="zjh-setting-row"><span class="zjh-setting-row__label">背景音乐</span>' +
-          '<button type="button" class="zjh-switch' + (audioPref.music ? ' is-on' : '') + '" id="swMusic" role="switch" aria-checked="' + audioPref.music + '"></button></div>' +
-        '<div class="zjh-setting-row"><span class="zjh-setting-row__label">游戏音效</span>' +
-          '<button type="button" class="zjh-switch' + (audioPref.sfx ? ' is-on' : '') + '" id="swSfx" role="switch" aria-checked="' + audioPref.sfx + '"></button></div>';
+      var html = window.TableShell
+        ? TableShell.buildAudioSettingsHtml(audioPref)
+        : '<p>设置加载失败</p>';
       openSheet('设置', html);
-      var swMusic = document.getElementById('swMusic');
-      var swSfx = document.getElementById('swSfx');
-      if (swMusic) swMusic.addEventListener('click', function () {
-        var on = !swMusic.classList.contains('is-on');
-        swMusic.classList.toggle('is-on', on);
-        swMusic.setAttribute('aria-checked', String(on));
-        setMusicOn(on);
-      });
-      if (swSfx) swSfx.addEventListener('click', function () {
-        var on = !swSfx.classList.contains('is-on');
-        swSfx.classList.toggle('is-on', on);
-        swSfx.setAttribute('aria-checked', String(on));
-        setSfxOn(on);
-      });
+      if (window.TableShell) {
+        TableShell.bindAudioSettings({
+          onMusic: function (on) { if (typeof unlockAudio === 'function') unlockAudio(); setMusicOn(on); },
+          onSfx: function (on) { if (typeof unlockAudio === 'function') unlockAudio(); setSfxOn(on); },
+        });
+      }
     });
   })();
 
@@ -2531,13 +2563,17 @@
   if (window.TableShell && TableShell.startSnapshotPoll) {
     window.__zjhSnapTimer = TableShell.startSnapshotPoll(SERVER_GAME, function (snap) {
       applyServerSnap(snap);
+      if (alignWaiting && snap.phase === 'BETTING' && Number(snap.secondsLeft) > 0) {
+        startBetRound();
+        return;
+      }
       if (phase === 'bet' && !roundBusy) {
         left = Math.max(0, Math.ceil(getBetRemainSec()));
         paint(false);
       }
     }, {
       intervalMs: 1500,
-      shouldPoll: function () { return phase === 'bet' && !roundBusy; },
+      shouldPoll: function () { return (phase === 'bet' && !roundBusy) || alignWaiting; },
     });
   }
   window.__zjhBooted = true;
