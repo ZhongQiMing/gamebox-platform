@@ -1,9 +1,0 @@
-:root {
-  --qn-body-y: 37.500%;
-  --qn-foot-y: 77.917%;
-  --qn-foot-h: 22.083%;
-  --qn-ctrl-mask-y: 63.000%;
-  --qn-tile-cols: 5;
-  --qn-tile-rows: 3;
-  --qn-deco-ar: 1536 / 360;
-}

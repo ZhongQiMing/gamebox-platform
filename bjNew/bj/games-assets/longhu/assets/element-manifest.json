@@ -1,9 +1,0 @@
-{
-  "version": "1.0",
-  "game": "龙虎斗",
-  "sides": [
-    "dragon",
-    "tiger",
-    "tie"
-  ]
-}

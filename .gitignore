@@ -11,6 +11,10 @@ build/
 .env
 .env.*
 !.env.example
+scripts/health-alert.env
+scripts/.health-alert-state.json
+scripts/backup-postgres.env
+backups/
 
 # 数据库（本地开发）
 *.sqlite
@@ -42,9 +46,22 @@ client-app/android/.gradle/
 uploads/
 tmp/
 .cache/
+_tmp_*
+_prototype/
+bjNew/
+/remove_bg.py
+/remove_white_bg.py
 
 # 游戏美术生成脚本的中间产物（按需）
 games-assets/**/__pycache__/
+# 时时彩摇号选型样片（仅本地预览）
+games-assets/ssc/media/draw-preview/*.mp4
+games-assets/ssc/media/draw-preview/*.webm
+games-assets/ssc/media/draw-preview/*.ogv
+# AI 分帧原图较大；动画成品 webp/gif 可按需入库，原帧默认忽略
+games-assets/ssc/media/draw-preview/ai/**/*.png
+# 参考站提取的开奖多帧副本（仅本地预览）
+games-assets/ssc/media/draw-preview/ref-lhc/
 
 # Python 缓存（全局）
 __pycache__/

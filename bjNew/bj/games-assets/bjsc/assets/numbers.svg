@@ -1,13 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
-  <!-- PK10 �r� <use href="#ball-N"> (_� CSS �� -->
-  <symbol id="ball-1" viewBox="0 0 32 32"><circle cx="16" cy="16" r="15" fill="#e8b923" stroke="#fff8dc" stroke-width="1.2"/><text x="16" y="21" text-anchor="middle" font-size="14" font-weight="700" fill="#1a1408" font-family="Arial,sans-serif">1</text></symbol>
-  <symbol id="ball-2" viewBox="0 0 32 32"><circle cx="16" cy="16" r="15" fill="#3b7ddd" stroke="#b8d4ff" stroke-width="1.2"/><text x="16" y="21" text-anchor="middle" font-size="14" font-weight="700" fill="#fff" font-family="Arial,sans-serif">2</text></symbol>
-  <symbol id="ball-3" viewBox="0 0 32 32"><circle cx="16" cy="16" r="15" fill="#6b6b73" stroke="#d0d0d8" stroke-width="1.2"/><text x="16" y="21" text-anchor="middle" font-size="14" font-weight="700" fill="#fff" font-family="Arial,sans-serif">3</text></symbol>
-  <symbol id="ball-4" viewBox="0 0 32 32"><circle cx="16" cy="16" r="15" fill="#f07a18" stroke="#ffd4a8" stroke-width="1.2"/><text x="16" y="21" text-anchor="middle" font-size="14" font-weight="700" fill="#fff" font-family="Arial,sans-serif">4</text></symbol>
-  <symbol id="ball-5" viewBox="0 0 32 32"><circle cx="16" cy="16" r="15" fill="#5ec8e8" stroke="#d4f4ff" stroke-width="1.2"/><text x="16" y="21" text-anchor="middle" font-size="14" font-weight="700" fill="#0d2838" font-family="Arial,sans-serif">5</text></symbol>
-  <symbol id="ball-6" viewBox="0 0 32 32"><circle cx="16" cy="16" r="15" fill="#9b4fd4" stroke="#e8c8ff" stroke-width="1.2"/><text x="16" y="21" text-anchor="middle" font-size="14" font-weight="700" fill="#fff" font-family="Arial,sans-serif">6</text></symbol>
-  <symbol id="ball-7" viewBox="0 0 32 32"><circle cx="16" cy="16" r="15" fill="#a8a8b0" stroke="#f0f0f4" stroke-width="1.2"/><text x="16" y="21" text-anchor="middle" font-size="14" font-weight="700" fill="#1a1408" font-family="Arial,sans-serif">7</text></symbol>
-  <symbol id="ball-8" viewBox="0 0 32 32"><circle cx="16" cy="16" r="15" fill="#e83838" stroke="#ffc8c8" stroke-width="1.2"/><text x="16" y="21" text-anchor="middle" font-size="14" font-weight="700" fill="#fff" font-family="Arial,sans-serif">8</text></symbol>
-  <symbol id="ball-9" viewBox="0 0 32 32"><circle cx="16" cy="16" r="15" fill="#8b1a2e" stroke="#ffb0c0" stroke-width="1.2"/><text x="16" y="21" text-anchor="middle" font-size="14" font-weight="700" fill="#fff" font-family="Arial,sans-serif">9</text></symbol>
-  <symbol id="ball-10" viewBox="0 0 32 32"><circle cx="16" cy="16" r="15" fill="#2db84a" stroke="#b8f0c4" stroke-width="1.2"/><text x="16" y="21" text-anchor="middle" font-size="13" font-weight="700" fill="#fff" font-family="Arial,sans-serif">10</text></symbol>
-</svg>
