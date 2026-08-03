@@ -3,20 +3,36 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { sscFfcPayTable } from '../lottery/games/ffc.game';
 import { LOTTERY_INTERVALS } from '../lottery/lottery-intervals';
 
-/** 从 payTable 剥离 weight 字段，只保留展示信息 */
+/** 从 payTable 剥离 weight / awardWeights / rtp 等敏感字段，只保留展示信息 */
 function stripWeights(payTable: unknown): unknown {
-  if (!Array.isArray(payTable)) return payTable;
-  return payTable.map(({ weight: _w, ...rest }: Record<string, unknown>) => rest);
+  if (Array.isArray(payTable)) {
+    return payTable.map((row) => {
+      if (!row || typeof row !== 'object') return row;
+      const { weight: _w, awardWeights: _aw, ...rest } = row as Record<string, unknown>;
+      return rest;
+    });
+  }
+  if (payTable && typeof payTable === 'object') {
+    const o = { ...(payTable as Record<string, unknown>) };
+    delete o.weight;
+    delete o.awardWeights;
+    delete o.weights;
+    return o;
+  }
+  return payTable;
 }
 
 @Injectable()
 export class GamesService {
   constructor(private prisma: PrismaService) {}
 
-  /** 获取上架游戏列表（只返回展示用字段，不暴露爆率权重） */
+  /**
+   * 大厅目录：上架 + 维护（下架不返回）。
+   * 维护态前端可见但不可进；只返回展示字段，不暴露爆率权重。
+   */
   async listOnline() {
     const games = await this.prisma.game.findMany({
-      where: { status: 'ONLINE' },
+      where: { status: { in: ['ONLINE', 'MAINTENANCE'] } },
       orderBy: { sortOrder: 'asc' },
       include: {
         configs: {
@@ -27,15 +43,23 @@ export class GamesService {
       },
     });
     return games.map(g => ({
-      ...g,
+      id: g.id,
+      code: g.code,
+      name: g.name,
+      category: g.category,
+      status: g.status,
+      sortOrder: g.sortOrder,
+      minBet: g.minBet,
+      maxBet: g.maxBet,
       configs: g.configs.map(c => ({
-        ...c,
+        version: c.version,
+        /* 公开接口不返回 rtp / 权重 */
         payTable: stripWeights(c.payTable),
       })),
     }));
   }
 
-  /** 获取单个游戏详情（不暴露爆率权重） */
+  /** 获取单个游戏详情（不暴露爆率权重；仅上架可查） */
   async getGame(code: string) {
     const game = await this.prisma.game.findUnique({
       where: { code },
@@ -47,11 +71,20 @@ export class GamesService {
         },
       },
     });
-    if (!game) throw new NotFoundException(`游戏 ${code} 不存在或已下架`);
+    if (!game || game.status !== 'ONLINE') {
+      throw new NotFoundException(`游戏 ${code} 不存在或已下架`);
+    }
     return {
-      ...game,
+      id: game.id,
+      code: game.code,
+      name: game.name,
+      category: game.category,
+      status: game.status,
+      sortOrder: game.sortOrder,
+      minBet: game.minBet,
+      maxBet: game.maxBet,
       configs: game.configs.map(c => ({
-        ...c,
+        version: c.version,
         payTable: stripWeights(c.payTable),
       })),
     };
