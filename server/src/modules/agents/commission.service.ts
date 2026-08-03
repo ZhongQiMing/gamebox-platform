@@ -81,32 +81,56 @@ export class CommissionService {
 
       const key = `commission:${scope}:${sourceUser.id}:${beneficiaryUserId}`;
       const ownerType = this.roleToOwnerType(roleMap.get(beneficiaryUserId));
-      // 平台出账 → 代理入账（transferInTx 保证平台侧先加锁）
-      const { in: ledger } = await this.points.transferInTx(
-        tx,
-        { type: 'PLATFORM', id: PLATFORM_OWNER_ID, idempotencyKey: `${key}:OUT` },
-        { type: ownerType, id: beneficiaryUserId, idempotencyKey: `${key}:IN` },
-        amount,
-        { bizType: 'COMMISSION', refType: 'round', refId: refRoundId },
-      );
-
-      // 幂等命中（重复结算）时账本未新增，对应记录也必须跳过，否则记录与钱不一致
-      const recordExists = await tx.commissionRecord.findFirst({ where: { ledgerId: ledger.id } });
-      if (recordExists) continue;
-
-      await tx.commissionRecord.create({
-        data: {
-          beneficiaryId: beneficiaryUserId,
-          sourceUserId: sourceUser.id,
-          level: i + 1,
-          sourceRoundId: refRoundId,
-          baseFlow: validFlow,
-          rate: differentialRate,
+      // 挂靠佣金由房间运营代理出资（非平台池）
+      const payerId = await this.resolvePayerAgentId(tx, sourceUser.id, ancestors);
+      if (!payerId) continue;
+      try {
+        const { in: ledger } = await this.points.transferInTx(
+          tx,
+          { type: 'AGENT', id: payerId, idempotencyKey: `${key}:OUT` },
+          { type: ownerType, id: beneficiaryUserId, idempotencyKey: `${key}:IN` },
           amount,
-          ledgerId: ledger.id,
-        },
-      });
+          { bizType: 'COMMISSION', refType: 'round', refId: refRoundId },
+        );
+
+        const recordExists = await tx.commissionRecord.findFirst({ where: { ledgerId: ledger.id } });
+        if (recordExists) continue;
+
+        await tx.commissionRecord.create({
+          data: {
+            beneficiaryId: beneficiaryUserId,
+            sourceUserId: sourceUser.id,
+            level: i + 1,
+            sourceRoundId: refRoundId,
+            baseFlow: validFlow,
+            rate: differentialRate,
+            amount,
+            ledgerId: ledger.id,
+          },
+        });
+      } catch {
+        continue;
+      }
     }
+  }
+
+  /** 出资代理：优先房间绑定代理，否则取 agentPath 上最近的 AGENT */
+  private async resolvePayerAgentId(
+    tx: Prisma.TransactionClient,
+    playerId: string,
+    ancestors: string[],
+  ): Promise<string | null> {
+    const member = await tx.roomMember.findFirst({
+      where: { playerId, status: 'APPROVED', room: { ownerAgentId: { not: null } } },
+      include: { room: { include: { ownerAgent: { select: { userId: true } } } } },
+      orderBy: { updatedAt: 'desc' },
+    });
+    if (member?.room?.ownerAgent?.userId) return member.room.ownerAgent.userId;
+    for (const id of ancestors) {
+      const u = await tx.user.findUnique({ where: { id }, select: { role: true } });
+      if (u?.role === 'AGENT' || u?.role === 'PROXY') return id;
+    }
+    return ancestors[0] ?? null;
   }
 
   private roleToOwnerType(role?: string): 'BRANCH' | 'AGENT' | 'PROXY' | 'PLAYER' {

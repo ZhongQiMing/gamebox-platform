@@ -190,7 +190,7 @@ export class AgentController {
     const newDepth = under.depth + 1;
     const depthDelta = newDepth - friend.depth;
     const newPrefix = `${newAgentPath}${friend.id}/`;
-    const playerRate = Number(this.cfg.get('PLAYER_COMMISSION_RATE') ?? 0.01);
+    const playerRate = Number(this.cfg.get('PLAYER_COMMISSION_RATE') ?? 0.002);
 
     await this.prisma.$transaction(async (tx) => {
       await tx.user.update({
