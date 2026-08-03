@@ -7,8 +7,8 @@
     <div v-show="speedLayerOn" class="fx-speed-layer" aria-hidden="true">
       <!-- 官方 SPINNING：speedEffectMask.alpha=0.6，且在 spin 之下 -->
       <div v-if="showSpeedMask" class="fx-speed-mask" />
-      <!-- armature 锚点 (240,160) scale=0.7；DB 内多骨 ADD 爆发缩放 -->
-      <div class="fx-speed-arm" :class="{ strong: speedStrong }">
+      <!-- armature 锚点 (240,160) scale=0.7；DB 失败时回退 CSS 射线 -->
+      <div v-show="!useDbSpeed" class="fx-speed-arm" :class="{ strong: speedStrong }">
         <div
           v-for="(ray, i) in speedRays"
           :key="`ray${i}`"
@@ -50,31 +50,31 @@
         不要用 lv2 环绕电弧围框——官网主视觉是括号框+左右电弧
       -->
       <div
-        v-show="payoutArmOn"
+        v-show="payoutArmOn && !useDbPayout"
         class="fx-payout-arm"
         :class="`anim-${payoutAnim}`"
       >
         <img
           class="fx-circle c01"
-          :src="`${FX}/common/vfx_scifi_circle01.png`"
+          :src="fxUrl('common/vfx_scifi_circle01.png')"
           alt=""
           draggable="false"
         />
         <img
           class="fx-circle c02"
-          :src="`${FX}/common/vfx_scifi_circle02.png`"
+          :src="fxUrl('common/vfx_scifi_circle02.png')"
           alt=""
           draggable="false"
         />
         <img
           class="fx-circle c03"
-          :src="`${FX}/common/vfx_scifi_circle03.png`"
+          :src="fxUrl('common/vfx_scifi_circle03.png')"
           alt=""
           draggable="false"
         />
         <img
           class="fx-circle c05"
-          :src="`${FX}/common/vfx_scifi_circle05.png`"
+          :src="fxUrl('common/vfx_scifi_circle05.png')"
           alt=""
           draggable="false"
         />
@@ -85,7 +85,7 @@
           :key="`ol${i}`"
           v-show="showCorners"
           class="fx-corner-outline"
-          :src="`${FX}/common/mask_effect_outline.png`"
+          :src="fxUrl('common/mask_effect_outline.png')"
           alt=""
           draggable="false"
           :style="o.style"
@@ -97,7 +97,7 @@
           :key="`st${i}`"
           v-show="showSideThunder"
           class="fx-side-thunder"
-          :src="`${FX}/common/vfx_thunder_01.png`"
+          :src="fxUrl('common/vfx_thunder_01.png')"
           alt=""
           draggable="false"
           :style="t.style"
@@ -106,7 +106,7 @@
         <img
           v-show="showGlow"
           class="fx-glow"
-          :src="`${FX}/common/vfx_bg_txt_glow.png`"
+          :src="fxUrl('common/vfx_bg_txt_glow.png')"
           alt=""
           draggable="false"
         />
@@ -116,7 +116,7 @@
         v-for="(c, i) in clones"
         :key="`c${i}`"
         class="fx-clone"
-        :class="{ main: c.main, small: !c.main }"
+        :class="{ main: c.main, small: !c.main, shine: c.shine }"
         :src="c.src"
         alt=""
         draggable="false"
@@ -140,28 +140,27 @@
         draggable="false"
       />
 
+      <!-- 官方 Lv4 rewardPaperBg：yben_vfx_bg_purple ADD 全屏（彩纸粒子在 #bcbm-paper-fx-host） -->
       <img
-        v-for="(p, i) in papers"
-        :key="`p${i}`"
-        class="fx-paper"
-        :style="p.style"
-        :src="p.src"
+        v-if="showPaperBg"
+        class="fx-paper-bg"
+        src="/images/games/bcbm/benz/main/yben_vfx_bg_purple.png"
         alt=""
         draggable="false"
       />
 
-      <!-- 中心滚分：只用 win 字图；飞顶后改为左上「+金额」 -->
+      <!-- PrizeLv 电弧：DragonBones yben_lv2_thunder（见 startPrizeThunder） -->
+      <!-- 金额蓝光粒子专用层：在数字下、派彩 DB 上，勿整图拉竖条 -->
+      <div id="bcbm-amount-glow-host" class="fx-amount-glow-host" />
+
+      <!-- 官方 payoutAmountText：中心/顶部都用 win 字图；闪光用 yben_number_effect -->
       <div
         v-if="amountVisible"
         class="fx-amount-wrap"
-        :class="{
-          top: amountAtTop,
-          flying: amountFlying,
-        }"
+        :class="{ top: amountAtTop }"
         :style="amountWrapStyle"
       >
         <div
-          v-if="!amountAtTop"
           class="fx-amount-digits"
           :style="{ transform: `scaleY(${amountScaleY})` }"
         >
@@ -175,14 +174,13 @@
             draggable="false"
           />
         </div>
-        <div v-else class="fx-amount-plus">+{{ amountText }}</div>
       </div>
     </div>
   </Teleport>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onBeforeUnmount, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import {
   playBcbmCounting,
   endBcbmCounting,
@@ -190,7 +188,6 @@ import {
   playBcbmFlash,
   endBcbmPayout,
   playBcbmBonusAnnounce,
-  playBcbmFastJumpDing,
   bcbmCountDurationMs,
 } from '@/games/bcbm/bcbmAudio'
 import {
@@ -199,9 +196,23 @@ import {
   formatBcbmWinAmount,
   measureBcbmWinTextWidth,
 } from '@/games/bcbm/bcbmWinFont'
+import {
+  destroyBcbmDragonBones,
+  playBcbmDbArmature,
+  preloadBcbmDragonBones,
+  startBcbmAmountGlow,
+  startBcbmRewardPaper,
+  stopBcbmAmountGlow,
+  stopBcbmRewardPaper,
+  stopBcbmDbLayer,
+  stopBcbmDbSlot,
+} from '@/games/bcbm/bcbmDragonBones'
 
-const FX = '/images/games/bcbm/benz/fx'
 const TXT = '/images/games/bcbm/benz/txt'
+/** 黑底已转透明，带版本避免浏览器继续用旧图 */
+const FXV = 'alpha1'
+const FX = `/images/games/bcbm/benz/fx`
+const fxUrl = (rel: string) => `${FX}/${rel}?v=${FXV}`
 
 export type BcbmFxKind =
   | 'sanyuan'
@@ -218,6 +229,8 @@ const showSpeedZoom = ref(false)
 const showSpeedBlur = ref(false)
 const showSpeedMask = ref(false)
 const speedStrong = ref(false)
+const useDbSpeed = ref(false)
+const useDbPayout = ref(false)
 const payoutArmOn = ref(false)
 /** reward1 | reward2 | reward3 | reward4 | '' */
 const payoutAnim = ref('')
@@ -238,12 +251,37 @@ const clones = ref<
   Array<{
     src: string
     main: boolean
+    shine?: boolean
     style: Record<string, string>
   }>
 >([])
-const papers = ref<Array<{ src: string; style: Record<string, string> }>>([])
+/** 官方 PrizeLv randomPlayThunder 槽 */
+const prizeThunders = ref<
+  Array<{ id: number; src: string; style: Record<string, string> }>
+>([])
+const showAmountShine = ref(false)
+const showAmountDot = ref(false)
+const showPaperBg = ref(false)
+let prizeThunderTimers: number[] = []
 const speedFrame = ref(0)
 const speedZoomFrame = ref(0)
+
+/**
+ * 官方 PrizeLv 电弧槽（HIT：for i=0..5; if i!=1; ang=60*i+30）
+ * rotation = ang+90；半径 140；圆心 (W/2, payoutY=220)；scale 0.6
+ * 详见 scripts/_yben_dump/OFFICIAL_THUNDER_SPEC.md
+ */
+const THUNDER_RADIUS = 140
+const THUNDER_SCALE = 0.6
+const THUNDER_SLOTS: Array<{ ang: number; rotation: number }> = (() => {
+  const list: Array<{ ang: number; rotation: number }> = []
+  for (let i = 0; i < 6; i++) {
+    if (i === 1) continue
+    const ang = 60 * i + 30
+    list.push({ ang, rotation: ang + 90 })
+  }
+  return list
+})()
 
 let timers: number[] = []
 let running: Promise<void> | null = null
@@ -257,6 +295,8 @@ let amountRaf = 0
  * reward_1 ≈ 35f@24fps ≈ 1460ms；reward_2/3 ≈ 50f ≈ 2080ms；reward_4 ≈ 1460ms
  */
 const STAGE_W = 480
+/** 与 mobilePanelLayout.MOBILE_STAGE_H 一致；面板下移后射线仍需铺满 */
+const STAGE_H = 820
 const PAYOUT_Y = 220
 const SMALL_ICON_Y = 310
 const ICON_NATIVE = 112
@@ -268,11 +308,14 @@ const REWARD2_MS = 2080
 const REWARD4_MS = 1460
 const AMOUNT_CENTER_Y = 400
 const AMOUNT_CENTER_SCALE = 0.6
-/** 飞顶后短暂停留；过长会拖慢整段派彩 */
-const AMOUNT_TOP_HOLD_MS = 480
-const AMOUNT_FLY_MS = 480
-/** 余额旁兜底坐标（测不到 #bcbm-balance 时） */
-const BALANCE_FALLBACK = { x: 58, y: 28 }
+/** 官方 setPayoutAmountTextTop：left=220 y=44 scale=0.2 */
+const AMOUNT_TOP_LEFT = 220
+const AMOUNT_TOP_Y = 44
+const AMOUNT_TOP_SCALE = 0.2
+const AMOUNT_TOP_HOLD_MS = 200
+/** text_appear ≈17f@24fps（预留，当前时间轴未单独引用） */
+const _TEXT_APPEAR_MS = 708
+void _TEXT_APPEAR_MS
 
 /**
  * 四角青色括号框 mask_effect_outline（官网主框，不是五边形电框）
@@ -383,23 +426,18 @@ export type PayoutOpts = {
 }
 
 const SPEED_WEAK = [
-  `${FX}/speed2/vfx_speed_line_3.png`,
-  `${FX}/speed2/vfx_speed_line_4.png`,
+  fxUrl('speed2/vfx_speed_line_3.png'),
+  fxUrl('speed2/vfx_speed_line_4.png'),
 ]
 const SPEED_STRONG = [
-  `${FX}/speed/vfx_speed_line_1.png`,
-  `${FX}/speed/vfx_speed_line_2.png`,
+  fxUrl('speed/vfx_speed_line_1.png'),
+  fxUrl('speed/vfx_speed_line_2.png'),
 ]
-const ZOOM_WEAK = [`${FX}/speed2/vfx_circle_zoom_3.png`]
+const ZOOM_WEAK = [fxUrl('speed2/vfx_circle_zoom_3.png')]
 const ZOOM_STRONG = [
-  `${FX}/speed/vfx_circle_zoom_1.png`,
-  `${FX}/speed/vfx_circle_zoom_2.png`,
+  fxUrl('speed/vfx_circle_zoom_1.png'),
+  fxUrl('speed/vfx_circle_zoom_2.png'),
 ]
-const PAPER_SRCS = [
-  `${FX}/particles/yben_vfx_reward_paper_1.png`,
-  `${FX}/particles/yben_vfx_reward_paper_2.png`,
-]
-
 /**
  * 官方 speedup_effect：同一张放射贴图挂在多根 bone 上，短脉冲 sc 0.01→8（大线→20），
  * 再配合旋转相位。勿把 8 份全图叠到 maxScale≈1.2（糊成一团、往外爆不开）。
@@ -421,7 +459,10 @@ const payoutLayerOn = computed(
     !!bannerSrc.value ||
     amountVisible.value ||
     clones.value.length > 0 ||
-    papers.value.length > 0,
+    prizeThunders.value.length > 0 ||
+    showAmountShine.value ||
+    showAmountDot.value ||
+    showPaperBg.value,
 )
 
 const speedSrc = computed(() => {
@@ -433,7 +474,7 @@ const speedZoomSrc = computed(() => {
   return frames[speedZoomFrame.value % frames.length]
 })
 const speedBlurSrc = computed(() =>
-  speedStrong.value ? `${FX}/speed/vfx_bg_blur.png` : `${FX}/speed2/vfx_bg_blur.png`,
+  speedStrong.value ? fxUrl('speed/vfx_bg_blur.png') : fxUrl('speed2/vfx_bg_blur.png'),
 )
 
 const speedRays = computed(() => {
@@ -464,18 +505,17 @@ const BANNER: Record<Exclude<BcbmFxKind, 'win' | 'none'>, string> = {
 
 const amountChars = computed(() => amountText.value.split(''))
 const amountWrapStyle = computed(() => {
+  const w = measureBcbmWinTextWidth(amountText.value || '0', amountScale.value)
   if (amountAtTop.value && amountLeft.value != null) {
-    // 飞向左上余额旁；全程以中心点插值，落点在余额数字右侧
+    // 官方 left=220 为字图左缘；我们用中心点 = left + w/2
     return {
       left: `${amountLeft.value}px`,
       top: `${amountY.value}px`,
+      width: `${w}px`,
       transform: 'translate(-50%, -50%)',
-      transition: amountFlying.value
-        ? `left ${AMOUNT_FLY_MS}ms cubic-bezier(0.33, 0.1, 0.25, 1), top ${AMOUNT_FLY_MS}ms cubic-bezier(0.33, 0.1, 0.25, 1)`
-        : 'none',
+      transition: 'none',
     }
   }
-  const w = measureBcbmWinTextWidth(amountText.value || '0', amountScale.value)
   return {
     left: '50%',
     top: `${amountY.value}px`,
@@ -524,6 +564,10 @@ function resetLayers() {
   showSpeedBlur.value = false
   showSpeedMask.value = false
   speedStrong.value = false
+  useDbSpeed.value = false
+  useDbPayout.value = false
+  void stopBcbmDbLayer('speed')
+  void stopBcbmDbLayer('payout')
   payoutArmOn.value = false
   payoutAnim.value = ''
   showCorners.value = false
@@ -540,25 +584,92 @@ function resetLayers() {
   amountLeft.value = null
   amountY.value = AMOUNT_CENTER_Y
   clones.value = []
-  papers.value = []
+  stopPrizeLvFx()
+  showPaperBg.value = false
   speedFrame.value = 0
   speedZoomFrame.value = 0
   speedTickId = 0
 }
 
-function spawnPapers(n = 12) {
-  const list = []
-  for (let i = 0; i < n; i++) {
-    list.push({
-      src: PAPER_SRCS[i % PAPER_SRCS.length],
-      style: {
-        left: `${10 + Math.random() * 80}%`,
-        animationDelay: `${Math.random() * 0.5}s`,
-        animationDuration: `${1.2 + Math.random()}s`,
-      },
-    })
+/**
+ * 官方 randomPlayThunder：
+ * - 池 _remainThunderIdxList=[0..4] 对应 5 个预创建槽
+ * - playByFrame("vfx_electric_loop", 99) + spark.start()
+ * - 存活 200+floor(600*random) ms 后还池并链式续播
+ * - PrizeLv 进入时 for(n=0;n<3;n++) 同时起 3 路
+ */
+const activeThunderSlots = new Set<string>()
+
+function stopPrizeThunder() {
+  for (const id of prizeThunderTimers) window.clearTimeout(id)
+  prizeThunderTimers = []
+  for (const key of activeThunderSlots) {
+    void stopBcbmDbSlot('payout', key)
   }
-  papers.value = list
+  activeThunderSlots.clear()
+  prizeThunders.value = []
+}
+
+/** 官方 clearAllPrizeElement：电弧 + 金额蓝光 + 彩纸/紫底一起清 */
+function stopPrizeLvFx() {
+  stopPrizeThunder()
+  stopBcbmAmountGlow('amountGlow')
+  stopBcbmRewardPaper('paper')
+  showAmountShine.value = false
+  showAmountDot.value = false
+  showPaperBg.value = false
+}
+
+function startPrizeThunder() {
+  // 只停电弧槽，勿清 amountShine/Dot（与电弧并行）
+  for (const id of prizeThunderTimers) window.clearTimeout(id)
+  prizeThunderTimers = []
+  for (const key of activeThunderSlots) {
+    void stopBcbmDbSlot('payout', key)
+  }
+  activeThunderSlots.clear()
+  prizeThunders.value = []
+  // 官方：相对 thunderArmatureList 的下标 0..4
+  const remain = THUNDER_SLOTS.map((_, idx) => idx)
+  const spawnOne = () => {
+    if (!remain.length) return
+    const pick = Math.floor(Math.random() * remain.length)
+    const listIdx = remain.splice(pick, 1)[0]!
+    const slot = THUNDER_SLOTS[listIdx]!
+    const slotKey = `thunder-${listIdx}`
+    const rad = (slot.ang * Math.PI) / 180
+    const x = STAGE_W / 2 + THUNDER_RADIUS * Math.cos(rad)
+    const y = PAYOUT_Y + THUNDER_RADIUS * Math.sin(rad)
+    activeThunderSlots.add(slotKey)
+    void playBcbmDbArmature({
+      layerKey: 'payout',
+      packId: 'thunder',
+      animation: 'vfx_electric_loop',
+      playTimes: 99,
+      x,
+      y,
+      scale: THUNDER_SCALE,
+      rotationDeg: slot.rotation,
+      withSpark: true,
+      stageW: STAGE_W,
+      stageH: 640,
+      slotKey,
+    }).then((ok) => {
+      if (!ok) activeThunderSlots.delete(slotKey)
+    })
+    const tid = window.setTimeout(
+      () => {
+        void stopBcbmDbSlot('payout', slotKey)
+        activeThunderSlots.delete(slotKey)
+        remain.push(listIdx)
+        spawnOne()
+      },
+      200 + Math.floor(Math.random() * 600),
+    )
+    prizeThunderTimers.push(tid)
+  }
+  // 官方：同步连调 3 次，无 stagger
+  for (let i = 0; i < 3; i++) spawnOne()
 }
 
 function stop() {
@@ -580,6 +691,24 @@ function ensureSpeedTick(ms: number) {
   })
 }
 
+async function playSpeedDb(strong: boolean) {
+  await nextTick()
+  const ok = await playBcbmDbArmature({
+    layerKey: 'speed',
+    packId: strong ? 'speedStrong' : 'speedWeak',
+    animation: 'speedup_effect',
+    playTimes: 0,
+    x: STAGE_W / 2,
+    y: 160,
+    scale: 0.7,
+    stageW: STAGE_W,
+    stageH: STAGE_H,
+    slotKey: strong ? 'speedStrong' : 'speedWeak',
+  })
+  useDbSpeed.value = ok
+  return ok
+}
+
 function startSpeedWeak() {
   speedStrong.value = false
   showSpeedMask.value = true
@@ -589,6 +718,7 @@ function startSpeedWeak() {
   speedFrame.value = 0
   speedZoomFrame.value = 0
   ensureSpeedTick(42)
+  void playSpeedDb(false)
 }
 
 function startSpeedStrong() {
@@ -600,10 +730,7 @@ function startSpeedStrong() {
   speedFrame.value = 0
   speedZoomFrame.value = 0
   ensureSpeedTick(14)
-}
-
-function startSpeed() {
-  startSpeedWeak()
+  void playSpeedDb(true)
 }
 
 function stopSpeed() {
@@ -612,6 +739,8 @@ function stopSpeed() {
   showSpeedBlur.value = false
   showSpeedMask.value = false
   speedStrong.value = false
+  useDbSpeed.value = false
+  void stopBcbmDbLayer('speed')
   if (speedTickId) {
     window.clearInterval(speedTickId)
     timers = timers.filter((t) => t !== speedTickId)
@@ -619,10 +748,22 @@ function stopSpeed() {
   }
 }
 
-async function playSpeedup(ms = 1600) {
-  startSpeedWeak()
-  await sleep(ms)
-  stopSpeed()
+async function playPayoutDb(animation: string, playTimes = 1) {
+  await nextTick()
+  const ok = await playBcbmDbArmature({
+    layerKey: 'payout',
+    packId: 'payoutCommon',
+    animation,
+    playTimes,
+    x: STAGE_W / 2,
+    y: PAYOUT_Y,
+    scale: 0.6,
+    stageW: STAGE_W,
+    stageH: 640,
+    slotKey: 'payoutCommon',
+  })
+  useDbPayout.value = ok
+  return ok
 }
 
 function layoutFlyTargets(list: CloneFrom[]) {
@@ -709,6 +850,7 @@ function setClonesAt(
     return {
       src: t.src,
       main: t.main,
+      shine: false,
       style: {
         left: `${x}px`,
         top: `${y}px`,
@@ -737,20 +879,38 @@ function setAmountCenter(text: string) {
   amountVisible.value = true
 }
 
-/** 舞台坐标下，余额数字右侧中点（飞「+金额」落点） */
-function getBalancePlusPos() {
-  const bal = document.getElementById('bcbm-balance')
-  const stage = document.querySelector('.stage') as HTMLElement | null
-  if (!bal || !stage) return { ...BALANCE_FALLBACK }
-  const br = bal.getBoundingClientRect()
-  const sr = stage.getBoundingClientRect()
-  const sx = sr.width / STAGE_W || 1
-  const sy = sr.height / 715 || sx
-  return {
-    // 落在余额数字右侧紧挨着
-    x: (br.right - sr.left) / sx + 28,
-    y: (br.top + br.height / 2 - sr.top) / sy,
-  }
+/** 官方 setPayoutAmountTextTop：字图 left=220 y=44 sc=0.2 */
+function setAmountTop(text: string) {
+  const t = text || '0'
+  amountAtTop.value = true
+  amountFlying.value = false
+  amountText.value = t
+  amountScale.value = AMOUNT_TOP_SCALE
+  const w = measureBcbmWinTextWidth(t, AMOUNT_TOP_SCALE)
+  amountLeft.value = AMOUNT_TOP_LEFT + w / 2
+  amountY.value = AMOUNT_TOP_Y
+  amountVisible.value = true
+}
+
+/** 官方 payoutAmountFlashArmature text_appear（ADD） */
+async function playAmountTextAppear() {
+  const x =
+    amountAtTop.value && amountLeft.value != null
+      ? amountLeft.value
+      : STAGE_W / 2
+  const y = amountAtTop.value ? AMOUNT_TOP_Y : AMOUNT_CENTER_Y
+  await playBcbmDbArmature({
+    layerKey: 'payout',
+    packId: 'number',
+    animation: 'text_appear',
+    playTimes: 1,
+    x,
+    y,
+    scale: amountScale.value,
+    stageW: STAGE_W,
+    stageH: 640,
+    slotKey: 'amountFlash',
+  })
 }
 
 
@@ -807,39 +967,21 @@ async function showAmountWithCount(
 async function flashAmountToTop() {
   if (!amountVisible.value) return
   const text = amountText.value || formatBcbmWinAmount(0)
+  // 官方：scaleY→0(200)+text_appear+flash → setTop scaleY=0 → scaleY→0.2(200)+text_appear
   playBcbmFlash()
+  void playAmountTextAppear()
+  amountScaleY.value = 1
+  await nextTick()
+  amountScaleY.value = 0
+  await sleep(200)
 
-  // 先从中心当前位置起步，再开 transition 飞向余额
-  const wrap = document.querySelector('.fx-amount-wrap') as HTMLElement | null
-  const stage = document.querySelector('.stage') as HTMLElement | null
-  let startLeft = STAGE_W / 2
-  let startTop = AMOUNT_CENTER_Y
-  if (wrap && stage) {
-    const wr = wrap.getBoundingClientRect()
-    const sr = stage.getBoundingClientRect()
-    const sx = sr.width / STAGE_W || 1
-    const sy = sr.height / 715 || sx
-    startLeft = (wr.left + wr.width / 2 - sr.left) / sx
-    startTop = (wr.top + wr.height / 2 - sr.top) / sy
-  }
-
-  const pos = getBalancePlusPos()
-  amountFlying.value = false
-  amountAtTop.value = true
-  // 飞顶展示「+1,888」形式
-  amountText.value = Number(text).toLocaleString('en-US')
-  amountLeft.value = startLeft
-  amountY.value = startTop
+  setAmountTop(text)
+  amountScaleY.value = 0
   await nextTick()
   await waitFrames(2)
-  // 先挂上 transition，再改坐标，否则会跳变
-  amountFlying.value = true
-  await nextTick()
-  await waitFrames(2)
-  amountLeft.value = pos.x
-  amountY.value = pos.y
-  await sleep(AMOUNT_FLY_MS + 40)
-  amountFlying.value = false
+  void playAmountTextAppear()
+  amountScaleY.value = 1
+  await sleep(200)
   await sleep(AMOUNT_TOP_HOLD_MS)
 }
 
@@ -873,6 +1015,7 @@ async function playPayout(opts: PayoutOpts) {
     showCorners.value = true
     showSideThunder.value = false
     showGlow.value = false
+    void playPayoutDb('reward_1_start', 1)
 
     setClonesAt(targets, 'from')
     await nextTick()
@@ -880,11 +1023,14 @@ async function playPayout(opts: PayoutOpts) {
     setClonesAt(targets, 'to')
     await sleep(Math.max(REWARD1_MS, FLY_MS + 120))
 
-    // —— reward_2：左右横贯电弧 + glow + 特殊奖横幅 + 中文报奖 ——
+    // —— reward_2：DB 自带侧雷；CSS 侧雷仅兜底 ——
     if (hasBonus) {
       payoutAnim.value = 'reward2'
-      showSideThunder.value = true
-      showGlow.value = true
+      const db2 = await playPayoutDb('reward_2_text_appear', 1)
+      showSideThunder.value = !db2
+      showGlow.value = !db2
+      if (db2) void playPayoutDb('reward_2_text_appear_loop', 0)
+      // 彩纸仅 PrizeLv4（HIT：PrizeLv3 || PrizeLv4 && paper → 仅 Lv4）
       bannerSrc.value = BANNER[kind!]
       bannerPop.value = true
       playBcbmBonusAnnounce(opts.awardType || kind!)
@@ -900,46 +1046,117 @@ async function playPayout(opts: PayoutOpts) {
       )
     }
 
-    // —— reward_3_bg_loop：滚分；电弧继续横贯（不用环绕电框） ——
-    payoutAnim.value = 'reward3'
-    showSideThunder.value = true
-    showGlow.value = true
-    playBcbmCounting(payoutLevel)
-    if (payoutLevel >= 3) {
-      playBcbmPrizeLv(payoutLevel, hasBonus)
-      if (payoutLevel >= 4) spawnPapers(16)
-    }
-    if (payout > 0) {
-      showGlow.value = false
-      await showAmountWithCount(payout, payoutLevel, totalBet)
-      endBcbmCounting()
-      // —— reward_4_end：收缩 + 金额飞顶 ——
+    // 官方：特奖且 totalBonus==0 → Bonus 后直接 End（跳过 ShowAmount）
+    if (hasBonus && payout <= 0) {
       payoutAnim.value = 'reward4'
       showCorners.value = false
       showSideThunder.value = false
       showGlow.value = false
+      endBcbmPayout(true)
+      void playPayoutDb('reward_4_end')
+      await sleep(REWARD4_MS)
+      clones.value = []
+      payoutArmOn.value = false
+      payoutAnim.value = ''
+      useDbPayout.value = false
+      void stopBcbmDbLayer('payout')
+      clearTimers()
+      speedTickId = 0
+      return
+    }
+
+    // —— ShowAmount：reward_3 loop + 滚分；Lv≥3 立刻叠 PrizeLv（与滚分并行）——
+    // 正版：timeline AND(armature×a, Delay(r+1000))；入口末尾立刻 onPayoutStepCompleted→PrizeLv
+    payoutAnim.value = 'reward3'
+    showCorners.value = true
+    const countMs =
+      payout > 0 ? bcbmCountDurationMs(payout, totalBet, payoutLevel) : 0
+    const reward3Times =
+      payoutLevel <= 1 ? 1 : payoutLevel === 2 ? 2 : Math.ceil(countMs / 2000) + 1
+    const reward3Ms = reward3Times * 2083
+    const showAmountHoldMs =
+      payoutLevel >= 3 ? Math.max(reward3Ms, countMs + 1000) : Math.max(reward3Ms, countMs)
+    const dbOk = await playPayoutDb(
+      'reward_3_bg_loop_duplication1',
+      reward3Times,
+    )
+    // 仅 DB 失败时才用 CSS 侧雷/glow 兜底（侧雷是 common 内建，不是环绕电弧）
+    showSideThunder.value = !dbOk
+    showGlow.value = !dbOk
+    playBcbmCounting(payoutLevel)
+
+    // 官方：2<level 时 ShowAmount 一开始就进 PrizeLv；Lv3 无彩纸（|| && 短路）
+    // PrizeLv：amountShinePs + amountDotPs（蓝光粒子）+ randomPlayThunder×3
+    if (payoutLevel >= 3) {
+      playBcbmPrizeLv(payoutLevel, hasBonus)
+      await startBcbmAmountGlow({
+        layerKey: 'amountGlow',
+        x: STAGE_W / 2,
+        // 正版粒子 y=460（金额中心 400 下方 60px），勿再抬高
+        y: AMOUNT_CENTER_Y + 60,
+        stageW: STAGE_W,
+        stageH: 640,
+      })
+      startPrizeThunder()
+      if (payoutLevel >= 4) {
+        // 紫底在 payoutGroup；彩纸 GravityPS 在 betBoard+1
+        showPaperBg.value = true
+        void startBcbmRewardPaper({
+          layerKey: 'paper',
+          stageW: STAGE_W,
+          stageH: 820,
+        })
+      }
+    }
+
+    if (payout > 0) {
+      showGlow.value = false
+      // 正版：滚分一结束就 stop counting + counting_end（不是等 Jump）
+      await Promise.all([
+        showAmountWithCount(payout, payoutLevel, totalBet).then(() => {
+          endBcbmCounting()
+        }),
+        sleep(showAmountHoldMs),
+      ])
+      // 官方：进 JumpAmount 前 clearAllPrizeElement（含彩纸/紫底）
+      stopPrizeLvFx()
+
+      // —— JumpAmount：正版一进 Jump 就 fadeout/bonus_end，再 reward_4 + 飞顶 ——
+      payoutAnim.value = 'reward4'
+      showCorners.value = false
+      showSideThunder.value = false
+      showGlow.value = false
+      endBcbmPayout(hasBonus)
+      void playPayoutDb('reward_4_end')
       const jump = flashAmountToTop()
       await Promise.all([sleep(REWARD4_MS), jump])
     } else {
       endBcbmCounting()
-      playBcbmFlash()
+      stopPrizeLvFx()
       payoutAnim.value = 'reward4'
       showCorners.value = false
       showSideThunder.value = false
       showGlow.value = false
+      endBcbmPayout(hasBonus)
+      playBcbmFlash()
+      void playPayoutDb('reward_4_end')
       await sleep(REWARD4_MS)
     }
-    endBcbmPayout(hasBonus)
-    papers.value = []
-    amountVisible.value = false
-    amountAtTop.value = false
-    amountFlying.value = false
-    clones.value = []
+    stopPrizeLvFx()
+    // 官方 Jump 后金额仍留在顶部，等押格 shine/rise/Idle 再清（由 View hideAmount）
+    clones.value = clones.value.map((c) =>
+      c.main
+        ? { ...c, style: { ...c.style, opacity: '0' } }
+        : { ...c, style: { ...c.style, opacity: '0' } },
+    )
     payoutArmOn.value = false
     payoutAnim.value = ''
     showCorners.value = false
     showSideThunder.value = false
     showGlow.value = false
+    useDbPayout.value = false
+    // 保留 amountFlash / 字图；清 common armature
+    void stopBcbmDbSlot('payout', 'payoutCommon')
     clearTimers()
     speedTickId = 0
   })()
@@ -947,37 +1164,108 @@ async function playPayout(opts: PayoutOpts) {
   running = null
 }
 
-async function playSpecial(kind: Exclude<BcbmFxKind, 'win' | 'none'>) {
-  await playPayout({ kind, clones: [], payout: 0, payoutLevel: 3 })
-}
+onMounted(() => {
+  void preloadBcbmDragonBones()
+})
 
-async function playWin(payout: number) {
+onBeforeUnmount(() => {
+  destroyBcbmDragonBones()
+})
+
+/**
+ * 官方 SmallPrize：cloneIcons（主 clone ADD α0.2）+ 顶栏字图 + text_appear。
+ * ding / getIconShineTask 由 shineMainClone + View 编排。
+ */
+async function playWin(opts: {
+  payout: number
+  clones?: Array<{ src: string; x: number; y: number; scale: number }>
+}) {
+  const { payout, clones: cloneSrcs = [] } = opts
   if (payout <= 0) return
   if (running) await running
   running = (async () => {
-    // 官方 FastJumpAmount：ding@0 + ding@800，与跳分同时
-    playBcbmFastJumpDing()
-    await showAmountWithCount(payout, 1, 0)
-    await flashAmountToTop()
-    amountVisible.value = false
-    amountAtTop.value = false
-    amountFlying.value = false
+    if (cloneSrcs.length) {
+      const main = cloneSrcs[0]!
+      const w = Math.max(36, LARGE_ICON * main.scale)
+      clones.value = [
+        {
+          src: main.src,
+          main: true,
+          shine: false,
+          style: {
+            left: `${main.x}px`,
+            top: `${main.y}px`,
+            width: `${w}px`,
+            height: `${w}px`,
+            marginLeft: `${-w / 2}px`,
+            marginTop: `${-w / 2}px`,
+            opacity: '0.2',
+            mixBlendMode: 'plus-lighter',
+            transition: 'none',
+          },
+        },
+      ]
+    }
+    const target = formatBcbmWinAmount(payout)
+    setAmountTop(target)
+    amountScaleY.value = 0
+    await nextTick()
+    await waitFrames(2)
+    void playAmountTextAppear()
+    amountScaleY.value = 1
+    await sleep(220)
   })()
   await running
   running = null
 }
 
+/** 官方 getIconShineTask(4)：主 clone α 0.2→1，200ms ×4 ping-pong ≈800ms */
+async function shineMainClone() {
+  if (!clones.value.length) return
+  clones.value = clones.value.map((c) =>
+    c.main
+      ? {
+          ...c,
+          shine: true,
+          style: {
+            ...c.style,
+            opacity: '1',
+            mixBlendMode: 'plus-lighter',
+          },
+        }
+      : c,
+  )
+  await sleep(800)
+  clones.value = clones.value.map((c) =>
+    c.main
+      ? {
+          ...c,
+          shine: false,
+          style: { ...c.style, opacity: '0' },
+        }
+      : c,
+  )
+}
+
+function hideAmount() {
+  amountVisible.value = false
+  amountAtTop.value = false
+  amountFlying.value = false
+  amountScaleY.value = 1
+  clones.value = []
+  void stopBcbmDbSlot('payout', 'amountFlash')
+}
+
 onBeforeUnmount(stop)
 
 defineExpose({
-  playSpeedup,
-  startSpeed,
   startSpeedWeak,
   startSpeedStrong,
   stopSpeed,
-  playSpecial,
   playPayout,
+  hideAmount,
   playWin,
+  shineMainClone,
   stop,
 })
 </script>
@@ -989,9 +1277,11 @@ defineExpose({
   left: 0;
   top: 0;
   width: 480px;
-  height: 715px;
+  /* 铺满 820 舞台：面板下移后勿再按旧 715 裁射线 */
+  height: 100%;
+  min-height: 820px;
   pointer-events: none;
-  overflow: hidden;
+  overflow: visible;
   /* 勿 isolation，否则 ADD/screen 抠不出黑底 */
 }
 
@@ -1014,6 +1304,7 @@ defineExpose({
   margin-top: -256px;
   transform: scale(0.7);
   transform-origin: center center;
+  mix-blend-mode: plus-lighter;
 }
 .fx-speed-arm.strong {
   transform: scale(0.7);
@@ -1077,7 +1368,8 @@ defineExpose({
   left: 0;
   top: 0;
   width: 480px;
-  height: 715px;
+  height: 100%;
+  min-height: 820px;
   pointer-events: none;
   /* 侧雷会超出中心，勿裁切 */
   overflow: visible;
@@ -1091,6 +1383,7 @@ defineExpose({
   height: 0;
   transform: scale(0.6);
   transform-origin: center center;
+  mix-blend-mode: plus-lighter;
 }
 .fx-payout-arm.anim-reward4 {
   animation: payoutArmShrink 1.2s ease-in forwards;
@@ -1255,12 +1548,39 @@ defineExpose({
 }
 .fx-clone.main {
   z-index: 5;
+  /* 正版中心车标：贴边同色光晕，勿大面积散射 */
+  filter: drop-shadow(0 0 3px rgba(255, 80, 140, 0.95))
+    drop-shadow(0 0 8px rgba(255, 40, 100, 0.65)) brightness(1.12);
+  animation: mainClonePulse 0.55s ease-in-out infinite alternate;
 }
 .fx-clone.small {
   z-index: 4;
 }
+@keyframes mainClonePulse {
+  from {
+    filter: drop-shadow(0 0 2px rgba(255, 80, 140, 0.7))
+      drop-shadow(0 0 5px rgba(255, 40, 100, 0.4)) brightness(1.05);
+  }
+  to {
+    filter: drop-shadow(0 0 4px rgba(255, 100, 160, 1))
+      drop-shadow(0 0 10px rgba(255, 50, 120, 0.75)) brightness(1.2);
+  }
+}
 
-/* 中心滚分字图；飞顶后变左上「+金额」——无 line/dot 底光 */
+/* 金额蓝光粒子层：正版 addChildAt(shine/dot, indexOf(amountText)) */
+.fx-amount-glow-host {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 480px;
+  height: 640px;
+  pointer-events: none;
+  z-index: 6;
+  /* 整层 plus-lighter ≈ 正版 amountShinePs.blendMode=ADD（单粒子 NORMAL） */
+  mix-blend-mode: plus-lighter;
+  overflow: visible;
+}
+/* 中心滚分字图；飞顶后变左上「+金额」——蓝光在下层 host */
 .fx-amount-wrap {
   position: absolute;
   z-index: 7;
@@ -1288,38 +1608,7 @@ defineExpose({
   /* 字图自带描边发光，勿再叠 filter 以免发糊发脏 */
   filter: none;
 }
-.fx-amount-plus {
-  font-family: 'DIN Alternate', 'Segoe UI', system-ui, sans-serif;
-  font-size: 22px;
-  font-weight: 800;
-  line-height: 1;
-  letter-spacing: 0.02em;
-  color: #7dffb0;
-  background: transparent;
-  text-shadow:
-    0 0 6px rgba(80, 255, 160, 0.85),
-    0 0 14px rgba(40, 200, 120, 0.55),
-    0 1px 2px rgba(0, 0, 0, 0.65);
-  white-space: nowrap;
-  animation: plusPop 0.28s ease-out;
-}
-.fx-amount-wrap.flying .fx-amount-plus {
-  animation: none;
-  opacity: 0.95;
-  transform: scale(1.05);
-}
 
-.fx-paper {
-  position: absolute;
-  top: -6%;
-  width: 22px;
-  height: 22px;
-  object-fit: contain;
-  mix-blend-mode: plus-lighter;
-  animation-name: fall;
-  animation-timing-function: linear;
-  animation-fill-mode: forwards;
-}
 
 /* DB bone：sc 0.01 → ~8 脉冲（外层已转角） */
 @keyframes speedBurst {
@@ -1508,6 +1797,82 @@ defineExpose({
   100% {
     transform: translateY(720px) rotate(400deg);
     opacity: 0.15;
+  }
+}
+/* 官方 PrizeLv：vfx_electric_loop + spark；金额 shine/dot 粒子锚点中心 */
+.fx-prize-thunder {
+  position: absolute;
+  width: 220px;
+  height: auto;
+  pointer-events: none;
+  z-index: 6;
+  animation: prizeThunderFlicker 0.18s ease-in-out infinite alternate;
+}
+@keyframes prizeThunderFlicker {
+  from {
+    opacity: 0.55;
+    filter: brightness(1.1);
+  }
+  to {
+    opacity: 1;
+    filter: brightness(1.45);
+  }
+}
+.fx-paper-bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+  z-index: 1;
+  /* 正版 rewardPaperBg.blendMode=ADD，无额外压暗 */
+  mix-blend-mode: plus-lighter;
+}
+/* 官方 amountShinePs / amountDotPs 是粒子，贴图只作小精灵；
+   禁止把 95×512 竖条拉成满屏「中间蓝光柱」 */
+.fx-amount-shine,
+.fx-amount-dot {
+  position: absolute;
+  left: 50%;
+  top: 400px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 8;
+  mix-blend-mode: plus-lighter;
+}
+.fx-amount-shine {
+  /* 原图像素 95×512，只罩在滚分数字附近 */
+  width: 72px;
+  height: 220px;
+  object-fit: cover;
+  object-position: center;
+  animation: amountShinePulse 0.45s ease-in-out infinite alternate;
+  opacity: 0.55;
+}
+.fx-amount-dot {
+  width: 120px;
+  height: 120px;
+  object-fit: contain;
+  animation: amountDotSpin 2.4s linear infinite;
+  opacity: 0.55;
+}
+@keyframes amountShinePulse {
+  from {
+    transform: translate(-50%, -50%) scale(0.92);
+    opacity: 0.35;
+  }
+  to {
+    transform: translate(-50%, -50%) scale(1.06);
+    opacity: 0.65;
+  }
+}
+@keyframes amountDotSpin {
+  from {
+    transform: translate(-50%, -50%) rotate(0deg);
+  }
+  to {
+    transform: translate(-50%, -50%) rotate(360deg);
   }
 }
 </style>

@@ -82,10 +82,6 @@ const { error: toastError } = useToast()
 const gameCode = computed(() => route.params.gameCode as string)
 
 interface PayItem { label: string; multiplier: number }
-interface SpinResult {
-  gameCode: string; outcome: { prize: PayItem; index: number }
-  bets: Array<{ amount: number; payout: number; won: boolean }>
-}
 interface HistoryItem { label: string; payout: number; won: boolean; big: boolean }
 
 const gameName = ref('')

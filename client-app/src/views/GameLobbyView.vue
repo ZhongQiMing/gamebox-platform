@@ -43,13 +43,15 @@
       <!-- 游戏列表：一行一张，结构与原型 game-lobby.js 渲染输出一致 -->
       <div class="games-list">
         <div
-          v-for="g in GAMES"
+          v-for="g in visibleGames"
           :key="g.key"
           class="game-card"
+          :class="{ 'is-maint': isMaintenance(g) }"
           :data-game="g.key"
           @click="onGameClick(g)"
         >
-          <div v-if="g.tag" class="gc-tag">{{ g.tag }}</div>
+          <div v-if="isMaintenance(g)" class="gc-tag gc-tag--maint">维 护</div>
+          <div v-else-if="g.tag" class="gc-tag">{{ g.tag }}</div>
 
           <div class="gc-main">
             <div class="gc-icon">
@@ -57,22 +59,38 @@
               <svg v-else viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" v-html="g.svg"></svg>
             </div>
 
-            <div :class="['gc-name', g.name.length >= 5 ? 'gc-name-tight' : '']">{{ g.name }}</div>
+            <div class="gc-name">{{ g.name }}</div>
 
             <div class="gc-status">
               <!-- 彩票/牌桌显示期号；即时游戏只显示「实时进行」 -->
-              <div v-if="g.type === 'lottery' || g.type === 'table'" class="gc-issue">
-                第 <span class="gc-issue-no">{{ cardState[g.key]?.issue ?? '000000' }}</span>
+              <div
+                v-if="g.type === 'lottery' || g.type === 'table'"
+                class="gc-issue"
+                :title="cardState[g.key]?.issueFull || undefined"
+              >
+                第 <span class="gc-issue-no">{{ cardState[g.key]?.issue ?? '—' }}</span>
                 {{ g.type === 'table' ? '局' : '期' }}
               </div>
-              <div :class="['gc-countdown', cardState[g.key]?.cdClass]">
-                {{ cardState[g.key]?.cdText ?? (g.type === 'instant' ? '实时进行' : '--:--') }}
+              <div
+                :class="[
+                  'gc-countdown',
+                  isMaintenance(g) ? 'is-freeze' : cardState[g.key]?.cdClass,
+                ]"
+              >
+                {{
+                  isMaintenance(g)
+                    ? '维护中'
+                    : (cardState[g.key]?.cdText ?? (g.type === 'instant' ? '实时进行' : '--:--'))
+                }}
               </div>
             </div>
           </div>
 
           <div v-if="g.type === 'lottery' || g.type === 'table'" class="gc-foot">
-            <div class="gc-foot-issue">
+            <div
+              class="gc-foot-issue"
+              :title="cardState[g.key]?.prevIssueFull || undefined"
+            >
               <span class="gc-foot-issue-no">{{ cardState[g.key]?.prevIssue ?? '— —' }}</span>
               {{ g.type === 'table' ? '局' : '期' }}
             </div>
@@ -186,7 +204,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, onUnmounted } from 'vue'
+import { computed, ref, reactive, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useToast } from '@/composables/useToast'
 import { useBodyClass } from '@/composables/useBodyClass'
@@ -199,7 +217,7 @@ import {
   tableLobbyIntervalSec,
   tableLobbyPrepSec,
   LOTTERY_INTERVALS,
-  LOTTERY_PREP_SEC,
+  lotteryPrepSec,
 } from '@gamebox/shared'
 import TabBar from '@/components/TabBar.vue'
 import SlotsCover from '@/components/SlotsCover.vue'
@@ -243,9 +261,8 @@ interface LobbyGame {
   iconImg?: string
   svg?: string
   route?: string
+  /** 对应后端 Game.code；大厅展示/进入必须在平台上架列表中 */
   backendCode?: string
-  /** games-assets 内嵌聊天室，不依赖后端上架状态即可进入 */
-  assetGame?: boolean
 }
 
 /** 大厅排序：时时彩 → 赛车飞艇 → 快三/六合 → 牌桌 → 街机电子 */
@@ -253,72 +270,72 @@ const GAMES: LobbyGame[] = [
   // —— 时时彩 ——
   {
     key: 'ssc', name: '快乐时时彩', type: 'lottery',
-    intervalSec: LOTTERY_INTERVALS.ssc, prepSec: LOTTERY_PREP_SEC,
+    intervalSec: LOTTERY_INTERVALS.ssc, prepSec: lotteryPrepSec('ssc'),
     iconImg: '/images/games/ssc/ssc.png',
-    route: '/game/lottery/ssc', backendCode: 'ssc', assetGame: true,
+    route: '/game/lottery/ssc', backendCode: 'ssc',
   },
   {
     key: 'ffc', name: '1分时时彩', type: 'lottery',
-    intervalSec: LOTTERY_INTERVALS.ffc, prepSec: LOTTERY_PREP_SEC,
+    intervalSec: LOTTERY_INTERVALS.ffc, prepSec: lotteryPrepSec('ffc'),
     iconImg: '/images/games/ffc/ffc.png',
-    route: '/game/lottery/ffc', backendCode: 'ffc', assetGame: true,
+    route: '/game/lottery/ffc', backendCode: 'ffc',
   },
   // —— 赛车 / 飞艇 ——
   {
     key: 'speed-racing', name: '极速赛车', type: 'lottery',
-    intervalSec: LOTTERY_INTERVALS['speed-racing'], prepSec: LOTTERY_PREP_SEC,
+    intervalSec: LOTTERY_INTERVALS['speed-racing'], prepSec: lotteryPrepSec('speed-racing'),
     iconImg: '/images/games/speed-racing/speed-racing.png',
-    route: '/game/lottery/speed-racing', backendCode: 'speed-racing', assetGame: true,
+    route: '/game/lottery/speed-racing', backendCode: 'speed-racing',
   },
   {
     key: 'bjsc', name: '北京赛车', type: 'lottery',
-    intervalSec: LOTTERY_INTERVALS.bjsc, prepSec: LOTTERY_PREP_SEC,
+    intervalSec: LOTTERY_INTERVALS.bjsc, prepSec: lotteryPrepSec('bjsc'),
     iconImg: '/images/games/bjsc/bjsc.png',
-    route: '/game/lottery/bjsc', backendCode: 'bjsc', assetGame: true,
+    route: '/game/lottery/bjsc', backendCode: 'bjsc',
   },
   {
     key: 'speed-boat', name: '幸运飞艇', type: 'lottery',
-    intervalSec: LOTTERY_INTERVALS['speed-boat'], prepSec: LOTTERY_PREP_SEC,
+    intervalSec: LOTTERY_INTERVALS['speed-boat'], prepSec: lotteryPrepSec('speed-boat'),
     iconImg: '/images/games/speed-boat/speed-boat.png',
-    route: '/game/lottery/speed-boat', backendCode: 'speed-boat', assetGame: true,
+    route: '/game/lottery/speed-boat', backendCode: 'speed-boat',
   },
   // —— 快三 / 六合 ——
   {
     key: 'kuai3', name: '1分快三', type: 'lottery',
-    intervalSec: LOTTERY_INTERVALS.kuai3, prepSec: LOTTERY_PREP_SEC,
+    intervalSec: LOTTERY_INTERVALS.kuai3, prepSec: lotteryPrepSec('kuai3'),
     iconImg: '/images/games/kuai3/kuai3.png',
-    route: '/game/lottery/kuai3', backendCode: 'kuai3', assetGame: true,
+    route: '/game/lottery/kuai3', backendCode: 'kuai3',
   },
   {
     key: 'lhc', name: '幸运六合彩', type: 'lottery',
-    intervalSec: LOTTERY_INTERVALS.lhc, prepSec: LOTTERY_PREP_SEC,
+    intervalSec: LOTTERY_INTERVALS.lhc, prepSec: lotteryPrepSec('lhc'),
     iconImg: '/images/games/hk-mark6/hk-mark6.png',
-    route: '/game/lottery/lhc', backendCode: 'lhc', assetGame: true,
+    route: '/game/lottery/lhc', backendCode: 'lhc',
   },
   // —— 牌桌（prep = 开奖流程 + 派奖；不走彩票 API） ——
   {
     key: 'zhajinhua', name: '炸金花', tag: '热 门', type: 'table',
     intervalSec: tableLobbyIntervalSec('zhajinhua'), prepSec: tableLobbyPrepSec('zhajinhua'),
     iconImg: '/images/games/zhajinhua/zhajinhua.png',
-    route: '/game/lottery/zhajinhua', assetGame: true,
+    route: '/game/lottery/zhajinhua', backendCode: 'zhajinhua',
   },
   {
     key: 'douniu', name: '斗牛', type: 'table',
     intervalSec: tableLobbyIntervalSec('douniu'), prepSec: tableLobbyPrepSec('douniu'),
     iconImg: '/images/games/douniu/douniu.png',
-    route: '/game/lottery/douniu', assetGame: true,
+    route: '/game/lottery/douniu', backendCode: 'douniu',
   },
   {
     key: 'baccarat', name: '百家乐', tag: '热 门', type: 'table',
     intervalSec: tableLobbyIntervalSec('baccarat'), prepSec: tableLobbyPrepSec('baccarat'),
     iconImg: '/images/games/baccarat/baccarat.png',
-    route: '/game/lottery/baccarat', assetGame: true,
+    route: '/game/lottery/baccarat', backendCode: 'baccarat',
   },
   {
     key: 'longhu', name: '龙虎斗', tag: '新 品', type: 'table',
     intervalSec: tableLobbyIntervalSec('longhu'), prepSec: tableLobbyPrepSec('longhu'),
     iconImg: '/images/games/longhu/longhu-icon.png',
-    route: '/game/lottery/longhu', assetGame: true,
+    route: '/game/lottery/longhu', backendCode: 'dragon-tiger',
   },
   // —— 街机 / 电子 ——
   {
@@ -333,44 +350,50 @@ const GAMES: LobbyGame[] = [
   },
 ]
 
-/* ===== 跑马灯喜报（与原型同款随机模板） ===== */
-const NAME_PREFIX = ['黄金', '银河', '夜行', '闪电', '深海', '炽焰', '寒霜', '疾风', '幻影', '星辰', '破晓', '孤狼', '雷霆', '流沙', '沧海']
-const NAME_SUFFIX = ['猎手', '行者', '刺客', '骑士', '大师', '旅人', '贵族', '王者', '使者', '武士', '船长', '法师', '剑客', '少年', '侠客']
+/** code → ONLINE | MAINTENANCE（下架不在目录里） */
+const catalogStatus = ref<Map<string, string>>(new Map())
+const catalogLoaded = ref(false)
 
+function resolveBackendCode(g: LobbyGame): string | undefined {
+  if (g.backendCode) return g.backendCode
+  if (g.type === 'table') return TABLE_SERVER_CODE[g.key]
+  return undefined
+}
+
+function platformStatus(g: LobbyGame): string | null {
+  const code = resolveBackendCode(g)
+  if (!code || !catalogLoaded.value) return null
+  return catalogStatus.value.get(code) ?? null
+}
+
+function isPlatformOnline(g: LobbyGame): boolean {
+  return platformStatus(g) === 'ONLINE'
+}
+
+function isMaintenance(g: LobbyGame): boolean {
+  return platformStatus(g) === 'MAINTENANCE'
+}
+
+/** 上架可玩 + 维护可见；下架不展示 */
+const visibleGames = computed(() =>
+  GAMES.filter((g) => {
+    const s = platformStatus(g)
+    return s === 'ONLINE' || s === 'MAINTENANCE'
+  }),
+)
+
+/* ===== 跑马灯：中性运营文案（禁止伪造「某某赢了 xxx」） ===== */
 const marqueeItems = ref<string[]>([])
 
-function fmt(n: number) {
-  return (Math.round((Number(n) || 0) * 100) / 100).toLocaleString('en-US', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })
-}
-function randName() {
-  return NAME_PREFIX[Math.floor(Math.random() * NAME_PREFIX.length)]
-    + NAME_SUFFIX[Math.floor(Math.random() * NAME_SUFFIX.length)]
-}
-function randGame() {
-  return GAMES[Math.floor(Math.random() * GAMES.length)].name.replace(/\s+/g, '')
-}
-function randAmount() {
-  const r = Math.random()
-  if (r < 0.55) return 500 + Math.floor(Math.random() * 5000)
-  if (r < 0.85) return 5000 + Math.floor(Math.random() * 30000)
-  return 30000 + Math.floor(Math.random() * 70000)
-}
 function buildMarquee() {
-  const tpls = [
-    () => `${randName()} 在「${randGame()}」赢得 <span class="num">${fmt(randAmount())}</span> 积分`,
-    () => `${randName()} 在「${randGame()}」连赢 ${3 + Math.floor(Math.random() * 8)} 场获 <span class="num">${fmt(randAmount())}</span> 积分`,
-    () => `${randName()} 单场最大赢取 <span class="num">${fmt(randAmount())}</span> 积分`,
-    () => `${randName()} 累计有效投注突破 <span class="num">${fmt(50 + Math.floor(Math.random() * 200))}</span> 万`,
-    () => `${randName()} 解锁日积月累终极豪礼 <span class="num">${fmt(randAmount())}</span> 积分`,
+  marqueeItems.value = [
+    '理性娱乐 · 量力而行',
+    '开奖结果以房间官方公告为准',
+    '下注前请确认玩法与赔率',
+    '封盘后请等待开奖动画完成',
+    '祝您游戏愉快',
+    '积分变动以账户余额为准',
   ]
-  const items: string[] = []
-  for (let i = 0; i < 6; i++) {
-    items.push(tpls[Math.floor(Math.random() * tpls.length)]())
-  }
-  marqueeItems.value = items
 }
 
 /* ===== 期号 / 倒计时滴答：倒计时显示 = 总时间 − 准备中 ===== */
@@ -446,8 +469,12 @@ interface DrawPart {
 }
 
 interface CardState {
+  /** 大厅短显期号/局号 */
   issue: string
   prevIssue: string
+  /** 完整期号（title 悬停，不占版面） */
+  issueFull?: string
+  prevIssueFull?: string
   cdText: string
   cdClass: string
   /** 数字彩开奖号 */
@@ -461,13 +488,21 @@ const cardState = reactive<Record<string, CardState>>({})
 const apiDrawCache = reactive<Record<string, { issueNo: string; nums: string[]; parts?: DrawPart[] }>>({})
 /** 后端当前期号（与进房后 serverCurrent.issueNo 对齐） */
 const apiCurrentCache = reactive<Record<string, string>>({})
+/** 彩票直播相位（来自 /lottery/.../current，与进房 lockAt 对齐） */
+const apiLotteryLive = reactive<Record<string, {
+  issueNo: string
+  lockAt: number
+  openAt: number
+  status: string
+  fetchedAt: number
+}>>({})
 /** 牌桌直播相位（来自 /table/.../snapshot） */
 const apiTableLive = reactive<Record<string, { phase: string; secondsLeft: number; roundNo: string; fetchedAt: number }>>({})
 
-/** 与服务端 genIssueNo 一致的期号族 */
-const RACING_ISSUE_KEYS = new Set(['bjsc', 'speed-racing', 'speed-boat'])
-const MMDD_ISSUE_KEYS = new Set(['ssc', 'ffc', 'kuai3', 'lhc'])
-const RACING_ISSUE_BASE_MS = Date.UTC(2024, 0, 1)
+/** 全部彩票：上海日 MMDD + 当日序号（每日 00:00 重置） */
+const LOTTERY_ISSUE_KEYS = new Set([
+  'ssc', 'ffc', 'kuai3', 'lhc', 'bjsc', 'speed-racing', 'speed-boat',
+])
 
 function shanghaiYmdParts(date = new Date()) {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -486,6 +521,19 @@ function todayStartMs() {
   return Date.parse(`${p.y}-${p.m}-${p.d}T00:00:00+08:00`)
 }
 function pad(n: number, w: number) { return String(n).padStart(w, '0') }
+
+/**
+ * 彩票大厅短显：仅认日切全号 MMDD+6 位 → 取当日序号后 4 位。
+ * 旧连续累加号（如 1087645）禁止再截后四位，否则会误显示成「七千多期」。
+ */
+function shortLotteryIssueLabel(issueNo: string): string | null {
+  const s = String(issueNo || '').trim()
+  if (!s || s === '—' || s === '— —') return null
+  const m = s.match(/^\d{4}(\d{6})$/)
+  if (m) return m[1].slice(-4)
+  return null
+}
+
 /** 与服务端 _nextAlignedTime 一致：UTC epoch 整除对齐的下一开奖点 */
 function nextOpenAtMs(intervalSec: number, now = Date.now()) {
   const intervalMs = intervalSec * 1000
@@ -494,10 +542,7 @@ function nextOpenAtMs(intervalSec: number, now = Date.now()) {
 /** 本地兜底期号/局号：按 openAt 对齐服务端公式（有 API 时优先 API） */
 function fmtLobbyIssueFromOpenAt(gameKey: string, openAtMs: number, intervalSec: number) {
   const intervalMs = intervalSec * 1000
-  if (RACING_ISSUE_KEYS.has(gameKey)) {
-    return String(Math.max(1, Math.floor((openAtMs - RACING_ISSUE_BASE_MS) / intervalMs) + 1))
-  }
-  if (MMDD_ISSUE_KEYS.has(gameKey)) {
+  if (LOTTERY_ISSUE_KEYS.has(gameKey)) {
     const p = shanghaiYmdParts(new Date(openAtMs))
     const dayStart = Date.parse(`${p.y}-${p.m}-${p.d}T00:00:00+08:00`)
     const seq = Math.floor((openAtMs - dayStart) / intervalMs) + 1
@@ -513,45 +558,6 @@ function fmtLobbyIssueFromOpenAt(gameKey: string, openAtMs: number, intervalSec:
 function fmtMmss(sec: number) {
   const s = Math.max(0, Math.ceil(sec))
   return pad(Math.floor(s / 60), 2) + ':' + pad(s % 60, 2)
-}
-
-/** 稳定种子：同一游戏同一期号始终同一组号码（大厅无人进房也会轮换） */
-function hashSeed(str: string) {
-  let h = 2166136261
-  for (let i = 0; i < str.length; i++) {
-    h ^= str.charCodeAt(i)
-    h = Math.imul(h, 16777619)
-  }
-  return h >>> 0
-}
-function mulberry32(seed: number) {
-  let a = seed >>> 0
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0
-    let t = a
-    t = Math.imul(t ^ (t >>> 15), t | 1)
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
-  }
-}
-
-const SUITS = ['♠', '♥', '♣', '♦'] as const
-const RANKS_LHD = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'] as const
-/** 龙虎比牌：A=1 … K=13 */
-function rankValueLhd(r: string) {
-  return RANKS_LHD.indexOf(r as (typeof RANKS_LHD)[number]) + 1
-}
-function pickCard(rnd: () => number) {
-  const suit = SUITS[Math.floor(rnd() * SUITS.length)]
-  const rank = RANKS_LHD[Math.floor(rnd() * RANKS_LHD.length)]
-  const tone = suit === '♥' || suit === '♦' ? 'red' as const : 'black' as const
-  return { text: `${suit}${rank}`, tone, rank }
-}
-/** 百家乐点数：A=1，2-9 面值，10/J/Q/K=0，只取个位 */
-function baccaratPoint(rank: string) {
-  if (rank === 'A') return 1
-  if (rank === '10' || rank === 'J' || rank === 'Q' || rank === 'K') return 0
-  return Number(rank)
 }
 
 function faceCardText(card: unknown): { text: string; tone: 'red' | 'black' } {
@@ -627,152 +633,10 @@ function outcomeToParts(gameKey: string, outcome: Record<string, unknown> | null
       { kind: 'side', text: '闲', tone: 'player' },
       { kind: 'hand', text: pt, tone: 'player' },
       sep(),
-      resultPart(String(outcome.result || (gameKey === 'douniu' ? 'banker' : 'tie')), 'bp'),
+      resultPart(String(outcome.result || 'banker'), 'bp'),
     ]
   }
   return []
-}
-
-function seededTableParts(gameKey: string, rnd: () => number): DrawPart[] {
-  const sep = (): DrawPart => ({ kind: 'sep', text: '·' })
-
-  if (gameKey === 'longhu') {
-    const d = pickCard(rnd)
-    const t = pickCard(rnd)
-    const dv = rankValueLhd(d.rank)
-    const tv = rankValueLhd(t.rank)
-    const result =
-      dv > tv ? { text: '龙赢', tone: 'dragon' as const }
-      : tv > dv ? { text: '虎赢', tone: 'tiger' as const }
-      : { text: '和局', tone: 'tie' as const }
-    return [
-      { kind: 'side', text: '龙', tone: 'dragon' },
-      { kind: 'card', text: d.text, tone: d.tone },
-      sep(),
-      { kind: 'side', text: '虎', tone: 'tiger' },
-      { kind: 'card', text: t.text, tone: t.tone },
-      sep(),
-      { kind: 'result', text: result.text, tone: result.tone },
-    ]
-  }
-
-  if (gameKey === 'baccarat') {
-    const b1 = pickCard(rnd)
-    const b2 = pickCard(rnd)
-    const p1 = pickCard(rnd)
-    const p2 = pickCard(rnd)
-    const bp = (baccaratPoint(b1.rank) + baccaratPoint(b2.rank)) % 10
-    const pp = (baccaratPoint(p1.rank) + baccaratPoint(p2.rank)) % 10
-    const result =
-      bp > pp ? { text: '庄赢', tone: 'banker' as const }
-      : pp > bp ? { text: '闲赢', tone: 'player' as const }
-      : { text: '和局', tone: 'tie' as const }
-    /* 大厅底栏空间紧：每边牌面合并为一枚 chip，去掉中间分隔点 */
-    const parts: DrawPart[] = [
-      { kind: 'side', text: '庄', tone: 'banker' },
-      { kind: 'card', text: `${b1.text} ${b2.text}` },
-      { kind: 'point', text: `${bp}点`, tone: 'banker' },
-      { kind: 'side', text: '闲', tone: 'player' },
-      { kind: 'card', text: `${p1.text} ${p2.text}` },
-      { kind: 'point', text: `${pp}点`, tone: 'player' },
-      { kind: 'result', text: result.text, tone: result.tone },
-    ]
-    if (b1.rank === b2.rank) parts.push({ kind: 'tag', text: '庄对', tone: 'banker' })
-    if (p1.rank === p2.rank) parts.push({ kind: 'tag', text: '闲对', tone: 'player' })
-    return parts
-  }
-
-  if (gameKey === 'zhajinhua') {
-    const hands = ['豹子', '顺金', '金花', '顺子', '对子', '散牌']
-    // 权重：散牌/对子更常见
-    const weights = [3, 4, 10, 12, 22, 49]
-    const pickHand = () => {
-      const total = weights.reduce((a, b) => a + b, 0)
-      let x = rnd() * total
-      for (let i = 0; i < hands.length; i++) {
-        x -= weights[i]
-        if (x <= 0) return hands[i]
-      }
-      return '散牌'
-    }
-    const bh = pickHand()
-    const ph = pickHand()
-    const bi = hands.indexOf(bh)
-    const pi = hands.indexOf(ph)
-    const result =
-      bi < pi ? { text: '庄赢', tone: 'banker' as const }
-      : pi < bi ? { text: '闲赢', tone: 'player' as const }
-      : { text: '和局', tone: 'tie' as const }
-    return [
-      { kind: 'side', text: '庄', tone: 'banker' },
-      { kind: 'hand', text: bh, tone: 'banker' },
-      sep(),
-      { kind: 'side', text: '闲', tone: 'player' },
-      { kind: 'hand', text: ph, tone: 'player' },
-      sep(),
-      { kind: 'result', text: result.text, tone: result.tone },
-    ]
-  }
-
-  if (gameKey === 'douniu') {
-    const hands = ['五小牛', '炸弹牛', '五花牛', '牛牛', '牛9', '牛8', '牛7', '牛6', '牛5', '牛4', '牛3', '牛2', '牛1', '无牛']
-    const pickHand = () => hands[Math.floor(rnd() * hands.length)]
-    const bh = pickHand()
-    const ph = pickHand()
-    const bi = hands.indexOf(bh)
-    const pi = hands.indexOf(ph)
-    const result =
-      bi < pi ? { text: '庄赢', tone: 'banker' as const }
-      : pi < bi ? { text: '闲赢', tone: 'player' as const }
-      : { text: '庄赢', tone: 'banker' as const } // 同级默认庄赢（与玩法一致）
-    return [
-      { kind: 'side', text: '庄', tone: 'banker' },
-      { kind: 'hand', text: bh, tone: 'banker' },
-      sep(),
-      { kind: 'side', text: '闲', tone: 'player' },
-      { kind: 'hand', text: ph, tone: 'player' },
-      sep(),
-      { kind: 'result', text: result.text, tone: result.tone },
-    ]
-  }
-
-  return [{ kind: 'result', text: '已开奖', tone: 'tie' }]
-}
-
-function seededDraw(gameKey: string, issue: string): { nums: string[]; parts: DrawPart[] } {
-  const kind = DRAW_KIND[gameKey] ?? 'digit5'
-  const rnd = mulberry32(hashSeed(`${gameKey}:${issue}`))
-  if (kind === 'table') {
-    return { nums: [], parts: seededTableParts(gameKey, rnd) }
-  }
-  if (kind === 'digit5') {
-    return { nums: Array.from({ length: 5 }, () => String(Math.floor(rnd() * 10))), parts: [] }
-  }
-  if (kind === 'dice3') {
-    return { nums: Array.from({ length: 3 }, () => String(1 + Math.floor(rnd() * 6))), parts: [] }
-  }
-  if (kind === 'pk10') {
-    const arr = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-    for (let i = arr.length - 1; i > 0; i--) {
-      const j = Math.floor(rnd() * (i + 1))
-      ;[arr[i], arr[j]] = [arr[j], arr[i]]
-    }
-    return { nums: arr.map(String), parts: [] }
-  }
-  if (kind === 'lhc') {
-    const pool = Array.from({ length: 49 }, (_, i) => i + 1)
-    const pick: number[] = []
-    for (let i = 0; i < 7; i++) {
-      const j = Math.floor(rnd() * pool.length)
-      pick.push(pool.splice(j, 1)[0])
-    }
-    const special = pick.pop()!
-    return {
-      nums: [...pick.sort((a, b) => a - b).map((n) => pad(n, 2)), '+', pad(special, 2)],
-      parts: [],
-    }
-  }
-  return { nums: Array.from({ length: 5 }, () => String(Math.floor(rnd() * 10))), parts: [] }
 }
 
 function parseApiDrawNumbers(raw: string | null | undefined): string[] {
@@ -820,6 +684,17 @@ async function refreshLotteryDraws() {
       ])
       if (current?.issueNo) {
         apiCurrentCache[g.key] = String(current.issueNo)
+        const lockAt = new Date(current.lockAt).getTime()
+        const openAt = new Date(current.openAt).getTime()
+        if (Number.isFinite(lockAt) && Number.isFinite(openAt)) {
+          apiLotteryLive[g.key] = {
+            issueNo: String(current.issueNo),
+            lockAt,
+            openAt,
+            status: String(current.status || ''),
+            fetchedAt: Date.now(),
+          }
+        }
       }
       const row = list?.[0]
       if (!row) return
@@ -827,7 +702,7 @@ async function refreshLotteryDraws() {
       if (!nums.length) return
       apiDrawCache[g.key] = { issueNo: String(row.issueNo), nums }
     } catch {
-      // 后端无此彩种或未开奖：用本地种子结果
+      // 后端无此彩种或未开奖：底条显示「等待开奖」
     }
   })
   await Promise.all(tasks)
@@ -887,57 +762,78 @@ function tickAll() {
     }
     const interval = g.intervalSec
     const prep = Math.max(1, g.prepSec ?? 4)
-    const chatLottery = RACING_ISSUE_KEYS.has(g.key) || MMDD_ISSUE_KEYS.has(g.key)
+    const isLottery = g.type === 'lottery'
     const isTable = g.type === 'table'
     let r: number
     let localIssue: string
     let localPrev: string
-    if (chatLottery || isTable) {
-      /* 聊天室彩票 / 牌桌：倒计时与服务端 UTC epoch 对齐网格一致 */
-      const openAt = nextOpenAtMs(interval)
-      r = (openAt - Date.now()) / 1000
-      if (r <= 0) r = interval
-      if (isTable) {
-        /* 牌桌：当前墙钟周期 = 正在进行的局；勿用 nextOpen（那是下一局） */
-        localIssue = fmtLobbyIssueFromOpenAt(g.key, Date.now(), interval)
-        localPrev = fmtLobbyIssueFromOpenAt(g.key, Date.now() - interval * 1000, interval)
-      } else {
-        localIssue = fmtLobbyIssueFromOpenAt(g.key, openAt, interval)
-        localPrev = fmtLobbyIssueFromOpenAt(g.key, openAt - interval * 1000, interval)
-      }
+    /* 聊天室彩票 / 牌桌：倒计时与服务端 UTC epoch 对齐网格一致 */
+    const openAt = nextOpenAtMs(interval)
+    r = (openAt - Date.now()) / 1000
+    if (r <= 0) r = interval
+    if (isTable) {
+      /* 牌桌：当前墙钟周期 = 正在进行的局；勿用 nextOpen（那是下一局） */
+      localIssue = fmtLobbyIssueFromOpenAt(g.key, Date.now(), interval)
+      localPrev = fmtLobbyIssueFromOpenAt(g.key, Date.now() - interval * 1000, interval)
     } else {
-      const elapsed = (Date.now() - todayStartMs()) / 1000
-      const seq = Math.floor(elapsed / interval) + 1
-      r = interval - (elapsed % interval)
-      localIssue = pad(Math.max(1, seq), 6)
-      localPrev = seq > 1 ? pad(seq - 1, 6) : '— —'
+      localIssue = fmtLobbyIssueFromOpenAt(g.key, openAt, interval)
+      localPrev = fmtLobbyIssueFromOpenAt(g.key, openAt - interval * 1000, interval)
     }
 
     let cdText: string
     let cdClass = ''
-    const live = isTable ? apiTableLive[g.key] : undefined
-    if (live && Date.now() - live.fetchedAt < 20_000) {
-      /* 有近期 snapshot：按真实相位展示（本地按 elapsed 估算剩余） */
-      const elapsedSec = (Date.now() - live.fetchedAt) / 1000
-      const left = Math.max(0, live.secondsLeft - elapsedSec)
-      if (live.phase === 'BETTING' && left > 0) {
+    const nowMs = Date.now()
+    const liveTable = isTable ? apiTableLive[g.key] : undefined
+    const liveLot = isLottery ? apiLotteryLive[g.key] : undefined
+    /** 彩票直播包：期号与倒计时必须同包，禁止「旧期号 + 墙钟下一期秒数」拼盘 */
+    let lotteryLiveIssue: string | null = null
+    if (liveTable && nowMs - liveTable.fetchedAt < 20_000) {
+      /* 牌桌近期 snapshot：按真实相位展示 */
+      const elapsedSec = (nowMs - liveTable.fetchedAt) / 1000
+      const left = Math.max(0, liveTable.secondsLeft - elapsedSec)
+      if (liveTable.phase === 'BETTING' && left > 0) {
         cdText = fmtMmss(left)
         cdClass = ''
       } else {
-        cdText = '准备中'
+        cdText = '开奖中'
         cdClass = 'is-drawing'
       }
-    } else if (r <= prep) {
-      cdText = '准备中'; cdClass = 'is-drawing'
+    } else if (liveLot && nowMs - liveLot.fetchedAt < 25_000) {
+      if (nowMs >= liveLot.openAt) {
+        /* 该期 openAt 已过：作废直播包，避免继续显示已结束期号配上下一期墙钟倒计时 */
+        delete apiLotteryLive[g.key]
+        if (apiCurrentCache[g.key] === liveLot.issueNo) delete apiCurrentCache[g.key]
+        cdText = '开奖中'
+        cdClass = 'is-drawing'
+        lotteryLiveIssue = localIssue
+      } else if (liveLot.status === 'PENDING' && nowMs < liveLot.lockAt) {
+        cdText = fmtMmss((liveLot.lockAt - nowMs) / 1000)
+        cdClass = ''
+        lotteryLiveIssue = liveLot.issueNo
+      } else {
+        cdText = '开奖中'
+        cdClass = 'is-drawing'
+        lotteryLiveIssue = liveLot.issueNo
+      }
     } else {
-      cdText = fmtMmss(r - prep)
+      if (liveLot && nowMs - liveLot.fetchedAt >= 25_000) {
+        delete apiLotteryLive[g.key]
+        if (apiCurrentCache[g.key] === liveLot.issueNo) delete apiCurrentCache[g.key]
+      }
+      if (r <= prep) {
+        cdText = '开奖中'; cdClass = 'is-drawing'
+      } else {
+        cdText = fmtMmss(r - prep)
+      }
     }
     /*
      * 牌桌双形态（必须严格分工，短号绝不能进 API / 验算 / 注单）：
      * - 权威全号 issueFull/prevFull：BJL20260725-0399（服务端 roundNo，缓存与 resolveDraw 只用它）
      * - 大厅短显 cardState：0399（pure display；进房点击不带期号）
      */
-    const issueFull = apiCurrentCache[g.key] || localIssue
+    const issueFull = isLottery
+      ? (lotteryLiveIssue || apiCurrentCache[g.key] || localIssue)
+      : (apiCurrentCache[g.key] || localIssue)
     const prevFull = apiDrawCache[g.key]?.issueNo || localPrev
     let issue = issueFull
     let prevIssue = prevFull
@@ -953,11 +849,19 @@ function tickAll() {
         /* 上期仍是旧 T… / 乱号：结果芯片可信，局号勿用本地短号冒充成另一局 */
         prevIssue = '— —'
       }
+    } else if (isLottery) {
+      issue = shortLotteryIssueLabel(issueFull) || shortLotteryIssueLabel(localIssue) || '—'
+      /* 历史若仍是旧连续号，short 会得到 null，回退本地日切上期，避免底条空白或假「七千期」 */
+      prevIssue = shortLotteryIssueLabel(prevFull)
+        || shortLotteryIssueLabel(localPrev)
+        || '— —'
     }
     const draw = resolveDraw(g.key, prevFull)
     cardState[g.key] = {
       issue,
       prevIssue,
+      issueFull,
+      prevIssueFull: prevFull || undefined,
       cdText,
       cdClass,
       nums: draw.nums,
@@ -965,9 +869,6 @@ function tickAll() {
     }
   }
 }
-
-/* ===== 后端在线游戏（决定卡片是否可进入） ===== */
-const onlineCodes = ref<Set<string>>(new Set())
 
 const showSlotsCover = ref(false)
 const currentSlotsRoute = ref('')
@@ -997,15 +898,12 @@ async function enterBcbmGame() {
 }
 
 function onGameClick(g: LobbyGame) {
-  const isPlayable =
-    g.route &&
-    (g.assetGame ||
-      onlineCodes.value.size === 0 ||
-      !g.backendCode ||
-      onlineCodes.value.has(g.backendCode))
-
-  if (!isPlayable) {
-    toast(`${g.name.replace(/\s+/g, '')} · 即将上线`)
+  if (isMaintenance(g)) {
+    toast(`${g.name.replace(/\s+/g, '')} · 维护中，暂不可进入`)
+    return
+  }
+  if (!g.route || !isPlatformOnline(g)) {
+    toast(`${g.name.replace(/\s+/g, '')} · 已下架`)
     return
   }
 
@@ -1034,16 +932,18 @@ onMounted(async () => {
   timer = setInterval(tickAll, 1000)
   try {
     const list = await gamesApi.list()
-    onlineCodes.value = new Set(list.map(g => g.code))
+    catalogStatus.value = new Map(list.map((g) => [g.code, g.status || 'ONLINE']))
   } catch {
-    // 后端不可达时不阻断大厅渲染
+    catalogStatus.value = new Map()
+  } finally {
+    catalogLoaded.value = true
   }
-  // 拉取各彩种 / 牌桌最近开奖；失败则用期号种子结果，保证底条始终有号
+  // 拉取各彩种 / 牌桌最近开奖；无数据时底条显示「等待开奖」
   await Promise.all([refreshLotteryDraws(), refreshTableDraws()])
   tickAll()
   drawTimer = setInterval(() => {
     Promise.all([refreshLotteryDraws(), refreshTableDraws()]).then(() => tickAll())
-  }, 8000)
+  }, 3000)
 })
 
 onUnmounted(() => {

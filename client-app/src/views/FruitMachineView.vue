@@ -8,11 +8,11 @@
       aria-hidden="true"
     />
 
-    <div class="cabinet-stage">
+    <div class="cabinet-stage" :class="ringFxClass">
       <img
         class="cabinet-body"
         :src="cabinetBodyUrl"
-        alt="水果机"
+        alt="水果机
         draggable="false"
       />
 
@@ -48,7 +48,7 @@
       <img
         class="fruit-ring"
         :src="fruitRingUrl"
-        alt="24格"
+        alt="24格
         draggable="false"
         :style="boxStyle(fruitRingBox)"
       />
@@ -60,9 +60,11 @@
         :ref="(el) => setRingCellRef(el as any, i)"
         class="ring-cell"
         :class="{
-          hit: hitLit.has(i) && trainHead !== i && trainTail !== i,
+          active: cursorIndex === i,
+          hit: hitLit.has(i),
           train: trainHead === i,
           'train-tail': trainTail === i,
+          'train-car': trainBody.has(i) && trainHead !== i,
           flash: flashAll,
         }"
         :style="boxStyle(cell)"
@@ -158,84 +160,123 @@
 
     <button type="button" class="lobby-back fruit-top-btn" @click="goBack" aria-label="返回" />
 
-    <div class="fruit-top-right">
-      <button
-        v-if="isDev"
-        type="button"
-        class="fruit-demo-chip"
-        :disabled="busy || autoPlaying"
-        @click="playTrainDemo"
-      >
-        开火车演示
+    <!-- 与牌桌聊天室同一套侧栏图标：历史 / 玩法 / 设置 -->
+    <div class="fruit-top-right" aria-label="快捷操作">
+      <button type="button" class="fruit-rail-btn" title="历史记录" @click="openBetRecords">
+        <img class="fruit-rail-ic" src="/images/table-rail/rail-history.png" alt="" draggable="false" />
+        <span class="fruit-rail-lb">历史</span>
       </button>
-      <button
-        type="button"
-        class="fruit-top-btn fruit-top-btn--history"
-        aria-label="历史记录"
-        @click="showHistory = true"
-      />
-      <button
-        type="button"
-        class="fruit-top-btn fruit-top-btn--rules"
-        aria-label="游戏玩法"
-        @click="showRules = true"
-      />
-      <button
-        type="button"
-        class="fruit-top-btn fruit-top-btn--settings"
-        aria-label="设置"
-        @click="openSettings"
-      />
+      <button type="button" class="fruit-rail-btn" title="玩法规则" @click="showRules = true">
+        <img class="fruit-rail-ic" src="/images/table-rail/rail-rules.png" alt="" draggable="false" />
+        <span class="fruit-rail-lb">玩法</span>
+      </button>
+      <button type="button" class="fruit-rail-btn" title="设置" @click="openSettings">
+        <img class="fruit-rail-ic" src="/images/table-rail/rail-settings.png" alt="" draggable="false" />
+        <span class="fruit-rail-lb">设置</span>
+      </button>
     </div>
 
     <FruitSettingsPanel v-if="showSettings" @close="showSettings = false" />
-
-    <!-- 历史记录 -->
-    <div v-if="showHistory" class="fruit-modal" @click.self="showHistory = false">
-      <div class="fruit-modal-card">
-        <div class="fruit-modal-head">
-          <h3>历史记录</h3>
-          <button type="button" class="fruit-modal-close" @click="showHistory = false">关闭</button>
-        </div>
-        <div v-if="spinHistory.length" class="fruit-history-list">
-          <div v-for="(row, i) in spinHistory" :key="i" class="fruit-history-row">
-            <span class="fh-time">{{ row.time }}</span>
-            <span class="fh-award">{{ row.award }}</span>
-            <span class="fh-win" :class="{ plus: row.win > 0 }">
-              {{ row.win > 0 ? `+${row.win}` : '0' }}
-            </span>
-          </div>
-        </div>
-        <div v-else class="fruit-modal-empty">暂无记录，开始游戏后这里会显示近局结果</div>
-      </div>
-    </div>
 
     <!-- 游戏玩法 -->
     <div v-if="showRules" class="fruit-modal" @click.self="showRules = false">
       <div class="fruit-modal-card fruit-modal-card--rules">
         <div class="fruit-modal-head">
           <h3>游戏玩法</h3>
-          <button type="button" class="fruit-modal-close" @click="showRules = false">关闭</button>
+          <button type="button" class="fruit-modal-close" aria-label="关闭" @click="showRules = false">
+            &times;
+          </button>
         </div>
         <div class="fruit-rules-body">
-          <p>经典水果机（玛丽机）：先选倍数，再对各水果押分，按「开始」跑灯开奖。</p>
-          <p><b>自动</b>：盘面已有押分时点「自动」，会按当前押分连续开局；按钮变为「停止」，再点即可在本局结束后停下。</p>
-          <p><b>普通中奖</b>：灯停在已押符号上，按该格倍率 × 该符号押注 × 当前倍数得分。</p>
-          <p><b>开火车</b>：正常停灯 → 全图闪 → 语音报奖 → 从停点一格格往前开并同步常驻一二行算账；结束后有赢分才进猜大小。</p>
-          <p><b>大三元 / 小三元 / 大四喜 / 大满贯</b>：正常停灯 → 全图闪 → 语音揭晓 → 对应格一格格点亮并同步算账。</p>
-          <p><b>送灯</b>：停在好运格 → 闪灯报「送灯」→ 再分别跑灯到各中奖格并算账。</p>
-          <p><b>吃灯</b>：停在好运格 → 报「吃灯」，本局无分。</p>
-          <p><b>猜大小</b>：当局有赢分时可猜大(8-13)或小(1-6)，猜中翻倍，猜错清零，7 为和局。自动模式下跳过猜大小，直接连开下一局。</p>
-          <p>顶部弧槽跑马灯会在报奖与庆祝时追跑点亮，属老式柜机效果。</p>
-          <button
-            v-if="isDev"
-            type="button"
-            class="fruit-demo-btn"
-            :disabled="busy || autoPlaying"
-            @click="playTrainDemo"
-          >
-            演示完整开火车效果
-          </button>
+          <section class="fruit-rules-sec">
+            <h4>一、游戏说明</h4>
+            <p>
+              水果机为经典街机玩法（俗称玛丽机）。外围共 24 个图案格，底部有 8 个押注仓位。              玩家先选择押注倍数，再对一个或多个水果仓位押分，按下「开始」后跑灯开奖。              灯停在已押符号对应的格子上即中奖；未押的符号停中不计分。            </p>
+          </section>
+
+          <section class="fruit-rules-sec">
+            <h4>二、如何下注</h4>
+            <ol>
+              <li>底部「倍数」选择本局押注倍数：×1、×5、×10、×20、×50、×100。</li>
+              <li>点击下方水果图标押分，每点一次该仓位增加 1 注；实际扣分 = 注数 × 倍数。</li>
+              <li>可同时押多个水果；总押注须在游戏限额内。</li>
+              <li>点「开始」开奖；点「自动」可按当前盘面押分连续开局，再点「停止」结束自动。</li>
+              <li>「退币」可退回尚未开跑的盘面押分（当局已结算赢分不受影响）。</li>
+            </ol>
+          </section>
+
+          <section class="fruit-rules-sec">
+            <h4>三、中奖结算</h4>
+            <p>单格中奖得分：</p>
+            <p class="fruit-rules-formula">得分 = 格位赔率 × 押注倍数 × 该符号注数。</p>
+            <p>
+              例：押苹果 2 注、倍数 ×10，灯停在大苹果（×5），得分 = 5 × 10 × 2 = 100。              特殊奖一次命中多格时，对每个命中格分别按上式计算后累加。            </p>
+          </section>
+
+          <section class="fruit-rules-sec">
+            <h4>四、押注仓位与赔率</h4>
+            <p>押某一仓位后，该符号的「大格」与「小格」均可中奖，赔率以停中格子为准：</p>
+            <table class="fruit-rules-table">
+              <thead>
+                <tr>
+                  <th>仓位</th>
+                  <th>大格赔率</th>
+                  <th>小格赔率</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td>天门（BAR）</td><td>×100</td><td>×50</td></tr>
+                <tr><td>77</td><td>×40</td><td>×2</td></tr>
+                <tr><td>双星</td><td>×30</td><td>×2</td></tr>
+                <tr><td>西瓜</td><td>×20</td><td>×2</td></tr>
+                <tr><td>铃铛</td><td>×20</td><td>×2</td></tr>
+                <tr><td>芒果</td><td>×15</td><td>×2</td></tr>
+                <tr><td>橘子</td><td>×10</td><td>×2</td></tr>
+                <tr><td>苹果</td><td>×5</td><td>×2</td></tr>
+              </tbody>
+            </table>
+            <p>盘面另有 2 格「GOOD LUCK」好运格，不直接派彩，用于触发送灯或吃灯。</p>
+          </section>
+
+          <section class="fruit-rules-sec">
+            <h4>五、奖项说明</h4>
+            <ul>
+              <li><b>普通中奖</b>：灯停在某一水果格。若已押该符号，按该格赔率结算；未押则本局不得分。</li>
+              <li>
+                <b>幸运送灯</b>：开到好运格并发放送灯。随机 1～N 个水果格为中奖格，                对每个已押中的符号分别计分后累加。              </li>
+              <li><b>幸运吃灯</b>：开到好运格但触发吃灯。本局全部押注无效，不得分。</li>
+              <li>
+                <b>开火车</b>：从停点起连续命中若干格（跳过好运格），凡已押中的符号均计分。              </li>
+              <li>
+                <b>大三元</b>：一次同时中「大77、大双星、大西瓜」三个高赔格。                你押了哪个，就按哪个的赔率算分；三个都押了就三个都算，只押其中一个也只算那一个。              </li>
+              <li>
+                <b>小三元</b>：一次同时中「大铃铛、大芒果、大橘子」三个高赔格。                算法同上：押中哪个算哪个，可叠加。              </li>
+              <li><b>大四喜</b>：命中盘面全部苹果格，凡押了苹果的按各格赔率累计得分。</li>
+              <li><b>大满贯</b>：命中盘面全部非好运格，已押符号按各命中格赔率全部累计。</li>
+            </ul>
+          </section>
+
+          <section class="fruit-rules-sec">
+            <h4>六、猜大小</h4>
+            <p>
+              当局有赢分时，可用全部当局赢分猜「大」或「小」（不可改金额）。            </p>
+            <ul>
+              <li><b>小</b>：开出 1～6 为赢，赢分翻倍；</li>
+              <li><b>大</b>：开出 8～13 为赢，赢分翻倍；</li>
+              <li><b>和</b>：开出 7，赢分退回，可继续猜。</li>
+              <li>猜错则当局赢分清零。</li>
+            </ul>
+            <p>猜中后可继续用新的当局赢分再猜，也可直接离开带走积分。自动模式下跳过猜大小，直接进入下一局。</p>
+          </section>
+
+          <section class="fruit-rules-sec">
+            <h4>七、其他说明</h4>
+            <ul>
+              <li>顶部「总积分」为当前可用积分；「当局赢分」为上一局（或猜大小后）尚未并入总积分的赢分。</li>
+              <li>开新局前，若仍有当局赢分，将自动并入总积分。</li>
+              <li>点返回离开：本局已开跑时会等结算完成再退；若正在猜大小，则放弃续猜并退出。查看历史记录可返回继续猜大小。</li>
+            </ul>
+          </section>
         </div>
       </div>
     </div>
@@ -244,10 +285,8 @@
 
 <script setup lang="ts">
 import { computed, defineComponent, h, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRouter } from 'vue-router'
 import {
-  FRUIT_AWARD_LABELS,
-  FRUIT_MULT_STEPS,
   FRUIT_RING,
   type FruitAwardType,
   type FruitBetSymbolId,
@@ -256,19 +295,39 @@ import type { CenterStageMode } from '@/games/slots/fruitCenterAssets'
 import FruitCenterStage from '@/components/FruitCenterStage.vue'
 import FruitSettingsPanel from '@/components/FruitSettingsPanel.vue'
 import {
-  playFruitAnnounce,
-  playFruitAwardFanfare,
-  playFruitAwardVoice,
   playFruitBet,
-  playFruitGo,
   playFruitSfx,
   initFruitMuteFromStorage,
   setFruitBgmDuck,
   startFruitBgm,
   stopFruitBgm,
+  stopFruitAnnounce,
   stopFruitGo,
+  disposeFruitAudio,
   unlockFruitAudio,
 } from '@/games/slots/fruitAudio'
+import {
+  TITLE_MARQUEE_BULBS,
+  betButtons,
+  betLeds,
+  boxStyle,
+  buildControlButtons,
+  cabinetAmbientUrl,
+  cabinetBodyUrl,
+  cellBoxes,
+  fruitRingBox,
+  fruitRingUrl,
+  multButtons,
+  titleMarqueeBulbStyle,
+  totalScoreBox,
+  tvScreenBox,
+  winScoreBox,
+  type BetId,
+  type ControlId,
+  type MultValue,
+} from '@/games/slots/fruitLayout'
+import { useFruitRingLights } from '@/games/slots/useFruitRingLights'
+import { createFruitAwardFx } from '@/games/slots/fruitAwardFx'
 import { gamesApi } from '@/api/games'
 import { useWalletStore } from '@/stores/wallet'
 import { useToast } from '@/composables/useToast'
@@ -339,147 +398,34 @@ const SegDigit = defineComponent({
 })
 
 const router = useRouter()
-const route = useRoute()
-const isDev = import.meta.env.DEV
-/** DEV 下一局强制大奖（仅本地演示，不改真钱包） */
-const forceAwardOnce = ref<FruitAwardType | null>(null)
 const walletStore = useWalletStore()
 const { toast } = useToast()
 const spinSession = useGameSpinSession('fruit')
 /** 服务端游戏限额（默认与 seed 一致，进页后刷新） */
 const fruitMinBet = ref(1)
-const fruitMaxBet = ref(50_000)
+const fruitMaxBet = ref(100_000)
 
-const cabinetBodyUrl = '/images/games/slots/fruit-cabinet-base.png'
-const cabinetAmbientUrl = '/images/games/slots/fruit-cabinet-bg-blur.jpg'
-const fruitRingUrl = '/images/games/slots/24格.png'
-
-const BASE_W = 1024
-const BASE_H = 1536
-
-interface PixelBox {
-  x: number
-  y: number
-  w: number
-  h: number
-}
-
-/** 24 格盘面（位置不动） */
-const fruitRingBox: PixelBox = { x: 139, y: 421, w: 752, h: 680 }
-/**
- * 底图中间大金框内侧黑屏 = 电视机画面区
- * 仅中心舞台用这里，不改 24 格坐标
- */
-const tvScreenBox: PixelBox = { x: 256, y: 534, w: 518, h: 455 }
-const totalScoreBox: PixelBox = { x: 275, y: 323, w: 185, h: 48 }
-const winScoreBox: PixelBox = { x: 571, y: 323, w: 182, h: 47 }
-
-/**
- * 「水果机」顶弧跑马灯（底图 1024×1536）
- * 位置：外金弧下沿 ↔ 内标题金框上沿 的灯槽中线（约 y=45 顶点，不是外框顶边）
- * 形状：圆拟合 + 等角均分，左右镜像对称，16 点
- */
-const TITLE_MARQUEE_BULBS = [
-  { x: 214, y: 155 },
-  { x: 244, y: 130 },
-  { x: 280, y: 108 },
-  { x: 320, y: 90 },
-  { x: 361, y: 75 },
-  { x: 403, y: 62 },
-  { x: 445, y: 53 },
-  { x: 489, y: 49 },
-  { x: 535, y: 49 },
-  { x: 579, y: 53 },
-  { x: 621, y: 62 },
-  { x: 663, y: 75 },
-  { x: 704, y: 90 },
-  { x: 744, y: 108 },
-  { x: 782, y: 130 },
-  { x: 820, y: 155 },
-] as const
-
-/** 灯珠直径：落在灯槽内 */
-const TITLE_MARQUEE_BULB_SIZE = 28
 const titleMarqueeBulbs = TITLE_MARQUEE_BULBS
 
-/**
- * 24 格在 ring 图内的实测格子（752×680）
- * 格缝按 24格.png 透明缝实测，行高不均（GOOD LUCK 等偏矮）
- * 行高约：103 / 107 / 102 / 79 / 102 / 87 / 100
- * 顺序与 FRUIT_RING 一致：上7 → 右5 → 下7(右→左) → 左5(下→上)
- */
-const RING_X = [0, 105, 214, 323, 432, 540, 648, 752] as const
-const RING_Y = [0, 103, 210, 312, 391, 493, 580, 680] as const
-const RING_PAD = 2
-
-function ringCellAt(col: number, row: number): PixelBox {
-  return {
-    x: RING_X[col] + RING_PAD,
-    y: RING_Y[row] + RING_PAD,
-    w: RING_X[col + 1] - RING_X[col] - RING_PAD * 2,
-    h: RING_Y[row + 1] - RING_Y[row] - RING_PAD * 2,
-  }
-}
-
-const RING_CELL_LOCAL: ReadonlyArray<PixelBox> = [
-  // 上 7
-  ringCellAt(0, 0),
-  ringCellAt(1, 0),
-  ringCellAt(2, 0),
-  ringCellAt(3, 0),
-  ringCellAt(4, 0),
-  ringCellAt(5, 0),
-  ringCellAt(6, 0),
-  // 右 5（含偏矮格）
-  ringCellAt(6, 1),
-  ringCellAt(6, 2),
-  ringCellAt(6, 3),
-  ringCellAt(6, 4),
-  ringCellAt(6, 5),
-  // 下 7（右→左）
-  ringCellAt(6, 6),
-  ringCellAt(5, 6),
-  ringCellAt(4, 6),
-  ringCellAt(3, 6),
-  ringCellAt(2, 6),
-  ringCellAt(1, 6),
-  ringCellAt(0, 6),
-  // 左 5（下→上，含偏矮格）
-  ringCellAt(0, 5),
-  ringCellAt(0, 4),
-  ringCellAt(0, 3),
-  ringCellAt(0, 2),
-  ringCellAt(0, 1),
-]
-
-const cellBoxes: PixelBox[] = RING_CELL_LOCAL.map((b) => ({
-  x: fruitRingBox.x + b.x,
-  y: fruitRingBox.y + b.y,
-  w: b.w,
-  h: b.h,
-}))
+const lights = useFruitRingLights(FRUIT_RING.length)
+const {
+  cursorIndex,
+  hitLit,
+  trainHead,
+  trainTail,
+  trainBody,
+  flashAll,
+  ringFxClass,
+  setRingCellRef,
+  setCursor,
+  clearTrainVisual,
+  setRingFx,
+  clearHitLit,
+} = lights
 
 const totalScore = ref(0)
 const winScore = ref(0)
 const busy = ref(false)
-const cursorIndex = ref(-1)
-// 跑灯高亮直写 DOM：只在旧/新两个格子上增删 .active class，
-// 不再让 24 格 v-for 每步整体重算 class（跑灯每圈数十步），显著降低主线程压力。
-const ringCellEls: (HTMLElement | null)[] = []
-function setRingCellRef(el: HTMLElement | null, i: number) {
-  ringCellEls[i] = el
-}
-function setCursor(idx: number) {
-  const old = cursorIndex.value
-  if (old === idx) return
-  if (old >= 0) ringCellEls[old]?.classList.remove('active')
-  if (idx >= 0) ringCellEls[idx]?.classList.add('active')
-  cursorIndex.value = idx
-}
-const hitLit = ref<Set<number>>(new Set())
-const trainHead = ref(-1)
-const trainTail = ref(-1)
-const flashAll = ref(false)
 const selectedBet = ref<FruitBetSymbolId>('apple')
 
 /** 标题弧槽跑马灯：常灭，报奖时追跑 */
@@ -499,16 +445,8 @@ const centerHitLabel = ref('')
 const centerHitOdds = ref(0)
 /** 该符号押注注数（算式第三项） */
 const centerHitBetUnits = ref(0)
-const showHistory = ref(false)
 const showRules = ref(false)
 const showSettings = ref(false)
-
-interface SpinHistoryRow {
-  time: string
-  award: string
-  win: number
-}
-const spinHistory = ref<SpinHistoryRow[]>([])
 
 const totalScoreDigits = computed(() =>
   String(Math.min(999999, Math.max(0, totalScore.value))).padStart(6, '0').split(''),
@@ -517,36 +455,14 @@ const winScoreDigits = computed(() =>
   String(Math.min(999999, Math.max(0, winScore.value))).padStart(6, '0').split(''),
 )
 
-type ControlId = 'refund' | 'auto' | 'small' | 'big' | 'start'
-
-interface ControlButton extends PixelBox {
-  id: ControlId
-  label: string
-  src: string
-}
-
 /** 自动连局中（为 true 时按钮显示「停止」） */
 const autoPlaying = ref(false)
 let autoRunToken = 0
 
-const controlButtons = computed<ControlButton[]>(() => [
-  { id: 'refund', label: '退币', src: '/images/games/slots/退币.png', x: 139, y: 1136, w: 129, h: 64 },
-  {
-    id: 'auto',
-    label: autoPlaying.value ? '停止' : '自动',
-    src: autoPlaying.value ? '/images/games/slots/停止.png' : '/images/games/slots/自动.png',
-    x: 297,
-    y: 1136,
-    w: 127,
-    h: 63,
-  },
-  { id: 'small', label: '小', src: '/images/games/slots/小.png', x: 451, y: 1136, w: 109, h: 63 },
-  { id: 'big', label: '大', src: '/images/games/slots/大.png', x: 587, y: 1136, w: 109, h: 63 },
-  { id: 'start', label: '开始', src: '/images/games/slots/开始.png', x: 726, y: 1137, w: 159, h: 62 },
-])
+const controlButtons = computed(() => buildControlButtons(autoPlaying.value))
 
 function isControlDisabled(id: ControlId) {
-  if (id === 'refund') return false
+  if (id === 'refund') return busy.value || autoPlaying.value
   // 自动中允许点「停止」；未开自动时转盘忙则不可点
   if (id === 'auto') return busy.value && !autoPlaying.value
   return busy.value || autoPlaying.value
@@ -557,36 +473,6 @@ function stopAutoPlay() {
   autoPlaying.value = false
   autoRunToken += 1
 }
-
-type BetId = FruitBetSymbolId
-
-interface BetButton extends PixelBox {
-  id: BetId
-  label: string
-  src: string
-}
-
-const betButtons: BetButton[] = [
-  { id: 'bar', label: '天门', src: '/images/games/slots/1.png', x: 75, y: 1270, w: 118, h: 100 },
-  { id: 'seven', label: '77', src: '/images/games/slots/2.png', x: 185, y: 1269, w: 113, h: 101 },
-  { id: 'star', label: '双星', src: '/images/games/slots/3.png', x: 295, y: 1269, w: 108, h: 101 },
-  { id: 'melon', label: '西瓜', src: '/images/games/slots/4.png', x: 402, y: 1269, w: 106, h: 101 },
-  { id: 'bell', label: '铃铛', src: '/images/games/slots/5.png', x: 510, y: 1269, w: 109, h: 101 },
-  { id: 'lemon', label: '芒果', src: '/images/games/slots/6.png', x: 618, y: 1269, w: 111, h: 101 },
-  { id: 'orange', label: '橘子', src: '/images/games/slots/7.png', x: 726, y: 1269, w: 114, h: 101 },
-  { id: 'apple', label: '苹果', src: '/images/games/slots/8.png', x: 832, y: 1269, w: 120, h: 101 },
-]
-
-const betLeds: Array<PixelBox & { id: BetId }> = [
-  { id: 'bar', x: 104, y: 1240, w: 83, h: 22 },
-  { id: 'seven', x: 206, y: 1240, w: 85, h: 22 },
-  { id: 'star', x: 313, y: 1240, w: 81, h: 22 },
-  { id: 'melon', x: 414, y: 1240, w: 84, h: 22 },
-  { id: 'bell', x: 520, y: 1240, w: 85, h: 22 },
-  { id: 'lemon', x: 627, y: 1240, w: 83, h: 22 },
-  { id: 'orange', x: 731, y: 1240, w: 86, h: 22 },
-  { id: 'apple', x: 837, y: 1240, w: 87, h: 22 },
-]
 
 const betCounts = ref<Record<BetId, number>>({
   bar: 0,
@@ -602,22 +488,6 @@ const betCounts = ref<Record<BetId, number>>({
 function betLedDigits(id: BetId) {
   return String(Math.min(99, betCounts.value[id] ?? 0)).padStart(2, '0').split('')
 }
-
-type MultValue = (typeof FRUIT_MULT_STEPS)[number]
-
-interface MultButton extends PixelBox {
-  value: MultValue
-  src: string
-}
-
-const multButtons: MultButton[] = [
-  { value: 1, src: '/images/games/slots/X1.png', x: 242, y: 1435, w: 89, h: 66 },
-  { value: 5, src: '/images/games/slots/X5.png', x: 354, y: 1435, w: 89, h: 66 },
-  { value: 10, src: '/images/games/slots/X10.png', x: 470, y: 1435, w: 89, h: 66 },
-  { value: 20, src: '/images/games/slots/X20.png', x: 586, y: 1435, w: 92, h: 66 },
-  { value: 50, src: '/images/games/slots/X50.png', x: 703, y: 1435, w: 92, h: 66 },
-  { value: 100, src: '/images/games/slots/X100.png', x: 823, y: 1435, w: 92, h: 66 },
-]
 
 const selectedMult = ref<MultValue>(10)
 
@@ -688,9 +558,14 @@ function restoreLastBets(): boolean {
   const restored = { ...lastBetCounts.value }
   const units = (Object.values(restored) as number[]).reduce((a, b) => a + b, 0)
   const cost = units * selectedMult.value
+  if (cost < fruitMinBet.value) {
+    playFruitSfx('lose', 0.45)
+    toast(`总押注不能低于${fruitMinBet.value}`)
+    return false
+  }
   if (cost > fruitMaxBet.value) {
     playFruitSfx('lose', 0.45)
-    toast(`总押注不能超过 ${fruitMaxBet.value}`)
+    toast(`总押注不能超过${fruitMaxBet.value}`)
     return false
   }
   // 若盘面已有押分，先退回再重摆
@@ -745,24 +620,6 @@ function enterGambleOrIdle() {
   } else {
     stageMode.value = 'idle'
     stageAwardType.value = 'normal'
-  }
-}
-
-function boxStyle(box: PixelBox) {
-  return {
-    left: `${(box.x / BASE_W) * 100}%`,
-    top: `${(box.y / BASE_H) * 100}%`,
-    width: `${(box.w / BASE_W) * 100}%`,
-    height: `${(box.h / BASE_H) * 100}%`,
-  }
-}
-
-function titleMarqueeBulbStyle(bulb: { x: number; y: number }) {
-  const s = TITLE_MARQUEE_BULB_SIZE
-  return {
-    left: `${((bulb.x - s / 2) / BASE_W) * 100}%`,
-    top: `${((bulb.y - s / 2) / BASE_H) * 100}%`,
-    width: `${(s / BASE_W) * 100}%`,
   }
 }
 
@@ -839,8 +696,83 @@ function onFirstInteract() {
   startFruitBgm()
 }
 
-function goBack() {
+let leavingGame = false
+/** 本局开奖进行中时，卸载页不要抢先 abandon（等跑完再退）*/
+let abandonOnUnmount = true
+
+function waitWhileBusy(timeoutMs = 120_000) {
+  if (!busy.value) return Promise.resolve()
+  return new Promise<void>((resolve) => {
+    const t0 = Date.now()
+    const id = setInterval(() => {
+      if (!busy.value || Date.now() - t0 > timeoutMs) {
+        clearInterval(id)
+        resolve()
+      }
+    }, 80)
+  })
+}
+
+/** 猜大小阶段离开：赢分已入账，放弃续赌资金。*/
+async function abandonGambleAndLeaveUi() {
   stopAutoPlay()
+  stopBetHold()
+  stopTitleMarquee()
+  collectPendingWin()
+  stageMode.value = 'idle'
+  stageAwardType.value = 'normal'
+  gambleResultNum.value = null
+  try {
+    const res = await gamesApi.fruitAbandonGamble()
+    if (typeof res.balance === 'number') walletStore.balance = res.balance
+  } catch {
+    /* 忽略 */
+  }
+  syncScoreFromWallet()
+}
+
+function isInGamblePhase() {
+  return (
+    winScore.value > 0 ||
+    stageMode.value === 'gamble_roll' ||
+    stageMode.value === 'gamble_win' ||
+    stageMode.value === 'gamble_lose' ||
+    stageMode.value === 'gamble_push'
+  )
+}
+
+async function goBack() {
+  if (leavingGame) return
+  leavingGame = true
+  stopAutoPlay()
+  stopBetHold()
+
+  // 猜大小阶段：立刻退出并放弃续赌（不等骰子动画）
+  if (isInGamblePhase()) {
+    abandonOnUnmount = false
+    await abandonGambleAndLeaveUi()
+    stopFruitBgm()
+    router.replace('/lobby')
+    return
+  }
+
+  // 开奖演出中：等本局跑完并结算后再退
+  if (busy.value) {
+    toast('本局结算中，完成后退出。')
+    await waitWhileBusy()
+  }
+
+  abandonOnUnmount = false
+  if (isInGamblePhase()) {
+    // 本局结算后进入猜大小：带走已入账赢分，放弃续赌。
+    await abandonGambleAndLeaveUi()
+  } else {
+    // 仅盘面有押、未开跑：退回本地押分。
+    clearBoardBets(true)
+    syncScoreFromWallet()
+    stopTitleMarquee()
+  }
+
   stopFruitBgm()
   // replace 回大厅，去掉游戏页历史，避免大厅返回再次进入游戏
   router.replace('/lobby')
@@ -852,17 +784,22 @@ function openSettings() {
   showSettings.value = true
 }
 
-function pushSpinHistory(awardType: string, win: number) {
-  const award =
-    awardType in FRUIT_AWARD_LABELS
-      ? FRUIT_AWARD_LABELS[awardType as FruitAwardType]
-      : awardType === 'bar'
-        ? '天门'
-        : '普通中奖'
-  const now = new Date()
-  const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`
-  spinHistory.value.unshift({ time, award, win })
-  if (spinHistory.value.length > 30) spinHistory.value.length = 30
+/** 与聊天室游戏一致：跳转竞猜记录页（返回可继续玩，勿 abandon）*/
+function openBetRecords() {
+  abandonOnUnmount = false
+  router.push({ path: '/bets', query: { game: 'fruit-machine', from: 'game' } })
+}
+
+function fruitErrMsg(e: unknown, fallback = '操作失败') {
+  const msg = e instanceof Error ? e.message : String(e || '')
+  if (!msg) return fallback
+  if (/余额不足|积分不足|PLAYER\//i.test(msg)) return '积分不足'
+  if (/没有可再赌/.test(msg)) return '没有可再赌的当局赢分'
+  if (/再赌金额须等于/.test(msg)) return msg.replace(/^.*再赌金额/, '再赌金额')
+  if (/总押注须在|无效仓位|请至少押/.test(msg)) return msg
+  if (/未上线|不存在|已下线/.test(msg)) return '游戏暂不可用'
+  if (/网络|timeout|Failed to fetch|Network/i.test(msg)) return '网络异常，请重试'
+  return msg.length > 80 ? fallback : msg
 }
 
 /** 注数合计 × 倍数 = 实际扣分 */
@@ -884,16 +821,22 @@ async function onControlClick(id: ControlId) {
   unlockFruitAudio()
   startFruitBgm()
   if (id === 'refund') {
+    if (busy.value || autoPlaying.value) return
     stopAutoPlay()
     playFruitSfx('cashout')
-    // 退币：先取当局赢分，再把盘面押分退回总积分
+    // 退币：放弃猜大小资格，盘面押分退回，赢分已在开奖时入账
     collectPendingWin()
     clearBoardBets(true)
+    try {
+      const res = await gamesApi.fruitAbandonGamble()
+      if (typeof res.balance === 'number') walletStore.balance = res.balance
+    } catch {
+      /* 忽略：本地已清，下次开跑服务端也会清 pending */
+    }
     syncScoreFromWallet()
-    hitLit.value = new Set()
+    clearHitLit()
     setCursor(-1)
-    trainHead.value = -1
-    trainTail.value = -1
+    clearTrainVisual()
     clearCenterHit()
     enterGambleOrIdle()
     return
@@ -942,12 +885,19 @@ async function onAutoClick() {
   const token = ++autoRunToken
 
   while (autoPlaying.value && token === autoRunToken) {
-    // 自动模式跳过猜大小：当局赢分并入总积分后继续开
+    // 自动模式跳过猜大小：取分入账并放弃服务端续赌资格
     if (winScore.value > 0) {
       collectPendingWin()
       stageMode.value = 'idle'
       stageAwardType.value = 'normal'
       gambleResultNum.value = null
+      try {
+        const res = await gamesApi.fruitAbandonGamble()
+        if (typeof res.balance === 'number') walletStore.balance = res.balance
+        syncScoreFromWallet()
+      } catch {
+        /* 下次开跑服务端也会清*/
+      }
     }
 
     if (!hasAnyBet()) {
@@ -985,7 +935,7 @@ function addBet(id: BetId): boolean {
   }
   if (stakedScore.value + cost > fruitMaxBet.value) {
     playFruitSfx('lose', 0.45)
-    toast(`总押注不能超过 ${fruitMaxBet.value}`)
+    toast(`总押注不能超过${fruitMaxBet.value}`)
     return false
   }
   if (betCounts.value[id] >= 99) {
@@ -1039,20 +989,29 @@ async function doGamble(choice: 'big' | 'small') {
   const amount = winScore.value
   try {
     const clientRequestId = spinSession.currentOrNewClientRequestId()
-    const res = await gamesApi.fruitGamble(amount, choice, clientRequestId)
+    let res
+    try {
+      res = await gamesApi.fruitGamble(amount, choice, clientRequestId)
+    } catch {
+      // 幂等重试：响应丢失时用同一 clientRequestId 拉回结果
+      res = await gamesApi.fruitGamble(amount, choice, clientRequestId)
+    }
     spinSession.clearClientRequestId()
     walletStore.balance = res.balance
     const result = res.result as 'win' | 'lose' | 'push'
     const roll = res.roll
+    const payout = typeof res.payout === 'number' ? res.payout : 0
+    const pending =
+      typeof res.pendingGambleAmount === 'number' ? res.pendingGambleAmount : payout
 
     gambleResultNum.value = roll
     if (result === 'win') {
-      winScore.value = amount * 2
+      winScore.value = pending
       syncScoreFromWallet()
       stageMode.value = 'gamble_win'
       playFruitSfx('gambleWin')
       await sleep(2000)
-      stageMode.value = 'gamble_roll'
+      stageMode.value = pending > 0 ? 'gamble_roll' : 'idle'
     } else if (result === 'lose') {
       winScore.value = 0
       syncScoreFromWallet()
@@ -1061,261 +1020,37 @@ async function doGamble(choice: 'big' | 'small') {
       await sleep(2000)
       enterGambleOrIdle()
     } else {
+      winScore.value = pending
       syncScoreFromWallet()
       stageMode.value = 'gamble_push'
       playFruitSfx('click')
       await sleep(1200)
-      stageMode.value = 'gamble_roll'
+      stageMode.value = pending > 0 ? 'gamble_roll' : 'idle'
     }
   } catch (e) {
-    toast(e instanceof Error ? e.message : '再赌失败')
+    toast(fruitErrMsg(e, '再赌失败'))
   } finally {
     busy.value = false
   }
 }
 
-async function runLightTo(stopIndex: number, minLaps = 2) {
-  const n = FRUIT_RING.length
-  const start = cursorIndex.value >= 0 ? cursorIndex.value : 0
-  const dist = ((stopIndex - start) % n + n) % n
-  const totalSteps = minLaps * n + dist
-  setFruitBgmDuck(true)
-  playFruitGo()
-  for (let step = 0; step <= totalSteps; step++) {
-    const idx = (start + step) % n
-    setCursor(idx)
-    const p = step / totalSteps
-    if (p > 0.72) playFruitSfx('tick', 0.35)
-    let delay = 55
-    if (p < 0.15) delay = 110 - p * 300
-    else if (p > 0.7) delay = 55 + (p - 0.7) * 280
-    else delay = 38
-    await sleep(Math.max(28, delay))
-  }
-  stopFruitGo()
-  setCursor(stopIndex)
-  playFruitSfx('stop')
-  await sleep(220)
-}
-
-/** 单格报奖：中心立刻切水果图标 + 语音 + 累加赢分 */
-async function announceCell(
-  cellIndex: number,
-  addWin = 0,
-): Promise<string> {
-  const cell = FRUIT_RING[cellIndex]
-  if (!cell?.symbol) return ''
-  setCenterHit(cellIndex)
-  const size = cell.size === 'big' ? 'big' : 'small'
-  const label = `${cell.label} ×${cell.mult}`
-  const announceP = playFruitAnnounce(cell.symbol, size)
-  if (addWin > 0) {
-    winScore.value += addWin
-    playFruitSfx('scoreUp', 0.7)
-  }
-  await announceP
-  return label
-}
-
-/** 天门 / 高倍格：灯效庆祝；一律留在常驻四行算账 */
-async function celebrateHighCell(cellIndex: number) {
-  const cell = FRUIT_RING[cellIndex]
-  if (!cell?.symbol) return
-  const isBar = cell.symbol === 'bar'
-  const isHigh = isBar || cell.mult >= 20
-  if (!isHigh) return
-
-  setCenterHit(cellIndex)
-  stageMode.value = 'idle'
-  playFruitSfx(isBar ? 'barWin' : 'jackpot', isBar ? 0.95 : 0.85)
-  if (isBar) playFruitSfx('jackpot', 0.7)
-  await flashRing(isBar ? 5 : 3, isBar ? 85 : 90)
-  await sleep(isBar ? 350 : 200)
-}
-
-async function flashRing(times = 3, gap = 120) {
-  for (let i = 0; i < times; i++) {
-    flashAll.value = true
-    await sleep(gap)
-    flashAll.value = false
-    await sleep(gap)
-  }
-}
-
-/** 开火车：车头推进；每亮一格同步常驻一二行算账 */
-async function playTrainReveal(
-  hitIndexes: number[],
-  winByCell: Map<number, number>,
-) {
-  hitLit.value = new Set()
-  trainHead.value = -1
-  trainTail.value = -1
-  stageMode.value = 'idle'
-  for (const idx of hitIndexes) {
-    trainTail.value = trainHead.value
-    trainHead.value = idx
-    const next = new Set(hitLit.value)
-    next.add(idx)
-    hitLit.value = next
-    setCursor(idx)
-    setCenterHit(idx)
-    playFruitSfx('trainStep', 0.85)
-    await announceCell(idx, winByCell.get(idx) ?? 0)
-    await sleep(100)
-  }
-  trainHead.value = -1
-  trainTail.value = -1
-}
-
-/**
- * 大三元 / 小三元 / 大四喜 / 大满贯：
- * 揭晓后一格格点亮留下，同步常驻一二行算账（不做每格狂闪）
- */
-async function playMultiHitReveal(
-  hitIndexes: number[],
-  winByCell: Map<number, number>,
-  stepMs = 260,
-) {
-  hitLit.value = new Set()
-  stageMode.value = 'idle'
-  for (const idx of hitIndexes) {
-    const next = new Set(hitLit.value)
-    next.add(idx)
-    hitLit.value = next
-    setCursor(idx)
-    setCenterHit(idx)
-    playFruitSfx('special', 0.4)
-    await announceCell(idx, winByCell.get(idx) ?? 0)
-    await sleep(stepMs)
-  }
-}
-
-/** 送灯：揭晓后分别跑灯到每个中奖格，灯留下并同步算账 */
-async function playLuckSendRuns(
-  hitIndexes: number[],
-  winByCell: Map<number, number>,
-) {
-  hitLit.value = new Set()
-  stageMode.value = 'idle'
-  for (const idx of hitIndexes) {
-    await runLightTo(idx, 1)
-    const next = new Set(hitLit.value)
-    next.add(idx)
-    hitLit.value = next
-    setCenterHit(idx)
-    await announceCell(idx, winByCell.get(idx) ?? 0)
-    await sleep(80)
-  }
-}
-
-async function revealHits(
-  awardType: FruitAwardType,
-  stopIndex: number,
-  hitIndexes: number[],
-  wins: Array<{ cellIndex: number; amount: number }>,
-) {
-  const winByCell = new Map(wins.map((w) => [w.cellIndex, w.amount]))
-  const stoppedOnLuck = FRUIT_RING[stopIndex]?.size === 'luck'
-  const isSend =
-    awardType === 'luck_send' || (stoppedOnLuck && hitIndexes.length > 0 && awardType !== 'luck_eat')
-  const special = awardType !== 'normal' || isSend
-
-  hitLit.value = new Set()
-  stageMode.value = 'idle'
-
-  // —— 吃灯：停 Luck → 闪 → 报吃灯 → 本局无分 ——
-  if (awardType === 'luck_eat') {
-    setCursor(stopIndex)
-    centerHitSymbol.value = 'luck'
-    centerHitSize.value = 'luck'
-    centerHitKind.value = 'luck'
-    centerHitLabel.value = '吃灯'
-    await sleep(350)
-    playFruitSfx('special', 0.55)
-    await flashRing(2, 110)
-    enterAwardStage('luck_eat')
-    await playFruitAwardVoice('luck_eat')
-    await sleep(500)
-    clearCenterHit()
-    setFruitBgmDuck(false)
-    return
-  }
-
-  // —— 送灯：停 Luck → 闪 → 报送灯 → 再分别跑灯到各中奖格并算账 ——
-  if (isSend) {
-    setCursor(stopIndex)
-    centerHitSymbol.value = 'luck'
-    centerHitSize.value = 'luck'
-    centerHitKind.value = 'luck'
-    centerHitLabel.value = '送灯'
-    await sleep(350)
-    playFruitSfx('jackpot', 0.85)
-    await flashRing(3, 100)
-    enterAwardStage('luck_send')
-    playFruitAwardFanfare('luck_send')
-    await playFruitAwardVoice('luck_send')
-    await sleep(150)
-    await playLuckSendRuns(hitIndexes, winByCell)
-    playFruitSfx('coin', 0.8)
-    await flashRing(3, 90)
-  }
-  // —— 开火车：停灯 → 闪 → 报奖 → 从停点一格格开并算账 ——
-  else if (awardType === 'train') {
-    clearCenterHit()
-    setCursor(stopIndex)
-    await sleep(420)
-    playFruitSfx('special', 0.75)
-    await flashRing(4, 90)
-    enterAwardStage('train')
-    playFruitAwardFanfare('train')
-    await playFruitAwardVoice('train')
-    await sleep(180)
-    await playTrainReveal(hitIndexes, winByCell)
-    playFruitSfx('coin', 0.85)
-    playFruitSfx('awardTrain', 0.55)
-    await flashRing(3, 90)
-  }
-  // —— 大三元 / 小三元 / 大四喜 / 大满贯 ——
-  // 停灯 → 闪 → 语音揭晓 → 对应格一格格点亮并算账
-  else if (awardType === 'big3' || awardType === 'small3' || awardType === 'four' || awardType === 'slam') {
-    clearCenterHit()
-    setCursor(stopIndex)
-    await sleep(400)
-    playFruitSfx('jackpot', 0.95)
-    await flashRing(awardType === 'slam' ? 5 : 4, 90)
-    enterAwardStage(awardType)
-    playFruitAwardFanfare(awardType)
-    await playFruitAwardVoice(awardType)
-    await sleep(180)
-    await playMultiHitReveal(
-      hitIndexes,
-      winByCell,
-      awardType === 'slam' ? 110 : awardType === 'four' ? 200 : 280,
-    )
-    playFruitSfx('coin', 0.85)
-    await flashRing(3, 90)
-  }
-  // —— 普通单格 ——
-  else if (hitIndexes.length) {
-    hitLit.value = new Set(hitIndexes)
-    for (const idx of hitIndexes) {
-      setCursor(idx)
-      const amt = winByCell.get(idx) ?? 0
-      setCenterHit(idx)
-      stageMode.value = 'idle'
-      await celebrateHighCell(idx)
-      await announceCell(idx, amt)
-    }
-    if ((wins.reduce((s, w) => s + w.amount, 0) || 0) > 0) {
-      playFruitSfx('win', 0.75)
-    }
-  }
-
-  await sleep(special ? 700 : 280)
-  if (special) await sleep(500)
-  setFruitBgmDuck(false)
-  // 猜大小由 doSpin 在最终赢分校准后再切入
-}
+const awardFx = createFruitAwardFx({
+  lights,
+  sleep,
+  winScore,
+  stageMode,
+  centerHitSymbol,
+  centerHitSize,
+  centerHitKind,
+  centerHitLabel,
+  centerHitOdds,
+  centerHitBetUnits,
+  clearCenterHit,
+  setCenterHit,
+  enterAwardStage,
+  startTitleMarquee,
+})
+const { runLightTo, revealHits } = awardFx
 
 async function doSpin() {
   const payload = buildBetPayload()
@@ -1341,18 +1076,18 @@ async function doSpin() {
   lastBetCounts.value = { ...betCounts.value }
 
   busy.value = true
-  // 开新局前：当局赢分并入总积分（不丢分）
+  // 开新局前：当局赢分并入总积分（不丢分）；服务端也会清 pending 猜大小。
   collectPendingWin()
-  hitLit.value = new Set()
-  trainHead.value = -1
-  trainTail.value = -1
+  clearHitLit()
+  clearTrainVisual()
   flashAll.value = false
   stageMode.value = 'idle'
   clearCenterHit()
   gambleResultNum.value = null
   playFruitSfx('start')
 
-  let result: {
+  const clientRequestId = spinSession.currentOrNewClientRequestId()
+  type SpinRes = {
     awardType: string
     stopIndex: number
     hitIndexes: number[]
@@ -1360,23 +1095,17 @@ async function doSpin() {
     wins?: Array<{ cellIndex: number; amount: number; symbol?: string; mult?: number }>
     balance?: number
   }
+  let result: SpinRes
 
   try {
-    // DEV 演示强制奖只改表现，不改钱包；生产路径一律服务端权威
-    const forced = isDev ? forceAwardOnce.value : null
-    forceAwardOnce.value = null
-    if (forced) {
-      const { localFruitSpin } = await import('@/games/slots/fruitLocalSpin')
-      result = localFruitSpin(payload, { forceAward: forced })
-      // 演示不触碰真钱包，用本地总分做演出
-      totalScore.value = Math.max(0, totalScore.value)
-    } else {
-      const clientRequestId = spinSession.currentOrNewClientRequestId()
-      const res = await gamesApi.fruitSpin(payload, clientRequestId)
-      spinSession.clearClientRequestId()
-      result = res
-      if (typeof res.balance === 'number') walletStore.balance = res.balance
+    try {
+      result = await gamesApi.fruitSpin(payload, clientRequestId)
+    } catch {
+      // 响应丢失时幂等重试：服务端已结算则回放，未结算则补开
+      result = await gamesApi.fruitSpin(payload, clientRequestId)
     }
+    spinSession.clearClientRequestId()
+    if (typeof result.balance === 'number') walletStore.balance = result.balance
 
     const wins = (result.wins ?? []).map((w) => ({
       cellIndex: w.cellIndex,
@@ -1386,39 +1115,38 @@ async function doSpin() {
     const award = result.awardType as FruitAwardType
     // 一律先正常跑灯停格；开火车等特殊奖在停定后再揭晓报奖
     await runLightTo(result.stopIndex, 2)
+    // 报奖累加前先归零，避免与上局残值叠算；最终以 totalWin 校准
+    winScore.value = 0
     await revealHits(award, result.stopIndex, result.hitIndexes, wins)
 
-    // 以服务端结算为准校正当局赢分（报奖过程中已滚动累加）
     const win = result.totalWin ?? 0
     winScore.value = win
-    pushSpinHistory(String(result.awardType || 'normal'), win)
     // 押注已消耗，清盘面但不退分
     stakedScore.value = 0
     for (const k of Object.keys(betCounts.value) as BetId[]) betCounts.value[k] = 0
-    if (!forced) syncScoreFromWallet()
+    syncScoreFromWallet()
 
     const isSpecial = result.awardType !== 'normal'
+    // 特殊奖的 coin 已在 revealHits 末尾播过，这里只补普通中奖 / 未中
     if (win > 0) {
       if (!isSpecial) {
         playFruitSfx('win')
         if (win >= cost * 20) playFruitSfx('coin')
-      } else if (win >= cost * 10) {
-        playFruitSfx('coin')
       }
     } else if (result.awardType !== 'luck_eat') {
       playFruitSfx('lose')
       setFruitBgmDuck(false)
     }
 
-    // 报奖完全结束后再进猜大小（有赢分才转）
     await sleep(isSpecial ? 450 : 320)
-    if (!forced) enterGambleOrIdle()
-    else stageMode.value = 'idle'
+    enterGambleOrIdle()
     await sleep(isSpecial ? 200 : 280)
   } catch (e) {
+    spinSession.clearClientRequestId()
     stopFruitGo()
     setFruitBgmDuck(false)
     flashAll.value = false
+    setRingFx('none')
     stageMode.value = 'idle'
     clearCenterHit()
     try {
@@ -1427,39 +1155,12 @@ async function doSpin() {
       for (const k of Object.keys(betCounts.value) as BetId[]) betCounts.value[k] = 0
       syncScoreFromWallet()
     } catch {
-      // 钱包不可用：把盘面押分退回总积分
       clearBoardBets(true)
     }
-    toast(e instanceof Error ? e.message : '开奖失败')
+    toast(fruitErrMsg(e, '开奖失败'))
   } finally {
     busy.value = false
   }
-}
-
-/** DEV：一键演示完整开火车（不改真钱包） */
-async function playTrainDemo() {
-  if (!isDev || busy.value || autoPlaying.value) return
-  showRules.value = false
-  unlockFruitAudio()
-  startFruitBgm()
-
-  if (!hasAnyBet()) {
-    const ids: BetId[] = ['apple', 'orange', 'lemon', 'melon', 'bell', 'bar', 'seven', 'star']
-    for (const id of ids) {
-      betCounts.value[id] = Math.max(betCounts.value[id] || 0, 2)
-    }
-    const units = ids.reduce((s, id) => s + (betCounts.value[id] || 0), 0)
-    const cost = units * selectedMult.value
-    if (totalScore.value < cost) {
-      totalScore.value = cost + 5000
-    }
-    stakedScore.value = cost
-    totalScore.value = Math.max(0, totalScore.value - cost)
-  }
-
-  forceAwardOnce.value = 'train'
-  toast('演示：开火车完整效果（DEV）')
-  await doSpin()
 }
 
 onMounted(async () => {
@@ -1470,21 +1171,28 @@ onMounted(async () => {
     /* 未登录时总分保持 0，不允许伪造余额 */
   }
   syncScoreFromWallet()
+  // 从历史记录返回等：恢复仍可猜大小的当局赢分
+  try {
+    const pend = await gamesApi.fruitPendingGamble()
+    if (typeof pend.balance === 'number') walletStore.balance = pend.balance
+    const amt = Math.max(0, Number(pend.pendingGambleAmount) || 0)
+    if (amt > 0) {
+      winScore.value = amt
+      stageMode.value = 'gamble_roll'
+    }
+    syncScoreFromWallet()
+  } catch {
+    /* 忽略：无 pending 或接口暂不可用*/
+  }
   try {
     const games = await gamesApi.list()
     const cfg = games.find((g) => g.code === 'fruit-machine')
     if (cfg) {
       fruitMinBet.value = Math.max(1, Number(cfg.minBet) || 1)
-      fruitMaxBet.value = Math.max(fruitMinBet.value, Number(cfg.maxBet) || 50_000)
+      fruitMaxBet.value = Math.max(fruitMinBet.value, Number(cfg.maxBet) || 100_000)
     }
   } catch {
     /* 用默认限额 */
-  }
-
-  if (isDev && String(route.query.demo || '') === 'train') {
-    await sleep(400)
-    await playTrainDemo()
-    router.replace({ path: route.path, query: {} })
   }
 })
 
@@ -1493,9 +1201,17 @@ watch([stageMode, flashAll, stageAwardType, busy], () => {
 })
 
 onUnmounted(() => {
+  // 开奖进行中勿抢 abandon（结算后 pending 可由下次进页恢复）。
+  // 主动点返回/历史时由 goBack、openBetRecords 控制 abandonOnUnmount
+  if (abandonOnUnmount && !busy.value) {
+    void gamesApi.fruitAbandonGamble().catch(() => {})
+  }
   stopAutoPlay()
   stopBetHold()
   stopTitleMarquee()
+  stopFruitAnnounce()
+  stopFruitGo()
+  disposeFruitAudio()
   stopFruitBgm()
 })
 </script>
@@ -1509,7 +1225,7 @@ onUnmounted(() => {
   height: 100dvh;
   margin: 0;
   overflow: hidden;
-  background: #2a0c10;
+  background: #1a0608;
 }
 
 .cabinet-ambient {
@@ -1523,18 +1239,31 @@ onUnmounted(() => {
   user-select: none;
   -webkit-user-drag: none;
   display: block;
+  /* 略提饱和，边缘再压暗一点，让柜机更沉*/
+  filter: saturate(1.12) contrast(1.04);
+}
+
+.cabinet-page::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse at 50% 42%, transparent 28%, rgba(10, 2, 4, 0.45) 72%, rgba(6, 1, 2, 0.72) 100%);
 }
 
 .cabinet-stage {
-  /* 保持机柜 1024×1536，电视屏才能是设计比例 518×455（不再被视口拉成竖条） */
+  /* 设计 1024×1536：等比例放大，任一边贴边即停，不额外拉高/拉宽 */
   position: absolute;
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
   z-index: 1;
   aspect-ratio: 1024 / 1536;
-  width: min(100%, 480px, calc(100vh * 1024 / 1536), calc(100dvh * 1024 / 1536));
-  height: auto;
+  width: min(100vw, calc(100dvh * 1024 / 1536));
+  height: min(100dvh, calc(100vw * 1536 / 1024));
+  max-width: 100%;
   max-height: 100%;
 }
 
@@ -1630,20 +1359,49 @@ onUnmounted(() => {
 
 .ring-cell.train {
   opacity: 1;
-  background: rgba(80, 220, 255, 0.4);
+  background: rgba(140, 250, 255, 0.65);
   box-shadow:
-    inset 0 0 0 3px rgba(160, 245, 255, 1),
-    0 0 20px 8px rgba(40, 200, 255, 0.85),
-    0 0 32px 10px rgba(255, 200, 60, 0.25);
-  animation: fruitTrainHeadPulse 0.34s ease-out;
+    inset 0 0 0 3px rgba(255, 255, 220, 1),
+    0 0 26px 10px rgba(80, 230, 255, 1),
+    0 0 40px 14px rgba(255, 210, 80, 0.55);
+  animation: fruitTrainHeadPulse 0.22s ease-out;
+  z-index: 5;
+  filter: brightness(1.4);
 }
 
-.ring-cell.train-tail {
+/* 车厢段整体提亮，转圈时是一段灯在跑，不是单格*/
+.ring-cell.train-tail,
+.ring-cell.train-car {
   opacity: 1;
-  background: rgba(60, 180, 230, 0.28);
+  background: rgba(60, 210, 255, 0.5);
   box-shadow:
-    inset 0 0 0 3px rgba(100, 220, 255, 0.85),
-    0 0 14px 5px rgba(40, 180, 255, 0.55);
+    inset 0 0 0 3px rgba(140, 240, 255, 0.95),
+    0 0 16px 6px rgba(50, 200, 255, 0.75);
+  z-index: 3;
+  filter: brightness(1.15);
+}
+
+.ring-cell.train-slam {
+  opacity: 1 !important;
+  background: rgba(255, 255, 230, 0.85) !important;
+  box-shadow:
+    inset 0 0 0 4px #fff,
+    0 0 30px 14px rgba(255, 240, 120, 1),
+    0 0 50px 18px rgba(80, 220, 255, 0.85) !important;
+  transform: scale(1.14);
+  z-index: 7;
+  animation: fruitTrainSlamPop 0.32s ease-out;
+}
+
+@keyframes fruitTrainSlamPop {
+  0% {
+    transform: scale(1.22);
+    filter: brightness(1.8);
+  }
+  100% {
+    transform: scale(1.08);
+    filter: brightness(1.2);
+  }
 }
 
 .ring-cell.flash {
@@ -1656,13 +1414,117 @@ onUnmounted(() => {
 
 @keyframes fruitTrainHeadPulse {
   0% {
-    transform: scale(1);
-    filter: brightness(1.4);
+    transform: scale(1.06);
+    filter: brightness(1.55);
   }
   100% {
     transform: scale(1);
-    filter: brightness(1);
+    filter: brightness(1.2);
   }
+}
+
+/* —— 特殊奖主题色（父级 .fx-* 作用到中奖格）—— */
+.cabinet-stage.fx-eat .fruit-ring {
+  filter: brightness(0.42) saturate(0.35);
+  transition: filter 0.35s ease;
+}
+.cabinet-stage.fx-eat .ring-cell.active {
+  background: rgba(180, 30, 30, 0.45);
+  box-shadow:
+    inset 0 0 0 3px rgba(255, 80, 80, 0.9),
+    0 0 18px 6px rgba(200, 20, 20, 0.7);
+}
+
+.cabinet-stage.fx-send .ring-cell.hit {
+  background: rgba(200, 80, 255, 0.4);
+  box-shadow:
+    inset 0 0 0 3px rgba(255, 160, 255, 0.95),
+    0 0 18px 6px rgba(180, 60, 255, 0.75),
+    0 0 28px 8px rgba(255, 200, 80, 0.35);
+}
+.cabinet-stage.fx-send .ring-cell.active {
+  background: rgba(255, 120, 220, 0.35);
+  box-shadow:
+    inset 0 0 0 3px rgba(255, 180, 255, 0.95),
+    0 0 16px 5px rgba(220, 80, 255, 0.7);
+}
+
+.cabinet-stage.fx-train .fruit-ring {
+  filter: brightness(0.92) saturate(1.2) hue-rotate(-8deg);
+}
+/* 已中格必须压过车头样式，转圈时也持续亮着 */
+.cabinet-stage.fx-train .ring-cell.hit {
+  opacity: 1 !important;
+  background: rgba(40, 200, 255, 0.42) !important;
+  box-shadow:
+    inset 0 0 0 3px rgba(140, 240, 255, 1),
+    0 0 18px 7px rgba(40, 190, 255, 0.75) !important;
+  z-index: 4;
+}
+.cabinet-stage.fx-train .ring-cell.train-car:not(.train) {
+  animation: fruitTrainCarShimmer 0.45s ease-in-out infinite alternate;
+}
+@keyframes fruitTrainCarShimmer {
+  from { filter: brightness(0.95); }
+  to { filter: brightness(1.2); }
+}
+
+.cabinet-stage.fx-big3 .ring-cell.hit {
+  background: rgba(255, 170, 30, 0.45);
+  box-shadow:
+    inset 0 0 0 3px rgba(255, 220, 80, 1),
+    0 0 20px 7px rgba(255, 160, 20, 0.85),
+    0 0 32px 10px rgba(255, 80, 0, 0.35);
+}
+
+.cabinet-stage.fx-small3 .ring-cell.hit {
+  background: rgba(60, 220, 140, 0.4);
+  box-shadow:
+    inset 0 0 0 3px rgba(160, 255, 200, 0.95),
+    0 0 18px 6px rgba(40, 200, 120, 0.75);
+}
+
+.cabinet-stage.fx-four .fruit-ring {
+  filter: brightness(1.05) saturate(1.2);
+}
+.cabinet-stage.fx-four .ring-cell.hit {
+  background: rgba(255, 70, 70, 0.48);
+  box-shadow:
+    inset 0 0 0 3px rgba(255, 200, 180, 1),
+    0 0 20px 7px rgba(255, 50, 50, 0.8),
+    0 0 28px 10px rgba(80, 220, 100, 0.4);
+  animation: fruitFourHitPop 0.5s ease-in-out infinite alternate;
+}
+@keyframes fruitFourHitPop {
+  from { filter: brightness(1.05); transform: scale(1); }
+  to { filter: brightness(1.35); transform: scale(1.03); }
+}
+
+.cabinet-stage.fx-slam .ring-cell.hit {
+  background: rgba(255, 245, 200, 0.55);
+  box-shadow:
+    inset 0 0 0 3px #fff6c0,
+    0 0 22px 8px rgba(255, 220, 80, 0.95),
+    0 0 36px 12px rgba(255, 160, 40, 0.55);
+  animation: fruitSlamHitGlow 0.55s ease-in-out infinite alternate;
+}
+.cabinet-stage.fx-slam .fruit-ring {
+  filter: brightness(1.18) saturate(1.25);
+  animation: fruitSlamRingPulse 1.1s ease-in-out infinite;
+}
+@keyframes fruitSlamHitGlow {
+  from { filter: brightness(1.05); }
+  to { filter: brightness(1.45); }
+}
+@keyframes fruitSlamRingPulse {
+  0%, 100% { filter: brightness(1.1) saturate(1.15); }
+  50% { filter: brightness(1.28) saturate(1.35); }
+}
+
+.ring-cell.hit-pulse {
+  opacity: 1 !important;
+  filter: brightness(1.55);
+  transform: scale(1.04);
 }
 
 .led-score,
@@ -1815,47 +1677,53 @@ onUnmounted(() => {
 
 .fruit-top-right {
   position: fixed;
-  top: max(12px, env(safe-area-inset-top));
-  right: 12px;
+  top: max(10px, env(safe-area-inset-top));
+  right: max(8px, env(safe-area-inset-right));
   z-index: 100;
   display: flex;
-  gap: 8px;
+  flex-direction: row;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.fruit-rail-btn {
+  display: flex;
+  flex-direction: column;
   align-items: center;
-}
-
-.fruit-demo-chip {
-  border: 1px solid rgba(80, 220, 255, 0.65);
-  border-radius: 999px;
-  padding: 6px 12px;
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  color: #062838;
-  background: linear-gradient(180deg, #e8ffff 0%, #60d8ff 45%, #2090c8 100%);
-  box-shadow: 0 0 10px rgba(60, 200, 255, 0.35);
+  justify-content: center;
+  gap: 3px;
+  width: 44px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #f2d98a;
   cursor: pointer;
-  white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.14s ease, filter 0.14s ease;
 }
 
-.fruit-demo-chip:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
+.fruit-rail-btn:active {
+  transform: scale(0.9);
+  filter: brightness(1.15);
 }
 
-.fruit-top-right .fruit-top-btn {
-  position: static;
+.fruit-rail-ic {
+  width: 38px;
+  height: 38px;
+  object-fit: contain;
+  display: block;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.45));
 }
 
-.fruit-top-btn--history {
-  background-image: url('/images/history-button.svg');
-}
-
-.fruit-top-btn--rules {
-  background-image: url('/images/rules-button.svg');
-}
-
-.fruit-top-btn--settings {
-  background-image: url('/images/settings-button.svg');
+.fruit-rail-lb {
+  font-size: 9px;
+  line-height: 1;
+  letter-spacing: 0.5px;
+  font-family: 'Noto Serif SC', 'Songti SC', serif;
+  color: rgba(240, 220, 160, 0.9);
 }
 
 .fruit-modal {
@@ -1870,9 +1738,11 @@ onUnmounted(() => {
 }
 
 .fruit-modal-card {
+  display: flex;
+  flex-direction: column;
   width: min(92vw, 380px);
   max-height: min(72vh, 520px);
-  overflow: auto;
+  overflow: hidden;
   border-radius: 14px;
   border: 1px solid rgba(244, 211, 107, 0.4);
   background: linear-gradient(180deg, #2a1c10 0%, #140e08 100%);
@@ -1881,85 +1751,92 @@ onUnmounted(() => {
 }
 
 .fruit-modal-card--rules {
-  max-height: min(78vh, 580px);
+  width: min(94vw, 460px);
+  max-height: min(82vh, 680px);
 }
 
 .fruit-modal-head {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 14px 16px 10px;
+  padding: 12px 14px;
   border-bottom: 1px solid rgba(244, 211, 107, 0.22);
+  background: linear-gradient(180deg, rgba(58, 44, 22, 0.55), rgba(30, 22, 12, 0.15));
 }
 
 .fruit-modal-head h3 {
   margin: 0;
   font-size: 16px;
-  letter-spacing: 0.12em;
+  font-weight: 700;
+  letter-spacing: 0.14em;
   color: #ffe7a0;
 }
 
 .fruit-modal-close {
-  border: 1px solid rgba(244, 211, 107, 0.35);
-  border-radius: 999px;
-  padding: 4px 12px;
-  font-size: 12px;
-  color: #f5e0c0;
-  background: rgba(0, 0, 0, 0.25);
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(212, 175, 55, 0.4);
+  border-radius: 50%;
+  padding: 0;
+  font-size: 20px;
+  line-height: 1;
+  color: #f2d98a;
+  background: rgba(0, 0, 0, 0.35);
   cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }
 
-.fruit-modal-empty {
-  padding: 36px 16px;
-  text-align: center;
-  color: rgba(245, 224, 192, 0.55);
-  font-size: 13px;
-}
-
-.fruit-history-list {
-  padding: 8px 12px 14px;
-}
-
-.fruit-history-row {
-  display: grid;
-  grid-template-columns: 72px 1fr 64px;
-  gap: 8px;
-  align-items: center;
-  padding: 10px 6px;
-  border-bottom: 1px solid rgba(244, 211, 107, 0.12);
-  font-size: 13px;
-}
-
-.fh-time {
-  color: rgba(245, 224, 192, 0.55);
-  font-variant-numeric: tabular-nums;
-}
-
-.fh-award {
-  color: #ffe7a0;
-}
-
-.fh-win {
-  text-align: right;
-  color: rgba(245, 224, 192, 0.55);
-  font-variant-numeric: tabular-nums;
-}
-
-.fh-win.plus {
-  color: #7dff9a;
-  font-weight: 700;
+.fruit-modal-close:active {
+  transform: scale(0.9);
+  filter: brightness(1.2);
 }
 
 .fruit-rules-body {
-  padding: 12px 16px 18px;
+  flex: 1;
+  min-height: 0;
+  padding: 10px 16px 18px;
   font-size: 13px;
   line-height: 1.65;
   color: rgba(245, 230, 200, 0.88);
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
-.fruit-rules-body p {
-  margin: 0 0 10px;
+.fruit-rules-sec {
+  margin: 0 0 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(244, 211, 107, 0.12);
+}
+
+.fruit-rules-sec:last-child {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.fruit-rules-sec h4 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #ffe7a0;
+}
+
+.fruit-rules-body p,
+.fruit-rules-body ol,
+.fruit-rules-body ul {
+  margin: 0 0 8px;
+}
+
+.fruit-rules-body ol,
+.fruit-rules-body ul {
+  padding-left: 1.2em;
+}
+
+.fruit-rules-body li {
+  margin: 0 0 6px;
 }
 
 .fruit-rules-body b {
@@ -1967,24 +1844,41 @@ onUnmounted(() => {
   font-weight: 700;
 }
 
-.fruit-demo-btn {
-  display: block;
-  width: 100%;
-  margin-top: 14px;
-  padding: 10px 14px;
-  border: 1px solid rgba(80, 220, 255, 0.55);
-  border-radius: 10px;
-  font-size: 14px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  color: #062838;
-  background: linear-gradient(180deg, #e8ffff 0%, #60d8ff 45%, #2090c8 100%);
-  box-shadow: 0 0 14px rgba(60, 200, 255, 0.35);
-  cursor: pointer;
+.fruit-rules-formula {
+  margin: 8px 0 !important;
+  padding: 8px 12px;
+  text-align: center;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #ffe7a0;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(244, 211, 107, 0.2);
+  border-radius: 8px;
 }
 
-.fruit-demo-btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
+.fruit-rules-table {
+  width: 100%;
+  margin: 8px 0 10px;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
+
+.fruit-rules-table th,
+.fruit-rules-table td {
+  padding: 8px 6px;
+  text-align: center;
+  border-bottom: 1px solid rgba(244, 211, 107, 0.14);
+}
+
+.fruit-rules-table th {
+  color: rgba(245, 224, 192, 0.55);
+  font-weight: 600;
+}
+
+.fruit-rules-table td:first-child {
+  text-align: left;
+  color: #ffe7a0;
+}
+
 </style>
