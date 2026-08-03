@@ -14,6 +14,11 @@
     </div>
 
     <div class="page-body">
+      <section class="ag-console-tip">
+        <div class="ag-console-tip-t">运营控制台</div>
+        <div class="ag-console-tip-d">上下分、房间、机器人、报表请使用独立控制台登录（超管/房主/代理账号）。本页仅保留佣金与团队查看。</div>
+      </section>
+
       <section class="ag-hero" v-if="overview">
         <div class="ag-hero-main">
           <div class="ag-hero-item">
@@ -26,18 +31,7 @@
             <div class="ag-hero-val">{{ fmtInt(overview.totalCommission) }}</div>
           </div>
         </div>
-        <div class="ag-hero-meta">
-          <span>直属 {{ overview.directCount }}</span>
-          <span>团队 {{ overview.teamCount }}</span>
-        </div>
       </section>
-
-      <p class="ag-tip" v-if="overview && !overview.canHang">
-        好友先注册，把对方玩家 ID 交给代理挂到你名下，才算佣金。
-        <template v-if="overview.parent">
-          代理 {{ overview.parent.nickname }} · {{ overview.parent.uid }}
-        </template>
-      </p>
 
       <nav class="ag-seg" :class="{ 'ag-seg--3': overview?.canHang }">
         <button

@@ -743,33 +743,32 @@ body.lobby-bg::before { display: none; }
     drop-shadow(0 6px 14px rgba(0, 0, 0, 0.45));
 }
 
-/* —— 中间：游戏名（垂直 + 水平 居中） —— */
+/* —— 中间：游戏名（水平居中；可两行，禁止省略号截断） —— */
 .game-card .gc-name {
-  flex: 1;
+  flex: 1 1 0;
   min-width: 0;
   text-align: center;
   font-family: var(--lobby-font);
   font-size: var(--lobby-fs-name);
   font-weight: 800;
   color: var(--gold-bright);
-  letter-spacing: 2px;
-  line-height: 1.2;
-}
-/* 长名字只收字距，不改字号，保持卡片内字号一致 */
-.game-card .gc-name.gc-name-tight {
-  letter-spacing: 0.5px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  letter-spacing: 1px;
+  line-height: 1.25;
+  white-space: normal;
+  word-break: keep-all;
+  overflow: visible;
 }
 
 /* —— 右侧：当前期号（上）+ 倒计时 / 封盘 / 开奖（下） —— */
+/* 短号后宽度收窄，把空间还给游戏名 */
 .game-card .gc-status {
-  flex-shrink: 0;
-  min-width: 84px;
+  flex: 0 0 88px;
+  width: 88px;
+  min-width: 88px;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
+  justify-content: center;
   gap: 6px;
   text-align: right;
   font-family: var(--lobby-font);
@@ -1139,6 +1138,17 @@ body.lobby-bg::before { display: none; }
   transform: rotate(35deg);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
   z-index: 2;
+}
+.game-card .gc-tag--maint {
+  color: #fff8e8;
+  background: linear-gradient(180deg, #c4a46a 0%, #8a6a2e 60%, #5a4520 100%);
+}
+.game-card.is-maint {
+  opacity: 0.72;
+  filter: grayscale(0.35);
+}
+.game-card.is-maint:active {
+  transform: none;
 }
 
 /* 大厅页底栏字号与正文阶梯对齐（不影响其它页） */

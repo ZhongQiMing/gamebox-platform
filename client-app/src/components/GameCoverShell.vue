@@ -14,6 +14,7 @@
       :alt="alt"
       draggable="false"
     />
+    <button type="button" class="cover-back" @click="emit('close')">返回</button>
     <!-- 开始按钮等叠加层由各游戏封面通过默认插槽传入 -->
     <slot />
   </div>
@@ -33,6 +34,8 @@ defineProps({
   durationMs: { type: Number, default: 800 },
   fromScale: { type: Number, default: 1.05 },
 })
+
+const emit = defineEmits<{ close: [] }>()
 </script>
 
 <style scoped>
@@ -55,6 +58,29 @@ defineProps({
   user-select: none;
   -webkit-user-drag: none;
   animation: coverIn var(--cover-in-duration, 800ms) ease-out both;
+}
+
+.cover-back {
+  position: absolute;
+  top: max(12px, env(safe-area-inset-top, 0px));
+  left: max(12px, env(safe-area-inset-left, 0px));
+  z-index: 3;
+  border: none;
+  padding: 8px 14px;
+  margin: 0;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  border-radius: 8px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  backdrop-filter: blur(4px);
+}
+
+.cover-back:active {
+  opacity: 0.85;
 }
 
 @keyframes coverIn {

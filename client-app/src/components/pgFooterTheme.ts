@@ -1,6 +1,6 @@
 import { computed, toValue, type MaybeRefOrGetter } from 'vue'
 
-/** PG 封面页脚默认 theme_color（正版麻将胡了取值 RGB(180,120,80)），各游戏可传入自己的主题色覆盖 */
+/** PG 封面页脚默认 theme_color；麻将封面请传 #EB1313（正版 rgb(235,19,19)） */
 export const PG_THEME_COLOR = '#B47850'
 
 function hexToRgb(hex: string) {

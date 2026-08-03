@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
+    "build:app": "vue-tsc -b && vite build --mode app",
     "preview": "vite preview",
+    "lint": "eslint \"src/**/*.{ts,vue}\"",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -15,21 +17,38 @@
     "@capacitor/cli": "^8.4.0",
     "@capacitor/core": "^8.4.0",
     "@gamebox/shared": "workspace:*",
+    "@md5crypt/dragonbones-pixi": "5.8.1",
+    "@pixi/constants": "7.1.0",
+    "@pixi/core": "7.1.0",
+    "@pixi/display": "7.1.0",
+    "@pixi/graphics": "7.1.0",
+    "@pixi/math": "7.1.0",
+    "@pixi/mesh-extras": "7.1.0",
+    "@pixi/settings": "7.1.0",
+    "@pixi/sprite": "7.1.0",
     "axios": "^1.17.0",
     "pinia": "^3.0.4",
+    "pixi.js": "7.1.0",
     "socket.io-client": "^4.8.3",
     "vue": "^3.5.34",
     "vue-router": "4"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^24.13.2",
     "@vitejs/plugin-vue": "^6.0.6",
     "@vue/test-utils": "^2.4.11",
     "@vue/tsconfig": "^0.9.1",
+    "eslint": "^10.8.0",
+    "eslint-plugin-vue": "^10.10.0",
+    "globals": "^17.9.0",
     "jsdom": "^29.1.1",
+    "sharp": "^0.35.3",
     "typescript": "~6.0.2",
+    "typescript-eslint": "^8.65.0",
     "vite": "^8.0.12",
     "vitest": "^4.1.10",
+    "vue-eslint-parser": "^10.4.1",
     "vue-tsc": "^3.2.8"
   }
 }

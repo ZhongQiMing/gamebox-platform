@@ -108,8 +108,6 @@ export const BCBM_UI = {
  */
 export const BCBM_CHIP_POOL = [1, 5, 10, 50, 100, 200, 500, 1000] as const
 export const BCBM_CHIP_DEFAULT = [1, 5, 10, 100] as const
-/** @deprecated 使用 BCBM_CHIP_DEFAULT */
-export const BCBM_CHIP_STEPS = BCBM_CHIP_DEFAULT
 
 /**
  * PC_Benz 灯环展示序（24 格，左右各一轮 12 色档）。

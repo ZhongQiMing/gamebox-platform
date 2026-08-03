@@ -95,7 +95,7 @@
       if (App._bridgeToken && payload && typeof payload === 'object' && !payload.bridgeToken) {
         payload.bridgeToken = App._bridgeToken
       }
-      window.parent.postMessage(payload, '*')
+      window.parent.postMessage(payload, location.origin)
       return true
     }
     return false
@@ -1035,6 +1035,9 @@
       /* 进房后立刻重拉彩票快照，避免首轮在父页监听前发出而一直「同步中」 */
       if (typeof App.resyncLottery === 'function') {
         try { App.resyncLottery() } catch (_) { /* ignore */ }
+      } else {
+        /* lhc.js 等尚未执行完时先打标，脚本末尾看到后补拉 */
+        App._pendingResyncLottery = true
       }
       return
     }

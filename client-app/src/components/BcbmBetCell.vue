@@ -3,7 +3,16 @@
   <button
     type="button"
     class="bet-cell"
-    :class="[`size-${bet.size}`, { win: win, down: pressed }]"
+    :class="[
+      `size-${bet.size}`,
+      {
+        win: win && settlePhase !== 'off',
+        down: pressed,
+        dimmed,
+        shine: settlePhase === 'shine',
+        rising: settlePhase === 'rise',
+      },
+    ]"
     :style="xyStyle"
     :disabled="disabled"
     @pointerdown="pressed = true"
@@ -42,7 +51,7 @@
       />
     </template>
 
-    <!-- 按下高亮 -->
+    <!-- 按下 / 中奖 shine：highlightRect（官方 shineTask PING_PONG α） -->
     <div
       v-if="bet.size !== 'S'"
       class="highlight"
@@ -59,6 +68,7 @@
 
     <img
       class="icon"
+      :class="`color-${color}`"
       :src="iconUrl"
       alt=""
       draggable="false"
@@ -75,11 +85,23 @@
       <img :src="txtbox" alt="" draggable="false" />
       <span :style="{ fontSize: skin.amtFont + 'px' }">{{ amount }}</span>
     </div>
+    <!--
+      官方 FastJumpAmount：
+      initPayoutTask → 显示 +金额（alpha=1）
+      shineTask → highlightRect 闪
+      riseUpPayoutLabelTask → bottom+100 / alpha→0.5（400ms）
+    -->
+    <span
+      v-if="payoutLabelOn"
+      class="payout-label"
+      :class="[`size-${bet.size}`, { rise: settlePhase === 'rise' }]"
+      >+{{ floatLabel }}</span
+    >
   </button>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { BCBM_PLAYTYPE_META } from '@/games/bcbm/bcbmSpinMath'
 import {
   BET_SKIN,
@@ -90,10 +112,21 @@ import {
   type PanelBet,
 } from '@/games/bcbm/mobilePanelLayout'
 
+export type BetSettlePhase = 'off' | 'label' | 'shine' | 'rise'
+
 const props = defineProps<{
   bet: PanelBet
   amount: number
   win?: boolean
+  /** 本仓派彩（>0 时显示 +金额） */
+  winAmount?: number
+  /**
+   * 官方 generateAllBetItemShinningTask 阶段：
+   * label=initPayout / shine=shineTask / rise=riseUpPayoutLabel
+   */
+  settlePhase?: BetSettlePhase
+  /** 官方 dimTask：未中押格 alpha=0.3 */
+  dimmed?: boolean
   disabled?: boolean
   /** 官方 setBet：sqrt(bet/limit) 点亮 spark 比例 */
   betLimit?: number
@@ -102,6 +135,30 @@ const props = defineProps<{
 defineEmits<{ bet: [] }>()
 
 const pressed = ref(false)
+const floatLabel = ref('0')
+
+function fmtWinAmt(n: number) {
+  if (!Number.isFinite(n)) return '0'
+  if (Number.isInteger(n)) return String(n)
+  return n.toFixed(2).replace(/\.?0+$/, '')
+}
+
+const payoutLabelOn = computed(
+  () =>
+    !!props.win &&
+    !!(props.winAmount && props.winAmount > 0) &&
+    props.settlePhase != null &&
+    props.settlePhase !== 'off',
+)
+
+watch(
+  () => props.winAmount,
+  (amt) => {
+    if (amt && amt > 0) floatLabel.value = fmtWinAmt(amt)
+  },
+  { immediate: true },
+)
+
 const skin = computed(() => BET_SKIN[props.bet.size])
 const meta = computed(() => BCBM_PLAYTYPE_META[props.bet.playType])
 const color = computed(() => meta.value.color)
@@ -173,7 +230,6 @@ const midStyle = computed(() => {
 const outStyle = computed(() => {
   const r = ring.value
   if (!r) return {}
-  // EXML：x/y 为锚点，换算为左上角
   return {
     left: `${r.out.x - r.out.ax}px`,
     top: `${r.out.y - r.out.ay}px`,
@@ -225,7 +281,7 @@ const addStyle = computed(() => {
     top: `${h.y}px`,
     width: `${60 * h.scale}px`,
     height: `${52 * h.scale}px`,
-    opacity: pressed.value || props.win ? 0.5 : 0,
+    opacity: pressed.value ? 0.5 : 0,
   }
 })
 </script>
@@ -242,13 +298,17 @@ const addStyle = computed(() => {
   line-height: 0;
   font-size: 0;
   overflow: visible;
+  transition: opacity 0.12s linear;
+}
+/* 官方 dimTask：未中押格 alpha=0.3 */
+.bet-cell.dimmed {
+  opacity: 0.3;
 }
 .spark {
   position: absolute;
   z-index: 1;
   width: auto;
   height: auto;
-  /* Egret Image 默认绕左上角旋转 */
   transform-origin: 0 0;
   pointer-events: none;
   mix-blend-mode: screen;
@@ -302,9 +362,23 @@ const addStyle = computed(() => {
   mix-blend-mode: plus-lighter;
   opacity: 0;
 }
-.bet-cell.down .highlight,
-.bet-cell.win .highlight {
+.bet-cell.down .highlight {
   opacity: 0.5;
+}
+/* 官方 shineTask：highlightRect α→1，200ms × 4 PING_PONG */
+.bet-cell.shine .highlight {
+  animation: bcbmBetShine 0.2s linear 4 alternate;
+}
+.bet-cell.shine .highlight-add {
+  animation: bcbmBetShine 0.2s linear 4 alternate;
+}
+@keyframes bcbmBetShine {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 .highlight-add {
   position: absolute;
@@ -320,6 +394,55 @@ const addStyle = computed(() => {
   height: auto;
   max-width: none;
   pointer-events: none;
+}
+.icon.color-red {
+  --glow: #ff2438;
+}
+.icon.color-green {
+  --glow: #28ff4e;
+}
+.icon.color-yellow {
+  --glow: #ffe03c;
+}
+/* 官方 payoutLabel：init 时贴在押格上，rise 时上移 100 + alpha→0.5 */
+.payout-label {
+  position: absolute;
+  left: 50%;
+  bottom: 18%;
+  z-index: 6;
+  transform: translateX(-50%);
+  color: #fff;
+  font-weight: 700;
+  font-family: 'DIN Alternate', 'Helvetica Neue', Arial, sans-serif;
+  letter-spacing: 0.02em;
+  text-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.85),
+    0 0 4px rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+  white-space: nowrap;
+  opacity: 1;
+  transition:
+    bottom 0.4s linear,
+    opacity 0.4s linear,
+    transform 0.4s linear;
+}
+.payout-label.size-L {
+  font-size: 30px;
+}
+.payout-label.size-M {
+  font-size: 26px;
+}
+.payout-label.size-S {
+  font-size: 22px;
+  bottom: 14%;
+}
+.payout-label.rise {
+  bottom: calc(18% + 100px);
+  opacity: 0.5;
+  transform: translateX(-50%);
+}
+.payout-label.size-S.rise {
+  bottom: calc(14% + 100px);
 }
 .odds {
   position: absolute;

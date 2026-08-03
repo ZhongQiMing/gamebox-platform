@@ -161,6 +161,9 @@ export function mountOfficialPgLoader(root: HTMLElement): () => void {
   slogan.style.color = 'rgb(204, 204, 204)'
   slogan.style.opacity = '0'
   slogan.style.textAlign = 'center'
+  slogan.style.margin = '12px 0 0'
+  slogan.style.padding = '0'
+  slogan.style.whiteSpace = 'pre'
   slogan.style.animation = '1.2s ease-in-out 0s 1 normal forwards running fade-in'
 
   root.appendChild(outerSvg)

@@ -1,0 +1,314 @@
+{
+  "groups": [
+    {
+      "keys": "Benz_en_json,Benz_hans_json,yben_coin_mc_json,yben_coin_mc_png,yben_betboard_json,yben_main_json,yben_spin_item_json,yben_win_font_fnt,yben_effect_final_common_ske_json,yben_effect_final_common_tex_json,yben_effect_final_common_tex_png,yben_effect_final_text_ske_json,yben_effect_final_text_tex_json,yben_effect_final_text_tex_png,yben_lv2_thunder_ske_json,yben_lv2_thunder_tex_json,yben_lv2_thunder_tex_png,yben_number_effect_ske_json,yben_number_effect_tex_json,yben_number_effect_tex_png,yben_speeed_effect_final_ske_json,yben_speeed_effect_final_tex_json,yben_speeed_effect_final_tex_png,yben_lv2_thunder_spark_json,yben_lv2_thunder_spark_png,yben_vfx_number_dot_json,yben_vfx_number_dot_png,yben_vfx_number_shine_json,yben_vfx_number_shine_png,yben_vfx_reward_paper_1_json,yben_vfx_reward_paper_1_png,yben_vfx_reward_paper_2_json,yben_vfx_reward_paper_2_png,yben_speeed_effect_2_final_ske_json,yben_speeed_effect_2_final_tex_json,yben_speeed_effect_2_final_tex_png,yben_bgm_mp3,yben_sfx_anticipation_mp3,yben_sfx_bet_mp3,yben_sfx_bonus_end_mp3,yben_sfx_bonus_loop_mp3,yben_sfx_counting_end_mp3,yben_sfx_counting_mp3,yben_sfx_ding_mp3,yben_sfx_flash_mp3,yben_sfx_payout_fadeout_mp3,yben_sfx_payout_loop_mp3,yben_sfx_payout_loop2_mp3,yben_sfx_spin_loop_mp3,yben_sfx_spin_start_mp3,yben_sfx_spin_stop_mp3,yben_rules_json,yben_setting_json",
+      "name": "Benz"
+    },
+    {
+      "keys": "yben_bgm_mp3,yben_sfx_anticipation_mp3,yben_sfx_bet_mp3,yben_sfx_bonus_end_mp3,yben_sfx_bonus_loop_mp3,yben_sfx_counting_end_mp3,yben_sfx_counting_mp3,yben_sfx_ding_mp3,yben_sfx_flash_mp3,yben_sfx_payout_fadeout_mp3,yben_sfx_payout_loop_mp3,yben_sfx_payout_loop2_mp3,yben_sfx_spin_loop_mp3,yben_sfx_spin_start_mp3,yben_sfx_spin_stop_mp3",
+      "name": "sound"
+    },
+    {
+      "keys": "yben_lang_en_json",
+      "name": "Benz_en"
+    },
+    {
+      "keys": "yben_lang_hans_json",
+      "name": "Benz_hans"
+    },
+    {
+      "keys": "yben_lang_hant_json",
+      "name": "Benz_hant"
+    }
+  ],
+  "resources": [
+    {
+      "name": "Benz_en_json",
+      "type": "json",
+      "url": "locale/Benz_en.e726ca80.json"
+    },
+    {
+      "name": "Benz_hans_json",
+      "type": "json",
+      "url": "locale/Benz_hans.b634ebcb.json"
+    },
+    {
+      "name": "yben_coin_mc_json",
+      "type": "json",
+      "url": "mc/yben_coin_mc.d60cccee.json"
+    },
+    {
+      "name": "yben_coin_mc_png",
+      "type": "image",
+      "url": "mc/yben_coin_mc.4eba40f7.png"
+    },
+    {
+      "name": "yben_betboard_json",
+      "subkeys": "yben_bg_total_bet,yben_btn_allbet_off,yben_btn_allbet_on,yben_btn_allbet_select_off_1,yben_btn_allbet_select_off_2,yben_btn_allbet_select_on_1,yben_btn_allbet_select_on_2,yben_btn_arrow_1_on,yben_btn_autoplay_bg_detect,yben_btn_autoplay_off,yben_btn_autoplay_on,yben_btn_chips_change,yben_btn_chips_off,yben_btn_chips_on,yben_btn_select_arrow_off,yben_btn_select_arrow_on,yben_btn_undo,yben_icon_arrow,yben_icon_bet_audi_green,yben_icon_bet_audi_red,yben_icon_bet_audi_yellow,yben_icon_bet_benz_green,yben_icon_bet_benz_red,yben_icon_bet_benz_yellow,yben_icon_bet_bmw_green,yben_icon_bet_bmw_red,yben_icon_bet_bmw_yellow,yben_icon_bet_volkswagen_green,yben_icon_bet_volkswagen_red,yben_icon_bet_volkswagen_yellow,yben_icon_history_audi,yben_icon_history_benz,yben_icon_history_bmw,yben_icon_history_green,yben_icon_history_red,yben_icon_history_volkswagen,yben_icon_history_yellow,yben_icon_select_audi,yben_icon_select_benz,yben_icon_select_bmw,yben_icon_select_volkswagen,yben_mask_btn_vol_animat,yben_mask_common,yben_mask_outline,yben_mask_panel_pattern,yben_mask_panel_vol_animat,yben_sfx_flash_light,yben_txt_x10,yben_txt_x12,yben_txt_x13,yben_txt_x16,yben_txt_x22,yben_txt_x27,yben_txt_x38,yben_txt_x4,yben_txt_x45,yben_txt_x5,yben_txt_x6,yben_txt_x7,yben_ui_geniric_border3,yben_ui_geniric_border3_selected,yben_ui_panel,yben_vfx_add_green,yben_vfx_add_red,yben_vfx_add_yellow,yben_vfx_auto_clear_auto_on,yben_vfx_bet_glow_mid_line_green,yben_vfx_bet_glow_mid_line_red,yben_vfx_bet_glow_mid_line_yellow,yben_vfx_bet_glow_out_line_green,yben_vfx_bet_glow_out_line_red,yben_vfx_bet_glow_out_line_yellow,yben_vfx_glow_largebet_green,yben_vfx_glow_largebet_red,yben_vfx_glow_largebet_yellow,yben_vfx_glow_minibet_green,yben_vfx_glow_minibet_red,yben_vfx_glow_minibet_yellow,yben_vfx_start_on,yben_vfx_stop_on",
+      "type": "sheet",
+      "url": "assets/yben_betboard.39bb9e9e.json"
+    },
+    {
+      "name": "yben_main_json",
+      "subkeys": "yben_bg,yben_btn_back,yben_btn_close,yben_btn_geniric_blue,yben_btn_geniric_red,yben_btn_menu,yben_btn_rule_arrow,yben_btn_rules_undo,yben_btn_user_bar_own,yben_btn_user_own,yben_icon_history_l_audi_green,yben_icon_history_l_audi_red,yben_icon_history_l_audi_yellow,yben_icon_history_l_benz_green,yben_icon_history_l_benz_red,yben_icon_history_l_benz_yellow,yben_icon_history_l_bmw_green,yben_icon_history_l_bmw_red,yben_icon_history_l_bmw_yellow,yben_icon_history_l_volkswagen_green,yben_icon_history_l_volkswagen_red,yben_icon_history_l_volkswagen_yellow,yben_icon_history_s_audi_green,yben_icon_history_s_audi_red,yben_icon_history_s_audi_yellow,yben_icon_history_s_benz_green,yben_icon_history_s_benz_red,yben_icon_history_s_benz_yellow,yben_icon_history_s_bmw_green,yben_icon_history_s_bmw_red,yben_icon_history_s_bmw_yellow,yben_icon_history_s_volkswagen_green,yben_icon_history_s_volkswagen_red,yben_icon_history_s_volkswagen_yellow,yben_icon_large_audi_blue,yben_icon_large_benz_blue,yben_icon_large_bmw_blue,yben_icon_large_volkswagen_blue,yben_icon_money,yben_icon_rules_2000,yben_icon_rules_light,yben_icon_rules_x22,yben_txt_new,yben_ui_geniric_border,yben_ui_geniric_border2,yben_ui_txtbox_active,yben_vfx_bg_purple",
+      "type": "sheet",
+      "url": "assets/yben_main.bd0e33c4.json"
+    },
+    {
+      "name": "yben_spin_item_json",
+      "subkeys": "yben_bg_history_blk_circle,yben_icon_U_turn,yben_icon_fast_and_furious,yben_icon_four_great_blessings,yben_icon_large_audi_green,yben_icon_large_audi_red,yben_icon_large_audi_yellow,yben_icon_large_benz_green,yben_icon_large_benz_red,yben_icon_large_benz_yellow,yben_icon_large_bmw_green,yben_icon_large_bmw_red,yben_icon_large_bmw_yellow,yben_icon_large_volkswagen_green,yben_icon_large_volkswagen_red,yben_icon_large_volkswagen_yellow,yben_icon_lightning_bolt,yben_icon_three_great_scholars,yben_icon_total_drift",
+      "type": "sheet",
+      "url": "assets/yben_spin_item.3bf1741a.json"
+    },
+    {
+      "name": "yben_lang_en_json",
+      "subkeys": "yben_btn_more_en,yben_btn_rules_auto_en,yben_btn_rules_clear_en,yben_btn_rules_start_en,yben_txt_allbet_off_en,yben_txt_allbet_on_en,yben_txt_auto_off_en,yben_txt_auto_on_en,yben_txt_cancel_en,yben_txt_clear_off_en,yben_txt_clear_on_en,yben_txt_confirm_en,yben_txt_fast_and_furious_en,yben_txt_four_great_blessings_en,yben_txt_gamerules_en,yben_txt_history_en,yben_txt_lightning_bolt_en,yben_txt_reply_en,yben_txt_select_allbet_off_en,yben_txt_select_allbet_on_en,yben_txt_specialrewards_en,yben_txt_start_en,yben_txt_stop_en,yben_txt_three_great_scholars_en,yben_txt_total_drift_en,yben_txt_u_turn_en",
+      "type": "sheet",
+      "url": "assets/locale/en/yben_lang_en.9c6351c5.json"
+    },
+    {
+      "name": "yben_lang_hans_json",
+      "subkeys": "yben_btn_more_hans,yben_btn_rules_auto_hans,yben_btn_rules_clear_hans,yben_btn_rules_start_hans,yben_txt_allbet_hans,yben_txt_allbet_off_hans,yben_txt_allbet_on_hans,yben_txt_auto_off_hans,yben_txt_auto_on_hans,yben_txt_cancel_hans,yben_txt_clear_off_hans,yben_txt_clear_on_hans,yben_txt_confirm_hans,yben_txt_fast_and_furious_hans,yben_txt_four_great_blessings_hans,yben_txt_gamerules_hans,yben_txt_history_hans,yben_txt_lightning_bolt_hans,yben_txt_reply_hans,yben_txt_select_allbet_off_hans,yben_txt_select_allbet_on_hans,yben_txt_specialrewards_hans,yben_txt_start_hans,yben_txt_stop_hans,yben_txt_three_great_scholars_hans,yben_txt_total_drift_hans,yben_txt_u_turn_hans",
+      "type": "sheet",
+      "url": "assets/locale/hans/yben_lang_hans.b4885b65.json"
+    },
+    {
+      "name": "yben_lang_hant_json",
+      "subkeys": "yben_btn_more_hant,yben_btn_rules_auto_hant,yben_btn_rules_clear_hant,yben_btn_rules_start_hant,yben_txt_allbet_hant,yben_txt_allbet_off_hant,yben_txt_allbet_on_hant,yben_txt_auto_off_hant,yben_txt_auto_on_hant,yben_txt_cancel_hant,yben_txt_clear_off_hant,yben_txt_clear_on_hant,yben_txt_confirm_hant,yben_txt_fast_and_furious_hant,yben_txt_four_great_blessings_hant,yben_txt_gamerules_hant,yben_txt_history_hant,yben_txt_lightning_bolt_hant,yben_txt_reply_hant,yben_txt_select_allbet_off_hant,yben_txt_select_allbet_on_hant,yben_txt_specialrewards_hant,yben_txt_start_hant,yben_txt_stop_hant,yben_txt_three_great_scholars_hant,yben_txt_total_drift_hant,yben_txt_u_turn_hant",
+      "type": "sheet",
+      "url": "assets/locale/hant/yben_lang_hant.1457ec92.json"
+    },
+    {
+      "name": "yben_win_font_fnt",
+      "type": "font",
+      "url": "font/yben_win_font.1a7da49b.fnt"
+    },
+    {
+      "name": "yben_effect_final_common_ske_json",
+      "type": "json",
+      "url": "dragonbones/yben_effect_final_common_ske.cad49dfc.json"
+    },
+    {
+      "name": "yben_effect_final_common_tex_json",
+      "type": "json",
+      "url": "dragonbones/yben_effect_final_common_tex.f00df7be.json"
+    },
+    {
+      "name": "yben_effect_final_common_tex_png",
+      "type": "image",
+      "url": "dragonbones/yben_effect_final_common_tex.3f02a2dc.png"
+    },
+    {
+      "name": "yben_effect_final_text_ske_json",
+      "type": "json",
+      "url": "dragonbones/yben_effect_final_text_ske.25fba10a.json"
+    },
+    {
+      "name": "yben_effect_final_text_tex_json",
+      "type": "json",
+      "url": "dragonbones/yben_effect_final_text_tex.81c19626.json"
+    },
+    {
+      "name": "yben_effect_final_text_tex_png",
+      "type": "image",
+      "url": "dragonbones/yben_effect_final_text_tex.4871ab25.png"
+    },
+    {
+      "name": "yben_lv2_thunder_ske_json",
+      "type": "json",
+      "url": "dragonbones/yben_lv2_thunder_ske.bc0bfbd8.json"
+    },
+    {
+      "name": "yben_lv2_thunder_tex_json",
+      "type": "json",
+      "url": "dragonbones/yben_lv2_thunder_tex.c00bfa90.json"
+    },
+    {
+      "name": "yben_lv2_thunder_tex_png",
+      "type": "image",
+      "url": "dragonbones/yben_lv2_thunder_tex.c95d4120.png"
+    },
+    {
+      "name": "yben_number_effect_ske_json",
+      "type": "json",
+      "url": "dragonbones/yben_number_effect_ske.cdbafa46.json"
+    },
+    {
+      "name": "yben_number_effect_tex_json",
+      "type": "json",
+      "url": "dragonbones/yben_number_effect_tex.a81aac1d.json"
+    },
+    {
+      "name": "yben_number_effect_tex_png",
+      "type": "image",
+      "url": "dragonbones/yben_number_effect_tex.ff59a9eb.png"
+    },
+    {
+      "name": "yben_speeed_effect_final_ske_json",
+      "type": "json",
+      "url": "dragonbones/yben_speeed_effect_final_ske.49db5e6e.json"
+    },
+    {
+      "name": "yben_speeed_effect_final_tex_json",
+      "type": "json",
+      "url": "dragonbones/yben_speeed_effect_final_tex.cbbf5f40.json"
+    },
+    {
+      "name": "yben_speeed_effect_final_tex_png",
+      "type": "image",
+      "url": "dragonbones/yben_speeed_effect_final_tex.192b2a32.png"
+    },
+    {
+      "name": "yben_lv2_thunder_spark_json",
+      "type": "json",
+      "url": "particles/yben_lv2_thunder_spark.json"
+    },
+    {
+      "name": "yben_lv2_thunder_spark_png",
+      "type": "image",
+      "url": "particles/yben_lv2_thunder_spark.91efadb9.png"
+    },
+    {
+      "name": "yben_vfx_number_dot_json",
+      "type": "json",
+      "url": "particles/yben_vfx_number_dot.json"
+    },
+    {
+      "name": "yben_vfx_number_dot_png",
+      "type": "image",
+      "url": "particles/yben_vfx_number_dot.43b2b79c.png"
+    },
+    {
+      "name": "yben_vfx_number_shine_json",
+      "type": "json",
+      "url": "particles/yben_vfx_number_shine.json"
+    },
+    {
+      "name": "yben_vfx_number_shine_png",
+      "type": "image",
+      "url": "particles/yben_vfx_number_shine.960095f4.png"
+    },
+    {
+      "name": "yben_vfx_reward_paper_1_json",
+      "type": "json",
+      "url": "particles/yben_vfx_reward_paper_1.f7accb62.json"
+    },
+    {
+      "name": "yben_vfx_reward_paper_1_png",
+      "type": "image",
+      "url": "particles/yben_vfx_reward_paper_1.b27ff79a.png"
+    },
+    {
+      "name": "yben_vfx_reward_paper_2_json",
+      "type": "json",
+      "url": "particles/yben_vfx_reward_paper_2.169b6b75.json"
+    },
+    {
+      "name": "yben_vfx_reward_paper_2_png",
+      "type": "image",
+      "url": "particles/yben_vfx_reward_paper_2.afef147f.png"
+    },
+    {
+      "name": "yben_speeed_effect_2_final_ske_json",
+      "type": "json",
+      "url": "dragonbones/yben_speeed_effect_2_final_ske.454e86be.json"
+    },
+    {
+      "name": "yben_speeed_effect_2_final_tex_json",
+      "type": "json",
+      "url": "dragonbones/yben_speeed_effect_2_final_tex.05d51147.json"
+    },
+    {
+      "name": "yben_speeed_effect_2_final_tex_png",
+      "type": "image",
+      "url": "dragonbones/yben_speeed_effect_2_final_tex.4101d423.png"
+    },
+    {
+      "name": "yben_bgm_mp3",
+      "type": "sound",
+      "url": "sounds/yben_bgm.dc958266.mp3"
+    },
+    {
+      "name": "yben_sfx_anticipation_mp3",
+      "type": "sound",
+      "url": "sounds/yben_sfx_anticipation.6a93b2c2.mp3"
+    },
+    {
+      "name": "yben_sfx_bet_mp3",
+      "type": "sound",
+      "url": "sounds/yben_sfx_bet.20bb4040.mp3"
+    },
+    {
+      "name": "yben_sfx_bonus_end_mp3",
+      "type": "sound",
+      "url": "sounds/yben_sfx_bonus_end.6fae6140.mp3"
+    },
+    {
+      "name": "yben_sfx_bonus_loop_mp3",
+      "type": "sound",
+      "url": "sounds/yben_sfx_bonus_loop.955c3f93.mp3"
+    },
+    {
+      "name": "yben_sfx_counting_end_mp3",
+      "type": "sound",
+      "url": "sounds/yben_sfx_counting_end.59382296.mp3"
+    },
+    {
+      "name": "yben_sfx_counting_mp3",
+      "type": "sound",
+      "url": "sounds/yben_sfx_counting.596f35dd.mp3"
+    },
+    {
+      "name": "yben_sfx_ding_mp3",
+      "type": "sound",
+      "url": "sounds/yben_sfx_ding.09d4863f.mp3"
+    },
+    {
+      "name": "yben_sfx_flash_mp3",
+      "type": "sound",
+      "url": "sounds/yben_sfx_flash.db9d2c2a.mp3"
+    },
+    {
+      "name": "yben_sfx_payout_fadeout_mp3",
+      "type": "sound",
+      "url": "sounds/yben_sfx_payout_fadeout.5e8de75e.mp3"
+    },
+    {
+      "name": "yben_sfx_payout_loop_mp3",
+      "type": "sound",
+      "url": "sounds/yben_sfx_payout_loop.384a5b9a.mp3"
+    },
+    {
+      "name": "yben_sfx_payout_loop2_mp3",
+      "type": "sound",
+      "url": "sounds/yben_sfx_payout_loop2.18b359a5.mp3"
+    },
+    {
+      "name": "yben_sfx_spin_loop_mp3",
+      "type": "sound",
+      "url": "sounds/yben_sfx_spin_loop.04b26129.mp3"
+    },
+    {
+      "name": "yben_sfx_spin_start_mp3",
+      "type": "sound",
+      "url": "sounds/yben_sfx_spin_start.683d80f9.mp3"
+    },
+    {
+      "name": "yben_sfx_spin_stop_mp3",
+      "type": "sound",
+      "url": "sounds/yben_sfx_spin_stop.d71e130f.mp3"
+    },
+    {
+      "name": "yben_rules_json",
+      "subkeys": "yben_msc_btn_close,yben_msc_ui_geniric_border,yben_rul_btn_rule_arrow,yben_rul_btn_rules_auto_lang_en,yben_rul_btn_rules_auto_lang_hans,yben_rul_btn_rules_auto_lang_hant,yben_rul_btn_rules_clear_lang_en,yben_rul_btn_rules_clear_lang_hans,yben_rul_btn_rules_clear_lang_hant,yben_rul_btn_rules_start_lang_en,yben_rul_btn_rules_start_lang_hans,yben_rul_btn_rules_start_lang_hant,yben_rul_btn_rules_undo,yben_rul_icon_U_turn,yben_rul_icon_audi_green,yben_rul_icon_audi_red,yben_rul_icon_audi_yellow,yben_rul_icon_benz_green,yben_rul_icon_benz_red,yben_rul_icon_benz_yellow,yben_rul_icon_bmw_green,yben_rul_icon_bmw_red,yben_rul_icon_bmw_yellow,yben_rul_icon_fast_and_furious,yben_rul_icon_four_great_blessings,yben_rul_icon_large_audi_blue,yben_rul_icon_large_benz_blue,yben_rul_icon_large_bmw_blue,yben_rul_icon_large_volkswagen_blue,yben_rul_icon_lightning_bolt,yben_rul_icon_rules_2000,yben_rul_icon_rules_x22,yben_rul_icon_three_great_scholars,yben_rul_icon_total_drift,yben_rul_icon_volkswagen_green,yben_rul_icon_volkswagen_red,yben_rul_icon_volkswagen_yellow,yben_rul_txt_fast_and_furious_lang_en,yben_rul_txt_fast_and_furious_lang_hans,yben_rul_txt_fast_and_furious_lang_hant,yben_rul_txt_four_great_blessings_lang_en,yben_rul_txt_four_great_blessings_lang_hans,yben_rul_txt_four_great_blessings_lang_hant,yben_rul_txt_lightning_bolt_lang_en,yben_rul_txt_lightning_bolt_lang_hans,yben_rul_txt_lightning_bolt_lang_hant,yben_rul_txt_three_great_scholars_lang_en,yben_rul_txt_three_great_scholars_lang_hans,yben_rul_txt_three_great_scholars_lang_hant,yben_rul_txt_title_lang_en,yben_rul_txt_title_lang_hans,yben_rul_txt_title_lang_hant,yben_rul_txt_total_drift_lang_en,yben_rul_txt_total_drift_lang_hans,yben_rul_txt_total_drift_lang_hant,yben_rul_txt_u_turn_lang_en,yben_rul_txt_u_turn_lang_hans,yben_rul_txt_u_turn_lang_hant",
+      "type": "sheet",
+      "url": "assets/yben_rules.28defabf.json"
+    },
+    {
+      "name": "yben_setting_json",
+      "subkeys": "yben_set_cancel_off,yben_set_cancel_on,yben_set_chips_off,yben_set_chips_on,yben_set_confirm_off,yben_set_confirm_on,yben_set_inside_bordar,yben_set_main_bordar",
+      "type": "sheet",
+      "url": "assets/yben_setting.6e47476b.json"
+    }
+  ]
+}

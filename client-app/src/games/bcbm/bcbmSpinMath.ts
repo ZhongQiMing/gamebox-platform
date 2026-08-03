@@ -6,6 +6,10 @@ export const BCBM_POSITION_NUM = 24
 /** 手机 SpinPanelV2.RADIUS（PC 为 300；V66 H5 用手机版） */
 export const BCBM_RADIUS = 180
 export const BCBM_FOCAL = 100
+/**
+ * 下列速度参数按官方 Egret enter_frame（约 30fps）「每逻辑帧」标定。
+ * 渲染层必须用 30fps 定步 tick（见 BcbmSpinRing），勿按 60fps rAF 每帧推进。
+ */
 export const BCBM_MAX_SPEED = 20
 export const BCBM_STOP_ACCEL = -0.5
 

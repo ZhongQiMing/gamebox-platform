@@ -67,7 +67,7 @@
               type="text"
               inputmode="numeric"
               placeholder="请 输 入 金 额"
-              maxlength="9"
+              maxlength="6"
               @input="onAmountInput"
             />
             <button v-show="amountStr" class="rf-clear" type="button" aria-label="清空" @click="clearAmount">×</button>
@@ -164,6 +164,7 @@ import { useToast } from '@/composables/useToast'
 import { useBodyClass } from '@/composables/useBodyClass'
 import { pushCsScoreApply } from '@/composables/csLocalChat'
 import TabBar from '@/components/TabBar.vue'
+import { PLAYER_DOWN_MIN, PLAYER_FUND_MAX, PLAYER_UP_MIN } from '@gamebox/shared'
 import '@/assets/recharge.css'
 
 useBodyClass('deco-bg')
@@ -193,8 +194,8 @@ const QUICK = computed(() => (curType.value === 'up' ? QUICK_UP : QUICK_DOWN))
 
 const amountHint = computed(() =>
   curType.value === 'up'
-    ? '（请输入整数积分，最低 200）'
-    : `（最低 500，最多可下 ${walletStore.balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} 积分）`
+    ? `（最低 ${PLAYER_UP_MIN}，最高 ${PLAYER_FUND_MAX}）`
+    : `（最低 ${PLAYER_DOWN_MIN}，最高 ${PLAYER_FUND_MAX}，且不超过余额 ${walletStore.balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}）`
 )
 
 function switchType(t: 'up' | 'down') {
@@ -209,7 +210,7 @@ function switchType(t: 'up' | 'down') {
 function onAmountInput() {
   let v = amountStr.value.replace(/[^\d]/g, '')
   if (v.length > 1) v = v.replace(/^0+/, '')
-  amountStr.value = v.slice(0, 9)
+  amountStr.value = v.slice(0, 6)
   quickActive.value = null
 }
 
@@ -237,9 +238,13 @@ async function submit() {
   const amount = parseInt(amountStr.value, 10)
   if (!amountStr.value) { toast('请输入金额'); return }
   if (!amount || amount <= 0) { toast('金额格式有误'); return }
-  if (curType.value === 'up' && amount < 200) { toast('上分最低 200 积分'); return }
+  if (curType.value === 'up') {
+    if (amount < PLAYER_UP_MIN) { toast(`上分最低 ${PLAYER_UP_MIN} 积分`); return }
+    if (amount > PLAYER_FUND_MAX) { toast(`单笔上分不超过 ${PLAYER_FUND_MAX}`); return }
+  }
   if (curType.value === 'down') {
-    if (amount < 500) { toast('下分最低 500 积分'); return }
+    if (amount < PLAYER_DOWN_MIN) { toast(`下分最低 ${PLAYER_DOWN_MIN} 积分`); return }
+    if (amount > PLAYER_FUND_MAX) { toast(`单笔下分不超过 ${PLAYER_FUND_MAX}`); return }
     if (amount > walletStore.balance) { toast('下分金额不能大于当前积分'); return }
   }
 

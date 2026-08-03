@@ -16,6 +16,7 @@
  *   报奖旁白：announce-sanyuan / sixi / fast / uturn / lightning / drift
  */
 import type { BcbmAwardType } from '@gamebox/shared'
+import { isAppBgmOn, isClickSoundOn } from '@/composables/appSoundPrefs'
 import { playOneShot } from '../pg-common/audioPool'
 
 const BASE = '/audio/bcbm'
@@ -64,6 +65,9 @@ let countingEl: HTMLAudioElement | null = null
 let announceEl: HTMLAudioElement | null = null
 let spinStartTimer: number | null = null
 let announceDuckTimer: number | null = null
+let dingTimers: number[] = []
+/** 切后台前 BGM 是否在播，回前台用于恢复 */
+let bgmWasPlaying = false
 
 const LS_BGM = 'bcbm_bgm_off'
 const LS_SFX = 'bcbm_sfx_off'
@@ -173,10 +177,6 @@ export function playBcbmSpinStartAndLoop() {
   spinEl = playLoop(FILES.spin, 0.55)
 }
 
-export function playBcbmSpinLoop() {
-  playBcbmSpinStartAndLoop()
-}
-
 export function stopBcbmSpinLoop() {
   if (spinStartTimer != null) {
     window.clearTimeout(spinStartTimer)
@@ -184,6 +184,11 @@ export function stopBcbmSpinLoop() {
   }
   stopEl(spinEl)
   spinEl = null
+}
+
+function clearDingTimers() {
+  for (const id of dingTimers) window.clearTimeout(id)
+  dingTimers = []
 }
 
 export function playBcbmAnticipation() {
@@ -229,19 +234,35 @@ function stopPayoutGroup() {
   countingEl = null
 }
 
-/** 小奖 FastJumpAmount：只停轨，不播 fadeout */
+/** 停派彩组/旁白/ding 定时器；不播 counting_end（离局与收尾用） */
 export function clearBcbmPayout() {
-  endBcbmCounting()
+  clearDingTimers()
+  stopEl(countingEl)
+  countingEl = null
   stopPayoutGroup()
   stopAnnounce()
 }
 
+/** 切到后台：暂停 BGM，停掉循环 SFX，避免漏音 */
+export function pauseBcbmForBackground() {
+  bgmWasPlaying = !!(bgmEl && !bgmEl.paused && !bgmEl.muted && !bgmMuted)
+  if (bgmEl) bgmEl.pause()
+  stopBcbmSpinLoop()
+  stopBcbmAnticipation()
+  clearBcbmPayout()
+}
+
+/** 回前台：按需恢复 BGM（开奖中 SFX 由本局流程自行再起） */
+export function resumeBcbmFromBackground() {
+  if (bgmWasPlaying && !bgmMuted) startBcbmBgm()
+  bgmWasPlaying = false
+}
+
+/** 本游戏开关：关写 1 / 开写 0；有记录后不再被个人资料覆盖 */
 function persistMute() {
   if (typeof localStorage === 'undefined') return
-  if (bgmMuted) localStorage.setItem(LS_BGM, '1')
-  else localStorage.removeItem(LS_BGM)
-  if (sfxMuted) localStorage.setItem(LS_SFX, '1')
-  else localStorage.removeItem(LS_SFX)
+  localStorage.setItem(LS_BGM, bgmMuted ? '1' : '0')
+  localStorage.setItem(LS_SFX, sfxMuted ? '1' : '0')
   localStorage.removeItem(LS_LEGACY)
 }
 
@@ -268,15 +289,8 @@ export function setBcbmSfxMuted(v: boolean) {
   if (v) {
     stopBcbmSpinLoop()
     stopBcbmAnticipation()
-    stopPayoutGroup()
-    stopAnnounce()
+    clearBcbmPayout()
   }
-}
-
-/** @deprecated 合并静音；设置页请用分轨 API */
-export function setBcbmMuted(v: boolean) {
-  setBcbmBgmMuted(v)
-  setBcbmSfxMuted(v)
 }
 
 export function isBcbmBgmMuted() {
@@ -287,17 +301,27 @@ export function isBcbmSfxMuted() {
   return sfxMuted
 }
 
-/** 两轨都关才算全静音（兼容旧调用） */
-export function isBcbmMuted() {
-  return bgmMuted && sfxMuted
-}
-
+/**
+ * 读取本游戏静音。
+ * 无本游戏记录时跟随个人资料；有记录后只认本游戏开关。
+ */
 export function initBcbmMuteFromStorage() {
-  if (typeof localStorage === 'undefined') return
+  if (typeof localStorage === 'undefined') {
+    bgmMuted = false
+    sfxMuted = false
+    return
+  }
   const legacy = localStorage.getItem(LS_LEGACY) === '1'
-  bgmMuted = localStorage.getItem(LS_BGM) === '1' || legacy
-  sfxMuted = localStorage.getItem(LS_SFX) === '1' || legacy
-  if (legacy) persistMute()
+  if (legacy) {
+    bgmMuted = true
+    sfxMuted = true
+    persistMute()
+    return
+  }
+  const bgmKey = localStorage.getItem(LS_BGM)
+  const sfxKey = localStorage.getItem(LS_SFX)
+  bgmMuted = bgmKey == null ? !isAppBgmOn() : bgmKey === '1'
+  sfxMuted = sfxKey == null ? !isClickSoundOn() : sfxKey === '1'
 }
 
 export function isBcbmBonusAward(awardType: BcbmAwardType | string) {
@@ -385,8 +409,8 @@ export function startBcbmPayout(opts: {
   if (sfxMuted) return
   const { isBonus, payoutLevel } = opts
   if (isBonus) {
-    // 旁白改在横幅出现时播（FxOverlay）；此处只起氛围乐并预留压低音量
-    payoutLoopEl = playLoop(FILES.bonusLoop, BONUS_LOOP_DUCK_VOL)
+    // 正版 startPayout 立刻 bonus_loop(vol=100)；旁白出现时再压低
+    payoutLoopEl = playLoop(FILES.bonusLoop, BONUS_LOOP_VOL)
     return
   }
   if (payoutLevel > 1) {
@@ -398,10 +422,13 @@ export function startBcbmPayout(opts: {
 /** 官方 FastJumpAmount：800ms 间隔 ding ×2 */
 export function playBcbmFastJumpDing() {
   if (sfxMuted) return
+  clearDingTimers()
   playUrl(FILES.ding, 0.8)
-  window.setTimeout(() => {
-    if (!sfxMuted) playUrl(FILES.ding, 0.8)
-  }, 800)
+  dingTimers.push(
+    window.setTimeout(() => {
+      if (!sfxMuted) playUrl(FILES.ding, 0.8)
+    }, 800),
+  )
 }
 
 /** ShowAmount：level≥2 循环 counting */
@@ -449,25 +476,6 @@ export function endBcbmPayout(isBonus: boolean) {
   } else {
     stopPayoutGroup()
     playUrl(FILES.payoutOut, 0.75)
-  }
-}
-
-/**
- * @deprecated 用 startBcbmPayout + playPayout 分阶段
- */
-export function playBcbmAward(awardType: BcbmAwardType | string, payout: number) {
-  const isBonus = isBcbmBonusAward(awardType)
-  startBcbmPayout({
-    isBonus,
-    payoutLevel: isBonus ? 3 : payout > 0 ? 2 : 0,
-    payout,
-    awardType,
-  })
-  if (isBonus) {
-    window.setTimeout(() => endBcbmPayout(true), 2800)
-  } else if (payout > 0) {
-    playBcbmCounting(2)
-    window.setTimeout(() => endBcbmPayout(false), 900)
   }
 }
 

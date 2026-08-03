@@ -6,6 +6,7 @@
     bg-color="#0a0604"
     :duration-ms="750"
     :from-scale="1.04"
+    @close="emit('close')"
   >
     <button
       type="button"
@@ -30,7 +31,7 @@ defineProps({
   visible: { type: Boolean, default: true },
 })
 
-const emit = defineEmits(['start'])
+const emit = defineEmits(['start', 'close'])
 
 function handleStart() {
   emit('start')
@@ -70,11 +71,30 @@ function handleStart() {
   -webkit-user-drag: none;
 }
 
-/* 按下只变暗、轻微下压，不缩小，避免露出封面黑槽 */
+/* 椭圆压暗层：盖在钮面上，避免 brightness 把半透明描边滤成黑圈 */
+.start-btn::after {
+  content: '';
+  position: absolute;
+  left: 7%;
+  right: 7%;
+  top: 18%;
+  bottom: 18%;
+  border-radius: 50%;
+  background: rgba(50, 16, 0, 0.42);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.1s ease;
+}
+
+/* 封面黑槽已填色，可轻微下压；压暗用遮罩而不是整钮 brightness */
 .start-btn:active {
   animation: none;
-  transform: translateY(2px);
-  filter: brightness(0.86);
+  transform: translateY(4px) scale(0.96);
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.55));
+}
+
+.start-btn:active::after {
+  opacity: 1;
 }
 
 @keyframes btnPulse {

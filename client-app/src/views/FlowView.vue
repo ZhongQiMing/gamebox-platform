@@ -18,13 +18,11 @@
 
       <h1 class="detail-title">明 细</h1>
 
-      <!-- 顶部两个 tab 按钮 -->
       <div class="detail-tabs">
-        <button type="button" :class="['dt-tab', tab === 'settled' ? 'active' : '']" @click="tab = 'settled'">今 日 已 结</button>
-        <button type="button" :class="['dt-tab', tab === 'unsettled' ? 'active' : '']" @click="tab = 'unsettled'">未 结 明 细</button>
+        <button type="button" :class="['dt-tab', tab === 'settled' ? 'active' : '']" @click="switchTab('settled')">今 日 已 结</button>
+        <button type="button" :class="['dt-tab', tab === 'unsettled' ? 'active' : '']" @click="switchTab('unsettled')">未 结 明 细</button>
       </div>
 
-      <!-- 4 列表格：期号 / 游戏类型 / 下注金额 / 结果 -->
       <div class="detail-table">
         <div class="dt-head">
           <div class="dt-col col-issue">期 号</div>
@@ -67,6 +65,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import http from '@/api/http'
 import { useBodyClass } from '@/composables/useBodyClass'
+import { isInRange, rangeBounds } from '@/composables/timeRange'
 import TabBar from '@/components/TabBar.vue'
 import '@/assets/flow.css'
 
@@ -81,6 +80,7 @@ interface BetRecord {
   payout: number
   status: 'PENDING' | 'WON' | 'LOST' | 'CANCELLED'
   createdAt: string
+  settledAt?: string | null
   game: { name: string; code: string }
 }
 
@@ -89,19 +89,18 @@ const loading = ref(true)
 const records = ref<BetRecord[]>([])
 
 const rows = computed(() => {
-  const today0 = (() => {
-    const d = new Date()
-    return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
-  })()
   const src = tab.value === 'settled'
-    ? records.value.filter(b => b.status !== 'PENDING' && new Date(b.createdAt).getTime() >= today0)
-    : records.value.filter(b => b.status === 'PENDING')
-  return src.map(b => ({
+    ? records.value.filter((b) => {
+        if (b.status === 'PENDING' || b.status === 'CANCELLED') return false
+        const t = b.settledAt || b.createdAt
+        return isInRange(t, 'today')
+      })
+    : records.value.filter((b) => b.status === 'PENDING')
+  return src.map((b) => ({
     id: b.id,
     issue: b.betNo,
     game: b.game.name.replace(/\s+/g, ''),
     stake: b.amount,
-    // 已结：结果 = 派彩 - 本金（输 = -本金）；未结：null → 待开奖
     result: b.status === 'PENDING' ? null : b.payout - b.amount,
   }))
 })
@@ -110,16 +109,35 @@ function fmt(n: number) {
   return Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
+async function loadRecords() {
+  loading.value = true
+  try {
+    if (tab.value === 'settled') {
+      const [from, to] = rangeBounds('today')
+      records.value = await http.get<BetRecord[], BetRecord[]>(
+        `/bet/history?range=today&from=${from}&to=${to}`,
+      )
+    } else {
+      /* 未结：拉最近注单再筛 PENDING（不限今日） */
+      records.value = await http.get<BetRecord[], BetRecord[]>('/bet/history')
+    }
+  } catch {
+    records.value = []
+  } finally {
+    loading.value = false
+  }
+}
+
+async function switchTab(next: 'settled' | 'unsettled') {
+  if (tab.value === next) return
+  tab.value = next
+  await loadRecords()
+}
+
 function goBack() {
   if (window.history.length > 1) router.back()
   else router.push('/lobby')
 }
 
-onMounted(async () => {
-  try {
-    records.value = await http.get<BetRecord[], BetRecord[]>('/bet/history')
-  } catch { /* 静默 */ } finally {
-    loading.value = false
-  }
-})
+onMounted(() => { void loadRecords() })
 </script>

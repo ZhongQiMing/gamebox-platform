@@ -1,5 +1,25 @@
 .ag-page .page-body { padding: 10px 16px 0; }
 
+.ag-console-tip {
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(212, 175, 55, 0.28);
+  background: rgba(20, 16, 10, 0.85);
+}
+.ag-console-tip-t {
+  font-size: 13px;
+  font-weight: 700;
+  color: #f4d36b;
+  letter-spacing: 1px;
+  margin-bottom: 4px;
+}
+.ag-console-tip-d {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted, #9a9080);
+}
+
 .ag-hero {
   margin-bottom: 12px;
   padding: 16px 14px 12px;

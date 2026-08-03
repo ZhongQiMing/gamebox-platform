@@ -16,6 +16,8 @@ export interface DrawHistory {
   openAt: string
   serverSeed: string
   serverSeedHash: string
+  /** 开奖页码：复算用 seed:server:nonce；自然开奖为 1 */
+  nonce?: number | null
   totalFlow: number
 }
 

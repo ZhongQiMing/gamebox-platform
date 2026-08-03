@@ -92,13 +92,23 @@
 }
 .br-kpi-num {
   font-family: ui-monospace, 'JetBrains Mono', Consolas, monospace;
-  font-size: 18px;
+  font-size: clamp(12px, 3.8vw, 18px);
   font-weight: 700;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.2px;
+  line-height: 1.2;
+  text-align: center;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-all;
   background: linear-gradient(180deg, #f7e29a 0%, var(--gold) 50%, #a8841f 100%);
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
+}
+.br-kpi-label {
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: var(--text-muted);
 }
 .br-kpi-num.neg-num {
   background: none;

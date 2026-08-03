@@ -185,11 +185,6 @@ export const PANEL_CHIP_SLOTS = [
   { x: 286.5, y: 150, w: 62, h: 62 },
   { x: 346.73, y: 150, w: 62, h: 62 },
 ] as const
-/** @deprecated 使用 PANEL_CHIP_SLOTS + 动态面额 */
-export const PANEL_CHIPS = PANEL_CHIP_SLOTS.map((s, i) => ({
-  ...s,
-  v: ([1, 5, 10, 100] as const)[i]!,
-}))
 /** historyList：x=46 y=33 w=345 h=50，gap=-1；item 50×50；约 7 格可见 */
 export const PANEL_HISTORY = { x: 46, y: 33, w: 345, h: 50 }
 /** historyListMask：为 latest 62 图与小车标溢出预留 */

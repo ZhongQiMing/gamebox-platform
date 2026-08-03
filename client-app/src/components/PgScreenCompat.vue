@@ -14,8 +14,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { calcPgScreenScale, PG_SCREEN_H, PG_SCREEN_W } from '@/games/pg-common/pgScreenScale'
+import { computed, onMounted, onUnmounted, provide, ref, watch } from 'vue'
+import {
+  calcPgScreenMetrics,
+  type PgScreenMetrics,
+} from '@/games/pg-common/pgScreenScale'
 
 const props = defineProps({
   zIndex: {
@@ -30,34 +33,46 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  /** 正版 screen_compat：高度 640~780 自适应（麻将封面需要） */
+  adaptiveHeight: {
+    type: Boolean,
+    default: false,
+  },
 })
 
 const centerVertically = computed(() => props.centerVertically)
 const backdropTransparent = computed(() => props.backdropTransparent)
 
-const scale = ref(calcPgScreenScale())
+const metrics = ref<PgScreenMetrics>(calcPgScreenMetrics(props.adaptiveHeight))
 
-function updateScale() {
-  scale.value = calcPgScreenScale()
+function updateMetrics() {
+  metrics.value = calcPgScreenMetrics(props.adaptiveHeight)
 }
 
+watch(
+  () => props.adaptiveHeight,
+  () => updateMetrics(),
+)
+
 onMounted(() => {
-  updateScale()
-  window.addEventListener('resize', updateScale)
+  updateMetrics()
+  window.addEventListener('resize', updateMetrics)
 })
 
 onUnmounted(() => {
-  window.removeEventListener('resize', updateScale)
+  window.removeEventListener('resize', updateMetrics)
 })
+
+provide('pgScreenMetrics', metrics)
 
 const rootStyle = computed(() => ({
   zIndex: String(props.zIndex),
 }))
 
 const stageStyle = computed(() => ({
-  width: `${PG_SCREEN_W}px`,
-  height: `${PG_SCREEN_H}px`,
-  transform: `scale(${scale.value.toFixed(5)})`,
+  width: `${metrics.value.width}px`,
+  height: `${metrics.value.height}px`,
+  transform: `scale(${metrics.value.scale.toFixed(5)})`,
 }))
 </script>
 

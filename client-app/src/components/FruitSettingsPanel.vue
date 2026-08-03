@@ -1,47 +1,42 @@
 <template>
-  <div class="fruit-set-root" @click.self="emit('close')">
-    <div class="fruit-set-panel" role="dialog" aria-labelledby="fruit-set-title">
-      <div class="fruit-set-head">
+  <Teleport to="body">
+    <div class="fruit-set-mask" @click.self="emit('close')" />
+    <div class="fruit-set-sheet" role="dialog" aria-modal="true" aria-labelledby="fruit-set-title">
+      <header class="fruit-set-head">
         <h3 id="fruit-set-title">设置</h3>
-        <button type="button" class="fruit-set-close" @click="emit('close')">关闭</button>
-      </div>
+        <button type="button" class="fruit-set-close" aria-label="关闭" @click="emit('close')">
+          &times;
+        </button>
+      </header>
 
       <div class="fruit-set-body">
         <div class="fruit-set-row">
-          <span class="fruit-set-label">音乐</span>
+          <span class="fruit-set-label">背景音乐</span>
           <button
             type="button"
             class="fruit-set-switch"
-            :class="{ on: bgmOn }"
+            :class="{ 'is-on': bgmOn }"
             role="switch"
             :aria-checked="bgmOn"
-            aria-label="音乐"
-            @click="toggleBgm"
-          >
-            <span class="knob" />
-          </button>
+            aria-label="背景音乐"
+            @click.stop="toggleBgm"
+          />
         </div>
         <div class="fruit-set-row">
-          <span class="fruit-set-label">音效</span>
+          <span class="fruit-set-label">游戏音效</span>
           <button
             type="button"
             class="fruit-set-switch"
-            :class="{ on: sfxOn }"
+            :class="{ 'is-on': sfxOn }"
             role="switch"
             :aria-checked="sfxOn"
-            aria-label="音效"
-            @click="toggleSfx"
-          >
-            <span class="knob" />
-          </button>
+            aria-label="游戏音效"
+            @click.stop="toggleSfx"
+          />
         </div>
       </div>
-
-      <div class="fruit-set-foot">
-        <button type="button" class="fruit-set-ok" @click="emit('close')">确定</button>
-      </div>
     </div>
-  </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
@@ -70,143 +65,147 @@ onMounted(() => {
 
 function toggleBgm() {
   unlockFruitAudio()
-  bgmOn.value = !bgmOn.value
-  setFruitBgmMuted(!bgmOn.value)
+  setFruitBgmMuted(bgmOn.value)
+  bgmOn.value = !isFruitBgmMuted()
   if (bgmOn.value) startFruitBgm()
   if (sfxOn.value) playFruitSfx('click', 0.45)
 }
 
 function toggleSfx() {
   unlockFruitAudio()
-  sfxOn.value = !sfxOn.value
-  setFruitSfxMuted(!sfxOn.value)
+  setFruitSfxMuted(sfxOn.value)
+  sfxOn.value = !isFruitSfxMuted()
   if (sfxOn.value) playFruitSfx('click', 0.45)
 }
 </script>
 
 <style scoped>
-.fruit-set-root {
+.fruit-set-mask {
   position: fixed;
   inset: 0;
-  z-index: 130;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 20px;
+  z-index: 1000;
   background: rgba(0, 0, 0, 0.62);
+  backdrop-filter: blur(2px);
 }
 
-.fruit-set-panel {
-  width: min(92vw, 340px);
+.fruit-set-sheet {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 1001;
+  width: min(92vw, 460px);
+  max-height: min(80vh, 620px);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(212, 175, 55, 0.5);
   border-radius: 14px;
-  border: 1px solid rgba(244, 211, 107, 0.4);
-  background: linear-gradient(180deg, #2a1c10 0%, #140e08 100%);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+  background: linear-gradient(180deg, #1c150d 0%, #120d08 100%);
+  box-shadow:
+    0 18px 50px rgba(0, 0, 0, 0.65),
+    inset 0 1px 0 rgba(255, 226, 150, 0.14);
   color: #f5e6c8;
+  overflow: hidden;
+  pointer-events: auto;
 }
 
 .fruit-set-head {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 14px 16px 10px;
-  border-bottom: 1px solid rgba(244, 211, 107, 0.22);
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(212, 175, 55, 0.28);
+  background: linear-gradient(180deg, rgba(58, 44, 22, 0.6), rgba(30, 22, 12, 0.2));
 }
 
 .fruit-set-head h3 {
   margin: 0;
   font-size: 16px;
-  letter-spacing: 0.12em;
-  color: #ffe7a0;
+  font-weight: 700;
+  letter-spacing: 2px;
+  font-family: 'Noto Serif SC', 'Songti SC', serif;
+  color: #f2d98a;
 }
 
 .fruit-set-close {
-  border: 1px solid rgba(244, 211, 107, 0.35);
-  border-radius: 999px;
-  padding: 4px 12px;
-  font-size: 12px;
-  color: #f5e0c0;
-  background: rgba(0, 0, 0, 0.25);
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(212, 175, 55, 0.4);
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.35);
+  color: #f2d98a;
+  font-size: 20px;
+  line-height: 1;
+  padding: 0;
   cursor: pointer;
+  transition: transform 0.14s, filter 0.14s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.fruit-set-close:active {
+  transform: scale(0.9);
+  filter: brightness(1.2);
 }
 
 .fruit-set-body {
-  padding: 28px 28px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 26px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 18px 18px;
+  -webkit-overflow-scrolling: touch;
 }
 
 .fruit-set-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 36px;
+  padding: 14px 4px;
+  border-bottom: 1px solid rgba(212, 175, 55, 0.16);
+  pointer-events: auto;
 }
 
 .fruit-set-label {
-  font-size: 16px;
-  letter-spacing: 0.16em;
-  color: #f5e0c0;
+  font-size: 15px;
+  color: #e8d9b0;
+  letter-spacing: 1px;
 }
 
 .fruit-set-switch {
   position: relative;
-  width: 66px;
-  height: 34px;
-  border: 1px solid rgba(244, 211, 107, 0.35);
-  border-radius: 17px;
-  padding: 0;
-  background: #3a2a18;
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: background 0.18s ease, border-color 0.18s ease;
-}
-
-.fruit-set-switch.on {
-  background: linear-gradient(180deg, #c9a24a 0%, #8a6420 100%);
-  border-color: rgba(255, 230, 150, 0.65);
-}
-
-.fruit-set-switch .knob {
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 28px;
+  width: 50px;
   height: 28px;
-  border-radius: 50%;
-  background: linear-gradient(180deg, #fff8e8 0%, #f0d9a0 100%);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
-  transition: transform 0.18s ease;
-}
-
-.fruit-set-switch.on .knob {
-  transform: translateX(32px);
-}
-
-.fruit-set-foot {
-  padding: 8px 16px 18px;
-  display: flex;
-  justify-content: center;
-}
-
-.fruit-set-ok {
-  min-width: 120px;
-  border: 1px solid rgba(244, 211, 107, 0.5);
   border-radius: 999px;
-  padding: 10px 28px;
-  font-size: 14px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  color: #2a1a08;
-  background: linear-gradient(180deg, #ffe9a8 0%, #d4a040 55%, #a07828 100%);
+  border: none;
+  padding: 0;
+  background: rgba(120, 100, 60, 0.4);
   cursor: pointer;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  transition: background 0.2s ease;
+  flex-shrink: 0;
+  -webkit-tap-highlight-color: transparent;
+  pointer-events: auto;
+  touch-action: manipulation;
 }
 
-.fruit-set-ok:active {
-  transform: scale(0.96);
-  filter: brightness(1.08);
+.fruit-set-switch::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #f4ead0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  transition: transform 0.2s ease;
+  pointer-events: none;
+}
+
+.fruit-set-switch.is-on {
+  background: linear-gradient(90deg, #b8862a, #e8c76a);
+}
+
+.fruit-set-switch.is-on::after {
+  transform: translateX(22px);
 }
 </style>

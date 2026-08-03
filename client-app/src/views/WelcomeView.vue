@@ -23,10 +23,10 @@
 
     <!-- 右上角弹出菜单 -->
     <div :class="['menu-popover', menuOpen ? 'show' : '']" @click.stop>
-      <div class="menu-item" @click="menuOpen=false">
+      <div class="menu-item" @click="goStaffLogin('agent')">
         <span class="ic">⚜</span><span class="lb">代理登录</span><span class="arrow">›</span>
       </div>
-      <div class="menu-item" @click="menuOpen=false">
+      <div class="menu-item" @click="goStaffLogin('branch')">
         <span class="ic">♛</span><span class="lb">房主登录</span><span class="arrow">›</span>
       </div>
       <div class="menu-item" @click="toast('关于：金御汇 v1.0'); menuOpen=false">
@@ -94,6 +94,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
+import { useStaffStore } from '@/stores/staff'
 import { authApi } from '@/api/auth'
 import { useToast } from '@/composables/useToast'
 import { useBodyClass } from '@/composables/useBodyClass'
@@ -103,6 +104,7 @@ useBodyClass('deco-bg', 'welcome-login')
 
 const router = useRouter()
 const userStore = useUserStore()
+const staffStore = useStaffStore()
 const { toast } = useToast()
 
 const account = ref('')
@@ -131,12 +133,33 @@ onMounted(() => {
   }
 })
 
+function goStaffLogin(kind: 'agent' | 'branch') {
+  menuOpen.value = false
+  router.push({ name: kind === 'branch' ? 'staff-login-branch' : 'staff-login-agent' })
+}
+
 async function doLogin() {
   if (!account.value.trim()) { toast('请输入账号'); return }
   if (!password.value) { toast('请输入密码'); return }
   loading.value = true
   try {
     const res = await authApi.login({ username: account.value.trim(), password: password.value })
+    const role = res.user.role
+    // 运营账号：写入 staff 会话并进手机工作台（勿进玩家房间号页）
+    if (role === 'ADMIN' || role === 'BRANCH') {
+      staffStore.setAuth(res.user, res.token, 'branch')
+      userStore.logout()
+      toast(`欢迎 ${res.user.nickname}`)
+      await router.replace({ name: 'staff-home' })
+      return
+    }
+    if (role === 'AGENT' || role === 'PROXY') {
+      staffStore.setAuth(res.user, res.token, 'agent')
+      userStore.logout()
+      toast(`欢迎 ${res.user.nickname}`)
+      await router.replace({ name: 'staff-home' })
+      return
+    }
     userStore.setAuth(res.user, res.token)
     try {
       if (rememberMe.value) {
@@ -148,7 +171,7 @@ async function doLogin() {
       /* ignore */
     }
     toast(`欢迎 ${res.user.nickname}`)
-    setTimeout(() => router.push('/room'), 600)
+    await router.replace({ name: 'room' })
   } catch (e: unknown) {
     toast(e instanceof Error ? e.message : '登录失败')
   } finally {

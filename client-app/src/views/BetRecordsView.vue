@@ -87,19 +87,19 @@
                 </div>
                 <div class="br-kpi-cell">
                   <span class="br-kpi-num">{{ fmt(summary.amount) }}</span>
-                  <span class="br-kpi-label">总 金 额</span>
+                  <span class="br-kpi-label">投 注 金 额</span>
                 </div>
                 <div class="br-kpi-cell">
                   <span :class="['br-kpi-num', summary.playerSettle >= 0 ? 'pos-num' : 'neg-num']">{{ fmtProfit(summary.playerSettle) }}</span>
-                  <span class="br-kpi-label">总 盈 亏</span>
+                  <span class="br-kpi-label">玩 家 盈 亏</span>
                 </div>
               </div>
               <div class="br-summary">
                 <div class="br-summary-cell">
-                  游戏总结过 <span :class="['br-summary-num', summary.gameSettle >= 0 ? 'pos' : 'neg']">{{ fmt(summary.gameSettle) }}</span>
+                  有效流水 <span class="br-summary-num pos">{{ fmt(summary.validFlow) }}</span>
                 </div>
                 <div class="br-summary-cell">
-                  玩家总结过 <span :class="['br-summary-num', summary.playerSettle >= 0 ? 'pos' : 'neg']">{{ fmt(summary.playerSettle) }}</span>
+                  庄家盈亏 <span :class="['br-summary-num', summary.houseSettle >= 0 ? 'pos' : 'neg']">{{ fmtProfit(summary.houseSettle) }}</span>
                 </div>
               </div>
             </div>
@@ -139,6 +139,14 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import http from '@/api/http'
 import { lotteryApi, type LotteryBet } from '@/api/lottery'
+import {
+  BCBM_AWARD_LABELS,
+  FRUIT_AWARD_LABELS,
+  bcbmBetSlot,
+  isBcbmBetId,
+  type BcbmAwardType,
+  type FruitAwardType,
+} from '@gamebox/shared'
 import { useBodyClass } from '@/composables/useBodyClass'
 import { TIME_RANGES, rangeBounds, formatRangeDateText, formatDay, type TimeRangeKey } from '@/composables/timeRange'
 import TabBar from '@/components/TabBar.vue'
@@ -168,6 +176,12 @@ const LOTTERY_BET_GAMES: Record<string, { title: string; storagePrefix: string; 
   longhu: { title: '龙虎斗注单', storagePrefix: 'lhd_bet_log_', eventName: 'lhd-bet-log-updated' },
 }
 
+/** 街机类：走 /bet/history，UI 与聊天室注单页同一套 */
+const ARCADE_BET_GAMES: Record<string, { title: string }> = {
+  'fruit-machine': { title: '水果机注单' },
+  bcbm: { title: '奔驰宝马注单' },
+}
+
 const activeGameCode = computed(() => {
   const g = route.query.game
   return typeof g === 'string' ? g : ''
@@ -176,6 +190,11 @@ const activeGameCode = computed(() => {
 const activeLotteryGame = computed(() => {
   const g = activeGameCode.value
   return g ? LOTTERY_BET_GAMES[g] : undefined
+})
+
+const activeArcadeGame = computed(() => {
+  const g = activeGameCode.value
+  return g ? ARCADE_BET_GAMES[g] : undefined
 })
 
 interface BetRecord {
@@ -190,6 +209,14 @@ interface BetRecord {
   game?: { name: string; code: string }
   roundNo?: string | null
   issueNo?: string | null
+  outcome?: unknown
+  details?: Array<{
+    position: string
+    amount: number
+    payout: number
+    multiplier: number
+    won: boolean
+  }>
 }
 
 interface SscBetItem {
@@ -213,12 +240,24 @@ interface SscBetGroup {
   totalProfit: number
 }
 
+interface ReportSummary {
+  start: string
+  end: string
+  orders: number
+  amount: number
+  validFlow: number
+  playerSettle: number
+  houseSettle: number
+}
+
 const range = ref<TimeRangeKey>('today')
 const rangeDateText = computed(() => formatRangeDateText(range.value))
 const loading = ref(true)
 const records = ref<BetRecord[]>([])
 const sscLog = ref<SscBetGroup[]>([])
 const expandedIssue = ref<string | null>(null)
+/** 报表顶部全量汇总（与下方列表条数上限无关） */
+const reportSummary = ref<ReportSummary | null>(null)
 let lotteryPollTimer: ReturnType<typeof setInterval> | null = null
 let loadSeq = 0
 
@@ -262,7 +301,12 @@ function formatServerPlay(betType: string | null | undefined, payload: LotteryBe
   if (t === 'triplet') return '三同'
   if (t === 'tripletN') return `三同${value}`
   if (t === 'straight') return value && value !== 'any' ? `三连${value}` : '三连号'
-  if (t === 'alldiff') return '三不同'
+  if (t === 'alldiff') {
+    if (!value || value === 'any') return '三不同号'
+    const digits = String(value).replace(/\D/g, '').split('').filter((c) => '123456'.includes(c))
+    const sorted = [...new Set(digits)].sort().join('')
+    return sorted.length === 3 ? '三不同' + sorted : '三不同号'
+  }
   if (t === 'long' && value.includes(':')) {
     const [a, b] = value.split(':')
     return `长牌${a}${b}`
@@ -392,8 +436,134 @@ function loadLocalLotteryBetLog() {
   }
 }
 
+function formatFruitPlay(outcome: unknown): string {
+  const o = (outcome ?? {}) as {
+    awardType?: string
+    choice?: string
+    result?: string
+  }
+  if (o.choice === 'big' || o.choice === 'small') {
+    if (o.result === 'win') return '猜大小·赢'
+    if (o.result === 'lose') return '猜大小·输'
+    return '猜大小·和'
+  }
+  if (o.awardType && o.awardType in FRUIT_AWARD_LABELS) {
+    return FRUIT_AWARD_LABELS[o.awardType as FruitAwardType]
+  }
+  if (o.awardType === 'bar') return '天门'
+  if (o.awardType === 'normal') return '普通中奖'
+  return o.awardType || '投注'
+}
+
+function formatBcbmPlay(outcome: unknown): string {
+  const o = (outcome ?? {}) as { awardType?: string }
+  if (o.awardType && o.awardType in BCBM_AWARD_LABELS) {
+    return BCBM_AWARD_LABELS[o.awardType as BcbmAwardType]
+  }
+  if (o.awardType === 'normal') return '普通中奖'
+  return o.awardType || '投注'
+}
+
+function formatBcbmPosition(pos: string): string {
+  if (isBcbmBetId(pos)) return bcbmBetSlot(pos).label
+  return pos || '仓位'
+}
+
+function formatArcadePlay(gameCode: string, outcome: unknown): string {
+  if (gameCode === 'fruit-machine') return formatFruitPlay(outcome)
+  if (gameCode === 'bcbm') return formatBcbmPlay(outcome)
+  return '投注'
+}
+
+function formatArcadeIssue(r: BetRecord): string {
+  // 展开 key 需唯一；优先单号，否则用时间+短 id
+  if (r.betNo) return String(r.betNo)
+  if (r.roundNo) return String(r.roundNo)
+  const d = new Date(r.createdAt)
+  if (Number.isNaN(d.getTime())) return r.id.slice(0, 10)
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  const hh = String(d.getHours()).padStart(2, '0')
+  const mi = String(d.getMinutes()).padStart(2, '0')
+  const ss = String(d.getSeconds()).padStart(2, '0')
+  return `${mm}-${dd} ${hh}:${mi}:${ss}`
+}
+
+function groupsFromArcadeRecords(gameCode: string, list: BetRecord[]): SscBetGroup[] {
+  return list
+    .filter((r) => r.game?.code === gameCode && r.status !== 'CANCELLED')
+    .map((r) => {
+      const pending = r.status === 'PENDING'
+      const profit = pending ? 0 : r.payout - r.amount
+      const play = formatArcadePlay(gameCode, r.outcome)
+      /** 奔驰宝马：展开各仓位明细，开奖结果放 drawSummary */
+      const bets: SscBetItem[] =
+        gameCode === 'bcbm' && r.details?.length
+          ? r.details.map((d) => {
+              const dProfit = pending ? 0 : d.payout - d.amount
+              return {
+                play: formatBcbmPosition(d.position),
+                amount: d.amount,
+                status: d.won ? 'WON' : 'LOST',
+                profit: dProfit,
+                winAmount: d.payout,
+                hit: d.won ? '中奖' : '',
+              }
+            })
+          : [
+              {
+                play,
+                amount: r.amount,
+                status: r.status,
+                profit,
+                winAmount: r.payout,
+                hit: r.status === 'WON' ? '中奖' : '',
+              },
+            ]
+      return {
+        game: gameCode,
+        issue: formatArcadeIssue(r),
+        createdAt: r.createdAt,
+        settledAt: r.settledAt || undefined,
+        settled: !pending,
+        drawSummary: gameCode === 'bcbm' ? play : undefined,
+        bets,
+        totalAmount: r.amount,
+        totalProfit: profit,
+      }
+    })
+    .sort(
+      (a, b) =>
+        new Date(b.settledAt || b.createdAt).getTime() -
+        new Date(a.settledAt || a.createdAt).getTime(),
+    )
+}
+
+async function loadBetHistoryForRange() {
+  const [from, to] = rangeBounds(range.value)
+  try {
+    records.value = await http.get<BetRecord[], BetRecord[]>(
+      `/bet/history?range=${range.value}&from=${from}&to=${to}`,
+    )
+  } catch {
+    records.value = []
+  }
+}
+
+async function ensureBetHistoryLoaded() {
+  if (records.value.length) return
+  await loadBetHistoryForRange()
+}
+
 async function loadLotteryBetLog() {
   const code = activeGameCode.value
+  if (ARCADE_BET_GAMES[code]) {
+    const seq = ++loadSeq
+    await ensureBetHistoryLoaded()
+    if (seq !== loadSeq) return
+    sscLog.value = groupsFromArcadeRecords(code, records.value)
+    return
+  }
   const cfg = activeLotteryGame.value
   if (!cfg || !code) {
     sscLog.value = []
@@ -440,7 +610,9 @@ function stopLotteryPoll() {
   lotteryPollTimer = null
 }
 
-const pageTitle = computed(() => activeLotteryGame.value?.title ?? '竞猜报表')
+const pageTitle = computed(
+  () => activeLotteryGame.value?.title ?? activeArcadeGame.value?.title ?? '竞猜报表',
+)
 
 const listHeading = computed(() => (activeGameCode.value ? '竞 猜 记 录' : '竞 猜 报 表'))
 
@@ -486,28 +658,43 @@ const reportRounds = computed(() => {
 
 const summary = computed(() => {
   if (isGameDetail.value) return null
-  const list = recordsInRange.value
-  if (!list.length) return null
-  const amount = list.reduce((s, r) => s + r.amount, 0)
-  const pendingAmount = list
-    .filter(r => r.status === 'PENDING')
-    .reduce((s, r) => s + r.amount, 0)
-  const settledPayout = list
-    .filter(r => r.status !== 'PENDING')
-    .reduce((s, r) => s + r.payout, 0)
-  const settledAmount = amount - pendingAmount
-  const orders = list.reduce((s, r) => s + (r.betCount || 1), 0)
+  return reportSummary.value
+})
+
+async function loadReportSummary() {
+  if (activeGameCode.value) {
+    reportSummary.value = null
+    return
+  }
   const [from, to] = rangeBounds(range.value)
   const endTs = Math.min(to - 1, Date.now())
-  return {
-    start: formatDay(from),
-    end: formatDay(endTs),
-    orders,
-    amount,
-    gameSettle: settledAmount - settledPayout,
-    playerSettle: settledPayout - settledAmount,
+  try {
+    const data = await http.get<{
+      orders: number
+      amount: number
+      validFlow: number
+      playerSettle: number
+      houseSettle: number
+    }, {
+      orders: number
+      amount: number
+      validFlow: number
+      playerSettle: number
+      houseSettle: number
+    }>(`/bet/report-summary?range=${range.value}&from=${from}&to=${to}`)
+    reportSummary.value = {
+      start: formatDay(from),
+      end: formatDay(endTs),
+      orders: data.orders,
+      amount: data.amount,
+      validFlow: data.validFlow,
+      playerSettle: data.playerSettle,
+      houseSettle: data.houseSettle,
+    }
+  } catch {
+    reportSummary.value = null
   }
-})
+}
 
 function fmt(n: number) {
   return Number(n).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
@@ -521,9 +708,13 @@ function toggleExpand(issue: string) {
   expandedIssue.value = expandedIssue.value === issue ? null : issue
 }
 
-function onRangeChange(key: TimeRangeKey) {
+async function onRangeChange(key: TimeRangeKey) {
   range.value = key
   expandedIssue.value = null
+  await Promise.all([loadBetHistoryForRange(), loadReportSummary()])
+  if (activeArcadeGame.value || activeLotteryGame.value) {
+    await loadLotteryBetLog()
+  }
 }
 
 function betDetailMid(b: SscBetItem, settled: boolean) {
@@ -552,7 +743,8 @@ watch(activeGameCode, () => {
 })
 
 onMounted(async () => {
-  await loadLotteryBetLog()
+  await loadBetHistoryForRange()
+  await Promise.all([loadLotteryBetLog(), loadReportSummary()])
   startLotteryPollIfNeeded()
   window.addEventListener('storage', onLotteryLogStorage)
   window.addEventListener('ssc-bet-log-updated', () => { void loadLotteryBetLog() })
@@ -564,11 +756,7 @@ onMounted(async () => {
   window.addEventListener('lhc-bet-log-updated', () => { void loadLotteryBetLog() })
   window.addEventListener('zjh-bet-log-updated', () => { void loadLotteryBetLog() })
   document.addEventListener('visibilitychange', onLotteryLogVisible)
-  try {
-    records.value = await http.get<BetRecord[], BetRecord[]>('/bet/history')
-  } catch { /* 静默 */ } finally {
-    loading.value = false
-  }
+  loading.value = false
 })
 
 onUnmounted(() => {

@@ -9,7 +9,7 @@
       allow="autoplay"
       @load="onFrameLoad"
     />
-    <div v-else class="assets-game-loading">加载中…</div>
+    <div v-else class="assets-game-loading">加载中…首次进入可能需下载素材</div>
   </div>
 </template>
 
@@ -104,7 +104,7 @@ const gameTitle = computed(() => {
 function postToFrame(payload: Record<string, unknown>) {
   const win = frameEl.value?.contentWindow
   if (!win) return
-  win.postMessage(payload, '*')
+  win.postMessage(payload, location.origin)
 }
 
 function syncLegacyUserOnly() {

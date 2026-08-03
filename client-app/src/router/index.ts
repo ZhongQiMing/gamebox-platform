@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { useRoomStore } from '@/stores/room'
+import { useStaffStore } from '@/stores/staff'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -22,6 +23,66 @@ const router = createRouter({
       meta: { public: true },
     },
     {
+      path: '/staff/login/agent',
+      name: 'staff-login-agent',
+      component: () => import('@/views/staff/StaffLoginView.vue'),
+      meta: { public: true, staffPublic: true },
+    },
+    {
+      path: '/staff/login/branch',
+      name: 'staff-login-branch',
+      component: () => import('@/views/staff/StaffLoginView.vue'),
+      meta: { public: true, staffPublic: true },
+    },
+    {
+      path: '/staff/home',
+      name: 'staff-home',
+      component: () => import('@/views/staff/StaffHomeView.vue'),
+      meta: { public: true, staff: true },
+    },
+    {
+      path: '/staff/players',
+      name: 'staff-players',
+      component: () => import('@/views/staff/StaffPlayersView.vue'),
+      meta: { public: true, staff: true },
+    },
+    {
+      path: '/staff/rooms',
+      name: 'staff-rooms',
+      component: () => import('@/views/staff/StaffRoomsView.vue'),
+      meta: { public: true, staff: true },
+    },
+    {
+      path: '/staff/rooms/:id',
+      name: 'staff-room-detail',
+      component: () => import('@/views/staff/StaffRoomDetailView.vue'),
+      meta: { public: true, staff: true },
+    },
+    {
+      path: '/staff/audit',
+      name: 'staff-audit',
+      component: () => import('@/views/staff/StaffAuditView.vue'),
+      meta: { public: true, staff: true },
+    },
+    {
+      path: '/staff/report',
+      name: 'staff-report',
+      component: () => import('@/views/staff/StaffReportView.vue'),
+      meta: { public: true, staff: true },
+    },
+    {
+      path: '/staff/agents',
+      name: 'staff-agents',
+      component: () => import('@/views/staff/StaffAgentsView.vue'),
+      meta: { public: true, staff: true },
+    },
+    {
+      path: '/staff/risk',
+      name: 'staff-risk',
+      component: () => import('@/views/staff/StaffRiskView.vue'),
+      meta: { public: true, staff: true },
+    },
+    {
       path: '/room',
       name: 'room',
       component: () => import('@/views/ReferralInputView.vue'),
@@ -33,7 +94,8 @@ const router = createRouter({
       component: () => import('@/views/GameLobbyView.vue'),
     },
     { path: '/recharge', name: 'recharge', component: () => import('@/views/RechargeView.vue') },
-    { path: '/flow',     name: 'flow',     component: () => import('@/views/FlowView.vue') },
+    /* 旧明细页：与聊天室竞猜报表合并为 /bets */
+    { path: '/flow', redirect: '/bets' },
     { path: '/cs',       name: 'cs',       component: () => import('@/views/CsView.vue') },
     { path: '/settings', name: 'settings', component: () => import('@/views/ProfileView.vue'), meta: { allowWithoutRoom: true } },
     { path: '/account', name: 'account', component: () => import('@/views/AccountManageView.vue'), meta: { allowWithoutRoom: true } },
@@ -54,20 +116,6 @@ const router = createRouter({
       },
     },
     { path: '/game/fruit', name: 'fruit-machine', component: () => import('@/views/FruitMachineView.vue') },
-    {
-      path: '/dev/fruit-fx',
-      name: 'fruit-fx-preview',
-      component: () => import('@/views/FruitFxPreviewView.vue'),
-      meta: { public: true },
-    },
-    { path: '/game/slot/slots-mahjong', name: 'mahjong', component: () => import('@/views/MahjongGameView.vue') },
-    {
-      path: '/game/slot/slots-mahjong-iframe',
-      name: 'mahjong-iframe',
-      component: () => import('@/views/AssetsGameView.vue'),
-      meta: { assetGame: 'slots-mahjong' },
-    },
-    { path: '/game/slot/slots-mahjong-vue', redirect: '/game/slot/slots-mahjong' },
     { path: '/game/slot/:gameCode',    name: 'slot',    component: () => import('@/views/SlotView.vue') },
     { path: '/game/lottery/bjsc', name: 'bjsc', component: () => import('@/views/AssetsGameView.vue'), meta: { assetGame: 'bjsc' } },
     { path: '/game/lottery/ssc', name: 'ssc', component: () => import('@/views/AssetsGameView.vue'), meta: { assetGame: 'ssc' } },
@@ -105,22 +153,45 @@ const router = createRouter({
 router.beforeEach(async (to) => {
   const userStore = useUserStore()
   const roomStore = useRoomStore()
-  await userStore.restoreSession()
+  const staffStore = useStaffStore()
+  await Promise.all([userStore.restoreSession(), staffStore.restoreSession()])
+
+  // 手机运营端（代理 / 房主）
+  if (to.meta.staff) {
+    if (!staffStore.isLoggedIn) {
+      return {
+        name: staffStore.loginKind === 'branch' ? 'staff-login-branch' : 'staff-login-agent',
+      }
+    }
+    return true
+  }
+  if (to.meta.staffPublic) {
+    if (staffStore.isLoggedIn) return { name: 'staff-home' }
+    return true
+  }
+
+  // 已登录运营端时，禁止掉进玩家进房/大厅流程
+  if (staffStore.isLoggedIn && !to.meta.staff && !to.meta.staffPublic) {
+    if (to.name === 'login' || to.name === 'register' || to.name === 'room' || to.name === 'lobby') {
+      return { name: 'staff-home' }
+    }
+  }
+
   if (!to.meta.public && !userStore.isLoggedIn) {
     return { name: 'login' }
   }
   if (to.meta.public && userStore.isLoggedIn && (to.name === 'login' || to.name === 'register')) {
     return roomStore.hasRoom ? { name: 'lobby' } : { name: 'room' }
   }
-    // 已登录但未进房：只能停在房间号页 / 设置 / 账号管理 / 改密
-    if (
-      userStore.isLoggedIn
-      && !roomStore.hasRoom
-      && !to.meta.public
-      && !to.meta.allowWithoutRoom
-    ) {
-      return { name: 'room' }
-    }
+  // 已登录但未进房：只能停在房间号页 / 设置 / 账号管理 / 改密
+  if (
+    userStore.isLoggedIn
+    && !roomStore.hasRoom
+    && !to.meta.public
+    && !to.meta.allowWithoutRoom
+  ) {
+    return { name: 'room' }
+  }
 })
 
 export default router

@@ -59,6 +59,79 @@
   color: #f4d36b;
 }
 
+/* ===== 时段汇总：上分/下分 + 审核状态 ===== */
+.ar-summary {
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  background: linear-gradient(180deg, var(--bg-card) 0%, var(--bg-card-2) 100%);
+  border: 1px solid rgba(212, 175, 55, 0.22);
+  border-radius: var(--radius-md);
+  box-shadow:
+    0 1px 0 rgba(244, 211, 107, 0.10) inset,
+    0 4px 10px rgba(0, 0, 0, 0.35);
+}
+.ar-summary-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.ar-kpi {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 10px 8px;
+  background: rgba(0, 0, 0, 0.22);
+  border-radius: 8px;
+}
+.ar-kpi-num {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.ar-kpi-num.up { color: #ffe08a; }
+.ar-kpi-num.down { color: #ff6b7a; }
+.ar-kpi-label {
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+}
+.ar-kpi-sub {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--gold-bright);
+  letter-spacing: 0.2px;
+}
+.ar-status-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px dashed rgba(212, 175, 55, 0.18);
+}
+.ar-st {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.ar-st-num {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 18px;
+  font-weight: 700;
+}
+.ar-st-num.pending { color: #ffb74d; }
+.ar-st-num.success { color: #7dffb0; }
+.ar-st-num.reject { color: #ff5566; }
+.ar-st-label {
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+}
+
 /* ===== 列表 ===== */
 .ar-list {
   display: flex;
@@ -141,6 +214,14 @@
   font-size: 11px;
   color: var(--text-muted);
   letter-spacing: 0.5px;
+}
+.ar-reason {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #ff8a96;
+  letter-spacing: 0.3px;
+  line-height: 1.35;
+  word-break: break-word;
 }
 .ar-amount {
   flex-shrink: 0;

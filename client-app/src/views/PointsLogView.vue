@@ -22,10 +22,26 @@
           :key="t.key"
           type="button"
           :class="['tt-item', range === t.key ? 'active' : '']"
-          @click="range = t.key"
+          @click="onRangeChange(t.key)"
         >{{ t.label }}</button>
       </div>
       <div class="time-range-hint">{{ rangeDateText }}</div>
+
+      <div v-if="displaySummary" class="pl-summary">
+        <div class="pl-kpi">
+          <span class="pl-kpi-num pos">+{{ fmtBal(displaySummary.income) }}</span>
+          <span class="pl-kpi-label">收入合计</span>
+        </div>
+        <div class="pl-kpi">
+          <span class="pl-kpi-num neg">-{{ fmtBal(displaySummary.expense) }}</span>
+          <span class="pl-kpi-label">支出合计</span>
+        </div>
+        <div class="pl-kpi">
+          <span :class="['pl-kpi-num', displaySummary.net >= 0 ? 'pos' : 'neg']">{{ fmtSigned(displaySummary.net) }}</span>
+          <span class="pl-kpi-label">净变动</span>
+        </div>
+        <div class="pl-summary-meta">共 {{ total }} 笔账变</div>
+      </div>
 
       <div class="pl-filter-row">
         <div class="pl-filter-label">{{ FILTERS[filterIdx].label }}</div>
@@ -42,16 +58,21 @@
           <div class="pl-empty-icon">◇</div>
           <div class="pl-empty-text">加 载 中 …</div>
         </div>
-        <div v-else-if="!filtered.length" class="pl-empty">
+        <div v-else-if="!displayList.length" class="pl-empty">
           <div class="pl-empty-icon">◇</div>
           <div class="pl-empty-text">暂 无 记 录</div>
         </div>
         <template v-else>
-          <div v-for="r in filtered" :key="r.id" class="pl-row">
+          <div v-for="r in displayList" :key="r.id" class="pl-row">
             <span class="pl-kind">{{ kindText(r.bizType) }}</span>
             <span :class="['pl-amount', r.amount >= 0 ? 'pos' : 'neg']">{{ fmtSigned(r.amount) }}</span>
             <span class="pl-time">{{ fmtTime(r.createdAt) }}</span>
             <span class="pl-balance">余额 {{ fmtBal(r.balanceAfter) }}</span>
+          </div>
+          <div v-if="hasMore" class="pl-more">
+            <button type="button" class="pl-more-btn" :disabled="loadingMore" @click="loadMore">
+              {{ loadingMore ? '加载中…' : `加载更多（已显示 ${list.length}/${total}）` }}
+            </button>
           </div>
         </template>
       </div>
@@ -60,7 +81,6 @@
     </div>
   </div>
 
-  <!-- 筛选 sheet（底部上拉） -->
   <div :class="['pl-sheet-mask', sheetOpen ? '' : 'hidden']" @click="sheetOpen = false"></div>
   <div :class="['pl-sheet', sheetOpen ? '' : 'hidden']">
     <div class="pl-sheet-head">
@@ -84,7 +104,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { walletApi, type LedgerItem } from '@/api/wallet'
+import { walletApi, type LedgerItem, type LedgerSummary } from '@/api/wallet'
 import { useBodyClass } from '@/composables/useBodyClass'
 import { TIME_RANGES, rangeBounds, formatRangeDateText, type TimeRangeKey } from '@/composables/timeRange'
 import TabBar from '@/components/TabBar.vue'
@@ -94,57 +114,95 @@ useBodyClass('deco-bg')
 
 const router = useRouter()
 
-/* 后端 bizType → 原型筛选类型映射 */
 const FILTERS: { label: string; types: string[] | null }[] = [
-  { label: '全 部',   types: null },
-  { label: '存 款',   types: ['RECHARGE'] },
-  { label: '取 款',   types: ['WITHDRAW'] },
+  { label: '全 部', types: null },
+  { label: '存 款', types: ['RECHARGE'] },
+  { label: '取 款', types: ['WITHDRAW'] },
   { label: '存 取 款', types: ['RECHARGE', 'WITHDRAW'] },
-  { label: '下 注',   types: ['BET'] },
-  { label: '结 算',   types: ['WIN'] },
-  { label: '回 水',   types: ['REBATE'] },
-  { label: '活 动',   types: ['ACTIVITY'] },
-  { label: '转 账',   types: ['TRANSFER_IN', 'TRANSFER_OUT'] },
-  { label: '佣 金',   types: ['COMMISSION'] },
+  { label: '下 注', types: ['BET'] },
+  { label: '结 算', types: ['WIN'] },
+  { label: '回 水', types: ['REBATE'] },
+  { label: '活 动', types: ['ACTIVITY'] },
+  { label: '佣 金', types: ['COMMISSION'] },
 ]
 
 const KIND_TEXT: Record<string, string> = {
-  RECHARGE: '存 款', WITHDRAW: '取 款',
-  BET: '游戏下注', WIN: '游戏结算', FEE: '手续费',
-  COMMISSION: '佣 金', REBATE: '回 水', ACTIVITY: '活动奖励',
-  TRANSFER_IN: '转 入', TRANSFER_OUT: '转 出', ADJUST: '调 整',
+  RECHARGE: '存 款',
+  WITHDRAW: '取 款',
+  BET: '游戏下注',
+  WIN: '游戏结算',
+  FEE: '手续费',
+  COMMISSION: '佣 金',
+  REBATE: '回 水',
+  ACTIVITY: '活动奖励',
+  TRANSFER_IN: '转 入',
+  TRANSFER_OUT: '转 出',
+  ADJUST: '调 整',
 }
+
+const PAGE_SIZE = 50
 
 const range = ref<TimeRangeKey>('today')
 const filterIdx = ref(0)
 const sheetOpen = ref(false)
 const loading = ref(false)
+const loadingMore = ref(false)
 const list = ref<LedgerItem[]>([])
+const summary = ref<LedgerSummary | null>(null)
+const total = ref(0)
+const page = ref(1)
 
 const rangeDateText = computed(() => formatRangeDateText(range.value))
+const activeTypes = computed(() => FILTERS[filterIdx.value]?.types ?? null)
 
-const filtered = computed(() => {
+function rowInCurrentRange(iso: string) {
   const [from, to] = rangeBounds(range.value)
-  const types = FILTERS[filterIdx.value].types
-  return list.value.filter(r => {
-    const t = new Date(r.createdAt).getTime()
-    if (t < from || t >= to) return false
-    if (types && !types.includes(r.bizType)) return false
+  const t = new Date(iso).getTime()
+  return t >= from && t < to
+}
+
+/** 日期 + 类型双过滤，避免 Tab 只改标题、列表仍是全量 */
+const displayList = computed(() => {
+  const types = activeTypes.value
+  return list.value.filter((r) => {
+    if (!rowInCurrentRange(r.createdAt)) return false
+    if (types?.length && !types.includes(r.bizType)) return false
     return true
   })
 })
 
-function pickFilter(i: number) {
-  filterIdx.value = i
-  sheetOpen.value = false
-}
+/**
+ * 收支汇总一律用服务端全量（与 total 同口径）。
+ * 笔数展示用 total，勿用当前页 list.length，避免「共 50 笔」误导。
+ */
+const displaySummary = computed(() => {
+  const server = summary.value
+  if (server) {
+    return {
+      income: server.income,
+      expense: server.expense,
+      net: server.net,
+      count: total.value || server.count || 0,
+    }
+  }
+  return { income: 0, expense: 0, net: 0, count: total.value }
+})
+
+const hasMore = computed(() => list.value.length < total.value)
 
 function kindText(t: string) { return KIND_TEXT[t] ?? t }
 function fmtSigned(n: number) {
-  return (n >= 0 ? '+' : '-') + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  const v = Number(n) || 0
+  return (v >= 0 ? '+' : '-') + Math.abs(v).toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })
 }
 function fmtBal(n: number) {
-  return Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  return Number(n || 0).toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })
 }
 function fmtTime(iso: string) {
   const d = new Date(iso)
@@ -152,18 +210,71 @@ function fmtTime(iso: string) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
 
+async function fetchPage(p: number, append: boolean) {
+  const [from, to] = rangeBounds(range.value)
+  const types = activeTypes.value
+  const res = await walletApi.ledger(p, PAGE_SIZE, {
+    range: range.value,
+    from,
+    to,
+    ...(types?.length ? { bizTypes: [...types] } : {}),
+  })
+  const rows = res.list ?? []
+  /* 日期 + 类型本地兜底，防止后端未过滤时 Tab 无效 */
+  const matched = rows.filter((r) => {
+    if (!rowInCurrentRange(r.createdAt)) return false
+    if (types?.length && !types.includes(r.bizType)) return false
+    return true
+  })
+  const fullTotal = Number(res.total ?? res.summary?.count ?? 0) || 0
+  summary.value = res.summary
+    ? { ...res.summary, count: fullTotal }
+    : { count: fullTotal, income: 0, expense: 0, net: 0 }
+  total.value = fullTotal
+  page.value = p
+  list.value = append ? [...list.value, ...matched] : matched
+}
+
+async function loadLedger() {
+  loading.value = true
+  list.value = []
+  try {
+    await fetchPage(1, false)
+  } catch {
+    list.value = []
+    summary.value = { count: 0, income: 0, expense: 0, net: 0 }
+    total.value = 0
+  } finally {
+    loading.value = false
+  }
+}
+
+async function loadMore() {
+  if (loadingMore.value || !hasMore.value) return
+  loadingMore.value = true
+  try {
+    await fetchPage(page.value + 1, true)
+  } finally {
+    loadingMore.value = false
+  }
+}
+
+async function onRangeChange(key: TimeRangeKey) {
+  if (range.value === key) return
+  range.value = key
+  await loadLedger()
+}
+
+async function pickFilter(i: number) {
+  filterIdx.value = i
+  sheetOpen.value = false
+  await loadLedger()
+}
+
 function goBack() {
   if (window.history.length > 1) router.back()
   else router.push('/settings')
 }
 
-onMounted(async () => {
-  loading.value = true
-  try {
-    const res = await walletApi.ledger(1, 200)
-    list.value = res.list
-  } finally {
-    loading.value = false
-  }
-})
+onMounted(() => { void loadLedger() })
 </script>

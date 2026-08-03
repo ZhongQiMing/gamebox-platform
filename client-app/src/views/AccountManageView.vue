@@ -42,7 +42,7 @@
         </button>
 
         <div class="am-row am-row--switch">
-          <span class="am-label">点 击 音 效</span>
+          <span class="am-label">游 戏 音 效</span>
           <div class="am-value">
             <label class="am-switch">
               <input type="checkbox" v-model="soundOn" @change="onSoundChange">
@@ -190,14 +190,14 @@ function onSoundChange() {
   setClickSoundOn(soundOn.value)
   if (soundOn.value) {
     playClick()
-    toast('点击音效已开启')
+    toast('游戏音效已开启（含大厅与各游戏）')
   } else {
-    toast('点击音效已关闭')
+    toast('游戏音效已关闭（含大厅与各游戏）')
   }
 }
 
 function onBgmChange() {
   setAppBgmOn(bgmOn.value)
-  toast(bgmOn.value ? '背景音乐已开启' : '背景音乐已关闭')
+  toast(bgmOn.value ? '背景音乐已开启（含各游戏）' : '背景音乐已关闭（含各游戏）')
 }
 </script>

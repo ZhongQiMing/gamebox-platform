@@ -54,16 +54,18 @@
         </div>
         <div class="wc-stats-row">
           <div class="wc-stat">
-            <span class="ws-label">流 水</span>
+            <span class="ws-label">今日流水</span>
             <span class="ws-value">{{ hidden ? '***' : fmtInt(stats.turnover) }}</span>
           </div>
           <div class="wc-stat">
-            <span class="ws-label">回 水</span>
+            <span class="ws-label">今日回水</span>
             <span class="ws-value">{{ hidden ? '***' : fmtInt(stats.rebate) }}</span>
           </div>
           <div class="wc-stat">
-            <span class="ws-label">盈 利</span>
-            <span class="ws-value">{{ hidden ? '***' : fmtInt(stats.pnl) }}</span>
+            <span class="ws-label">今日盈亏</span>
+            <span :class="['ws-value', !hidden && stats.pnl < 0 ? 'is-neg' : '', !hidden && stats.pnl > 0 ? 'is-pos' : '']">
+              {{ hidden ? '***' : fmtPnl(stats.pnl) }}
+            </span>
           </div>
         </div>
       </div>
@@ -217,7 +219,10 @@ import { useUserStore } from '@/stores/user'
 import { useWalletStore } from '@/stores/wallet'
 import { useToast } from '@/composables/useToast'
 import { useBodyClass } from '@/composables/useBodyClass'
+import { rangeBounds } from '@/composables/timeRange'
 import { userApi } from '@/api/user'
+import { rebateApi } from '@/api/rebate'
+import http from '@/api/http'
 import TabBar from '@/components/TabBar.vue'
 import AppModal from '@/components/AppModal.vue'
 import '@/assets/settings.css'
@@ -284,7 +289,39 @@ function toggleHidden() {
 const stats = reactive({ turnover: 0, rebate: 0, pnl: 0 })
 
 const fmtNum = (n: number) => Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-const fmtInt = (n: number) => Number(n).toLocaleString('en-US')
+const fmtInt = (n: number) => Number(n || 0).toLocaleString('en-US', {
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 2,
+})
+const fmtPnl = (n: number) => {
+  const v = Number(n) || 0
+  const body = Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 })
+  if (v > 0) return `+${body}`
+  if (v < 0) return `-${body}`
+  return body
+}
+
+async function loadWalletStats() {
+  const [from, to] = rangeBounds('today')
+  try {
+    const [report, rebate] = await Promise.all([
+      http.get<{
+        validFlow: number
+        playerSettle: number
+      }, {
+        validFlow: number
+        playerSettle: number
+      }>(`/bet/report-summary?range=today&from=${from}&to=${to}`),
+      rebateApi.status('today'),
+    ])
+    /* 流水/盈亏：与竞猜报表全量汇总一致；回水：与自助回水「今日累计·预计回水」一致 */
+    stats.turnover = Number(report?.validFlow) || 0
+    stats.pnl = Number(report?.playerSettle) || 0
+    stats.rebate = Number(rebate?.today?.estimatedRebate) || 0
+  } catch {
+    /* 保持上次数值，不弹错打断个人页 */
+  }
+}
 
 function checkUpdate() {
   toast('当前已是最新版本 v1.0.0')
@@ -304,6 +341,7 @@ function confirmLogout() {
 
 onMounted(() => {
   hidden.value = localStorage.getItem(WALLET_STORE.value) === '1'
-  walletStore.fetchBalance()
+  void walletStore.fetchBalance()
+  void loadWalletStats()
 })
 </script>

@@ -91,21 +91,25 @@
 
 .rb-kpi {
   text-align: center;
-  padding: 10px 4px;
+  padding: 10px 6px;
   background: rgba(0, 0, 0, 0.25);
   border-radius: 8px;
   min-width: 0;
 }
 
+/* 金额完整展示：禁止省略号；大数自动略缩小字号 */
 .rb-kpi-num {
   display: block;
-  font-size: 16px;
+  font-size: clamp(11px, 3.6vw, 16px);
   font-weight: 700;
   color: #ffe08a;
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-family: ui-monospace, Consolas, monospace;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-all;
 }
 
 .rb-kpi-label {
@@ -195,6 +199,9 @@
   margin-top: 4px;
   font-size: 11px;
   color: var(--text-muted);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 /* 时间 tab：5 等分铺满 */

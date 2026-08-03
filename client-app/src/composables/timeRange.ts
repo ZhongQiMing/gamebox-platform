@@ -8,34 +8,42 @@ export const TIME_RANGES = [
 
 export type TimeRangeKey = (typeof TIME_RANGES)[number]['key']
 
+const TZ_OFFSET_MS = 8 * 3600 * 1000
+const DAY_MS = 86400000
+
 function pad(n: number) {
   return n < 10 ? `0${n}` : `${n}`
 }
 
+/** 按上海时区格式化日期 YYYY-MM-DD */
 export function formatDay(ts: number) {
-  const d = new Date(ts)
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+  const u = new Date(ts + TZ_OFFSET_MS)
+  return `${u.getUTCFullYear()}-${pad(u.getUTCMonth() + 1)}-${pad(u.getUTCDate())}`
 }
 
-/** 周一为一周起点；返回 [from, to) 毫秒时间戳 */
-export function rangeBounds(key: TimeRangeKey): [number, number] {
-  const now = new Date()
-  const DAY = 86400000
-  const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
-  const weekday = (now.getDay() + 6) % 7
-  const week0 = today0 - weekday * DAY
-  const month0 = new Date(now.getFullYear(), now.getMonth(), 1).getTime()
+/**
+ * 周一为一周起点；返回 [from, to) 毫秒时间戳（上海自然日，与后端一致）
+ */
+export function rangeBounds(key: TimeRangeKey, nowMs = Date.now()): [number, number] {
+  const sh = new Date(nowMs + TZ_OFFSET_MS)
+  const y = sh.getUTCFullYear()
+  const m = sh.getUTCMonth()
+  const d = sh.getUTCDate()
+  const today0 = Date.UTC(y, m, d) - TZ_OFFSET_MS
+  const weekday = (new Date(today0 + TZ_OFFSET_MS).getUTCDay() + 6) % 7
+  const week0 = today0 - weekday * DAY_MS
+  const month0 = Date.UTC(y, m, 1) - TZ_OFFSET_MS
   switch (key) {
     case 'today':
-      return [today0, today0 + DAY]
+      return [today0, today0 + DAY_MS]
     case 'yesterday':
-      return [today0 - DAY, today0]
+      return [today0 - DAY_MS, today0]
     case 'thisweek':
-      return [week0, week0 + 7 * DAY]
+      return [week0, week0 + 7 * DAY_MS]
     case 'lastweek':
-      return [week0 - 7 * DAY, week0]
+      return [week0 - 7 * DAY_MS, week0]
     case 'thismonth':
-      return [month0, Date.now() + DAY]
+      return [month0, nowMs + DAY_MS]
   }
 }
 
@@ -46,4 +54,12 @@ export function formatRangeDateText(key: TimeRangeKey) {
   const a = formatDay(from)
   const b = formatDay(endTs)
   return a === b ? a : `${a}  ~  ${b}`
+}
+
+/** 判断时间戳是否落在当前时段 */
+export function isInRange(ts: number | string | Date, key: TimeRangeKey) {
+  const t = typeof ts === 'number' ? ts : new Date(ts).getTime()
+  if (!Number.isFinite(t)) return false
+  const [from, to] = rangeBounds(key)
+  return t >= from && t < to
 }

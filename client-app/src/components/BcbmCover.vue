@@ -7,6 +7,7 @@
     :duration-ms="800"
     :from-scale="1.05"
     class="bcbm-cover-shell"
+    @close="emit('close')"
   >
     <!--
       封面金紫霓虹风：用官方蓝框 + 金色「开始」字，
@@ -40,7 +41,7 @@ defineProps({
   },
 })
 
-const emit = defineEmits(['start'])
+const emit = defineEmits(['start', 'close'])
 
 function handleStart() {
   emit('start')

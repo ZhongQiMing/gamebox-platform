@@ -1,10 +1,12 @@
 /**
  * 水果机音效 / BGM
  * 下注、报奖、开跑等优先用参考柜机素材；特殊奖用中文语音报奖。
+ * 静音：跟随个人资料全局开关，本游戏可单独再关（不改全局）。
  */
 import type { FruitAwardType, FruitBetSymbolId } from '@gamebox/shared'
+import { isAppBgmOn, isClickSoundOn } from '@/composables/appSoundPrefs'
 
-const BASE = '/audio/slots'
+const BASE = '/audio/fruit'
 
 const FILES = {
   bgm: `${BASE}/bgm-idle.mp3`,
@@ -20,7 +22,9 @@ const FILES = {
   small: `${BASE}/sfx-small.mp3`,
   gambleWin: `${BASE}/sfx-gamble-win.mp3`,
   gambleLose: `${BASE}/sfx-gamble-lose.mp3`,
-  cashout: `${BASE}/clear.mp3`,
+  cashout: `${BASE}/sfx-cashout.mp3`,
+  /** 清盘 / 退注提示（与退币专用音区分） */
+  clearBoard: `${BASE}/clear.mp3`,
   mult: `${BASE}/sfx-mult.mp3`,
   click: `${BASE}/sfx-click.mp3`,
   special: `${BASE}/sfx-special.mp3`,
@@ -47,16 +51,16 @@ const AWARD_VOICE: Partial<Record<FruitAwardType | 'goodluck', string>> = {
   goodluck: `${BASE}/v_goodluck.mp3`,
 }
 
-/** 8 仓位下注音（参考机 s1~s8） */
+/** 8 仓位下注音（按钮左→右：bar→s1 … apple→s8） */
 const BET_SFX: Record<FruitBetSymbolId, string> = {
-  apple: `${BASE}/s1.mp3`,
-  orange: `${BASE}/s2.mp3`,
-  lemon: `${BASE}/s3.mp3`,
-  bell: `${BASE}/s4.mp3`,
-  melon: `${BASE}/s5.mp3`,
-  star: `${BASE}/s6.mp3`,
-  seven: `${BASE}/s7.mp3`,
-  bar: `${BASE}/s8.mp3`,
+  bar: `${BASE}/s1.mp3`,
+  seven: `${BASE}/s2.mp3`,
+  star: `${BASE}/s3.mp3`,
+  melon: `${BASE}/s4.mp3`,
+  bell: `${BASE}/s5.mp3`,
+  lemon: `${BASE}/s6.mp3`,
+  orange: `${BASE}/s7.mp3`,
+  apple: `${BASE}/s8.mp3`,
 }
 
 /** 报奖：普通格 / 大格（幸运加倍） */
@@ -94,29 +98,99 @@ function playUrl(url: string, volume = 0.75): HTMLAudioElement | null {
   return a
 }
 
-/** 播放并等到结束（带超时兜底） */
-function playUrlAndWait(url: string, volume = 0.9, maxMs = 3500): Promise<void> {
+let announceEl: HTMLAudioElement | null = null
+let announceSrc: MediaElementAudioSourceNode | null = null
+let announceCtx: AudioContext | null = null
+let announceGain: GainNode | null = null
+
+function getAnnounceCtx(): AudioContext | null {
+  if (typeof window === 'undefined') return null
+  const AC = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+  if (!AC) return null
+  if (!announceCtx || announceCtx.state === 'closed') {
+    announceCtx = new AC()
+    announceGain = announceCtx.createGain()
+    announceGain.connect(announceCtx.destination)
+  }
+  return announceCtx
+}
+
+function teardownAnnounceGraph() {
+  try {
+    announceSrc?.disconnect()
+  } catch {
+    /* ignore */
+  }
+  announceSrc = null
+  if (!announceEl) return
+  try {
+    announceEl.pause()
+    announceEl.removeAttribute('src')
+    announceEl.load()
+  } catch {
+    /* ignore */
+  }
+  announceEl = null
+}
+
+/** 打断进行中的报奖语音，避免开火车连报时互相掐断 */
+export function stopFruitAnnounce() {
+  teardownAnnounceGraph()
+}
+
+/**
+ * 播放并等到结束（独立 Audio，不 clone 未缓冲节点，带超时兜底）
+ * gainBoost > 1 时经 WebAudio 放大，突破 HTMLAudio volume≤1 的上限（报奖语音偏轻）
+ */
+function playUrlAndWait(url: string, volume = 0.9, maxMs = 3500, gainBoost = 1): Promise<void> {
   return new Promise((resolve) => {
     if (sfxMuted) {
       resolve()
       return
     }
     unlockFruitAudio()
-    const a = getAudio(url).cloneNode(true) as HTMLAudioElement
-    a.volume = volume
+    stopFruitAnnounce()
+    // 报奖必须新建实例：clone 预加载节点在未 ready 时会立刻 error/ended，导致中间格“没报”
+    const a = new Audio(url)
+    a.preload = 'auto'
+    a.crossOrigin = 'anonymous'
+    announceEl = a
     let done = false
     const finish = () => {
       if (done) return
       done = true
+      window.clearTimeout(t)
+      try {
+        announceSrc?.disconnect()
+      } catch {
+        /* ignore */
+      }
+      announceSrc = null
+      if (announceEl === a) announceEl = null
       resolve()
     }
-    a.addEventListener('ended', finish)
-    a.addEventListener('error', finish)
     const t = window.setTimeout(finish, maxMs)
-    void a.play().catch(() => {
-      window.clearTimeout(t)
-      finish()
-    })
+    a.addEventListener('ended', finish, { once: true })
+    a.addEventListener('error', finish, { once: true })
+
+    const boost = Math.max(1, gainBoost)
+    const ctx = boost > 1 ? getAnnounceCtx() : null
+    if (ctx && announceGain) {
+      a.volume = 1
+      announceGain.gain.value = volume * boost
+      void ctx.resume().catch(() => {})
+      try {
+        const src = ctx.createMediaElementSource(a)
+        src.connect(announceGain)
+        announceSrc = src
+      } catch {
+        // MediaElementSource 失败时退回普通播放
+        a.volume = Math.min(1, volume)
+      }
+    } else {
+      a.volume = Math.min(1, volume)
+    }
+    void a.play().catch(() => finish())
   })
 }
 
@@ -130,18 +204,41 @@ const LS_BGM = 'fruit_bgm_off'
 const LS_SFX = 'fruit_sfx_off'
 const LS_LEGACY = 'fruit_sound_off'
 
-function persistMute() {
+/** 本游戏开关：关写 off；开写 on（不再被全局压死，也不改个人资料） */
+function persistFruitLocal(bgmOff: boolean, sfxOff: boolean) {
   if (typeof localStorage === 'undefined') return
-  if (bgmMuted) localStorage.setItem(LS_BGM, '1')
-  else localStorage.removeItem(LS_BGM)
-  if (sfxMuted) localStorage.setItem(LS_SFX, '1')
-  else localStorage.removeItem(LS_SFX)
+  localStorage.setItem(LS_BGM, bgmOff ? '1' : '0')
+  localStorage.setItem(LS_SFX, sfxOff ? '1' : '0')
   localStorage.removeItem(LS_LEGACY)
+}
+
+/**
+ * 读取本游戏静音。
+ * 无本游戏记录时跟随个人资料；有记录后只认本游戏开关。
+ */
+function refreshEffectiveMute() {
+  if (typeof localStorage === 'undefined') {
+    bgmMuted = false
+    sfxMuted = false
+    return
+  }
+  const legacy = localStorage.getItem(LS_LEGACY) === '1'
+  const bgmKey = localStorage.getItem(LS_BGM)
+  const sfxKey = localStorage.getItem(LS_SFX)
+  if (legacy) {
+    bgmMuted = true
+    sfxMuted = true
+    return
+  }
+  bgmMuted = bgmKey == null ? !isAppBgmOn() : bgmKey === '1'
+  sfxMuted = sfxKey == null ? !isClickSoundOn() : sfxKey === '1'
 }
 
 export function unlockFruitAudio() {
   if (unlocked) return
   unlocked = true
+  const ctx = getAnnounceCtx()
+  if (ctx) void ctx.resume().catch(() => {})
   const a = getAudio(FILES.click)
   a.volume = 0
   void a
@@ -167,7 +264,9 @@ export function playFruitBet(symbol: FruitBetSymbolId) {
 export function playFruitAnnounce(symbol: FruitBetSymbolId, size: 'big' | 'small'): Promise<void> {
   const pack = ANNOUNCE_SFX[symbol]
   if (!pack) return Promise.resolve()
-  return playUrlAndWait(size === 'big' ? pack.big : pack.small, 0.92, size === 'big' ? 2200 : 1600)
+  const url = size === 'big' ? pack.big : pack.small
+  // 小格约 0.6~0.9s，大格约 1~1.4s；留足余量等 ended；增益抬高报奖人声
+  return playUrlAndWait(url, 1, size === 'big' ? 2800 : 2200, 1.65)
 }
 
 /** 开跑：播一段跑灯 go（可打断） */
@@ -184,7 +283,24 @@ export function stopFruitGo() {
   }
 }
 
+/** 离开页面时释放 AudioContext，避免报奖增益节点泄漏 */
+export function disposeFruitAudio() {
+  stopFruitAnnounce()
+  stopFruitGo()
+  try {
+    announceGain?.disconnect()
+  } catch {
+    /* ignore */
+  }
+  announceGain = null
+  if (announceCtx && announceCtx.state !== 'closed') {
+    void announceCtx.close().catch(() => {})
+  }
+  announceCtx = null
+}
+
 export function startFruitBgm() {
+  refreshEffectiveMute()
   if (bgmMuted) return
   unlockFruitAudio()
   if (!bgmEl) {
@@ -203,32 +319,42 @@ export function stopFruitBgm() {
   }
 }
 
-/** 跑灯时压低 BGM，结束后恢复 */
+/** 跑灯/报奖时压低 BGM，结束后恢复 */
 export function setFruitBgmDuck(duck: boolean) {
   if (!bgmEl) return
-  bgmEl.volume = duck ? 0.12 : 0.32
+  bgmEl.volume = duck ? 0.04 : 0.32
 }
 
-/** 只静音 BGM：保持进度，再开可续播 */
+/** 本游戏单独关/开音乐（不改个人资料） */
 export function setFruitBgmMuted(v: boolean) {
   bgmMuted = v
-  persistMute()
+  const sfxOff =
+    localStorage.getItem(LS_SFX) == null
+      ? !isClickSoundOn()
+      : localStorage.getItem(LS_SFX) === '1'
+  persistFruitLocal(v, sfxOff)
   if (bgmEl) {
     bgmEl.muted = v
     if (!v) {
       bgmEl.loop = true
       bgmEl.volume = 0.32
       void bgmEl.play().catch(() => {})
+    } else {
+      bgmEl.pause()
     }
   } else if (!v) {
     startFruitBgm()
   }
 }
 
-/** 静音音效：停掉进行中的循环跑灯音 */
+/** 本游戏单独关/开音效（不改个人资料） */
 export function setFruitSfxMuted(v: boolean) {
   sfxMuted = v
-  persistMute()
+  const bgmOff =
+    localStorage.getItem(LS_BGM) == null
+      ? !isAppBgmOn()
+      : localStorage.getItem(LS_BGM) === '1'
+  persistFruitLocal(bgmOff, v)
   if (v) stopFruitGo()
 }
 
@@ -252,24 +378,26 @@ export function setFruitMuted(v: boolean) {
 }
 
 export function initFruitMuteFromStorage() {
-  if (typeof localStorage === 'undefined') return
-  const legacy = localStorage.getItem(LS_LEGACY) === '1'
-  bgmMuted = localStorage.getItem(LS_BGM) === '1' || legacy
-  sfxMuted = localStorage.getItem(LS_SFX) === '1' || legacy
+  refreshEffectiveMute()
 }
 
-/** 特殊大奖开场曲（短音效，可叠加语音） */
+/**
+ * 特殊大奖开场曲（与中文语音配套，只在此处打一次 jackpot，避免与 revealHits 叠播）
+ */
 export function playFruitAwardFanfare(
   awardType: 'train' | 'big3' | 'small3' | 'four' | 'slam' | 'luck_send' | 'luck_eat' | string,
 ) {
-  // 所有特殊奖先打 jackpot 特殊音效
-  playFruitSfx('jackpot', 0.95)
+  if (awardType === 'luck_eat') {
+    playFruitSfx('special', 0.85)
+    return
+  }
+  playFruitSfx('jackpot', 1)
   if (awardType === 'train') {
-    playFruitSfx('awardTrain', 0.7)
+    playFruitSfx('awardTrain', 0.9)
     return
   }
   if (awardType === 'slam') {
-    playFruitSfx('awardSlam', 0.85)
+    playFruitSfx('awardSlam', 0.95)
     return
   }
   if (
@@ -278,10 +406,10 @@ export function playFruitAwardFanfare(
     awardType === 'four' ||
     awardType === 'luck_send'
   ) {
-    playFruitSfx('awardFanfare', 0.7)
+    playFruitSfx('awardFanfare', 0.88)
     return
   }
-  playFruitSfx('special', 0.7)
+  playFruitSfx('special', 0.85)
 }
 
 /**
@@ -293,5 +421,6 @@ export async function playFruitAwardVoice(
 ): Promise<void> {
   const url = AWARD_VOICE[awardType as keyof typeof AWARD_VOICE]
   if (!url) return
-  await playUrlAndWait(url, 0.98, 3200)
+  // 人声素材偏轻：WebAudio 约 1.9 倍增益，并配合 BGM 更深压低
+  await playUrlAndWait(url, 1, 3200, 1.9)
 }
