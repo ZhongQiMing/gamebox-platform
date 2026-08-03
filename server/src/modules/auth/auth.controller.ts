@@ -1,7 +1,9 @@
-import { Controller, Post, Body } from '@nestjs/common';
+import { Controller, Post, Body, Req } from '@nestjs/common';
+import type { Request } from 'express';
 import { AuthService } from './auth.service';
 import { Public } from '../../common/decorators/public.decorator';
 import { IsString, IsOptional, MinLength, MaxLength } from 'class-validator';
+import { extractClientIp } from '../../common/utils/client-ip';
 
 export class RegisterDto {
   @IsString() username!: string;
@@ -29,7 +31,7 @@ export class AuthController {
   /** POST /api/auth/login */
   @Public()
   @Post('login')
-  login(@Body() dto: LoginDto) {
-    return this.auth.login(dto.username, dto.password);
+  login(@Body() dto: LoginDto, @Req() req: Request) {
+    return this.auth.login(dto.username, dto.password, extractClientIp(req));
   }
 }
