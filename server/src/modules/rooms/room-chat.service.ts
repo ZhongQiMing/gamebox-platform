@@ -694,12 +694,13 @@ export class RoomChatService {
         });
         const avoidNames = recentNames.map((r) => r.senderName);
 
+        const robotCount = await this.robotCountFor(room.id, gameCode);
         const gen = genRobotBet(
           room.id,
           gameCode as ChatLotteryGame,
           issue.issueNo,
           `${Date.now()}-${room.id}-${Math.random().toString(36).slice(2, 8)}`,
-          { avoidNames },
+          { avoidNames, robotCount },
         );
         const payload: RoomChatBetPayload = {
           text: gen.text,
@@ -721,8 +722,20 @@ export class RoomChatService {
     }
   }
 
-  /** 确保房间有稳定机器名册（供调试/扩展） */
-  ensureRoster(roomId: string, gameCode: string) {
-    return robotRoster(roomId, gameCode);
+  /** 确保房间有稳定机器名册；人数读 RoomGameConfig */
+  async ensureRoster(roomId: string, gameCode: string) {
+    const cfg = await this.prisma.roomGameConfig.findUnique({
+      where: { roomId_gameCode: { roomId, gameCode } },
+      select: { robotCount: true },
+    });
+    return robotRoster(roomId, gameCode, cfg?.robotCount ?? 14);
+  }
+
+  async robotCountFor(roomId: string, gameCode: string) {
+    const cfg = await this.prisma.roomGameConfig.findUnique({
+      where: { roomId_gameCode: { roomId, gameCode } },
+      select: { robotCount: true },
+    });
+    return cfg?.robotCount ?? 14;
   }
 }

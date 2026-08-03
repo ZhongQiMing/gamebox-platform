@@ -6,6 +6,7 @@
 import { createHash } from 'node:crypto';
 import type { ChatLotteryGame, RoomChatPlayLine } from './room-chat.types';
 
+/** 大池：同一房间内按游戏分区独占，避免跨游戏重名 */
 const ROBOT_NAMES = [
   '星河漫步', '夜色温柔', '金币猎人', '风过无痕', '一叶知秋',
   '赤焰少年', '静水深流', '北岸灯火', '南巷清风', '云端漫步',
@@ -15,7 +16,47 @@ const ROBOT_NAMES = [
   '软糖骑士', '灰蓝笔记', '梧桐雨', '枕上书', '雾里看花',
   '掌心暖', '南风知意', '青柠汽水', '码头灯塔', '碎金时光',
   '月下独酌', '热巧克', '纸飞机', '麦田守望', '蓝调夜行',
+  '青竹马', '红袖添香', '孤岛电台', '雪顶咖啡', '琥珀猫',
+  '南岛季风', '北城夜车', '西岸潮声', '东篱把酒', '云深不知',
+  '疏影横斜', '暗香浮动', '清风徐来', '水波不兴', '长河落日',
+  '大漠孤烟', '烟雨江南', '杏花微雨', '竹马青梅', '白驹过隙',
+  '流光溢彩', '金风玉露', '碧落黄泉', '沧海月明', '蓝田日暖',
+  '橘生淮南', '梅子青时', '桃花依旧', '柳暗花明', '春江花月',
+  '秋水长天', '夏虫语冰', '冬日暖阳', '晨曦微露', '暮鼓晨钟',
+  '霓裳羽衣', '锦瑟无端', '玉壶冰心', '铁马冰河', '金戈铁马',
+  '银瓶乍破', '紫气东来', '青云直上', '黑白无常', '朱颜辞镜',
+  '绿蚁新醅', '黄粱一梦', '玄鸟归巢', '赤兔追风', '白鹤亮翅',
+  '灰狼队长', '橙汁派对', '薄荷凉风', '奶茶不加糖', '薯条勇士',
+  '爆米花君', '焦糖玛奇', '芝士焗薯', '番茄炒蛋', '土豆队长',
+  '豆浆油条', '煎饼果子', '关东煮王', '麻辣烫侠', '烧烤摊主',
+  '夜市灯笼', '街角吉他', '屋顶花园', '阳台猫窝', '电梯奇遇',
+  '地铁末班', '公交站牌', '共享单车', '快递小哥', '外卖骑士',
+  '便利店夜', '书店角落', '咖啡拉花', '奶盖星星', '布丁先生',
+  '慕斯小姐', '提拉米苏', '马卡龙蓝', '可颂清晨', '贝果周末',
+  '三明治侠', '热狗大王', '寿司忍者', '拉面武士', '饺子团长',
+  '包子司令', '馄饨使者', '汤圆圆圆', '粽子兄弟', '月饼团圆',
+  '冰糖葫芦', '糖炒栗子', '烤地瓜香', '棉花糖云', '棒棒糖梦',
+  '风筝线断', '陀螺旋转', '弹珠开战', '跳房子王', '捉迷藏鬼',
+  '积木城堡', '拼图边缘', '折纸飞机', '橡皮筋鸟', '粉笔涂鸦',
+  '黑板擦灰', '课桌抽屉', '操场夕阳', '图书馆静', '实验室白',
+  '天文台远', '显微镜下', '望远镜外', '指南针偏', '沙漏慢流',
+  '闹钟懒响', '日历撕页', '信封未拆', '邮票旅行', '墨水瓶蓝',
+  '钢笔尖细', '铅笔屑落', '水彩晕开', '油画厚涂', '素描淡影',
+  '相机快门', '胶卷岁月', '唱片转盘', '耳机线缠', '麦克风热',
+  '舞台追光', '幕后黑手', '观众席末', '检票口前', '安检门响',
+  '登机口迟', '跑道尽头', '云层之上', '海平面线', '地平线远',
+  '北极光舞', '南十字星', '赤道暖流', '回归线热', '子午线准',
+  '时差旅客', '候鸟迁徙', '鲸落深海', '萤火虫夏', '蝉鸣知了',
+  '蛙声一片', '犬吠月圆', '猫步无声', '鸽哨悠扬', '马蹄得得',
 ];
+
+/** 与开通游戏列表对齐，用于房间内名字分区（顺序固定） */
+const GAME_PARTITION_ORDER = [
+  'ffc', 'ssc', 'kuai3', 'bjsc', 'speed-racing', 'speed-boat',
+  'lhc', 'baccarat', 'longhu', 'douniu', 'zhajinhua',
+  'bcbm', 'fruit-machine',
+];
+const NAMES_PER_GAME = 40;
 
 /** 金额池加宽，少用整齐整数，更像真人随手输 */
 const AMTS = [
@@ -80,14 +121,40 @@ function hedgesWith(a: string, b: string): boolean {
   return HEDGE_PAIRS.some(([x, y]) => (ta === x && tb === y) || (ta === y && tb === x));
 }
 
+/**
+ * 同一房间内：各游戏从大池切互不重叠的名字段；头像种子含 gameCode，跨游戏必不同。
+ */
 export function robotRoster(roomId: string, gameCode: string, count = 14) {
-  const rnd = mulberry32(hashSeed(`${roomId}:${gameCode}:roster:v2`));
-  const pool = ROBOT_NAMES.slice();
+  const n = Math.min(50, Math.max(0, Math.floor(count) || 0));
+  if (n <= 0) return [];
+
+  // 房间级洗牌，保证不同房间名字段不同，但同房跨游戏不重叠
+  const shuffleRnd = mulberry32(hashSeed(`${roomId}:name-partition:v3`));
+  const shuffled = ROBOT_NAMES.slice();
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(shuffleRnd() * (i + 1));
+    const tmp = shuffled[i]!;
+    shuffled[i] = shuffled[j]!;
+    shuffled[j] = tmp;
+  }
+
+  let gIdx = GAME_PARTITION_ORDER.indexOf(gameCode);
+  if (gIdx < 0) {
+    gIdx = hashSeed(`game-part:${gameCode}`) % Math.max(1, Math.floor(shuffled.length / NAMES_PER_GAME));
+  }
+  const start = (gIdx * NAMES_PER_GAME) % shuffled.length;
+  let slice = shuffled.slice(start, start + NAMES_PER_GAME);
+  if (slice.length < NAMES_PER_GAME) {
+    slice = slice.concat(shuffled.slice(0, NAMES_PER_GAME - slice.length));
+  }
+
+  const pickRnd = mulberry32(hashSeed(`${roomId}:${gameCode}:roster:v3`));
+  const pool = slice.slice();
   const out: Array<{ name: string; avatar: string }> = [];
-  while (out.length < count && pool.length) {
-    const i = Math.floor(rnd() * pool.length);
+  while (out.length < n && pool.length) {
+    const i = Math.floor(pickRnd() * pool.length);
     const name = pool.splice(i, 1)[0]!;
-    const av = 1 + (hashSeed(`${roomId}:${name}:avatar`) % 162);
+    const av = 1 + (hashSeed(`${roomId}:${gameCode}:${name}:avatar:v3`) % 162);
     const ext = av === 22 || av === 78 || av === 86 ? 'png' : 'jpg';
     out.push({
       name,
@@ -259,9 +326,9 @@ export function genRobotBet(
   gameCode: ChatLotteryGame,
   issueNo: string,
   tickKey: string,
-  opts?: { avoidNames?: string[] },
+  opts?: { avoidNames?: string[]; robotCount?: number },
 ): { name: string; avatar: string; text: string; plays: RoomChatPlayLine[]; totalAmount: number } {
-  const roster = robotRoster(roomId, gameCode);
+  const roster = robotRoster(roomId, gameCode, opts?.robotCount ?? 14);
   const rnd = mulberry32(hashSeed(`${roomId}:${gameCode}:${issueNo}:${tickKey}`));
   const avoid = new Set((opts?.avoidNames || []).map((n) => String(n || '').trim()).filter(Boolean));
   const candidates = roster.filter((r) => !avoid.has(r.name));
