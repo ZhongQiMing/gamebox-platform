@@ -48,7 +48,6 @@ $adminToken = ''
 $playerToken = ''
 $playerId = ''
 $balAfterCredit = 0
-$mahjongBal = 0
 $orderId = ''
 
 Record 'health' {
@@ -83,7 +82,6 @@ Record 'games_catalog' {
   $r = Invoke-Api GET '/games'
   Assert-True ($r.code -eq 0) 'games list'
   $codes = @($r.data | ForEach-Object { $_.code })
-  Assert-True ($codes -contains 'slots-mahjong') 'has slots-mahjong'
   Assert-True ($codes -contains 'fruit-machine') 'has fruit-machine'
   Assert-True ($codes -contains 'dragon-tiger') 'has dragon-tiger'
 }
@@ -104,26 +102,6 @@ Record 'recharge_credit_flow' {
   $bal = Invoke-Api GET '/wallet/balance' -Token $playerToken
   Assert-True ([int]$bal.data.balance -ge 10000) ("balance>=10000 got {0}" -f $bal.data.balance)
   $script:balAfterCredit = [int]$bal.data.balance
-}
-
-Record 'mahjong_spin' {
-  $reqId = ("mj{0}" -f $suffix)
-  $r = Invoke-Api POST '/bet/mahjong/spin' @{
-    amount = 20
-    clientRequestId = $reqId
-  } -Token $playerToken
-  Assert-True ($r.code -eq 0) 'mahjong spin ok'
-  Assert-True ($null -ne $r.data.initialGrid) 'has initialGrid'
-  Assert-True ($null -ne $r.data.cascades) 'has cascades'
-  Assert-True ($null -ne $r.data.balance) 'has balance'
-  $script:mahjongBal = [int]$r.data.balance
-
-  $r2 = Invoke-Api POST '/bet/mahjong/spin' @{
-    amount = 20
-    clientRequestId = $reqId
-  } -Token $playerToken
-  Assert-True ($r2.code -eq 0) 'idempotent replay ok'
-  Assert-True ([int]$r2.data.balance -eq $script:mahjongBal) 'idempotent balance unchanged'
 }
 
 Record 'fruit_spin' {

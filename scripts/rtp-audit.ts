@@ -20,15 +20,13 @@ import {
   calcZhajinhuaPayout,
 } from '../server/src/modules/table/zhajinhua.game';
 import { drawDouniuFromDeck, calcDouniuPayout } from '../server/src/modules/table/douniu.game';
-import { LHC_ODDS } from '../server/src/modules/lottery/games/lhc-odds';
+import { LHC_ODDS, LHC_COLOR_HALF_ODDS, LHC_COLOR_HALF_HALF_ODDS } from '../server/src/modules/lottery/games/lhc-odds';
 import { bjscPayTable } from '../server/src/modules/lottery/games/bjsc.game';
 import { kuai3PayTable } from '../server/src/modules/lottery/games/kuai3.game';
 import { sscFfcPayTable } from '../server/src/modules/lottery/games/ffc.game';
 import { freshDeck, type FaceCard } from '../server/src/modules/table/table-cards';
-import { generateMahjongOutcome } from '../server/src/modules/game-core/mahjong-math';
 import {
   getTablePayTable,
-  payoutFromStakeMultCommission,
   BCBM_RING,
   BCBM_BET_SLOTS,
   BCBM_AWARD_TYPES,
@@ -38,13 +36,17 @@ import {
   bcbmNonFreeIndexes,
   FRUIT_RING,
   FRUIT_BET_SYMBOLS,
+  FRUIT_AWARD_TYPES,
   FRUIT_DEFAULT_AWARD_WEIGHTS,
   fruitBigIndexes,
   fruitAppleIndexes,
+  fruitLuckIndexes,
   fruitNonLuckIndexes,
   type BcbmAwardType,
   type BcbmBrandId,
   type BcbmColorId,
+  type FruitAwardType,
+  type FruitBetSymbolId,
 } from '@gamebox/shared';
 
 const TARGET_RTP = 0.96;
@@ -60,6 +62,56 @@ const INDUSTRY_STANDARD = new Set([
   '百家乐/tie',
   '百家乐/bankerPair',
   '百家乐/playerPair',
+  /* 龙虎：市面口径龙 0.95 / 虎 1 / 和 8（和局命中低，RTP 偏低不重标） */
+  '龙虎/tie',
+  /* 炸金花：对齐 OG New Three Cards 市面赔率（偏低不重标） */
+  '炸金花/shunjin',
+  '炸金花/baozi',
+  '炸金花/san6',
+  '炸金花/san7',
+  '炸金花/san3',
+]);
+
+/**
+ * 幸运六合彩截图对齐赔率：部分玩法刻意贴近官方展示（含统一两面 1.98），
+ * 单项 RTP 可能略超 100% 或低于 90%。不按 96% 重标；审计只提示，不记不合格。
+ */
+const SCREENSHOT_ALIGNED = new Set([
+  /* 炸金花闲 1:1：庄抽水、闲平赔；对半开时 RTP≈100%，蒙特卡洛可能略超 */
+  '炸金花/player',
+  /* 斗牛：市面给定牌型赔率（含闲 1、部分边注 RTP 偏离 96%） */
+  '斗牛/player',
+  '斗牛/small',
+  '斗牛/flower',
+  '斗牛/niuniu',
+  '斗牛/niu79',
+  '斗牛/niu06',
+  '六合彩/特码大(25-49)',
+  '六合彩/特码单(含49)',
+  '六合彩/合数大(>=7)',
+  '六合彩/特尾大(5-9)',
+  '六合彩/正码两面',
+  '六合彩/四全中',
+  '六合彩/特串',
+  '六合彩/2肖连中',
+  '六合彩/2肖连中·本命',
+  '六合彩/3肖连中',
+  '六合彩/3肖连中·本命',
+  '六合彩/4肖连中',
+  '六合彩/4肖连中·本命',
+  '六合彩/5肖连中',
+  '六合彩/5肖连中·本命',
+  '六合彩/2尾连中',
+  '六合彩/3尾连中',
+  '六合彩/4尾连中',
+  '六合彩/5尾连中',
+  '六合彩/5尾不中',
+  '六合彩/特码1-4头',
+  '六合彩/合肖2',
+  '六合彩/五行水',
+  '六合彩/五行土',
+  '六合彩/正肖·非本命',
+  '六合彩/正肖·本命',
 ]);
 
 /**
@@ -68,7 +120,7 @@ const INDUSTRY_STANDARD = new Set([
  * 普通开奖 RTP 的数学上限就是 1/Σ(1/倍率)≈83%，缺口由大奖补足，
  * 真正要看的是「均押12仓·总RTP」。
  */
-const DIAGNOSTIC_GROUPS = new Set(['奔驰宝马·仅normal', '麻将胡了·诊断']);
+const DIAGNOSTIC_GROUPS = new Set(['奔驰宝马·仅normal']);
 /** 蒙特卡洛用大额本金，规避 Math.floor 取整噪声 */
 const UNIT = 1_000_000;
 
@@ -138,17 +190,23 @@ function auditLhc() {
     return s;
   };
 
-  checkMult(g, '特码大(25-49)', 25 / 49, O.big);
+  /* 官方：特码大=25-48，49 和局退本（RTP 按胜出概率近似，不含和局） */
+  checkMult(g, '特码大(25-48)', 24 / 49, O.big);
   checkMult(g, '特码小(1-24)', 24 / 49, O.small);
   checkMult(g, '特码单(含49)', 25 / 49, O.odd);
   checkMult(g, '特码双', 24 / 49, O.even);
   checkMult(g, '特码号', 1 / 49, O.special);
   checkMult(g, '正码', 6 / 49, O.zhengma);
+  checkMult(g, '正码特', 1 / 49, O.zhengTe);
   checkMult(g, '特码大单', 13 / 49, O.combo);
   checkMult(g, '特码大双/小单/小双', 12 / 49, O.combo);
   checkMult(g, '红波(17号)', 17 / 49, O.colorRed);
   checkMult(g, '蓝波(16号)', 16 / 49, O.colorBlue);
   checkMult(g, '绿波(16号)', 16 / 49, O.colorGreen);
+  checkMult(g, '半波·红大', 7 / 49, LHC_COLOR_HALF_ODDS['红大']);
+  checkMult(g, '半波·红小', 10 / 49, LHC_COLOR_HALF_ODDS['红小']);
+  checkMult(g, '半半波·红大单', 3 / 49, LHC_COLOR_HALF_HALF_ODDS['红大单']);
+  checkMult(g, '半半波·红小单', 5 / 49, LHC_COLOR_HALF_HALF_ODDS['红小单']);
   checkMult(g, '特肖·非本命', 4 / 49, O.zodiac);
   checkMult(g, '特肖·本命', 5 / 49, O.zodiacYear);
   checkMult(g, '平特·非本命', 1 - none(4), O.pingTe);
@@ -161,10 +219,13 @@ function auditLhc() {
   checkMult(g, '合数小', 24 / 49, O.heSide);
   checkMult(g, '特尾大(5-9)', 25 / 49, O.weiSide);
   checkMult(g, '特尾小(0-4)', 24 / 49, O.weiSideSmall);
+  checkMult(g, '正码两面', 25 / 49, O.zhengSide);
+  checkMult(g, '正码组合', 12 / 49, O.zhengCombo);
   checkMult(g, '六肖·中(24号)', 24 / 49, O.liuxiao);
   checkMult(g, '六肖·不中(25号)', 25 / 49, O.liuxiao);
   checkMult(g, '二全中', (6 / 49) * (5 / 48), O.erQuanZhong);
   checkMult(g, '三全中', comb(6, 3) / comb(49, 3), O.sanQuanZhong);
+  checkMult(g, '四全中', comb(6, 4) / comb(49, 4), O.siQuanZhong);
   /* 三中二 / 二中特：同一注按命中数分档赔付，RTP 取合并 */
   checkTiered(g, '三中二(中二+中三)', [
     { p: (comb(6, 2) * 43) / comb(49, 3), multiplier: O.sanZhongEr },
@@ -178,15 +239,30 @@ function auditLhc() {
   /* 连肖按非本命肖 4 号/肖，连尾按 1-9 尾 5 号/尾 */
   for (const n of [2, 3, 4, 5] as const) {
     checkMult(g, `${n}肖连中`, allHit(n, 4), O[`sxLianZhong${n}`]);
+    checkMult(g, `${n}肖连中·本命`, allHit(n, 4), O[`sxLianZhong${n}Year`]);
     checkMult(g, `${n}肖不中`, none(4 * n), O[`sxLianBuZhong${n}`]);
   }
-  for (const n of [2, 3, 4] as const) {
+  for (const n of [2, 3, 4, 5] as const) {
     checkMult(g, `${n}尾连中`, allHit(n, 5), O[`wsLianZhong${n}`]);
     checkMult(g, `${n}尾不中`, none(5 * n), O[`wsLianBuZhong${n}`]);
   }
   for (const n of [5, 6, 7, 8, 9, 10, 11, 12] as const) {
     checkMult(g, `${n}不中`, none(n), O[`buZhong${n}`]);
   }
+  checkMult(g, '特码0头', 9 / 49, O.temaTou0);
+  checkMult(g, '特码1-4头', 10 / 49, O.temaTou);
+  checkMult(g, '特码0尾', 4 / 49, O.temaWei0);
+  checkMult(g, '特码1-9尾', 5 / 49, O.temaWei);
+  for (const n of [2, 3, 4, 5, 6, 7, 8, 9, 10, 11] as const) {
+    checkMult(g, `合肖${n}`, (n * 4) / 49, O[`heXiao${n}` as keyof typeof O]);
+  }
+  checkMult(g, '五行金', 11 / 49, O.wuxingJin);
+  checkMult(g, '五行木', 11 / 49, O.wuxingMu);
+  checkMult(g, '五行水', 6 / 49, O.wuxingShui);
+  checkMult(g, '五行火', 13 / 49, O.wuxingHuo);
+  checkMult(g, '五行土', 8 / 49, O.wuxingTu);
+  checkMult(g, '正肖·非本命', 1 - none(4), O.zhengXiao);
+  checkMult(g, '正肖·本命', 1 - none(5), O.zhengXiaoYear);
 }
 
 // ───────────────────────────────────────── 赛车 PK10
@@ -339,15 +415,10 @@ function auditFfc() {
   checkMult(g, '牛牛(10)', niuCnt[10] / N, P.niu.multiplier);
   checkMult(g, '牛1(最低档)', niuCnt[1] / N, P.niu.multiplier);
   checkMult(g, '牛2(最高档)', niuCnt[2] / N, P.niu.multiplier);
-  /* 牛两面：无牛退本，RTP = 命中×赔率 + 无牛×1 */
+  /* 牛两面：无牛判输（不退本），RTP = 命中×赔率 */
   let nBig = 0;
   for (let k = 6; k <= 10; k++) nBig += niuCnt[k] / N;
-  const push = niuCnt[-1] / N;
-  rows.push({
-    game: g, play: '牛大(无牛退本)', p: nBig, current: P.niuSide.multiplier,
-    rtp: nBig * P.niuSide.multiplier + push,
-    suggest: nBig > 0 ? (TARGET_RTP - push) / nBig : 0, unit: '倍数',
-  });
+  checkMult(g, '牛大(无牛判输)', nBig, P.niuSide.multiplier);
   for (const k of Object.keys(shapeCnt)) {
     const key = `shape_${k}` as keyof typeof P;
     checkMult(g, `形态·${k}`, shapeCnt[k] / N, (P[key] as { multiplier: number }).multiplier);
@@ -405,23 +476,29 @@ function auditTables(rounds: number) {
     run('百家乐', deck8, drawBaccaratFromDeck, calcBaccaratPayout as never, bjl.odds);
   }
 
-  /* 龙虎可精确枚举：52 张取 2，按 rank 比大小 */
+  /* 龙虎可精确枚举：52 张取 2，按 rank 比大小；开和龙/虎退本 */
   const lhd = getTablePayTable('dragon-tiger');
-  if (lhd?.mode === 'stake-mult-commission') {
-    let win = 0, tie = 0, total = 0;
+  if (lhd?.mode === 'profit-odds') {
+    let dragonWin = 0, tigerWin = 0, tie = 0, total = 0;
     for (let a = 1; a <= 13; a++) {
       for (let b = 1; b <= 13; b++) {
         const c = a === b ? 4 * 3 : 4 * 4;
         total += c;
-        if (a > b) win += c; else if (a === b) tie += c;
+        if (a > b) dragonWin += c;
+        else if (a < b) tigerWin += c;
+        else tie += c;
       }
     }
-    const pWin = win / total;
+    const pD = dragonWin / total;
+    const pT = tigerWin / total;
     const pTie = tie / total;
-    const sideRet = payoutFromStakeMultCommission(UNIT, lhd.mult.dragon, lhd.commission) / UNIT;
-    checkProfit('龙虎', 'dragon/tiger(开和退本)', pWin, pWin * sideRet + pTie, lhd.mult.dragon);
-    const tieRet = payoutFromStakeMultCommission(UNIT, lhd.mult.tie, lhd.commission) / UNIT;
-    checkProfit('龙虎', 'tie', pTie, pTie * tieRet, lhd.mult.tie);
+    const dRet = 1 + lhd.odds.dragon;
+    const tRet = 1 + lhd.odds.tiger;
+    const tieRet = 1 + lhd.odds.tie;
+    /* 开和退本：龙/虎 EV = pWin*(1+odds) + pTie*1 */
+    checkProfit('龙虎', 'dragon(开和退本)', pD, pD * dRet + pTie, lhd.odds.dragon);
+    checkProfit('龙虎', 'tiger(开和退本)', pT, pT * tRet + pTie, lhd.odds.tiger);
+    checkProfit('龙虎', 'tie', pTie, pTie * tieRet, lhd.odds.tie);
   }
 }
 
@@ -479,91 +556,129 @@ function auditArcade() {
     checkMult('奔驰宝马·仅normal', s.label, w / ringW, s.mult);
   }
 
-  /* 水果机：逐符号单押 */
-  const FW = FRUIT_DEFAULT_AWARD_WEIGHTS;
-  const fTypes = Object.keys(FW) as Array<keyof typeof FW>;
-  const fTotalW = fTypes.reduce((s, t) => s + FW[t], 0);
-  const fRingW = FRUIT_RING.reduce((s, c) => s + c.weight, 0);
-  const nonLuck = fruitNonLuckIndexes();
+  /* 水果机：蒙特卡洛，命中逻辑与 fruit-machine-engine.resolveHits 对齐 */
+  const fruitRounds = Math.max(50_000, Math.floor(Number(process.env.RTP_ROUNDS || 1_000_000) / 5));
   for (const sym of FRUIT_BET_SYMBOLS) {
-    const multAt = (i: number) => (FRUIT_RING[i].symbol === sym.id ? FRUIT_RING[i].mult : 0);
-    let ev = 0;
-    for (const t of fTypes) {
-      const share = FW[t] / fTotalW;
-      let e = 0;
-      if (t === 'normal' || t === 'luck_send' || t === 'luck_eat') {
-        for (let i = 0; i < FRUIT_RING.length; i++) e += (FRUIT_RING[i].weight / fRingW) * multAt(i);
-      } else if (t === 'slam') {
-        e = nonLuck.reduce((s, i) => s + multAt(i), 0);
-      } else if (t === 'train') {
-        for (let s0 = 0; s0 < nonLuck.length; s0++) {
-          let sub = 0;
-          for (let n = 0; n < 5; n++) sub += multAt(nonLuck[(s0 + n) % nonLuck.length]);
-          e += sub / nonLuck.length;
-        }
-      } else {
-        const group =
-          t === 'four' ? fruitAppleIndexes()
-            : t === 'big3' ? ['bar', 'seven', 'star'].flatMap((s) => fruitBigIndexes(s as never))
-              : ['melon', 'bell', 'lemon'].flatMap((s) => fruitBigIndexes(s as never));
-        e = group.reduce((s, i) => s + multAt(i), 0);
+    let sum = 0;
+    for (let r = 0; r < fruitRounds; r++) {
+      const award = fruitPickAwardType(FRUIT_DEFAULT_AWARD_WEIGHTS, Math.random());
+      const { hitIndexes } = fruitResolveHits(award, Math.random);
+      for (const i of hitIndexes) {
+        const cell = FRUIT_RING[i];
+        if (cell?.symbol === (sym.id as FruitBetSymbolId)) sum += cell.mult;
       }
-      ev += share * e;
     }
+    const ev = sum / fruitRounds;
     rows.push({
       game: '水果机', play: sym.label, p: null, current: ev, rtp: ev, suggest: 0, unit: '倍数',
     });
   }
 }
 
-// ───────────────────────────────────────── 麻将胡了（含级联与免费局）
-function auditMahjong(rounds: number) {
-  const BET = 2000; // 100 × 基准注 20，规避逐符号 Math.floor 的取整噪声
-  let staked = 0;
-  let won = 0;
-  let freeSpins = 0;
-  let triggers = 0;
-  let cascadeSteps = 0;
-
-  for (let i = 0; i < rounds; i++) {
-    staked += BET;
-    const base = generateMahjongOutcome({
-      amount: BET,
-      isFree: false,
-      rawConfig: null,
-      random: Math.random,
-    });
-    won += base.totalWin;
-    cascadeSteps += base.cascades.length;
-
-    /* 免费局：不再扣注，倍率阶梯更高，且可重触发 */
-    let remaining = base.spinsAwarded;
-    if (remaining > 0) triggers++;
-    let guard = 0;
-    while (remaining > 0 && guard++ < 500) {
-      remaining--;
-      freeSpins++;
-      const free = generateMahjongOutcome({
-        amount: BET,
-        isFree: true,
-        rawConfig: null,
-        random: Math.random,
-      });
-      won += free.totalWin;
-      remaining += free.spinsAwarded;
-    }
+/** 与 server fruit-machine-engine 同口径（改引擎命中时请同步） */
+function fruitWeightedPick(weights: number[], rnd: number): number {
+  const total = weights.reduce((s, w) => s + w, 0);
+  let acc = 0;
+  const target = rnd * total;
+  for (let i = 0; i < weights.length; i++) {
+    acc += weights[i]!;
+    if (target < acc) return i;
   }
+  return weights.length - 1;
+}
 
-  const rtp = won / staked;
-  rows.push({
-    game: '麻将胡了', play: '总RTP(含免费局)', p: null,
-    current: rtp, rtp, suggest: 0, unit: '倍数',
-  });
-  const diag = (play: string, p: number | null, value: number) =>
-    rows.push({ game: '麻将胡了·诊断', play, p, current: value, rtp: 1, suggest: 0, unit: '倍数' });
-  diag('免费局触发率', triggers / rounds, triggers / rounds);
-  diag('每局附赠免费局数', null, freeSpins / rounds);
-  diag('每局平均级联步数', null, cascadeSteps / rounds);
+function fruitPickAwardType(
+  weights: Record<FruitAwardType, number>,
+  rnd: number,
+): FruitAwardType {
+  const list = FRUIT_AWARD_TYPES.map((t) => Math.max(0, weights[t] ?? 0));
+  return FRUIT_AWARD_TYPES[fruitWeightedPick(list, rnd)]!;
+}
+
+function fruitPickWeightedIndex(
+  indexes: number[],
+  weights: number[],
+  random: () => number,
+): number {
+  const w = indexes.map((i) => Math.max(0, weights[i] ?? 1));
+  return indexes[fruitWeightedPick(w, random())]!;
+}
+
+function fruitPickOne(indexes: number[], random: () => number): number {
+  return indexes[Math.floor(random() * indexes.length) % indexes.length]!;
+}
+
+function fruitPickDistinct(
+  pool: number[],
+  count: number,
+  weights: number[],
+  random: () => number,
+): number[] {
+  const left = [...pool];
+  const out: number[] = [];
+  const n = Math.min(count, left.length);
+  for (let i = 0; i < n; i++) {
+    const w = left.map((idx) => Math.max(0, weights[idx] ?? 1));
+    const pick = fruitWeightedPick(w, random());
+    out.push(left[pick]!);
+    left.splice(pick, 1);
+  }
+  return out;
+}
+
+function fruitResolveHits(
+  awardType: FruitAwardType,
+  random: () => number,
+): { stopIndex: number; hitIndexes: number[] } {
+  const luckIdx = fruitLuckIndexes();
+  const nonLuck = fruitNonLuckIndexes();
+  const cellWeights = FRUIT_RING.map((c) => Math.max(0, c.weight));
+
+  if (awardType === 'luck_eat') {
+    const stopIndex = fruitPickWeightedIndex(luckIdx, cellWeights, random);
+    return { stopIndex, hitIndexes: [] };
+  }
+  if (awardType === 'luck_send') {
+    const stopIndex = fruitPickWeightedIndex(luckIdx, cellWeights, random);
+    const count = 1 + Math.floor(random() * 5);
+    return { stopIndex, hitIndexes: fruitPickDistinct(nonLuck, count, cellWeights, random) };
+  }
+  if (awardType === 'train') {
+    const start = fruitPickWeightedIndex(nonLuck, cellWeights, random);
+    const len = 4 + Math.floor(random() * 3);
+    const hits: number[] = [];
+    for (let i = 0; i < len; i++) {
+      const idx = (start + i) % FRUIT_RING.length;
+      if (FRUIT_RING[idx]!.size !== 'luck') hits.push(idx);
+    }
+    return { stopIndex: start, hitIndexes: hits };
+  }
+  if (awardType === 'big3') {
+    const hits = [
+      fruitPickOne(fruitBigIndexes('seven'), random),
+      fruitPickOne(fruitBigIndexes('star'), random),
+      fruitPickOne(fruitBigIndexes('melon'), random),
+    ];
+    return { stopIndex: hits[0]!, hitIndexes: hits };
+  }
+  if (awardType === 'small3') {
+    const hits = [
+      fruitPickOne(fruitBigIndexes('bell'), random),
+      fruitPickOne(fruitBigIndexes('lemon'), random),
+      fruitPickOne(fruitBigIndexes('orange'), random),
+    ];
+    return { stopIndex: hits[0]!, hitIndexes: hits };
+  }
+  if (awardType === 'four') {
+    const hits = fruitAppleIndexes();
+    return { stopIndex: hits[0] ?? 0, hitIndexes: hits };
+  }
+  if (awardType === 'slam') {
+    return { stopIndex: nonLuck[0] ?? 0, hitIndexes: [...nonLuck] };
+  }
+  // normal：与引擎一致，只停非 LUCK；送灯/吃灯走独立奖型
+  const stopIndex = fruitPickWeightedIndex(nonLuck, cellWeights, random);
+  return { stopIndex, hitIndexes: [stopIndex] };
 }
 
 // ───────────────────────────────────────── 输出
@@ -579,11 +694,14 @@ function report(): number {
     const diagnostic = DIAGNOSTIC_GROUPS.has(game);
     console.log('\n===== ' + game + (diagnostic ? '（仅诊断，不判定）' : '') + ' =====');
     for (const r of list) {
-      const standard = INDUSTRY_STANDARD.has(`${r.game}/${r.play}`);
-      const over = r.rtp > PASS_MAX && !diagnostic;
-      const under = r.rtp < PASS_MIN && !standard && !diagnostic;
+      const key = `${r.game}/${r.play}`;
+      const standard = INDUSTRY_STANDARD.has(key);
+      const shot = SCREENSHOT_ALIGNED.has(key);
+      const over = r.rtp > PASS_MAX && !diagnostic && !shot;
+      const under = r.rtp < PASS_MIN && !standard && !diagnostic && !shot;
       if (over || under) bad++;
       const flag = over ? '✗ 平台负期望' : under ? '✗ 偏离目标'
+        : shot && (r.rtp > PASS_MAX || r.rtp < PASS_MIN) ? '· 截图对齐'
         : diagnostic ? '·' : standard ? '✓ 行业标准' : '✓';
       const sug = (over || under) && r.suggest > 0
         ? `  建议${r.unit}=${r.suggest.toFixed(r.suggest > 100 ? 0 : 2)}`
@@ -614,7 +732,6 @@ function main() {
   if (want('ffc') || want('ssc')) auditFfc();
   if (want('table')) auditTables(rounds);
   if (want('arcade')) auditArcade();
-  if (want('mahjong')) auditMahjong(Math.min(rounds, 200_000));
   process.exitCode = report() > 0 ? 1 : 0;
 }
 
