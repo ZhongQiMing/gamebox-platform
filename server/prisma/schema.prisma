@@ -40,6 +40,7 @@ enum AccountOwnerType {
   AGENT
   PROXY
   PLAYER
+  ROOM // 房间盘口池（ownerId = roomId）
 }
 
 enum LedgerBizType {
@@ -131,11 +132,15 @@ model User {
 
   promoCode String? @unique // 推广码（代理/代分用）
 
+  /// 会话吊销：改密/停用时自增，JWT 携带的 version 不一致即失效
+  tokenVersion Int @default(0)
+
   lastLoginAt DateTime?
   lastLoginIp String?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
+  roomOwnerGrants RoomOwnerGrant[]
   agent          Agent?
   bets           Bet[]
   gameRounds     GameRound[]
@@ -152,10 +157,12 @@ model User {
   ledgerOps      PointsLedger[]  @relation("LedgerOperator")
   adminLogs      AdminLog[]
   roomMembers    RoomMember[]
+  riskHandled    RiskEvent[]     @relation("RiskHandledBy")
 
   @@index([role, status])
   @@index([parentId])
   @@index([agentPath])
+  @@index([lastLoginIp])
 }
 
 // 代理扩展（role=BRANCH/AGENT/PROXY 的用户拥有一条）
@@ -167,16 +174,18 @@ model Agent {
   levelId   String?
   level     AgentLevel? @relation(fields: [levelId], references: [id])
 
-  // 自营参数（也可继承等级默认值）
-  commissionRate Float @default(0.0) // 下线流水分成比例
-  rebateRate     Float @default(0.0) // 给下线的回水比例上限
+  // 自营参数
+  commissionRate Float @default(0.002) // 挂靠下级流水分成（默认 0.2%）
+  rebateRate     Float @default(0.018) // 给玩家的默认回水比例 P
 
-  // 团队统计（缓存，定时/事件更新）
-  teamFlowTotal Decimal @default(0) @db.Decimal(18, 2) // 团队累计有效流水（用于晋级）
+  teamFlowTotal Decimal @default(0) @db.Decimal(18, 2)
   teamFlowMonth Decimal @default(0) @db.Decimal(18, 2)
 
-  pointsQuota Decimal @default(0) @db.Decimal(18, 2) // 上级下发的可用额度
+  /// 真分可用库存
+  pointsQuota Decimal @default(0) @db.Decimal(18, 2)
   pointsUsed  Decimal @default(0) @db.Decimal(18, 2)
+  /// 飞盘剩余覆盖
+  flyCover Decimal @default(0) @db.Decimal(18, 2)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -203,17 +212,106 @@ model Room {
   id           String     @id @default(cuid())
   roomNo       String     @unique // 房间号 = 推荐码
   name         String
+  title        String? // 展示标题（可选，已不在创建表单使用）
   icon         String?
   ownerAgentId String?
   ownerAgent   Agent?     @relation(fields: [ownerAgentId], references: [id])
-  status       String     @default("OPEN") // OPEN | CLOSED
+  /// OPEN | MAINTENANCE | FROZEN | CLOSED
+  status       String     @default("OPEN")
   enabledGames String     @default("[]") // JSON 数组：["ssc","mahjong",...]
+  /// 代理房间月费（从绑定代理账户扣）；0=不收费
+  monthlyFee   Decimal    @default(0) @db.Decimal(18, 2)
+  /// 每月扣费日 1-28
+  billingDay   Int        @default(1)
+  /// 下次扣费时间（上海自然日 0 点语义由任务保证）
+  nextBillAt   DateTime?
+  lastBilledAt DateTime?
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
-  gameRounds GameRound[]
-  members    RoomMember[]
+  gameRounds   GameRound[]
+  members      RoomMember[]
   chatMessages RoomChatMessage[]
+  ownerGrants  RoomOwnerGrant[]
+  gameConfigs  RoomGameConfig[]
+  controlPolicies ControlPolicy[]
+
+  @@index([nextBillAt, status])
+}
+
+/// 房主(BRANCH) ↔ 房间多对多可见/管辖授权（超管分配）
+model RoomOwnerGrant {
+  id        String   @id @default(cuid())
+  roomId    String
+  room      Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  ownerId   String // User.id role=BRANCH
+  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([roomId, ownerId])
+  @@index([ownerId])
+}
+
+/// 房间×游戏运营覆盖：开关、机器人数量、限红等
+model RoomGameConfig {
+  id         String   @id @default(cuid())
+  roomId     String
+  room       Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  gameCode   String
+  enabled    Boolean  @default(true)
+  robotCount Int      @default(14)
+  minBet     Decimal? @db.Decimal(18, 2)
+  maxBet     Decimal? @db.Decimal(18, 2)
+  /// 节点回水比例覆盖（null=继承）
+  rebateRate Float?
+  updatedAt  DateTime @updatedAt
+  createdAt  DateTime @default(now())
+
+  @@unique([roomId, gameCode])
+  @@index([gameCode])
+}
+
+/// 超管控奖策略（房主/代理不可见参数细节）
+model ControlPolicy {
+  id          String    @id @default(cuid())
+  name        String
+  roomId      String? // 单房调控必填
+  room        Room?     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  gameCode    String? // 指定游戏；null=该房全部已接入游戏（当前=全部彩票）
+  /// HOUSE_HOLD_RATIO：庄家按局留存比例
+  targetType  String
+  /// 留存比例 0~1，如 0.30 = 30%
+  targetValue Float
+  /// 目标回血金额：该房该范围庄家净赢累计达到后自动结束（EXHAUSTED）
+  goalAmount  Decimal?  @db.Decimal(18, 2)
+  /// 兼容旧字段；开奖搜索深度已固定，不再手调
+  strength    Float     @default(1)
+  startAt     DateTime
+  /// 安全截止（防止永不结束）；正常以 goalAmount 达成结束
+  endAt       DateTime
+  /// DRAFT | ACTIVE | HALTED | EXHAUSTED
+  status      String    @default("DRAFT")
+  remark      String?
+  createdById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([status, startAt, endAt])
+  @@index([roomId, gameCode, status])
+}
+
+/// 全局回水政策（超管锁死总返水率与玩家下限）
+model RebatePolicy {
+  id        Int      @id @default(1)
+  /// 兼容旧字段：视作玩家比例参考带
+  minRate   Float    @default(0.018)
+  maxRate   Float    @default(0.05)
+  /// 飞盘流水总返水率 T（默认 5%）；玩家 P∈[playerMinRate, T/2]，代理得 T-P
+  totalRate     Float @default(0.05)
+  playerMinRate Float @default(0.018)
+  /// 分类默认 JSON（遗留，自助回水改按玩家 P）
+  defaults  Json     @default("{}")
+  updatedAt DateTime @updatedAt
 }
 
 /// 房间×游戏公共聊天时间线（全员一致；进房只拉历史，不本地造事件）
@@ -246,6 +344,10 @@ model RoomMember {
   roomId    String
   room      Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
   status    String   @default("APPROVED") // PENDING | APPROVED | REJECTED
+  /// 是否飞盘到房间盘口池；关闭则只与代理结算
+  flyEnabled Boolean @default(true)
+  /// 该玩家回水比例 P（null=用代理 rebateRate 默认）
+  playerRebateRate Float?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -320,7 +422,7 @@ model Game {
   iconUrl   String?
   entryUrl  String? // games-assets 入口
   minBet    Decimal      @default(1) @db.Decimal(18, 2)
-  maxBet    Decimal      @default(1000000) @db.Decimal(18, 2)
+  maxBet    Decimal      @default(100000) @db.Decimal(18, 2)
   sortOrder Int          @default(0)
   // 彩票专用：开奖周期（秒），如 SSC=60；非彩票为 null
   drawIntervalSec Int?
@@ -609,17 +711,23 @@ model AppVersion {
 
 // ======================= 风控 / 审计 =======================
 
-// 风控事件（异常胜率/大额/RTP 偏离/疑似对刷）
+// 风控事件（大额中奖 / 同 IP / 疑似刷分 / 桌台对刷）
 model RiskEvent {
-  id        String   @id @default(cuid())
-  type      String // RTP_DEVIATION | BIG_WIN | ABNORMAL_WINRATE | COLLUSION
-  level     String   @default("INFO") // INFO | WARN | CRITICAL
-  targetId  String? // 关联 user/game/round
-  detail    Json?
-  handled   Boolean  @default(false)
-  createdAt DateTime @default(now())
+  id         String    @id @default(cuid())
+  type       String // BIG_WIN | SAME_IP | SUSPECT_WASH | COLLUSION
+  level      String    @default("INFO") // INFO | WARN | CRITICAL
+  targetId   String? // 主关联玩家 userId（便于管辖范围过滤）
+  detail     Json?
+  handled    Boolean   @default(false)
+  handleNote String?
+  handledAt  DateTime?
+  handledBy  String?
+  handler    User?     @relation("RiskHandledBy", fields: [handledBy], references: [id], onDelete: SetNull)
+  createdAt  DateTime  @default(now())
 
   @@index([type, level, createdAt])
+  @@index([handled, createdAt])
+  @@index([targetId, createdAt])
 }
 
 model AdminLog {

@@ -24,6 +24,7 @@ import { RolesGuard } from './common/guards/roles.guard';
 import { RiskModule } from './modules/risk/risk.module';
 import { RoomsModule } from './modules/rooms/rooms.module';
 import { RebateModule } from './modules/rebate/rebate.module';
+import { ConsoleModule } from './modules/console/console.module';
 
 /**
  * 应用根模块。
@@ -42,7 +43,8 @@ import { RebateModule } from './modules/rebate/rebate.module';
         {
           name: 'default',
           ttl: Number(cfg.get('THROTTLE_TTL_MS') ?? 60_000),
-          limit: Number(cfg.get('THROTTLE_LIMIT') ?? 120),
+          /* 大厅多游戏轮询 + 房间桥接；公开读接口已 SkipThrottle，这里给写操作留余量 */
+          limit: Number(cfg.get('THROTTLE_LIMIT') ?? 300),
         },
       ],
     }),
@@ -58,6 +60,7 @@ import { RebateModule } from './modules/rebate/rebate.module';
     GameCoreModule,
     AgentsModule,
     AdminModule,
+    ConsoleModule,
     LotteryModule,
     TableModule,
     ActivityModule,
