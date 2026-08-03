@@ -38,46 +38,51 @@ export const TABLE_PAYTABLE: Record<string, TablePayTable> = {
   zhajinhua: {
     mode: 'profit-odds',
     /**
-     * 牌型副注只认赢方牌型（和局时任一方），赢方天然偏大牌，
-     * 因此命中率与「单手出现该牌型」完全不同，必须按赢方分布标定：
-     * 散牌 55.6% / 对子 27.8% / 顺子 6.1% / 金花 9.6% / 顺金 0.42% / 豹子 0.49% / 和 0.11%
+     * 牌型副注只认赢方牌型；点数相同比花色，无和局/和注。
+     * 牌型赔率对齐 OG Plus「New Three Cards / 龙凤炸金花」市面口径：
+     * 顺子 7 / 金花 8 / 顺金 100 / 豹子 120；庄 0.95 抽水、闲 1。
+     * （单手出现率：金花>顺子，但赢方口径下顺子更稀；正版仍把金花赔更高。）
      */
     odds: {
       banker: 0.95,
-      player: 0.95,
-      tie: 860,
-      shunjin: 218,
-      baozi: 200,
-      san2: 0.72,
-      san3: 2.45,
-      san6: 14.7,
-      san7: 8.95,
+      player: 1,
+      shunjin: 100,
+      baozi: 120,
+      san2: 0.75,
+      san3: 2,
+      san6: 7,
+      san7: 8,
     },
-    tieRefundSides: ['banker', 'player'],
-    sideMaxBet: { tie: 200, shunjin: 500, baozi: 500 },
+    sideMaxBet: { shunjin: 500, baozi: 500 },
   },
   douniu: {
     mode: 'profit-odds',
     /**
-     * 同为赢方牌型口径：牛牛 14.0% / 牛7-9 32.4% / 无牛-牛6 53.3%；
-     * 五小牛与五花牛作为赢方仅约 0.09%，低赔会让这两格形同虚设。
+     * 庄 0.95 抽水、闲 1；牌型副注按市面给定：
+     * 小牛 100 / 五花牛 90 / 牛牛 6.84 / 牛7-9 2.98 / 无牛-牛6 1.82。
      */
     odds: {
       banker: 0.95,
-      player: 0.95,
-      small: 1000,
-      niuniu: 5.8,
-      niu79: 1.96,
-      niu06: 0.8,
-      flower: 1150,
+      player: 1,
+      small: 100,
+      niuniu: 6.84,
+      niu79: 2.98,
+      niu06: 1.82,
+      flower: 90,
     },
     sideMaxBet: { small: 200, flower: 200, niuniu: 2000 },
   },
   'dragon-tiger': {
-    mode: 'stake-mult-commission',
-    /* 开和时龙/虎全退，和局本身没有平台优势来源，倍数需按 5.88% 命中率标定 */
-    mult: { dragon: 2, tiger: 2, tie: 17, DRAGON: 2, TIGER: 2, TIE: 17 },
-    commission: 0.05,
+    mode: 'profit-odds',
+    /** 龙 0.95 抽水、虎 1、和 8；开和时龙/虎全退 */
+    odds: {
+      dragon: 0.95,
+      tiger: 1,
+      tie: 8,
+      DRAGON: 0.95,
+      TIGER: 1,
+      TIE: 8,
+    },
     tieRefundSides: ['dragon', 'tiger', 'DRAGON', 'TIGER'],
     sideMaxBet: { tie: 5000, TIE: 5000 },
   },
