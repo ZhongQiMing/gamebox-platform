@@ -1,11 +1,13 @@
-import { BadRequestException, Controller, Post, Body, Get, Param } from '@nestjs/common';
+import { BadRequestException, Controller, Post, Body, Get, Param, Query } from '@nestjs/common';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { SlotEngine } from './slot-engine';
 import { BcbmEngine } from './bcbm-engine';
 import { FruitMachineEngine } from './fruit-machine-engine';
 import { IsString, IsInt, IsOptional, IsObject, IsIn, Min, Max, MaxLength } from 'class-validator';
 import { Type } from 'class-transformer';
-import { asMoney } from '@gamebox/shared';
+import { asMoney, roundMoney } from '@gamebox/shared';
+import type { Prisma } from '@prisma/client';
+import { resolveTimeWindow } from '../../common/shanghai-range';
 import { PrismaService } from '../../prisma/prisma.service';
 
 export class TableInstantDto {
@@ -126,13 +128,108 @@ export class BetController {
     });
   }
 
-  /** GET /api/bet/history — 下注历史（街机按局 / 彩票按期聚合，报表用） */
+  /** GET /api/bet/fruit/pending-gamble — 查询可猜大小的当局赢分（进页恢复） */
+  @Get('fruit/pending-gamble')
+  async fruitPendingGamble(@CurrentUser() u: { id: string }) {
+    return this.fruit.getPendingGamble(u.id);
+  }
+
+  /** POST /api/bet/fruit/abandon-gamble — 退币/放弃猜大小，清掉可再赌额度 */
+  @Post('fruit/abandon-gamble')
+  async fruitAbandonGamble(@CurrentUser() u: { id: string }) {
+    return this.fruit.abandonGamble(u.id);
+  }
+
+  /**
+   * GET /api/bet/report-summary?range=today|… 或 from=&to=
+   * 竞猜报表顶部汇总：按时段全量统计（不受 history 条数上限影响），口径与自助回水有效流水一致。
+   */
+  @Get('report-summary')
+  async reportSummary(
+    @CurrentUser() u: { id: string },
+    @Query('range') rangeKey?: string,
+    @Query('from') fromStr?: string,
+    @Query('to') toStr?: string,
+  ) {
+    const window = resolveTimeWindow({
+      range: rangeKey,
+      fromMs: fromStr != null && fromStr !== '' ? Number(fromStr) : undefined,
+      toMs: toStr != null && toStr !== '' ? Number(toStr) : undefined,
+    });
+    if (!window) throw new BadRequestException('无效的时间范围');
+    const [from, to] = window;
+
+    const bets = await this.prisma.bet.findMany({
+      where: {
+        playerId: u.id,
+        status: { not: 'CANCELLED' },
+        OR: [
+          { settledAt: { gte: from, lt: to } },
+          { settledAt: null, createdAt: { gte: from, lt: to } },
+        ],
+      },
+      select: {
+        amount: true,
+        payout: true,
+        validFlow: true,
+        status: true,
+      },
+    });
+
+    let orders = 0;
+    let amount = 0;
+    let validFlow = 0;
+    let settledAmount = 0;
+    let settledPayout = 0;
+    for (const b of bets) {
+      orders += 1;
+      const amt = asMoney(b.amount);
+      amount = roundMoney(amount + amt);
+      if (b.status === 'PENDING') continue;
+      settledAmount = roundMoney(settledAmount + amt);
+      settledPayout = roundMoney(settledPayout + asMoney(b.payout));
+      validFlow = roundMoney(validFlow + asMoney(b.validFlow));
+    }
+
+    const playerSettle = roundMoney(settledPayout - settledAmount);
+    return {
+      orders,
+      amount,
+      validFlow,
+      playerSettle,
+      houseSettle: roundMoney(-playerSettle),
+    };
+  }
+
+  /** GET /api/bet/history — 下注历史（街机按局 / 彩票按期聚合；可按 range/from/to 筛） */
   @Get('history')
-  async history(@CurrentUser() u: { id: string }) {
+  async history(
+    @CurrentUser() u: { id: string },
+    @Query('range') rangeKey?: string,
+    @Query('from') fromStr?: string,
+    @Query('to') toStr?: string,
+  ) {
+    const window = resolveTimeWindow({
+      range: rangeKey,
+      fromMs: fromStr != null && fromStr !== '' ? Number(fromStr) : undefined,
+      toMs: toStr != null && toStr !== '' ? Number(toStr) : undefined,
+    });
+    const where: Prisma.BetWhereInput = {
+      playerId: u.id,
+      status: { not: 'CANCELLED' },
+    };
+    if (window) {
+      const [from, to] = window;
+      where.OR = [
+        { settledAt: { gte: from, lt: to } },
+        { settledAt: null, createdAt: { gte: from, lt: to } },
+      ];
+    }
+
     const list = await this.prisma.bet.findMany({
-      where: { playerId: u.id, status: { not: 'CANCELLED' } },
+      where,
       orderBy: { createdAt: 'desc' },
-      take: 500,
+      take: window ? 3000 : 500,
       select: {
         id: true,
         betNo: true,
@@ -285,7 +382,7 @@ export class BetController {
     const rows = [...byGroup.values(), ...singles].sort(
       (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
     )
-    return rows.slice(0, 100)
+    return window ? rows : rows.slice(0, 100)
   }
 
   /** GET /api/bet/round/:id — 查单局详情（可证明公平验证用） */

@@ -4,7 +4,10 @@
  * 12 仓位（4 车×3 色）+ YoPlay YBEN ResultBonus 六大奖。
  * 资金动作走 SettlementKernel；本文件只负责开奖与盘面。
  */
-import { Injectable, BadRequestException, Logger, NotFoundException } from '@nestjs/common';
+import {
+  Injectable, BadRequestException, Logger, NotFoundException,
+  Optional, Inject, forwardRef,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { GameConfigCache } from './game-config.cache';
 import { SettlementKernel } from './settlement-kernel';
@@ -29,6 +32,10 @@ import {
   type BcbmColorId,
 } from '@gamebox/shared';
 import { businessNo } from './business-id';
+import { RiskService } from '../risk/risk.service';
+import { ConsoleControlService } from '../console/console-control.service';
+import { FlyDiskService } from '../console/fly-disk.service';
+import { matchRoomHoldPolicy, pickSeedByHoldTarget } from '../console/control-pick.util';
 
 const GAME_CODE = 'bcbm';
 const KEY = 'bcbm';
@@ -72,6 +79,10 @@ export class BcbmEngine {
     private prisma: PrismaService,
     private configCache: GameConfigCache,
     private settle: SettlementKernel,
+    private risk: RiskService,
+    @Optional() @Inject(forwardRef(() => ConsoleControlService))
+    private control?: ConsoleControlService,
+    @Optional() private flyDisk?: FlyDiskService,
   ) {}
 
   async spin(input: BcbmSpinInput) {
@@ -95,9 +106,13 @@ export class BcbmEngine {
     const totalAmount = entries.reduce((s, [, amt]) => s + amt, 0);
     const betMap = Object.fromEntries(entries) as Record<BcbmBetId, number>;
 
+    if (gameCode !== GAME_CODE) {
+      throw new BadRequestException('游戏编码无效');
+    }
     const game = await this.configCache.get(gameCode);
     if (!game || game.status !== 'ONLINE') throw new NotFoundException('游戏不存在或已下架');
     if (game.category !== 'ARCADE') throw new BadRequestException('该游戏不是街机品类');
+    if (game.code !== GAME_CODE) throw new BadRequestException('游戏编码无效');
     const config = game.configs[0];
     if (!config) throw new BadRequestException('游戏未配置');
     if (totalAmount < asMoney(game.minBet) || totalAmount > asMoney(game.maxBet)) {
@@ -108,15 +123,66 @@ export class BcbmEngine {
     const payCfg = (!rawPay || Array.isArray(rawPay) ? {} : rawPay) as BcbmConfigPayTable;
     const awardWeights = { ...BCBM_DEFAULT_AWARD_WEIGHTS, ...(payCfg.awardWeights ?? {}) };
 
-    const { seed: serverSeed, hash: serverSeedHash } = genServerSeed();
-    const rnd1 = deriveRandom(serverSeed, clientSeed, 1);
-    const rnd2 = deriveRandom(serverSeed, clientSeed, 2);
-    const rnd3 = deriveRandom(serverSeed, clientSeed, 3);
-    const awardType = pickAwardType(awardWeights, rnd1);
-    const { stopIndex, hitIndexes, freeStopIndex } = resolveHits(awardType, rnd2, rnd3);
-    const wins = settleWins(hitIndexes, betMap);
-    const totalPayout = wins.reduce((s, w) => s + w.amount, 0);
+    const house = this.flyDisk
+      ? await this.flyDisk.resolveHouse(playerId)
+      : null;
+    const policies = this.control
+      ? await this.control.getActiveHoldPolicies(GAME_CODE)
+      : [];
+    const policy = matchRoomHoldPolicy(policies, house?.roomId);
+    const picked = pickSeedByHoldTarget({
+      policy,
+      stake: totalAmount,
+      gen: () => {
+        const g = genServerSeed();
+        return { seed: g.seed, hash: g.hash };
+      },
+      simulate: (seed) => {
+        const rnd1 = deriveRandom(seed, clientSeed, 1);
+        const rnd2 = deriveRandom(seed, clientSeed, 2);
+        const rnd3 = deriveRandom(seed, clientSeed, 3);
+        const awardType = pickAwardType(awardWeights, rnd1);
+        const hits = resolveHits(awardType, rnd2, rnd3);
+        const wins = settleWins(hits.hitIndexes, betMap);
+        const rawTotal = wins.reduce((s, w) => s + w.amount, 0);
+        const rawByPos = entries.map(([pos]) =>
+          wins.filter((w) => w.position === pos).reduce((s, w) => s + w.amount, 0),
+        );
+        const allocated = allocateCappedWins(totalAmount, rawByPos);
+        return {
+          payout: allocated.total,
+          awardType,
+          stopIndex: hits.stopIndex,
+          hitIndexes: hits.hitIndexes,
+          freeStopIndex: hits.freeStopIndex,
+          wins,
+          rawTotal,
+          allocated,
+        };
+      },
+    });
+
+    const {
+      seed: serverSeed,
+      hash: serverSeedHash,
+      awardType,
+      stopIndex,
+      hitIndexes,
+      freeStopIndex,
+      wins,
+      rawTotal: totalPayout,
+      allocated,
+    } = picked;
     const stopCell = BCBM_RING[stopIndex];
+    const flyPayload = house
+      ? {
+          type: house.type,
+          id: house.id,
+          flying: house.flying,
+          roomId: house.roomId,
+          agentUserId: house.agentUserId,
+        }
+      : undefined;
 
     const player = await this.prisma.user.findUnique({
       where: { id: playerId },
@@ -147,20 +213,19 @@ export class BcbmEngine {
         keyPrefix: KEY,
       });
 
-      const rawByPos = entries.map(([pos]) =>
-        wins.filter((w) => w.position === pos).reduce((s, w) => s + w.amount, 0),
-      );
-      const allocated = allocateCappedWins(totalAmount, rawByPos);
       if (allocated.capped) {
         log.error(`奔驰宝马整局派彩触顶 原始=${totalPayout} 封顶=${allocated.total}`);
       }
+
+      /* wins 按封顶后金额对齐，供客户端报奖累加与 outcome 复盘一致 */
+      const paidWins = scaleWinLinesToTotal(wins, allocated.total);
 
       const betResults: Array<{ position: string; amount: number; payout: number; won: boolean }> =
         [];
       let first = true;
       for (let i = 0; i < entries.length; i++) {
         const [pos, amt] = entries[i]!;
-        const posWins = wins.filter((w) => w.position === pos);
+        const posWins = paidWins.filter((w) => w.position === pos);
         const payout = allocated.wins[i] ?? 0;
         const won = payout > 0;
         const mult = won && posWins[0] ? posWins[0].mult : 0;
@@ -180,6 +245,7 @@ export class BcbmEngine {
             odds: mult,
             validFlow: amt,
             settledAt: new Date(),
+            ...(flyPayload ? { payload: { fly: flyPayload } as never } : {}),
           },
         });
         first = false;
@@ -191,6 +257,7 @@ export class BcbmEngine {
           amount: payout,
           remark: `${game.name} ${pos}`,
           keyPrefix: KEY,
+          stake: amt,
           skipCap: true,
         });
 
@@ -208,7 +275,7 @@ export class BcbmEngine {
         winner: stopCell.label,
         kind: stopCell.kind,
         multiplier: stopCell.mult,
-        wins,
+        wins: paidWins,
         totalBet: totalAmount,
         totalPayout: paidTotal,
       };
@@ -223,8 +290,32 @@ export class BcbmEngine {
         },
       });
 
-      return { roundId: round.id, betResults, totalPayout: paidTotal };
+      return { roundId: round.id, betResults, totalPayout: paidTotal, paidWins };
     });
+
+    if (result.totalPayout >= Math.max(totalAmount * 50, 100_000)) {
+      await this.risk.record({
+        type: 'BIG_WIN',
+        level: result.totalPayout >= 1_000_000 ? 'CRITICAL' : 'WARN',
+        targetId: playerId,
+        fingerprint: `bw:${result.roundId}`,
+        dedupeMs: 24 * 3600_000,
+        detail: {
+          playerId,
+          totalAmount,
+          totalPayout: result.totalPayout,
+          gameCode,
+          roundId: result.roundId,
+          summary: `${gameCode} 派彩 ${result.totalPayout}（下注 ${totalAmount}）`,
+        },
+      });
+    }
+
+    try {
+      if (this.control) await this.control.refreshGoalExhaustion(GAME_CODE);
+    } catch {
+      /* 不影响开奖 */
+    }
 
     const balance = await this.settle.getBalance(playerId);
     return this.toResponse({
@@ -237,7 +328,7 @@ export class BcbmEngine {
       winner: stopCell.label,
       winnerKind: stopCell.kind,
       multiplier: stopCell.mult,
-      wins,
+      wins: result.paidWins,
       bets: result.betResults,
       totalBet: totalAmount,
       totalPayout: result.totalPayout,
@@ -250,6 +341,9 @@ export class BcbmEngine {
   private async replayIfAny(playerId: string, clientRequestId: string) {
     const bet = await this.settle.findSettledByClientRequestId(playerId, clientRequestId);
     if (!bet?.round?.outcome) return null;
+    if (bet.game.code !== GAME_CODE) {
+      throw new BadRequestException('clientRequestId 已被占用');
+    }
     const o = bet.round.outcome as unknown as BcbmRoundOutcome;
     const roundBets = await this.prisma.bet.findMany({
       where: { roundId: bet.round.id },
@@ -407,4 +501,38 @@ function settleWins(hitIndexes: number[], betMap: Record<BcbmBetId, number>): Bc
     });
   }
   return wins;
+}
+
+/** 将各格赢分按比例缩放到封顶后总额，保证 Σamount === paidTotal */
+function scaleWinLinesToTotal(wins: BcbmWinLine[], paidTotal: number): BcbmWinLine[] {
+  if (wins.length === 0) return wins;
+  const rawTotal = roundMoney(wins.reduce((s, w) => s + w.amount, 0));
+  const target = roundMoney(Math.max(0, paidTotal));
+  if (rawTotal <= 0 || target === rawTotal) {
+    return target === 0 && rawTotal > 0 ? wins.map((w) => ({ ...w, amount: 0 })) : wins;
+  }
+  if (target <= 0) return wins.map((w) => ({ ...w, amount: 0 }));
+
+  const scaled = wins.map((w) => ({
+    ...w,
+    amount: roundMoney((w.amount * target) / rawTotal),
+  }));
+  let allocated = roundMoney(scaled.reduce((s, w) => s + w.amount, 0));
+  let i = 0;
+  while (allocated + 0.005 < target && i < scaled.length * 200) {
+    const idx = i % scaled.length;
+    if (wins[idx]!.amount > 0) {
+      scaled[idx] = { ...scaled[idx]!, amount: roundMoney(scaled[idx]!.amount + 0.01) };
+      allocated = roundMoney(allocated + 0.01);
+    }
+    i += 1;
+  }
+  while (allocated - 0.005 > target && i < scaled.length * 400) {
+    const idx = scaled.findIndex((w) => w.amount >= 0.01);
+    if (idx < 0) break;
+    scaled[idx] = { ...scaled[idx]!, amount: roundMoney(scaled[idx]!.amount - 0.01) };
+    allocated = roundMoney(allocated - 0.01);
+    i += 1;
+  }
+  return scaled;
 }

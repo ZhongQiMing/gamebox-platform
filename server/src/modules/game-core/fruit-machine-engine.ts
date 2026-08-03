@@ -4,7 +4,10 @@
  * 玩法：24 格跑灯 + 8 仓位多符号下注；开奖可为单格或特殊大奖多格命中。
  * 本引擎是该类街机的标准实现，不套用其它游戏结构。
  */
-import { Injectable, BadRequestException, Logger, NotFoundException } from '@nestjs/common';
+import {
+  Injectable, BadRequestException, Logger, NotFoundException,
+  Optional, Inject, forwardRef,
+} from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PointsService, PLATFORM_OWNER_ID } from '../points/points.service';
@@ -31,6 +34,9 @@ import {
 } from '@gamebox/shared';
 import { businessNo } from './business-id';
 import { RiskService } from '../risk/risk.service';
+import { ConsoleControlService } from '../console/console-control.service';
+import { FlyDiskService } from '../console/fly-disk.service';
+import { matchRoomHoldPolicy, pickSeedByHoldTarget } from '../console/control-pick.util';
 
 const GAME_CODE = 'fruit-machine';
 const KEY = 'fruit';
@@ -76,6 +82,9 @@ export class FruitMachineEngine {
     private configCache: GameConfigCache,
     private risk: RiskService,
     private settle: SettlementKernel,
+    @Optional() @Inject(forwardRef(() => ConsoleControlService))
+    private control?: ConsoleControlService,
+    @Optional() private flyDisk?: FlyDiskService,
   ) {}
 
   async spin(input: FruitSpinInput) {
@@ -111,15 +120,65 @@ export class FruitMachineEngine {
     const payCfg = (config.payTable ?? {}) as FruitConfigPayTable;
     const awardWeights = { ...FRUIT_DEFAULT_AWARD_WEIGHTS, ...(payCfg.awardWeights ?? {}) };
 
-    const { seed: serverSeed, hash: serverSeedHash } = genServerSeed();
-    /* 每一次取随机都递增 nonce，玩家拿到 seed 后可以逐步复算 */
-    let nonce = 0;
-    const random = () => deriveRandom(serverSeed, clientSeed, ++nonce);
+    const house = this.flyDisk
+      ? await this.flyDisk.resolveHouse(playerId)
+      : null;
+    const policies = this.control
+      ? await this.control.getActiveHoldPolicies(GAME_CODE)
+      : [];
+    const policy = matchRoomHoldPolicy(policies, house?.roomId);
+    const picked = pickSeedByHoldTarget({
+      policy,
+      stake: totalAmount,
+      gen: () => {
+        const g = genServerSeed();
+        return { seed: g.seed, hash: g.hash };
+      },
+      simulate: (seed) => {
+        let nonce = 0;
+        const random = () => deriveRandom(seed, clientSeed, ++nonce);
+        const awardType = pickAwardType(awardWeights, random());
+        const hits = resolveHits(awardType, random);
+        const wins = settleWins(hits.hitIndexes, betMap);
+        const rawTotal = wins.reduce((s, w) => s + w.amount, 0);
+        const rawByPos = entries.map(([pos]) => {
+          const sym = pos as FruitBetSymbolId;
+          return wins.filter((w) => w.symbol === sym).reduce((s, w) => s + w.amount, 0);
+        });
+        const allocated = allocateCappedWins(totalAmount, rawByPos);
+        return {
+          payout: allocated.total,
+          awardType,
+          stopIndex: hits.stopIndex,
+          hitIndexes: hits.hitIndexes,
+          wins,
+          rawTotal,
+          allocated,
+          nonce,
+        };
+      },
+    });
 
-    const awardType = pickAwardType(awardWeights, random());
-    const { stopIndex, hitIndexes } = resolveHits(awardType, random);
-    const wins = settleWins(hitIndexes, betMap);
-    const totalPayout = wins.reduce((s, w) => s + w.amount, 0);
+    const {
+      seed: serverSeed,
+      hash: serverSeedHash,
+      awardType,
+      stopIndex,
+      hitIndexes,
+      wins,
+      rawTotal: totalPayout,
+      allocated,
+      nonce,
+    } = picked;
+    const flyPayload = house
+      ? {
+          type: house.type,
+          id: house.id,
+          flying: house.flying,
+          roomId: house.roomId,
+          agentUserId: house.agentUserId,
+        }
+      : undefined;
 
     const player = await this.prisma.user.findUnique({
       where: { id: playerId },
@@ -141,7 +200,7 @@ export class FruitMachineEngine {
           serverSeed,
           serverSeedHash,
           clientSeed,
-          nonce: 1,
+          nonce,
         },
       });
 
@@ -153,15 +212,12 @@ export class FruitMachineEngine {
         keyPrefix: KEY,
       });
 
-      /* 整局封顶后按仓拆分，避免多线各自再吃一遍封顶额度 */
-      const rawByPos = entries.map(([pos]) => {
-        const sym = pos as FruitBetSymbolId;
-        return wins.filter((w) => w.symbol === sym).reduce((s, w) => s + w.amount, 0);
-      });
-      const allocated = allocateCappedWins(totalAmount, rawByPos);
       if (allocated.capped) {
         log.error(`水果机整局派彩触顶 原始=${totalPayout} 封顶=${allocated.total}`);
       }
+
+      /* wins 按封顶后金额对齐，供客户端报奖累加与 outcome 复盘一致 */
+      const paidWins = scaleWinLinesToTotal(wins, allocated.total);
 
       const betResults: Array<{ position: string; amount: number; payout: number; won: boolean }> =
         [];
@@ -169,7 +225,7 @@ export class FruitMachineEngine {
       for (let i = 0; i < entries.length; i++) {
         const [pos, amt] = entries[i]!;
         const sym = pos as FruitBetSymbolId;
-        const symWins = wins.filter((w) => w.symbol === sym);
+        const symWins = paidWins.filter((w) => w.symbol === sym);
         const payout = allocated.wins[i] ?? 0;
         const mult = symWins.length ? symWins.reduce((s, w) => s + w.mult, 0) : 0;
         const won = payout > 0;
@@ -189,6 +245,7 @@ export class FruitMachineEngine {
             odds: mult,
             validFlow: amt,
             settledAt: new Date(),
+            ...(flyPayload ? { payload: { fly: flyPayload } as never } : {}),
           },
         });
         first = false;
@@ -200,6 +257,7 @@ export class FruitMachineEngine {
           amount: payout,
           remark: `${game.name} 命中 ${sym}`,
           keyPrefix: KEY,
+          stake: amt,
           skipCap: true,
         });
 
@@ -213,7 +271,7 @@ export class FruitMachineEngine {
         awardType,
         stopIndex,
         hitIndexes,
-        wins,
+        wins: paidWins,
         totalPayout: paidTotal,
         pendingGambleAmount: paidTotal > 0 ? paidTotal : 0,
       };
@@ -223,20 +281,37 @@ export class FruitMachineEngine {
           state: 'SETTLED',
           endedAt: new Date(),
           totalFlow: totalAmount,
+          /** 最终消耗的派生次数，供 seed+nonce 逐步复算 */
+          nonce,
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           outcome: outcome as any,
         },
       });
 
-      return { roundId: round.id, betResults, totalPayout: paidTotal };
+      return { roundId: round.id, betResults, totalPayout: paidTotal, paidWins };
     });
+
+    try {
+      if (this.control) await this.control.refreshGoalExhaustion(GAME_CODE);
+    } catch {
+      /* 不影响开奖 */
+    }
 
     if (result.totalPayout >= Math.max(totalAmount * 50, 100_000)) {
       await this.risk.record({
         type: 'BIG_WIN',
-        level: 'WARN',
-        targetId: result.roundId,
-        detail: { playerId, totalAmount, totalPayout: result.totalPayout, gameCode },
+        level: result.totalPayout >= 1_000_000 ? 'CRITICAL' : 'WARN',
+        targetId: playerId,
+        fingerprint: `bw:${result.roundId}`,
+        dedupeMs: 24 * 3600_000,
+        detail: {
+          playerId,
+          totalAmount,
+          totalPayout: result.totalPayout,
+          gameCode,
+          roundId: result.roundId,
+          summary: `${gameCode} 派彩 ${result.totalPayout}（下注 ${totalAmount}）`,
+        },
       });
     }
 
@@ -247,7 +322,7 @@ export class FruitMachineEngine {
       awardType,
       stopIndex,
       hitIndexes,
-      wins,
+      wins: result.paidWins,
       bets: result.betResults,
       totalBet: totalAmount,
       totalWin: result.totalPayout,
@@ -256,6 +331,33 @@ export class FruitMachineEngine {
       serverSeed,
       serverSeedHash,
     };
+  }
+
+  /** 查询是否仍有可猜大小的当局赢分（进页恢复 UI） */
+  async getPendingGamble(playerId: string) {
+    const balance = await this.settle.getBalance(playerId);
+    const game = await this.configCache.get(GAME_CODE);
+    if (!game) return { pendingGambleAmount: 0, balance };
+    const pending = await this.prisma.$transaction(async (tx) =>
+      this.findPendingGambleRoundInTx(tx, playerId, game.id),
+    );
+    if (!pending) return { pendingGambleAmount: 0, balance };
+    const outcome = pending.outcome as unknown as FruitRoundOutcome;
+    return {
+      pendingGambleAmount: Math.max(0, outcome.pendingGambleAmount || 0),
+      balance,
+      roundId: pending.id,
+    };
+  }
+
+  /** 退币 / 放弃猜大小：清掉当局可再赌额度（积分已在开奖时入账，不扣回） */
+  async abandonGamble(playerId: string) {
+    const game = await this.configCache.get(GAME_CODE);
+    if (!game) return { ok: true as const, balance: await this.settle.getBalance(playerId) };
+    await this.prisma.$transaction(async (tx) => {
+      await this.clearPendingGambleInTx(tx, playerId, game.id);
+    });
+    return { ok: true as const, balance: await this.settle.getBalance(playerId) };
   }
 
   private async replayGambleIfAny(playerId: string, clientRequestId: string) {
@@ -643,18 +745,9 @@ function resolveHits(
     return { stopIndex: nonLuck[0] ?? 0, hitIndexes: [...nonLuck] };
   }
 
-  // normal
-  const stopIndex = pickWeightedIndex(
-    [...Array(FRUIT_RING.length).keys()],
-    cellWeights,
-    random,
-  );
-  if (FRUIT_RING[stopIndex].size === 'luck') {
-    // 普通奖抽到 LUCK 格时，改为送灯 1~3
-    const count = 1 + Math.floor(random() * 3);
-    const hits = pickDistinct(nonLuck, count, cellWeights, random);
-    return { stopIndex, hitIndexes: hits };
-  }
+  // normal：只停非 LUCK 格（正版口径）。送灯/吃灯由独立奖型 luck_send / luck_eat 触发，
+  // 禁止「普通奖碰巧停好运 → 白送 1~3 格」。
+  const stopIndex = pickWeightedIndex(nonLuck, cellWeights, random);
   return { stopIndex, hitIndexes: [stopIndex] };
 }
 
@@ -702,6 +795,40 @@ function settleWins(
     });
   }
   return wins;
+}
+
+/** 将各格赢分按比例缩放到封顶后总额，保证 Σamount === paidTotal */
+function scaleWinLinesToTotal(wins: FruitWinLine[], paidTotal: number): FruitWinLine[] {
+  if (wins.length === 0) return wins;
+  const rawTotal = roundMoney(wins.reduce((s, w) => s + w.amount, 0));
+  const target = roundMoney(Math.max(0, paidTotal));
+  if (rawTotal <= 0 || target === rawTotal) {
+    return target === 0 && rawTotal > 0 ? wins.map((w) => ({ ...w, amount: 0 })) : wins;
+  }
+  if (target <= 0) return wins.map((w) => ({ ...w, amount: 0 }));
+
+  const scaled = wins.map((w) => ({
+    ...w,
+    amount: roundMoney((w.amount * target) / rawTotal),
+  }));
+  let allocated = roundMoney(scaled.reduce((s, w) => s + w.amount, 0));
+  let i = 0;
+  while (allocated + 0.005 < target && i < scaled.length * 200) {
+    const idx = i % scaled.length;
+    if (wins[idx]!.amount > 0) {
+      scaled[idx] = { ...scaled[idx]!, amount: roundMoney(scaled[idx]!.amount + 0.01) };
+      allocated = roundMoney(allocated + 0.01);
+    }
+    i += 1;
+  }
+  while (allocated - 0.005 > target && i < scaled.length * 400) {
+    const idx = scaled.findIndex((w) => w.amount >= 0.01);
+    if (idx < 0) break;
+    scaled[idx] = { ...scaled[idx]!, amount: roundMoney(scaled[idx]!.amount - 0.01) };
+    allocated = roundMoney(allocated - 0.01);
+    i += 1;
+  }
+  return scaled;
 }
 
 /** 供前端展示用的静态赔率表（也写入 seed 注释） */

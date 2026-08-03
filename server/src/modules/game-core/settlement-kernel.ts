@@ -1,16 +1,15 @@
 /**
  * 即时游戏结算内核：扣注 / 派彩 / 分佣 / 幂等回放。
- * 各引擎只负责开奖结果，资金动作统一走这里。
- *
- * 回水不在此发放：统一由 RebateService 按 Bet.validFlow 日结，
- * 局内再发一次会造成同一笔流水双倍回水。
+ * 飞盘开 → ROOM；关盘 → AGENT；无房 → PLATFORM。
  */
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, Optional } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { asMoney, capWin, roundMoney } from '@gamebox/shared';
 import { PrismaService } from '../../prisma/prisma.service';
-import { PointsService, PLATFORM_OWNER_ID } from '../points/points.service';
+import { PointsService, PLATFORM_OWNER_ID, type OwnerType } from '../points/points.service';
 import { CommissionService } from '../agents/commission.service';
+import { FlyDiskService } from '../console/fly-disk.service';
+import { FlyRebateService } from '../console/fly-rebate.service';
 
 export type Tx = Prisma.TransactionClient;
 
@@ -22,6 +21,8 @@ export class SettlementKernel {
     private prisma: PrismaService,
     private points: PointsService,
     private commission: CommissionService,
+    @Optional() private flyDisk?: FlyDiskService,
+    @Optional() private flyRebate?: FlyRebateService,
   ) {}
 
   assertClientRequestId(id?: string): string {
@@ -31,10 +32,6 @@ export class SettlementKernel {
     return id;
   }
 
-  /**
-   * 按 Bet.clientRequestId 查找已结算局，供幂等回放。
-   * 被占用但非本人 → 400。
-   */
   async findSettledByClientRequestId(playerId: string, clientRequestId: string) {
     const bet = await this.prisma.bet.findUnique({
       where: { clientRequestId },
@@ -58,7 +55,14 @@ export class SettlementKernel {
     return asMoney(account?.balance ?? 0);
   }
 
-  /** 玩家押注 → 平台池（round 级幂等键） */
+  private async house(playerId: string) {
+    if (!this.flyDisk) {
+      return { type: 'PLATFORM' as OwnerType, id: PLATFORM_OWNER_ID, flying: false as boolean };
+    }
+    return this.flyDisk.resolveHouse(playerId);
+  }
+
+  /** 玩家押注 → 飞盘对手盘 */
   async debitBetInTx(
     tx: Tx,
     opts: {
@@ -71,6 +75,7 @@ export class SettlementKernel {
   ) {
     const { playerId, roundId, amount, gameName, keyPrefix } = opts;
     if (amount <= 0) return;
+    const h = await this.house(playerId);
     await this.points.transferInTx(
       tx,
       {
@@ -80,19 +85,15 @@ export class SettlementKernel {
         idempotencyKey: `${keyPrefix}_bet_player_${roundId}`,
       },
       {
-        type: 'PLATFORM',
-        id: PLATFORM_OWNER_ID,
-        idempotencyKey: `${keyPrefix}_bet_plat_${roundId}`,
+        type: h.type,
+        id: h.id,
+        idempotencyKey: `${keyPrefix}_bet_house_${roundId}`,
       },
       amount,
       { bizType: 'BET', refType: 'round', refId: roundId },
     );
   }
 
-  /**
-   * 平台池 → 玩家派彩（bet 级幂等键）。
-   * 默认在这里封顶；多仓引擎可先整局 allocateCappedWins，再 skipCap 写入已拆好的金额。
-   */
   async creditWinInTx(
     tx: Tx,
     opts: {
@@ -102,54 +103,72 @@ export class SettlementKernel {
       amount: number;
       remark: string;
       keyPrefix: string;
-      /** 本局总下注，用于计算封顶线；缺省则只受绝对上限约束 */
       stake?: number;
-      /** 调用方已做整局封顶时跳过二次 cap */
       skipCap?: boolean;
     },
   ): Promise<{ paid: number; capped: boolean }> {
     const { playerId, roundId, betId, remark, keyPrefix } = opts;
-    if (opts.amount <= 0) return { paid: 0, capped: false };
-    const { win: amount, capped } = opts.skipCap
-      ? { win: Math.max(0, roundMoney(opts.amount)), capped: false }
-      : capWin(opts.stake ?? Number.MAX_SAFE_INTEGER, opts.amount);
-    if (capped) {
-      this.logger.error(
-        `派彩触顶：round=${roundId} bet=${betId} 原始=${opts.amount} 封顶=${amount}，请立即核对赔率配置`,
-      );
+    const stake = Math.max(0, roundMoney(opts.stake ?? 0));
+    const h = await this.house(playerId);
+
+    let amount = 0;
+    let capped = false;
+    if (opts.amount > 0) {
+      const cappedRes = opts.skipCap
+        ? { win: Math.max(0, roundMoney(opts.amount)), capped: false }
+        : capWin(stake > 0 ? stake : Number.MAX_SAFE_INTEGER, opts.amount);
+      amount = cappedRes.win;
+      capped = cappedRes.capped;
+      if (capped) {
+        this.logger.error(
+          `派彩触顶：round=${roundId} bet=${betId} 原始=${opts.amount} 封顶=${amount}，请立即核对赔率配置`,
+        );
+      }
+      if (amount > 0) {
+        await this.points.transferInTx(
+          tx,
+          {
+            type: h.type,
+            id: h.id,
+            idempotencyKey: `${keyPrefix}_win_house_${betId}`,
+          },
+          {
+            type: 'PLAYER',
+            id: playerId,
+            remark,
+            idempotencyKey: `${keyPrefix}_win_player_${betId}`,
+          },
+          amount,
+          { bizType: 'WIN', refType: 'round', refId: roundId },
+        );
+      }
     }
-    if (amount <= 0) return { paid: 0, capped };
-    await this.points.transferInTx(
-      tx,
-      {
-        type: 'PLATFORM',
-        id: PLATFORM_OWNER_ID,
-        idempotencyKey: `${keyPrefix}_win_plat_${betId}`,
-      },
-      {
-        type: 'PLAYER',
-        id: playerId,
-        remark,
-        idempotencyKey: `${keyPrefix}_win_player_${betId}`,
-      },
-      amount,
-      { bizType: 'WIN', refType: 'round', refId: roundId },
-    );
+
+    // 全输（派彩0）也要处理飞盘占用 / 关盘回额度 / 飞盘返水
+    if (this.flyDisk && stake > 0) {
+      await this.flyDisk.applyFlyLossInTx(tx, h.agentUserId, h.flying, stake, amount);
+    }
+    if (this.flyRebate && stake > 0) {
+      await this.flyRebate.payAgentShareInTx(tx, {
+        betId,
+        playerId,
+        validFlow: stake,
+        flying: h.flying,
+        roomId: h.roomId,
+        agentUserId: h.agentUserId,
+      });
+    }
+
     return { paid: amount, capped };
   }
 
   async applyCommissionInTx(
     tx: Tx,
-    player: { id: string; agentPath: string | null } | null | undefined,
+    player: { id: string; agentPath: string } | null,
     validFlow: number,
     roundId: string,
   ) {
-    if (!player?.agentPath || validFlow <= 0) return;
-    await this.commission.distributeInTx(
-      tx,
-      { id: player.id, agentPath: player.agentPath },
-      validFlow,
-      roundId,
-    );
+    if (!player || validFlow <= 0 || !player.agentPath) return;
+    await this.commission.distributeInTx(tx, player, validFlow, roundId);
   }
 }

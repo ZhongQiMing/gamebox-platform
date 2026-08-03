@@ -9,8 +9,11 @@
  * 回水统一由 RebateService 按 Bet.validFlow 日结，引擎内不再发放。
  * 每次 spin = 单事务内完成下注 + 开奖 + 结算；placeBet/settle 保留以实现 IGameEngine 契约。
  */
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
-import { asMoney, roundMoney } from '@gamebox/shared';
+import {
+  Injectable, BadRequestException, NotFoundException,
+  Optional, Inject, forwardRef,
+} from '@nestjs/common';
+import { asMoney, roundMoney, capWin } from '@gamebox/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PointsService, PLATFORM_OWNER_ID } from '../points/points.service';
 import { CommissionService } from '../agents/commission.service';
@@ -20,6 +23,9 @@ import type { IGameEngine, PlaceBetInput, SettlementSummary } from './types';
 import { businessNo } from './business-id';
 import { RiskService } from '../risk/risk.service';
 import { SettlementKernel } from './settlement-kernel';
+import { ConsoleControlService } from '../console/console-control.service';
+import { FlyDiskService } from '../console/fly-disk.service';
+import { matchRoomHoldPolicy, pickSeedByHoldTarget } from '../console/control-pick.util';
 
 interface PayItem { label: string; multiplier: number; weight: number; }
 
@@ -34,6 +40,9 @@ export class SlotEngine implements IGameEngine {
     private configCache: GameConfigCache,
     private risk: RiskService,
     private kernel: SettlementKernel,
+    @Optional() @Inject(forwardRef(() => ConsoleControlService))
+    private control?: ConsoleControlService,
+    @Optional() private flyDisk?: FlyDiskService,
   ) {}
 
   /**
@@ -59,10 +68,39 @@ export class SlotEngine implements IGameEngine {
     const payTable = config.payTable as unknown as PayItem[];
     const weights = payTable.map(p => p.weight);
 
-    const { seed: serverSeed, hash: serverSeedHash } = genServerSeed();
-    const rnd = deriveRandom(serverSeed, clientSeed, 1);
-    const idx = weightedPick(weights, rnd);
-    const prize = payTable[idx];
+    const house = this.flyDisk
+      ? await this.flyDisk.resolveHouse(playerId)
+      : null;
+    const policies = this.control
+      ? await this.control.getActiveHoldPolicies(gameCode)
+      : [];
+    const policy = matchRoomHoldPolicy(policies, house?.roomId);
+    const picked = pickSeedByHoldTarget({
+      policy,
+      stake: amount,
+      gen: () => {
+        const g = genServerSeed();
+        return { seed: g.seed, hash: g.hash };
+      },
+      simulate: (seed) => {
+        const rnd = deriveRandom(seed, clientSeed, 1);
+        const idx = weightedPick(weights, rnd);
+        const prize = payTable[idx]!;
+        const rawPayout = roundMoney(amount * prize.multiplier);
+        const payout = capWin(amount, rawPayout).win;
+        return { payout, rnd, idx, prize };
+      },
+    });
+    const { seed: serverSeed, hash: serverSeedHash, rnd, idx, prize } = picked;
+    const flyPayload = house
+      ? {
+          type: house.type,
+          id: house.id,
+          flying: house.flying,
+          roomId: house.roomId,
+          agentUserId: house.agentUserId,
+        }
+      : undefined;
 
     const player = await this.prisma.user.findUnique({
       where: { id: playerId },
@@ -84,6 +122,7 @@ export class SlotEngine implements IGameEngine {
           clientRequestId,
           playerId, gameId: game.id, roundId: round.id,
           amount, betType: 'SPIN', status: 'PENDING',
+          ...(flyPayload ? { payload: { fly: flyPayload } as never } : {}),
         },
       });
 
@@ -149,9 +188,23 @@ export class SlotEngine implements IGameEngine {
       await this.risk.record({
         type: 'BIG_WIN',
         level: payout >= 1_000_000 ? 'CRITICAL' : 'WARN',
-        targetId: result.roundId,
-        detail: { playerId, gameCode, amount, payout },
+        targetId: playerId,
+        fingerprint: `bw:${result.roundId}`,
+        dedupeMs: 24 * 3600_000,
+        detail: {
+          playerId,
+          gameCode,
+          amount,
+          payout,
+          roundId: result.roundId,
+          summary: `${gameCode} 派彩 ${payout}（下注 ${amount}）`,
+        },
       });
+    }
+    try {
+      if (this.control) await this.control.refreshGoalExhaustion(gameCode);
+    } catch {
+      /* 不影响开奖 */
     }
     return { ...result, balance: await this.kernel.getBalance(playerId) };
   }

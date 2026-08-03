@@ -18,17 +18,6 @@ export function validateGamePayTable(
   game: { code: string; category: string },
   payTable: unknown,
 ): void {
-  if (game.code === 'slots-mahjong') {
-    if (!payTable || typeof payTable !== 'object' || Array.isArray(payTable)) {
-      throw new BadRequestException('麻将配置必须是对象');
-    }
-    assertPositiveWeightMap(
-      (payTable as Record<string, unknown>).symbolWeights,
-      'symbolWeights',
-    );
-    return;
-  }
-
   if (game.category === 'SLOT' || game.category === 'TABLE') {
     if (!Array.isArray(payTable) || payTable.length === 0) {
       throw new BadRequestException('payTable 必须是非空数组');
