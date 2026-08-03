@@ -5,7 +5,7 @@ import { Roles } from '../../common/decorators/roles.decorator';
 import { PLATFORM_OWNER_ID } from '../points/points.service';
 
 @Controller('admin/dashboard')
-@Roles('ADMIN', 'BRANCH')
+@Roles('ADMIN')
 export class DashboardController {
   constructor(private prisma: PrismaService) {}
 

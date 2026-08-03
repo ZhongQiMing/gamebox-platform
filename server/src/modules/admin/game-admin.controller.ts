@@ -5,6 +5,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { AdminLogService } from './admin-log.service';
+import { GameOpsScheduler } from './game-ops.scheduler';
 import { GameConfigCache } from '../game-core/game-config.cache';
 import { validateGamePayTable } from '../game-core/game-config.validator';
 
@@ -15,12 +16,17 @@ export class GameAdminController {
     private prisma: PrismaService,
     private adminLog: AdminLogService,
     private configCache: GameConfigCache,
+    private gameOps: GameOpsScheduler,
   ) {}
+
+  /** 已下线目录（代码已移除，DB 若仍残留则列表中隐藏） */
+  private static readonly RETIRED_CODES = ['slots-mahjong', 'mahjong', 'slots'] as const;
 
   /** 游戏列表（含所有配置版本） */
   @Get()
   async list() {
     return this.prisma.game.findMany({
+      where: { code: { notIn: [...GameAdminController.RETIRED_CODES] } },
       orderBy: { sortOrder: 'asc' },
       include: {
         configs: {
@@ -31,7 +37,48 @@ export class GameAdminController {
     });
   }
 
-  /** 上下架 */
+  /** 平台定时运维规则（日切 / 每日维护窗） */
+  @Get('ops-schedule')
+  opsSchedule() {
+    return this.gameOps.getScheduleInfo();
+  }
+
+  /**
+   * 大厅排序：按 codes 数组顺序写成 1..N（不用手填数字）
+   * body: { codes: string[] } 须覆盖全部未下线目录游戏
+   */
+  @Post('reorder')
+  async reorder(
+    @Body('codes') codes: unknown,
+    @CurrentUser() user: { id: string },
+  ) {
+    if (!Array.isArray(codes) || !codes.length || codes.some((c) => typeof c !== 'string')) {
+      throw new BadRequestException('codes 无效');
+    }
+    const list = codes as string[];
+    const uniq = new Set(list);
+    if (uniq.size !== list.length) throw new BadRequestException('codes 有重复');
+
+    const existing = await this.prisma.game.findMany({
+      where: { code: { notIn: [...GameAdminController.RETIRED_CODES] } },
+      select: { code: true },
+    });
+    const expect = new Set(existing.map((g) => g.code));
+    if (list.length !== expect.size || list.some((c) => !expect.has(c))) {
+      throw new BadRequestException('请提交完整游戏列表顺序');
+    }
+
+    await this.prisma.$transaction(
+      list.map((code, i) =>
+        this.prisma.game.update({ where: { code }, data: { sortOrder: i + 1 } }),
+      ),
+    );
+    this.configCache.invalidateAll();
+    await this.adminLog.log(user.id, 'GAME_REORDER', list.join(','), { codes: list });
+    return { ok: true };
+  }
+
+  /** 上下架 / 维护 */
   @Patch(':code/status')
   async setStatus(
     @Param('code') code: string,
@@ -44,9 +91,72 @@ export class GameAdminController {
     const game = await this.prisma.game.findUnique({ where: { code } });
     if (!game) throw new NotFoundException('游戏不存在');
 
+    if (status === 'ONLINE') {
+      const active = await this.prisma.gameConfig.findFirst({
+        where: { gameId: game.id, active: true },
+        select: { id: true },
+      });
+      if (!active) {
+        throw new BadRequestException('请先配置并激活爆率，再上架');
+      }
+    }
+
     await this.prisma.game.update({ where: { code }, data: { status: status as never } });
     this.configCache.invalidate(code);
     await this.adminLog.log(user.id, 'GAME_STATUS_CHANGE', code, { from: game.status, to: status });
+    return { ok: true };
+  }
+
+  /** 基础参数：限红、排序 */
+  @Patch(':code')
+  async updateBasics(
+    @Param('code') code: string,
+    @Body()
+    body: { minBet?: number; maxBet?: number; sortOrder?: number; name?: string },
+    @CurrentUser() user: { id: string },
+  ) {
+    const game = await this.prisma.game.findUnique({ where: { code } });
+    if (!game) throw new NotFoundException('游戏不存在');
+
+    const data: {
+      minBet?: number;
+      maxBet?: number;
+      sortOrder?: number;
+      name?: string;
+    } = {};
+
+    if (body.minBet != null) {
+      const n = Number(body.minBet);
+      if (!Number.isFinite(n) || n <= 0) throw new BadRequestException('最小下注无效');
+      data.minBet = n;
+    }
+    if (body.maxBet != null) {
+      const n = Number(body.maxBet);
+      if (!Number.isFinite(n) || n <= 0) throw new BadRequestException('最大下注无效');
+      data.maxBet = n;
+    }
+    if (data.minBet != null && data.maxBet != null && data.minBet > data.maxBet) {
+      throw new BadRequestException('最小下注不能大于最大下注');
+    }
+    if (data.minBet != null && data.maxBet == null && data.minBet > Number(game.maxBet)) {
+      throw new BadRequestException('最小下注不能大于当前最大下注');
+    }
+    if (data.maxBet != null && data.minBet == null && data.maxBet < Number(game.minBet)) {
+      throw new BadRequestException('最大下注不能小于当前最小下注');
+    }
+    if (body.sortOrder != null) {
+      const n = Math.floor(Number(body.sortOrder));
+      if (!Number.isFinite(n)) throw new BadRequestException('排序无效');
+      data.sortOrder = n;
+    }
+    if (typeof body.name === 'string' && body.name.trim()) {
+      data.name = body.name.trim().slice(0, 40);
+    }
+    if (!Object.keys(data).length) throw new BadRequestException('无有效字段');
+
+    await this.prisma.game.update({ where: { code }, data: data as never });
+    this.configCache.invalidate(code);
+    await this.adminLog.log(user.id, 'GAME_BASICS_UPDATE', code, data);
     return { ok: true };
   }
 
