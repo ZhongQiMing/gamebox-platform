@@ -230,7 +230,10 @@ export class UsersService {
     if (oldPwd === newPwd) throw new ConflictException('新密码不能与当前密码相同');
     await this.prisma.user.update({
       where: { id },
-      data: { passwordHash: await bcrypt.hash(newPwd, SALT_ROUNDS) },
+      data: {
+        passwordHash: await bcrypt.hash(newPwd, SALT_ROUNDS),
+        tokenVersion: { increment: 1 },
+      },
     });
     return { ok: true };
   }
