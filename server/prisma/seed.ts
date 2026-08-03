@@ -2,11 +2,12 @@
  * 初始化种子数据。运行：pnpm --filter @gamebox/server prisma:seed
  * 内容：
  *   - 平台积分账户(PLATFORM)
- *   - 平台管理员账号(ADMIN)  密码：Admin@123456
+ *   - 平台管理员账号(ADMIN)
+ *     开发默认密码 Admin@123456；生产必须设置 SEED_ADMIN_PASSWORD（且不得用默认弱口令）
  *   - 代理等级 V1-V5
  *   - 游戏目录 + 各自 active 的 GameConfig（爆率/赔率）
  *
- * 注意：上线前请勿在生产执行含测试账号的 seed，或改写强密码。
+ * 注意：生产勿用弱口令 seed；可用 SKIP_ADMIN_SEED=1 跳过创建管理员。
  */
 import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
@@ -153,33 +154,45 @@ async function main() {
 
   // ── 管理员账号 ──
   const ADMIN_USERNAME = 'admin';
-  const ADMIN_PASSWORD = 'Admin@123456';
-  const existing = await prisma.user.findUnique({ where: { username: ADMIN_USERNAME } });
-  if (!existing) {
-    const hash = await bcrypt.hash(ADMIN_PASSWORD, 12);
-    const uid  = `UID${Date.now()}`;
-    const admin = await prisma.user.create({
-      data: {
-        uid,
-        username: ADMIN_USERNAME,
-        nickname: '超级管理员',
-        passwordHash: hash,
-        role: 'ADMIN',
-        status: 'ACTIVE',
-        agentPath: '/',
-        depth: 0,
-      },
-    });
-    await prisma.pointsAccount.create({
-      data: { ownerType: 'PLAYER', ownerId: admin.id, balance: 0 },
-    });
-    console.log(`[seed] 管理员账号: ${ADMIN_USERNAME} / ${ADMIN_PASSWORD}  ✔`);
+  const WEAK_ADMIN_PASSWORD = 'Admin@123456';
+  const isProd = (process.env.NODE_ENV ?? 'development') === 'production';
+  const skipAdmin = process.env.SKIP_ADMIN_SEED === '1';
+  const ADMIN_PASSWORD = (process.env.SEED_ADMIN_PASSWORD || WEAK_ADMIN_PASSWORD).trim();
+
+  if (skipAdmin) {
+    console.log('[seed] SKIP_ADMIN_SEED=1，跳过管理员账号');
   } else {
-    // 确保 role 是 ADMIN
-    if (existing.role !== 'ADMIN') {
-      await prisma.user.update({ where: { id: existing.id }, data: { role: 'ADMIN' } });
+    if (isProd && (!process.env.SEED_ADMIN_PASSWORD || ADMIN_PASSWORD === WEAK_ADMIN_PASSWORD)) {
+      throw new Error(
+        '[seed] 生产环境禁止使用默认弱口令创建管理员。请设置 SEED_ADMIN_PASSWORD，或 SKIP_ADMIN_SEED=1',
+      );
     }
-    console.log('[seed] 管理员账号已存在，跳过创建 ✔');
+    const existing = await prisma.user.findUnique({ where: { username: ADMIN_USERNAME } });
+    if (!existing) {
+      const hash = await bcrypt.hash(ADMIN_PASSWORD, 12);
+      const uid = `UID${Date.now()}`;
+      const admin = await prisma.user.create({
+        data: {
+          uid,
+          username: ADMIN_USERNAME,
+          nickname: '超级管理员',
+          passwordHash: hash,
+          role: 'ADMIN',
+          status: 'ACTIVE',
+          agentPath: '/',
+          depth: 0,
+        },
+      });
+      await prisma.pointsAccount.create({
+        data: { ownerType: 'PLAYER', ownerId: admin.id, balance: 0 },
+      });
+      console.log(`[seed] 管理员账号: ${ADMIN_USERNAME} / (密码见 SEED_ADMIN_PASSWORD 或开发默认)  ✔`);
+    } else {
+      if (existing.role !== 'ADMIN') {
+        await prisma.user.update({ where: { id: existing.id }, data: { role: 'ADMIN' } });
+      }
+      console.log('[seed] 管理员账号已存在，跳过创建 ✔');
+    }
   }
 
   // ── 代理等级 ──
