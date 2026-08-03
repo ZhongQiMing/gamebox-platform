@@ -41,104 +41,104 @@ const SSC_FFC_PAY = { ...sscFfcPayTable };
 const KUAI3_PAY = { ...kuai3PayTable };
 const BJSC_FAMILY_PAY = { ...bjscPayTable };
 
+/** 平台默认限红：单笔 1～100000（后台「游戏管理」可改，引擎实时校验） */
+const DEFAULT_MIN_BET = 1;
+const DEFAULT_MAX_BET = 100_000;
+
+/** 大厅顺序 1..N（后台用上移/下移调整，勿再手填空洞数字） */
 const GAMES = [
   {
     code: 'ffc', name: '1分时时彩', category: 'LOTTERY' as const,
-    status: 'ONLINE' as const, sortOrder: 2, drawIntervalSec: LOTTERY_INTERVALS.ffc, minBet: 1, maxBet: 10000,
+    status: 'ONLINE' as const, sortOrder: 1, drawIntervalSec: LOTTERY_INTERVALS.ffc,
+    minBet: DEFAULT_MIN_BET, maxBet: DEFAULT_MAX_BET,
     rtp: 0.95,
     payTable: SSC_FFC_PAY,
-  },
-  {
-    code: 'slots-mahjong', name: '麻将胡了', category: 'SLOT' as const,
-    status: 'ONLINE' as const, sortOrder: 5, minBet: 1, maxBet: 10000,
-    rtp: 0.96,
-    payTable: {
-      symbolWeights: {
-        '2t': 16, '2s': 16, '5t': 12, '5s': 12,
-        '8w': 9, bai: 7, zhong: 6, fa: 5, wild: 2, hu: 2.5,
-      },
-      goldenChance: 0.14,
-    },
   },
   // ── 街机类游戏 ──
   {
     code: 'fruit-machine', name: '水果机', category: 'ARCADE' as const,
-    status: 'ONLINE' as const, sortOrder: 3, minBet: 1, maxBet: 50_000,
+    status: 'ONLINE' as const, sortOrder: 2, minBet: DEFAULT_MIN_BET, maxBet: DEFAULT_MAX_BET,
     rtp: 0.96,
     // 盘面/赔率/大奖权重唯一来源在 @gamebox/shared fruit-machine
     // 引擎按 { ...默认值, ...本表 } 合并，写死一份会覆盖掉标定好的权重
     payTable: { awardWeights: { ...FRUIT_DEFAULT_AWARD_WEIGHTS } },
   },
+  // ── 彩票类游戏 ──
+  {
+    code: 'ssc', name: '快乐时时彩', category: 'LOTTERY' as const,
+    status: 'ONLINE' as const, sortOrder: 3, drawIntervalSec: LOTTERY_INTERVALS.ssc,
+    minBet: DEFAULT_MIN_BET, maxBet: DEFAULT_MAX_BET,
+    rtp: 0.95,
+    payTable: SSC_FFC_PAY,
+  },
+  {
+    code: 'kuai3', name: '1分快三', category: 'LOTTERY' as const,
+    status: 'ONLINE' as const, sortOrder: 4, drawIntervalSec: LOTTERY_INTERVALS.kuai3,
+    minBet: DEFAULT_MIN_BET, maxBet: DEFAULT_MAX_BET,
+    rtp: 0.95,
+    payTable: KUAI3_PAY,
+  },
+  {
+    code: 'speed-racing', name: '极速赛车', category: 'LOTTERY' as const,
+    status: 'ONLINE' as const, sortOrder: 5, drawIntervalSec: LOTTERY_INTERVALS['speed-racing'],
+    minBet: DEFAULT_MIN_BET, maxBet: DEFAULT_MAX_BET,
+    rtp: 0.95,
+    payTable: BJSC_FAMILY_PAY,
+  },
+  {
+    code: 'bjsc', name: '北京赛车', category: 'LOTTERY' as const,
+    status: 'ONLINE' as const, sortOrder: 6, drawIntervalSec: LOTTERY_INTERVALS.bjsc,
+    minBet: DEFAULT_MIN_BET, maxBet: DEFAULT_MAX_BET,
+    rtp: 0.95,
+    payTable: BJSC_FAMILY_PAY,
+  },
+  {
+    code: 'speed-boat', name: '幸运飞艇', category: 'LOTTERY' as const,
+    status: 'ONLINE' as const, sortOrder: 7, drawIntervalSec: LOTTERY_INTERVALS['speed-boat'],
+    minBet: DEFAULT_MIN_BET, maxBet: DEFAULT_MAX_BET,
+    rtp: 0.95,
+    payTable: BJSC_FAMILY_PAY,
+  },
   {
     code: 'bcbm', name: '奔驰宝马', category: 'ARCADE' as const,
-    status: 'ONLINE' as const, sortOrder: 8, minBet: 1, maxBet: 50_000,
+    status: 'ONLINE' as const, sortOrder: 8, minBet: DEFAULT_MIN_BET, maxBet: DEFAULT_MAX_BET,
     rtp: 0.95,
     // 盘面/赔率/大奖权重唯一来源在 @gamebox/shared bcbm
     // 早先这里只列了 9 项，fast/uturn/lightning/drift 被默认值静默补入，
     // 且 normal 被压到 78/130，大奖占比过高把 RTP 顶到 200%+
     payTable: { awardWeights: { ...BCBM_DEFAULT_AWARD_WEIGHTS } },
   },
+  {
+    code: 'lhc', name: '幸运六合彩', category: 'LOTTERY' as const,
+    status: 'ONLINE' as const, sortOrder: 9, drawIntervalSec: LOTTERY_INTERVALS.lhc,
+    minBet: DEFAULT_MIN_BET, maxBet: DEFAULT_MAX_BET,
+    rtp: 0.95,
+    payTable: lhcPayTableSeed(),
+  },
   // ── 棋牌类游戏 ──
   {
     code: 'dragon-tiger', name: '龙虎斗', category: 'TABLE' as const,
-    status: 'ONLINE' as const, sortOrder: 10, minBet: 10, maxBet: 100_000,
+    status: 'ONLINE' as const, sortOrder: 10, minBet: DEFAULT_MIN_BET, maxBet: DEFAULT_MAX_BET,
     rtp: 0.965,
     payTable: tablePaySeed('dragon-tiger'),
   },
   {
     code: 'baccarat', name: '百家乐', category: 'TABLE' as const,
-    status: 'ONLINE' as const, sortOrder: 11, minBet: 1, maxBet: 100_000,
+    status: 'ONLINE' as const, sortOrder: 11, minBet: DEFAULT_MIN_BET, maxBet: DEFAULT_MAX_BET,
     rtp: 0.97,
     payTable: tablePaySeed('baccarat'),
   },
   {
     code: 'zhajinhua', name: '炸金花', category: 'TABLE' as const,
-    status: 'ONLINE' as const, sortOrder: 12, minBet: 1, maxBet: 100_000,
+    status: 'ONLINE' as const, sortOrder: 12, minBet: DEFAULT_MIN_BET, maxBet: DEFAULT_MAX_BET,
     rtp: 0.97,
     payTable: tablePaySeed('zhajinhua'),
   },
   {
     code: 'douniu', name: '斗牛', category: 'TABLE' as const,
-    status: 'ONLINE' as const, sortOrder: 13, minBet: 1, maxBet: 100_000,
+    status: 'ONLINE' as const, sortOrder: 13, minBet: DEFAULT_MIN_BET, maxBet: DEFAULT_MAX_BET,
     rtp: 0.97,
     payTable: tablePaySeed('douniu'),
-  },
-  // ── 彩票类游戏 ──
-  {
-    code: 'ssc', name: '快乐时时彩', category: 'LOTTERY' as const,
-    status: 'ONLINE' as const, sortOrder: 4, drawIntervalSec: LOTTERY_INTERVALS.ssc, minBet: 1, maxBet: 10000,
-    rtp: 0.95,
-    payTable: SSC_FFC_PAY,
-  },
-  {
-    code: 'kuai3', name: '1分快三', category: 'LOTTERY' as const,
-    status: 'ONLINE' as const, sortOrder: 5, drawIntervalSec: LOTTERY_INTERVALS.kuai3, minBet: 1, maxBet: 50_000,
-    rtp: 0.95,
-    payTable: KUAI3_PAY,
-  },
-  {
-    code: 'speed-racing', name: '极速赛车', category: 'LOTTERY' as const,
-    status: 'ONLINE' as const, sortOrder: 6, drawIntervalSec: LOTTERY_INTERVALS['speed-racing'], minBet: 1, maxBet: 50_000,
-    rtp: 0.95,
-    payTable: BJSC_FAMILY_PAY,
-  },
-  {
-    code: 'speed-boat', name: '幸运飞艇', category: 'LOTTERY' as const,
-    status: 'ONLINE' as const, sortOrder: 8, drawIntervalSec: LOTTERY_INTERVALS['speed-boat'], minBet: 1, maxBet: 50_000,
-    rtp: 0.95,
-    payTable: BJSC_FAMILY_PAY,
-  },
-  {
-    code: 'bjsc', name: '北京赛车', category: 'LOTTERY' as const,
-    status: 'ONLINE' as const, sortOrder: 7, drawIntervalSec: LOTTERY_INTERVALS.bjsc, minBet: 1, maxBet: 50_000,
-    rtp: 0.95,
-    payTable: BJSC_FAMILY_PAY,
-  },
-  {
-    code: 'lhc', name: '幸运六合彩', category: 'LOTTERY' as const,
-    status: 'ONLINE' as const, sortOrder: 9, drawIntervalSec: LOTTERY_INTERVALS.lhc, minBet: 1, maxBet: 10000,
-    rtp: 0.95,
-    payTable: lhcPayTableSeed(),
   },
 ];
 
@@ -202,6 +202,8 @@ async function main() {
         status: g.status,
         name: g.name,
         sortOrder: g.sortOrder,
+        minBet: g.minBet,
+        maxBet: g.maxBet,
         ...(typeof g.drawIntervalSec === 'number' ? { drawIntervalSec: g.drawIntervalSec } : {}),
       },
       create: gameData,
@@ -213,9 +215,10 @@ async function main() {
       });
     } else if (
       g.code === 'bcbm' ||
+      g.code === 'fruit-machine' ||
       g.category === 'LOTTERY'
     ) {
-      // 对齐 H5/大厅赔率与周期配置
+      // 对齐 shared 标定的赔率/大奖权重（水果机、奔驰宝马、彩票）
       await prisma.gameConfig.update({
         where: { id: existing.id },
         data: { rtp, payTable },

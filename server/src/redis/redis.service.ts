@@ -142,7 +142,10 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       local prev = tonumber(room["betSummary"][side]) or 0
       room["betSummary"][side] = prev + amt
       room["version"] = (tonumber(room["version"]) or 0) + 1
-      redis.call("SET", KEYS[1], cjson.encode(room))
+      -- Lua cjson 把空 table 编成 {}；空 history 必须保持 JSON 数组 []
+      local encoded = cjson.encode(room)
+      encoded = string.gsub(encoded, '"history":{}', '"history":[]')
+      redis.call("SET", KEYS[1], encoded)
       return 1
     `;
     const res = await this.client.eval(
