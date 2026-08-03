@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
 import { IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 import { Public } from '../../common/decorators/public.decorator';
@@ -18,6 +19,7 @@ export class TableController {
 
   /** GET /api/table/:gameCode/snapshot — 首屏 / 轮询相位（含公平承诺 hash） */
   @Public()
+  @SkipThrottle()
   @Get(':gameCode/snapshot')
   snapshot(@Param('gameCode') gameCode: string) {
     return this.tableService.snapshot(gameCode);
@@ -25,6 +27,7 @@ export class TableController {
 
   /** GET /api/table/:gameCode/pay-table — 赔率单源（与结算同源） */
   @Public()
+  @SkipThrottle()
   @Get(':gameCode/pay-table')
   payTable(@Param('gameCode') gameCode: string) {
     return this.tableService.payTable(gameCode);

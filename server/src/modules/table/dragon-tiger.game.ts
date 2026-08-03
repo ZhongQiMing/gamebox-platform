@@ -1,6 +1,6 @@
 import * as crypto from 'crypto';
 import type { Card, DragonTigerOutcome } from './table.types';
-import { getTablePayTable, payoutFromStakeMultCommission } from '@gamebox/shared';
+import { getTablePayTable, payoutFromProfitOdds } from '@gamebox/shared';
 
 const SUITS: Card['suit'][] = ['S', 'H', 'D', 'C'];
 
@@ -45,21 +45,18 @@ export function drawCards(serverSeed: string, nonce: number): DragonTigerOutcome
 /** 赢利抽水与倍数见 @gamebox/shared TABLE_PAYTABLE */
 
 /**
- * 结算返还（含本金），对齐 WG 官方规则：
- * - 龙/虎：赔付倍数 1:2（含本金），赢利抽 5%
- * - 和：赔付倍数 1:9（含本金），赢利抽 5%
+ * 结算返还（含本金）：
+ * - 龙 1:0.95 / 虎 1:1 / 和 1:8（利润倍率，见 TABLE_PAYTABLE）
  * - 开和时：龙/虎注全退
  * - 买错：×0
  */
 export function calcPayout(side: string, outcome: DragonTigerOutcome, amount: number): number {
   const pt = getTablePayTable('dragon-tiger');
-  const commission =
-    pt && pt.mode === 'stake-mult-commission' ? pt.commission : 0.05;
-  const multMap = pt && pt.mode === 'stake-mult-commission' ? pt.mult : {};
+  const oddsMap = pt && pt.mode === 'profit-odds' ? pt.odds : {};
 
   if (side === outcome.winner) {
-    const mult = multMap[side] ?? (side === 'TIE' ? 9 : 2);
-    return payoutFromStakeMultCommission(amount, mult, commission);
+    const odds = oddsMap[side] ?? (side === 'TIE' ? 8 : side === 'DRAGON' ? 0.95 : 1);
+    return payoutFromProfitOdds(amount, odds);
   }
   if (outcome.winner === 'TIE' && side !== 'TIE') {
     return amount; // 开和全退

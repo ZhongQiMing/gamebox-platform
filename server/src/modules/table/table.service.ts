@@ -16,6 +16,9 @@ import {
   OnModuleInit,
   OnModuleDestroy,
   BadRequestException,
+  Optional,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
@@ -23,6 +26,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { PointsService, PLATFORM_OWNER_ID } from '../points/points.service';
 import { CommissionService } from '../agents/commission.service';
+import { GameConfigCache } from '../game-core/game-config.cache';
 import { genServerSeed } from '../game-core/fairness.util';
 import { businessNo } from '../game-core/business-id';
 import type { TableBetPayload, TableSnapshot } from './table.types';
@@ -51,8 +55,28 @@ import {
   sideExposure,
   TABLE_RISK,
 } from './table-risk';
+import { RiskDetectorService } from '../risk/risk-detector.service';
+import { RiskService } from '../risk/risk.service';
 import { createHash } from 'node:crypto';
-import { capWin, asMoney, getTablePayTable, isValidMoney, tableSideMaxBet, tableTimingOf } from '@gamebox/shared';
+import {
+  capWin,
+  asMoney,
+  getTablePayTable,
+  isValidMoney,
+  roundMoney,
+  shanghaiDayOf,
+  tableSideMaxBet,
+  tableTimingOf,
+} from '@gamebox/shared';
+import type { TableHistoryItem } from './table.types';
+import { ConsoleControlService } from '../console/console-control.service';
+import { FlyDiskService } from '../console/fly-disk.service';
+import {
+  CONTROL_FIXED_CANDIDATE_TRIES,
+  CONTROL_MIN_BET_COUNT,
+} from '../console/control.constants';
+import { holdScore, holdTargetPayout } from '../console/control-pick.util';
+import type { TableOutcome } from './table-rules';
 
 /** 覆盖 settle + 最长 draw 窗口，transition 内还会续期 */
 const LEADER_TTL_MS = 30_000;
@@ -78,6 +102,12 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
     private redis: RedisService,
     private points: PointsService,
     private commission: CommissionService,
+    private configCache: GameConfigCache,
+    private riskDetector: RiskDetectorService,
+    private risk: RiskService,
+    @Optional() @Inject(forwardRef(() => ConsoleControlService))
+    private control?: ConsoleControlService,
+    @Optional() private flyDisk?: FlyDiskService,
   ) {}
 
   async onModuleInit() {
@@ -240,7 +270,9 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
     try {
       const room = JSON.parse(raw) as RedisRoomState;
       if (typeof room.version !== 'number') room.version = 0;
-      return normalizeRoomHistory(room);
+      normalizeRoomHistory(room);
+      room.history = this.pruneHistoryToShanghaiDay(room.history);
+      return room;
     } catch {
       return null;
     }
@@ -324,13 +356,20 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
     if (room.phase === 'BETTING') {
       room.phase = 'DRAWING';
       room.phaseEndsAt = alignedDrawEndsAt(room.gameCode);
-      room.outcome = drawOutcome(room.gameCode, room.serverSeed, room.nonce);
+      const picked = await this.pickTableOutcomeWithControl(room);
+      room.nonce = picked.nonce;
+      room.outcome = picked.outcome;
       if (!(await this.saveRoomCas(room))) {
         this.logger.warn(`transition BETTING→DRAWING CAS 冲突 ${room.gameCode}`);
         return;
       }
       await this.settle(room);
       await this.publishSnapshot(room);
+      try {
+        if (this.control) await this.control.refreshGoalExhaustion(room.gameCode);
+      } catch {
+        /* 不影响开奖 */
+      }
       return;
     }
 
@@ -434,6 +473,7 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
     const roundId = await this.resolveRoundId(room);
     if (!roundId) return;
 
+    const bigWins: Array<{ betId: string; playerId: string; amount: number; payout: number }> = [];
     try {
       await this.prisma.$transaction(async (tx) => {
         const claimed = await tx.gameRound.updateMany({
@@ -444,6 +484,7 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             outcome: outcome as any,
             serverSeed: room.serverSeed,
+            nonce: room.nonce,
           },
         });
         if (claimed.count === 0) return;
@@ -481,6 +522,10 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
             },
           });
           if (betClaimed.count === 0) continue;
+
+          if (!refundOnly && payout >= Math.max(amt * 50, 100_000)) {
+            bigWins.push({ betId: bet.id, playerId: bet.playerId, amount: amt, payout });
+          }
 
           if (payout > 0) {
             const resultTag = String(outcome.result || outcome.winner || '');
@@ -530,9 +575,28 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
         serverSeedHash: room.serverSeedHash,
         nonce: room.nonce,
       });
-      if (room.history.length > 72) room.history.pop();
+      room.history = this.pruneHistoryToShanghaiDay(room.history);
       if (!(await this.saveRoomCas(room))) {
         this.logger.warn(`settle 写 history CAS 冲突 ${room.gameCode} round=${roundId}`);
+      }
+
+      for (const w of bigWins) {
+        await this.risk.record({
+          type: 'BIG_WIN',
+          level: w.payout >= 1_000_000 ? 'CRITICAL' : 'WARN',
+          targetId: w.playerId,
+          fingerprint: `bw:table:${w.betId}`,
+          dedupeMs: 24 * 3600_000,
+          detail: {
+            playerId: w.playerId,
+            totalAmount: w.amount,
+            totalPayout: w.payout,
+            gameCode: room.gameCode,
+            roundId,
+            betId: w.betId,
+            summary: `${room.gameCode} 派彩 ${w.payout}（下注 ${w.amount}）`,
+          },
+        });
       }
     } catch (err) {
       this.logger.error(
@@ -586,10 +650,16 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
     if (!allowedSides(room.gameCode).includes(side)) {
       throw new BadRequestException('投注方向无效');
     }
+    /* 限红以平台 Game 表为准（后台改完立即生效，不依赖 Redis 旧缓存） */
+    const gameCfg = await this.configCache.get(room.gameCode);
+    const minBet = Math.max(1, asMoney(gameCfg?.minBet ?? room.minBet) || 1);
+    const maxBet = asMoney(gameCfg?.maxBet ?? room.maxBet) || room.maxBet;
+    room.minBet = minBet;
+    room.maxBet = maxBet;
     /* 千倍赔率的低频边单独限红，避免单注击穿平台池 */
-    const sideCap = tableSideMaxBet(room.gameCode, side, room.maxBet);
-    if (!isValidMoney(amount, 1) || amount < room.minBet || amount > sideCap) {
-      throw new BadRequestException(`下注额须在 ${room.minBet}~${sideCap} 之间`);
+    const sideCap = tableSideMaxBet(room.gameCode, side, maxBet);
+    if (!isValidMoney(amount, 1) || amount < minBet || amount > sideCap) {
+      throw new BadRequestException(`下注额须在 ${minBet}~${sideCap} 之间`);
     }
 
     /* Redis 丢 roundId 时先按 roundNo 找回 */
@@ -605,6 +675,16 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
 
     const oppSides = oppositeHedgeSides(room.gameCode, side);
     let roundId = room.roundId;
+    const house = this.flyDisk
+      ? await this.flyDisk.resolveHouse(playerId)
+      : { type: 'PLATFORM' as const, id: PLATFORM_OWNER_ID, flying: false as boolean };
+    const flyPayload = {
+      type: house.type,
+      id: house.id,
+      flying: house.flying,
+      roomId: house.roomId,
+      agentUserId: house.agentUserId,
+    };
     try {
       await this.prisma.$transaction(async (tx) => {
         /* 1) 先落/锁住本局，再做对冲与单边上限（避免首注竞态绕过） */
@@ -617,7 +697,8 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
                 category: 'TABLE',
                 state: 'PLAYING',
                 serverSeedHash: room.serverSeedHash,
-                nonce: room.nonce,
+                /* 开奖 nonce 封盘时再定（控奖可在候选中挑选），此处占位 */
+                nonce: 0,
               },
             });
             roundId = created.id;
@@ -701,6 +782,7 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
             betType: side,
             amount,
             status: 'PENDING',
+            payload: { fly: flyPayload } as never,
           },
         });
 
@@ -754,6 +836,17 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
     });
 
     const snapRoom = (await this.loadRoom(roomId)) ?? latest;
+    if (roundId) {
+      void this.riskDetector.onTableBet({
+        roundId,
+        playerId,
+        side,
+        amount,
+        gameCode: room.gameCode,
+        roundNo: snapRoom.roundNo,
+      });
+    }
+
     const result = {
       roomId,
       side,
@@ -833,6 +926,24 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
+
+  /** 路单只保留上海时区当日记录（按局号日期 / createdAt） */
+  private pruneHistoryToShanghaiDay(history: TableHistoryItem[]): TableHistoryItem[] {
+    const list = Array.isArray(history) ? history : [];
+    const { ymd } = shanghaiDayOf(Date.now());
+    const kept = list.filter((h) => {
+      const m = String(h?.roundNo || '').match(/(\d{8})-/);
+      if (m) return m[1] === ymd;
+      if (h?.createdAt) {
+        const ts = Date.parse(h.createdAt);
+        if (Number.isFinite(ts)) return shanghaiDayOf(ts).ymd === ymd;
+      }
+      return false;
+    });
+    // 安全上限，防止异常膨胀
+    return kept.length > 2000 ? kept.slice(0, 2000) : kept;
+  }
+
   private buildSnapshot(room: RedisRoomState): TableSnapshot {
     const sealed = room.phase === 'DRAWING' || room.phase === 'SETTLED';
     const timing = tableTimingOf(room.gameCode);
@@ -844,9 +955,10 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
       secondsLeft: secondsLeftOf(room),
       outcome: room.outcome ?? undefined,
       betSummary: { ...room.betSummary },
-      history: room.history.slice(0, 72),
+      history: this.pruneHistoryToShanghaiDay(room.history),
       serverSeedHash: room.serverSeedHash,
-      nonce: room.nonce,
+      /* 下注阶段不公布 nonce，封盘控奖后再揭示，便于可验证复算 */
+      nonce: sealed ? room.nonce : undefined,
       serverSeed: sealed ? room.serverSeed : undefined,
       timing: {
         bettingMs: timing.bettingMs,
@@ -855,6 +967,93 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
         cycleMs: timing.cycleMs,
       },
     };
+  }
+
+  /**
+   * 控奖：按各运营房本局注单，在候选 nonce 中挑派彩最接近留存目标的结果。
+   * 无生效策略时用本局基数 nonce。
+   */
+  private async pickTableOutcomeWithControl(
+    room: RedisRoomState,
+  ): Promise<{ outcome: TableOutcome; nonce: number }> {
+    const baseNonce = room.nonce;
+    const defaultOutcome = drawOutcome(room.gameCode, room.serverSeed, baseNonce);
+    const policies = this.control
+      ? await this.control.getActiveHoldPolicies(room.gameCode)
+      : [];
+    if (!policies.length) {
+      return { outcome: defaultOutcome, nonce: baseNonce };
+    }
+
+    const roundId = await this.resolveRoundId(room);
+    if (!roundId) {
+      return { outcome: defaultOutcome, nonce: baseNonce };
+    }
+
+    const pendingBets = await this.prisma.bet.findMany({
+      where: { roundId, status: 'PENDING' },
+      select: { amount: true, betType: true, payload: true },
+    });
+
+    type Bucket = { roomId: string; bets: typeof pendingBets; stake: number };
+    const byRoom = new Map<string, Bucket>();
+    for (const b of pendingBets) {
+      const rid = (b.payload as { fly?: { roomId?: string } } | null)?.fly?.roomId;
+      if (!rid) continue;
+      let bucket = byRoom.get(rid);
+      if (!bucket) {
+        bucket = { roomId: rid, bets: [], stake: 0 };
+        byRoom.set(rid, bucket);
+      }
+      bucket.bets.push(b);
+      bucket.stake = roundMoney(bucket.stake + asMoney(b.amount));
+    }
+
+    const active = policies
+      .map((p) => {
+        const bucket = byRoom.get(p.roomId);
+        if (!bucket || bucket.bets.length < CONTROL_MIN_BET_COUNT) return null;
+        return {
+          policy: p,
+          bucket,
+          targetPayout: roundMoney(holdTargetPayout(bucket.stake, p.holdRatio)),
+        };
+      })
+      .filter((x): x is NonNullable<typeof x> => !!x);
+
+    if (!active.length) {
+      return { outcome: defaultOutcome, nonce: baseNonce };
+    }
+
+    let bestOutcome = defaultOutcome;
+    let bestNonce = baseNonce;
+    let bestScore = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < CONTROL_FIXED_CANDIDATE_TRIES; i++) {
+      const nonce = baseNonce + i;
+      const cand = i === 0
+        ? defaultOutcome
+        : drawOutcome(room.gameCode, room.serverSeed, nonce);
+      let score = 0;
+      for (const a of active) {
+        let pay = 0;
+        for (const b of a.bucket.bets) {
+          const amt = asMoney(b.amount);
+          const raw = calcTablePayout(room.gameCode, b.betType ?? '', cand, amt);
+          pay = roundMoney(pay + capWin(amt, raw).win);
+        }
+        score += holdScore(pay, a.targetPayout, a.bucket.stake);
+      }
+      if (score < bestScore) {
+        bestScore = score;
+        bestOutcome = cand;
+        bestNonce = nonce;
+      }
+    }
+
+    this.logger.log(
+      `control hold table=${room.gameCode} rooms=${active.length} nonce=${bestNonce} score~=${Math.round(bestScore)}`,
+    );
+    return { outcome: bestOutcome, nonce: bestNonce };
   }
 
   /** 赔率表（与 @gamebox/shared 同源） */

@@ -4,7 +4,6 @@ import { getTablePayTable, payoutFromProfitOdds } from '@gamebox/shared';
 export type ZhajinhuaSide =
   | 'banker'
   | 'player'
-  | 'tie'
   | 'shunjin'
   | 'baozi'
   | 'san2'
@@ -23,10 +22,18 @@ export interface ZhajinhuaOutcome {
   game: 'zhajinhua';
   banker: FaceCard[];
   player: FaceCard[];
-  result: 'banker' | 'player' | 'tie';
+  result: 'banker' | 'player';
   bankerType: ZjhHandEval;
   playerType: ZjhHandEval;
 }
+
+/** 黑桃 > 红心 > 梅花 > 方块 */
+const SUIT_POWER: Record<FaceCard['suit'], number> = {
+  spade: 4,
+  heart: 3,
+  club: 2,
+  diamond: 1,
+};
 
 function zjhOdds(): Record<string, number> {
   const pt = getTablePayTable('zhajinhua');
@@ -68,12 +75,57 @@ export function evalZjhHand(cards: FaceCard[]): ZjhHandEval {
   return { type: 'high', label: '散牌', score: 1, vals };
 }
 
-function compareHands(a: ZjhHandEval, b: ZjhHandEval): number {
+/** vals 中的 1 表示 A-2-3 顺子里的 A */
+function valToRankNum(v: number): number {
+  return v === 1 ? 14 : v;
+}
+
+function bestSuitAtValue(cards: FaceCard[], val: number): number {
+  let best = 0;
+  for (const c of cards) {
+    if (cardValue(c.rank) === val) best = Math.max(best, SUIT_POWER[c.suit]);
+  }
+  return best;
+}
+
+/** 点数相同比花色；单副牌下恒有胜负 */
+function compareBySuit(aCards: FaceCard[], bCards: FaceCard[], evalA: ZjhHandEval): number {
+  if (evalA.type === 'pair') {
+    const pairVal = evalA.vals[0];
+    const kicker = evalA.vals[1];
+    const pa = bestSuitAtValue(aCards, pairVal);
+    const pb = bestSuitAtValue(bCards, pairVal);
+    if (pa !== pb) return pa > pb ? 1 : -1;
+    const ka = bestSuitAtValue(aCards, kicker);
+    const kb = bestSuitAtValue(bCards, kicker);
+    if (ka !== kb) return ka > kb ? 1 : -1;
+    return 0;
+  }
+  for (let i = 0; i < 3; i++) {
+    const v = evalA.vals[i];
+    if (!v) continue;
+    const rv = valToRankNum(v);
+    const sa = bestSuitAtValue(aCards, rv);
+    const sb = bestSuitAtValue(bCards, rv);
+    if (sa !== sb) return sa > sb ? 1 : -1;
+  }
+  return 0;
+}
+
+export function compareHands(
+  a: ZjhHandEval,
+  b: ZjhHandEval,
+  aCards: FaceCard[],
+  bCards: FaceCard[],
+): number {
   if (a.score !== b.score) return a.score > b.score ? 1 : -1;
   for (let i = 0; i < 3; i++) {
     if (a.vals[i] !== b.vals[i]) return a.vals[i] > b.vals[i] ? 1 : -1;
   }
-  return 0;
+  const bySuit = compareBySuit(aCards, bCards, a);
+  if (bySuit !== 0) return bySuit;
+  /* 理论上不会到这；兜底庄赢，保证无和局 */
+  return 1;
 }
 
 function sideBetHit(
@@ -99,7 +151,7 @@ function sideBetHit(
   if (!need) return false;
   if (result === 'banker') return bt.type === need;
   if (result === 'player') return pt.type === need;
-  return bt.type === need || pt.type === need;
+  return false;
 }
 
 export function drawZhajinhua(serverSeed: string, nonce: number): ZhajinhuaOutcome {
@@ -112,8 +164,8 @@ export function drawZhajinhuaFromDeck(deck: FaceCard[]): ZhajinhuaOutcome {
   const player = [deck[1], deck[3], deck[5]];
   const bankerType = evalZjhHand(banker);
   const playerType = evalZjhHand(player);
-  const cmp = compareHands(bankerType, playerType);
-  const result = cmp > 0 ? 'banker' : cmp < 0 ? 'player' : 'tie';
+  const cmp = compareHands(bankerType, playerType, banker, player);
+  const result = cmp >= 0 ? 'banker' : 'player';
   return { game: 'zhajinhua', banker, player, result, bankerType, playerType };
 }
 
@@ -124,18 +176,15 @@ export function calcZhajinhuaPayout(side: string, outcome: ZhajinhuaOutcome, amo
   let win = false;
   if (side === 'banker') win = outcome.result === 'banker';
   else if (side === 'player') win = outcome.result === 'player';
-  else if (side === 'tie') win = outcome.result === 'tie';
   else win = sideBetHit(side, outcome.bankerType, outcome.playerType, outcome.result);
 
   if (win) return payoutFromProfitOdds(amount, odds);
-  if (outcome.result === 'tie' && (side === 'banker' || side === 'player')) return amount;
   return 0;
 }
 
 export const ZHAJINHUA_SIDES: ZhajinhuaSide[] = [
   'banker',
   'player',
-  'tie',
   'shunjin',
   'baozi',
   'san2',

@@ -37,7 +37,8 @@ export interface TableSnapshot {
   serverSeedHash: string;
   /** 封盘后公开，用于复算 */
   serverSeed?: string;
-  nonce: number;
+  /** 下注阶段不公布；封盘后公开，用于复算 */
+  nonce?: number;
   /** 周期配置（与 @gamebox/shared table-timing 同源），供 H5 校准本地兜底 */
   timing?: {
     bettingMs: number;

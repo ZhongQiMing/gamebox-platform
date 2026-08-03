@@ -28,6 +28,22 @@ export function roomKey(gameCode: string): string {
   return `table:room:${gameCode}`;
 }
 
+/**
+ * Redis Lua cjson 会把空数组编成 `{}`；从 Redis 读回后必须拉回真正的数组，
+ * 否则 history.slice / unshift 会抛 TypeError → 前端「服务器内部错误」。
+ */
+export function normalizeRoomHistory(room: RedisRoomState): RedisRoomState {
+  if (Array.isArray(room.history)) return room;
+  if (room.history && typeof room.history === 'object') {
+    room.history = Object.values(
+      room.history as unknown as Record<string, TableHistoryItem>,
+    );
+  } else {
+    room.history = [];
+  }
+  return room;
+}
+
 export function roomLeaderKey(gameCode: string): string {
   return `table:room:${gameCode}:leader`;
 }
