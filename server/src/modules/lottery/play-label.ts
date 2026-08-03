@@ -59,10 +59,10 @@ function formatRacing(type: string, val: string): string {
 }
 
 function formatDigit5(type: string, val: string): string {
-  if (type === 'big') return '大';
-  if (type === 'small') return '小';
-  if (type === 'odd') return '单';
-  if (type === 'even') return '双';
+  if (type === 'big') return '总大';
+  if (type === 'small') return '总小';
+  if (type === 'odd') return '总单';
+  if (type === 'even') return '总双';
   if (type === 'exact') return '个' + val;
   if (type === 'ballSide') {
     const m = val.match(/^([0-4]):(big|small|odd|even)$/);
@@ -85,7 +85,12 @@ function formatDigit5(type: string, val: string): string {
       return seg + tag + rest;
     }
   }
-  if (type === 'lhh') return val || '龙虎';
+  if (type === 'lhh') {
+    if (val === '龙' || val === '虎' || val === '和') return '1/5' + val;
+    const m = val.match(/^([0-4]):([0-4]):(龙|虎|和)$/);
+    if (m) return `${+m[1] + 1}/${+m[2] + 1}${m[3]}`;
+    return val || '龙虎';
+  }
   if (type === 'niu') {
     const n = Number(val);
     if (n === -1) return '无牛';
@@ -107,7 +112,12 @@ function formatKuai3(type: string, val: string): string {
   if (type === 'dice') return '三军' + val;
   if (type === 'pair') return '二同' + val;
   if (type === 'straight') return !val || val === 'any' ? '三连号' : '三连' + val;
-  if (type === 'alldiff') return '三不同号';
+  if (type === 'alldiff') {
+    if (!val || val === 'any') return '三不同号';
+    const digits = String(val).replace(/\D/g, '').split('').filter((c) => '123456'.includes(c));
+    const sorted = [...new Set(digits)].sort().join('');
+    return sorted.length === 3 ? '三不同' + sorted : '三不同号';
+  }
   if (type === 'long') return '长牌' + val.replace(':', '');
   return type + (val ? ':' + val : '');
 }
@@ -117,22 +127,36 @@ function formatLhc(type: string, val: string): string {
   if (type === 'small') return '特码小';
   if (type === 'odd') return '特码单';
   if (type === 'even') return '特码双';
+  const CN: Record<number, string> = {
+    1: '一', 2: '二', 3: '三', 4: '四', 5: '五', 6: '六', 7: '七', 8: '八', 9: '九', 10: '十', 11: '十一', 12: '十二',
+  };
   const map: Record<string, string> = {
     special: '特码',
     zhengma: '正码',
+    zhengTe: '正码特',
     combo: '特码',
+    zhengCombo: '正码',
+    zhengSide: '正码',
+    zhengHe: '正合',
+    zhengWei: '正尾',
+    zhengColor: '正波',
     color: '',
     temaZodiac: '特肖',
     pingZodiac: '一肖',
+    zhengXiao: '正肖',
     heSide: '合',
     weiSide: '尾',
     sumSide: '总',
     sumTail: '总尾',
     weiShu: '尾',
     weiShuMiss: '尾不中',
+    temaTou: '特头',
+    temaWei: '特尾',
+    wuxing: '五行',
+    heXiao: '合肖',
     lianma: '连码',
-    sxLian: '生肖连',
-    wsLian: '尾数连',
+    sxLian: '连肖',
+    wsLian: '连尾',
     buZhong: '不中',
     liuxiao: '六肖',
   };
@@ -141,26 +165,42 @@ function formatLhc(type: string, val: string): string {
   if (val.charAt(0) === '{') {
     try {
       const j = JSON.parse(val) as Record<string, unknown>;
-      const CN: Record<number, string> = {
-        2: '二', 3: '三', 4: '四', 5: '五', 6: '六', 7: '七', 8: '八', 9: '九', 10: '十', 11: '十一', 12: '十二',
-      };
       if (type === 'lianma' && j.play && Array.isArray(j.nums)) {
         const mode = String(j.mode || '复式');
-        const nums = (j.nums as number[]).map((n) => String(n).padStart(2, '0')).join(',');
-        return `${mode}${String(j.play)}${nums}`;
+        const nums = j.nums as number[];
+        const play = String(j.play);
+        const need = play === '四全中' ? 4 : (play === '三全中' || play === '三中二') ? 3 : 2;
+        if (mode === '拖头' && nums.length >= 2) {
+          const danN = Math.max(1, need - 1);
+          const pad = (n: number) => String(n).padStart(2, '0');
+          return `${mode}${play}${nums.slice(0, danN).map(pad).join(',')}拖${nums.slice(danN).map(pad).join('、')}`;
+        }
+        return `${mode}${play}${nums.map((n) => String(n).padStart(2, '0')).join(',')}`;
       }
       if (type === 'sxLian' && Array.isArray(j.zodiacs)) {
-        const n = Number(j.n) || (j.zodiacs as string[]).length;
+        const zs = j.zodiacs as string[];
+        const n = Number(j.n) || zs.length;
         const hit = j.hit ? '中' : '不中';
         const mode = String(j.mode || '复式');
-        return `${mode}${CN[n] || ''}肖${hit}${(j.zodiacs as string[]).join(',')}`;
+        const tag = `${mode}${CN[n] || ''}肖${hit}`;
+        if (mode === '拖头' && zs.length >= 2) {
+          const danN = Math.max(1, n - 1);
+          return `${tag}${zs.slice(0, danN).join('')}拖${zs.slice(danN).join('、')}`;
+        }
+        return `${tag}${zs.join(',')}`;
       }
       if (type === 'wsLian' && Array.isArray(j.tails)) {
         const tails = j.tails as number[];
         const n = Number(j.n) || tails.length;
         const hit = j.hit ? '中' : '不中';
         const mode = String(j.mode || '复式');
-        return `${mode}${CN[n] || ''}尾${hit}${tails.map((t) => t + '尾').join(',')}`;
+        const tag = `${mode}${CN[n] || ''}尾${hit}`;
+        const fmt = (t: number) => `${t}尾`;
+        if (mode === '拖头' && tails.length >= 2) {
+          const danN = Math.max(1, n - 1);
+          return `${tag}${tails.slice(0, danN).map(fmt).join('')}拖${tails.slice(danN).map(fmt).join('、')}`;
+        }
+        return `${tag}${tails.map(fmt).join(',')}`;
       }
       if (type === 'buZhong' && Array.isArray(j.nums)) {
         const nums = j.nums as number[];
@@ -170,6 +210,10 @@ function formatLhc(type: string, val: string): string {
       if (type === 'liuxiao' && Array.isArray(j.zodiacs)) {
         return (j.hit ? '六肖中' : '六肖不中') + (j.zodiacs as string[]).join(',');
       }
+      if (type === 'heXiao' && Array.isArray(j.zodiacs)) {
+        const n = Number(j.n) || (j.zodiacs as string[]).length;
+        return `合肖${CN[n] || n}肖${(j.zodiacs as string[]).join(',')}`;
+      }
     } catch {
       /* ignore */
     }
@@ -178,15 +222,33 @@ function formatLhc(type: string, val: string): string {
     const n = parseInt(val, 10);
     if (n >= 1 && n <= 49) return cn + String(n).padStart(2, '0');
   }
+  if (type === 'zhengTe') {
+    const m = val.match(/^([1-6]):(\d+)$/);
+    if (m) return `正${CN[Number(m[1])] || m[1]}特${String(m[2]).padStart(2, '0')}`;
+  }
+  if (type === 'zhengSide' || type === 'zhengCombo' || type === 'zhengHe' || type === 'zhengWei' || type === 'zhengColor') {
+    const m = val.match(/^([1-6]):(.+)$/);
+    if (m) {
+      const pos = CN[Number(m[1])] || m[1];
+      if (type === 'zhengColor') return `正${pos}${m[2]}波`;
+      if (type === 'zhengHe') return `正${pos}合${m[2]}`;
+      if (type === 'zhengWei') return `正${pos}尾${m[2]}`;
+      return `正${pos}${m[2]}`;
+    }
+  }
   if (type === 'color') return val + '波';
+  if (type === 'colorHalf' || type === 'colorHalfHalf') return val;
   if (type === 'combo') return '特码' + val;
-  if (type === 'temaZodiac' || type === 'pingZodiac') return cn + val;
+  if (type === 'temaZodiac' || type === 'pingZodiac' || type === 'zhengXiao') return cn + val;
   if (type === 'heSide') return '合' + val;
   if (type === 'weiSide') return '尾' + val;
   if (type === 'sumSide') return '总和' + val;
   if (type === 'sumTail') return '总尾' + val;
   if (type === 'weiShu') return val + '尾';
   if (type === 'weiShuMiss') return val + '尾不中';
+  if (type === 'temaTou') return val + '头';
+  if (type === 'temaWei') return '特' + val + '尾';
+  if (type === 'wuxing') return '五行' + val;
   return cn + val;
 }
 

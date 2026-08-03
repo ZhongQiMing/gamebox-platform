@@ -105,12 +105,14 @@ export const bjscGame: LotteryGameDef = {
       case 'runner':
         return Number(bet.value) === extras['runner'] ? 'runner' : null;
       case 'top2big':
-        return top2sum >= 12 ? 'top2big' : null;
       case 'top2small':
-        return top2sum <= 11 ? 'top2small' : null;
       case 'top2odd':
-        return top2sum % 2 !== 0 ? 'top2odd' : null;
       case 'top2even':
+        /* 官方：冠亚和值 11 为和局，退还本金（大小单双均退） */
+        if (top2sum === 11) return 'refund';
+        if (bet.betType === 'top2big') return top2sum >= 12 ? 'top2big' : null;
+        if (bet.betType === 'top2small') return top2sum <= 10 ? 'top2small' : null;
+        if (bet.betType === 'top2odd') return top2sum % 2 !== 0 ? 'top2odd' : null;
         return top2sum % 2 === 0 ? 'top2even' : null;
 
       case 'position': {
@@ -149,39 +151,36 @@ export const speedBoatGame: LotteryGameDef = { ...bjscGame, code: 'speed-boat' }
 
 /**
  * 【赔率唯一来源】改赔率只改这里；seed 写入 DB；H5 经 /pay-table 覆盖展示。PK10 三兄弟共用。
- * multiplier = 含本金返还倍数。改动后跑 `node scripts/rtp-audit.cjs bjsc` 校验。
+ * multiplier = 含本金返还倍数。改动后跑 `pnpm audit:rtp bjsc` 校验。
  *
- * 冠亚和大小/单双的分布并不对称（两车不重复，共 90 种有序组合）：
- * 大(12-19) 与 双 各占 40/90，小(3-11) 与 单 各占 50/90，
- * 因此两边必须用不同赔率，否则小/单侧是平台负期望。
+ * 冠亚两面：和值 11 和局退本；大小为 12-19 / 3-10。产品两边同赔 1.995。
  */
 export const bjscPayTable = {
-  champion: { multiplier: 9.8, desc: '猜赛道1/冠军号码（1-10）' },
-  runner: { multiplier: 9.8, desc: '猜赛道2/亚军号码（1-10）' },
-  top2big: { multiplier: 2.2275, desc: '冠亚和大（12-19）' },
-  top2small: { multiplier: 1.782, desc: '冠亚和小（3-11）' },
-  top2odd: { multiplier: 1.782, desc: '冠亚和奇' },
-  top2even: { multiplier: 2.2275, desc: '冠亚和偶' },
-  position: { multiplier: 9.8, desc: '定位车号（1-10名）' },
-  posSide: { multiplier: 1.98, desc: '名次两面' },
-  lhh: { multiplier: 1.98, desc: '龙虎' },
-  /* 和值分布以 11 为峰对称：3↔19 各 2/90，4↔18 各 2/90 … 11 为 10/90。
-     赔率必须跟着对称，早先 12 以上整体错位一档，导致 12/14/16/18 只有 49%~79% RTP。 */
-  gySum_3: { multiplier: 44.55, desc: '冠亚和3' },
-  gySum_4: { multiplier: 44.55, desc: '冠亚和4' },
-  gySum_5: { multiplier: 22.27, desc: '冠亚和5' },
-  gySum_6: { multiplier: 22.27, desc: '冠亚和6' },
-  gySum_7: { multiplier: 14.85, desc: '冠亚和7' },
-  gySum_8: { multiplier: 14.85, desc: '冠亚和8' },
-  gySum_9: { multiplier: 11.13, desc: '冠亚和9' },
-  gySum_10: { multiplier: 11.13, desc: '冠亚和10' },
-  gySum_11: { multiplier: 8.91, desc: '冠亚和11' },
-  gySum_12: { multiplier: 11.13, desc: '冠亚和12' },
-  gySum_13: { multiplier: 11.13, desc: '冠亚和13' },
-  gySum_14: { multiplier: 14.85, desc: '冠亚和14' },
-  gySum_15: { multiplier: 14.85, desc: '冠亚和15' },
-  gySum_16: { multiplier: 22.27, desc: '冠亚和16' },
-  gySum_17: { multiplier: 22.27, desc: '冠亚和17' },
-  gySum_18: { multiplier: 44.55, desc: '冠亚和18' },
-  gySum_19: { multiplier: 44.55, desc: '冠亚和19' },
+  refund: { multiplier: 1, desc: '和局退本' },
+  champion: { multiplier: 9.95, desc: '猜赛道1/冠军号码（1-10）' },
+  runner: { multiplier: 9.95, desc: '猜赛道2/亚军号码（1-10）' },
+  top2big: { multiplier: 1.995, desc: '冠亚和大（12-19）' },
+  top2small: { multiplier: 1.995, desc: '冠亚和小（3-10）；11 和局' },
+  top2odd: { multiplier: 1.995, desc: '冠亚和奇（11 和局）' },
+  top2even: { multiplier: 1.995, desc: '冠亚和偶（11 和局）' },
+  position: { multiplier: 9.95, desc: '定位车号（1-10名）' },
+  posSide: { multiplier: 1.995, desc: '名次两面' },
+  lhh: { multiplier: 1.995, desc: '龙虎' },
+  gySum_3: { multiplier: 42.5, desc: '冠亚和3' },
+  gySum_4: { multiplier: 42.5, desc: '冠亚和4' },
+  gySum_5: { multiplier: 21.5, desc: '冠亚和5' },
+  gySum_6: { multiplier: 21.5, desc: '冠亚和6' },
+  gySum_7: { multiplier: 14.5, desc: '冠亚和7' },
+  gySum_8: { multiplier: 14.5, desc: '冠亚和8' },
+  gySum_9: { multiplier: 10.5, desc: '冠亚和9' },
+  gySum_10: { multiplier: 10.5, desc: '冠亚和10' },
+  gySum_11: { multiplier: 8.5, desc: '冠亚和11' },
+  gySum_12: { multiplier: 10.5, desc: '冠亚和12' },
+  gySum_13: { multiplier: 10.5, desc: '冠亚和13' },
+  gySum_14: { multiplier: 14.5, desc: '冠亚和14' },
+  gySum_15: { multiplier: 14.5, desc: '冠亚和15' },
+  gySum_16: { multiplier: 21.5, desc: '冠亚和16' },
+  gySum_17: { multiplier: 21.5, desc: '冠亚和17' },
+  gySum_18: { multiplier: 42.5, desc: '冠亚和18' },
+  gySum_19: { multiplier: 42.5, desc: '冠亚和19' },
 } as const;

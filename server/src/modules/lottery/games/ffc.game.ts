@@ -11,7 +11,7 @@
  *   anyDigit                    不定位   value="前三|中三|后三:digit"
  *   group3                      组三     value="段:a,b"
  *   group6                      组六     value="段:a,b,c"
- *   lhh                         龙虎和   value=龙|虎|和（万vs个）
+ *   lhh                         龙虎和   value="a:b:龙|虎|和"（0-4 球位，a<b）；兼容旧值 龙|虎|和=0vs4
  *   niu                         斗牛     value=-1|1-9|10（无牛/牛几/牛牛）
  *   niuSide                     牛两面   value=大|小|单|双（无牛判输）
  *   shape                       形态     value="段:豹子|顺子|对子|半顺|杂六"
@@ -123,6 +123,18 @@ function matchBallSide(n: number, side: string): boolean {
   return false;
 }
 
+/** 龙虎和：a/b 为 0-4 球位；裸 龙|虎|和 兼容旧「万 vs 个」 */
+function parseLhh(value?: string | number): { a: number; b: number; pick: string } | null {
+  const s = String(value ?? '');
+  if (s === '龙' || s === '虎' || s === '和') return { a: 0, b: 4, pick: s };
+  const m = s.match(/^([0-4]):([0-4]):(龙|虎|和)$/);
+  if (!m) return null;
+  const a = +m[1];
+  const b = +m[2];
+  if (a >= b) return null;
+  return { a, b, pick: m[3] };
+}
+
 export const ffcGame: LotteryGameDef = {
   code: 'ffc',
 
@@ -137,7 +149,7 @@ export const ffcGame: LotteryGameDef = {
     if (betType === 'anyDigit') return !!parseSegDigit(value);
     if (betType === 'group3') return !!parseGroup3(value);
     if (betType === 'group6') return !!parseGroup6(value);
-    if (betType === 'lhh') return ['龙', '虎', '和'].includes(String(value ?? ''));
+    if (betType === 'lhh') return !!parseLhh(value);
     if (betType === 'niu') {
       const n = Number(value);
       return Number.isInteger(n) && ((n >= 1 && n <= 10) || n === -1);
@@ -225,12 +237,15 @@ export const ffcGame: LotteryGameDef = {
       }
 
       case 'lhh': {
-        const pick = String(value ?? '');
-        const res = extras['lhh'] as string;
-        if (pick !== res) return null;
-        if (pick === '和') return 'tie';
-        if (pick === '龙') return 'dragon';
-        if (pick === '虎') return 'tiger';
+        const p = parseLhh(value);
+        if (!p) return null;
+        const x = numbers[p.a];
+        const y = numbers[p.b];
+        const res = x > y ? '龙' : x < y ? '虎' : '和';
+        if (p.pick !== res) return null;
+        if (p.pick === '和') return 'tie';
+        if (p.pick === '龙') return 'dragon';
+        if (p.pick === '虎') return 'tiger';
         return null;
       }
 
@@ -275,7 +290,7 @@ export const sscGame: LotteryGameDef = { ...ffcGame, code: 'ssc' };
  * 【赔率唯一来源】改赔率只改这里；seed 写入 DB；H5 经 /pay-table 覆盖展示。SSC/FFC 共用。
  * multiplier = 含本金返还倍数（payout = 下注 × multiplier）。
  *
- * 盘口对齐常见私彩门面（两面/定位高标；斗牛/形态偏杀；组三 260 / 组六 125）。
+ * 盘口对齐官方 1分时时彩 NumberGame（两面/定位高标；组三 260 / 组六 125）。
  * 注意：组三 260 在「选 2 码、命中约 0.6%」规则下理论 RTP>100%，属门面价。
  * 牛两面：开无牛判输（不退本）。
  * 改动后跑 `pnpm audit:rtp ffc`。
@@ -292,15 +307,15 @@ export const sscFfcPayTable = {
   anyDigit: { multiplier: 3.6, desc: '不定位' },
   group3: { multiplier: 260, desc: '三星组三' },
   group6: { multiplier: 125, desc: '三星组六' },
-  dragon: { multiplier: 1.995, desc: '龙（万>个）' },
-  tiger: { multiplier: 1.995, desc: '虎（万<个）' },
-  tie: { multiplier: 9, desc: '和（万=个）' },
+  dragon: { multiplier: 1.99, desc: '龙（左球>右球）' },
+  tiger: { multiplier: 1.99, desc: '虎（左球<右球）' },
+  tie: { multiplier: 9, desc: '和（左球=右球）' },
   noNiu: { multiplier: 2.02, desc: '无牛' },
-  niu: { multiplier: 9.9, desc: '牛1~牛9、牛牛' },
+  niu: { multiplier: 9.22, desc: '牛1~牛9、牛牛' },
   niuSide: { multiplier: 1.98, desc: '牛大/小/单/双（无牛判输）' },
   shape_豹子: { multiplier: 75, desc: '前中后·豹子' },
   shape_顺子: { multiplier: 14.5, desc: '前中后·顺子' },
   shape_对子: { multiplier: 3.3, desc: '前中后·对子' },
-  shape_半顺: { multiplier: 2.51, desc: '前中后·半顺' },
-  shape_杂六: { multiplier: 3.01, desc: '前中后·杂六' },
+  shape_半顺: { multiplier: 2.5, desc: '前中后·半顺' },
+  shape_杂六: { multiplier: 3, desc: '前中后·杂六' },
 } as const;

@@ -9,7 +9,7 @@
  *   5. 查询（当前期 / 历史）
  */
 import {
-  Injectable, BadRequestException, NotFoundException, Logger,
+  Injectable, BadRequestException, NotFoundException, Logger, Inject, forwardRef, Optional,
 } from '@nestjs/common';
 import { createHash, randomBytes } from 'node:crypto';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -24,13 +24,19 @@ import { businessNo } from '../game-core/business-id';
 import { RoomChatService } from '../rooms/room-chat.service';
 import type { RoomChatPlayLine } from '../rooms/room-chat.types';
 import { formatLotteryPlayLabel } from './play-label';
+import { lotteryPrepSec } from './lottery-intervals';
+import { ConsoleControlService } from '../console/console-control.service';
+import { CONTROL_FIXED_CANDIDATE_TRIES, CONTROL_MIN_BET_COUNT } from '../console/control.constants';
+import { FlyDiskService } from '../console/fly-disk.service';
+import { FlyRebateService } from '../console/fly-rebate.service';
+import { RiskService } from '../risk/risk.service';
+import type { OwnerType } from '../points/points.service';
+import type { DrawResult, LotteryGameDef } from './lottery.types';
 
-/** 期号：
- *  - 赛车三房（bjsc / speed-racing / speed-boat）：正版短号风格，自 2024-01-01 起连续递增（约 6～7 位）
- *  - 其余彩票：上海日历 月日 + 当日序号（6 位），如 0722000285
+/** 期号：上海日历 月日 + 当日序号（6 位），如 0802000285；每日 00:00 重置。
+ *  赛车三房曾用连续短号，上线日切后清掉未下注的旧短号待开期。
  */
-const RACING_SHORT_ISSUE_GAMES = new Set(['bjsc', 'speed-racing', 'speed-boat']);
-const RACING_ISSUE_BASE_MS = Date.UTC(2024, 0, 1);
+const RACING_DAY_RESET_GAMES = new Set(['bjsc', 'speed-racing', 'speed-boat']);
 
 /** Asia/Shanghai 日历日切（MMDD + 当日序号） */
 function shanghaiDayParts(openAt: Date): { md: string; dayStartMs: number } {
@@ -50,12 +56,8 @@ function shanghaiDayParts(openAt: Date): { md: string; dayStartMs: number } {
   };
 }
 
-function genIssueNo(openAt: Date, intervalSec: number, gameCode?: string): string {
+function genIssueNo(openAt: Date, intervalSec: number, _gameCode?: string): string {
   const intervalMs = intervalSec * 1000;
-  if (gameCode && RACING_SHORT_ISSUE_GAMES.has(gameCode)) {
-    const n = Math.floor((openAt.getTime() - RACING_ISSUE_BASE_MS) / intervalMs) + 1;
-    return String(Math.max(1, n));
-  }
   const { md, dayStartMs } = shanghaiDayParts(openAt);
   const seq = Math.floor((openAt.getTime() - dayStartMs) / intervalMs) + 1;
   return `${md}${Math.max(1, seq).toString().padStart(6, '0')}`;
@@ -78,7 +80,19 @@ export class LotteryService {
     private registry: LotteryGameRegistry,
     private configCache: GameConfigCache,
     private roomChat: RoomChatService,
+    private risk: RiskService,
+    @Optional() @Inject(forwardRef(() => ConsoleControlService))
+    private control?: ConsoleControlService,
+    @Optional() private flyDisk?: FlyDiskService,
+    @Optional() private flyRebate?: FlyRebateService,
   ) {}
+
+  private async houseForPlayer(playerId: string) {
+    if (!this.flyDisk) {
+      return { type: 'PLATFORM' as OwnerType, id: PLATFORM_OWNER_ID, flying: false };
+    }
+    return this.flyDisk.resolveHouse(playerId);
+  }
 
   // ─── 期号管理 ─────────────────────────────────────────
 
@@ -94,40 +108,99 @@ export class LotteryService {
       include: { configs: { where: { active: true }, take: 1 } },
     });
     const activeConfig = game?.configs[0];
-    if (!game || !activeConfig) return;
+    // 下架 / 维护不再预创期号
+    if (!game || game.status !== 'ONLINE' || !activeConfig) return;
 
-    // 赛车短号上线：清掉未下注的旧长号待开期，避免长短号并存
-    if (RACING_SHORT_ISSUE_GAMES.has(gameCode)) {
+    const prepSec = lotteryPrepSec(gameCode);
+    const prepMs = prepSec * 1000;
+    const intervalMs = intervalSec * 1000;
+
+    // 赛车日切：期号必须是 MMDD+6 位（10 位）；旧连续短号待开期一律清掉重铺
+    let racingStaleCleared = false;
+    if (RACING_DAY_RESET_GAMES.has(gameCode)) {
       const pending = await this.prisma.lotteryIssue.findMany({
         where: { gameId: game.id, status: { in: ['PENDING', 'LOCKED'] } },
         select: { id: true, issueNo: true, _count: { select: { bets: true } } },
       });
+      const dayIssue = /^\d{10}$/;
       const staleIds = pending
-        .filter((r) => r.issueNo.length >= 10 && r._count.bets === 0)
+        .filter((r) => !dayIssue.test(r.issueNo) && r._count.bets === 0)
         .map((r) => r.id);
       if (staleIds.length) {
         await this.prisma.lotteryIssue.deleteMany({ where: { id: { in: staleIds } } });
+        racingStaleCleared = true;
+        this.logger.warn(
+          `${gameCode}: cleared ${staleIds.length} legacy short-issue pending rows for day-reset`,
+        );
       }
     }
 
-    // 找最晚一期的 openAt
-    const last = await this.prisma.lotteryIssue.findFirst({
-      where: { gameId: game.id, status: { in: ['PENDING', 'LOCKED'] } },
-      orderBy: { openAt: 'desc' },
-    });
+    // 周期/封盘窗变更：清掉未下注待开期，避免旧间隔/旧 lock 窗口残留
+    {
+      const pending = await this.prisma.lotteryIssue.findMany({
+        where: { gameId: game.id, status: { in: ['PENDING', 'LOCKED'] } },
+        select: {
+          id: true,
+          openAt: true,
+          lockAt: true,
+          _count: { select: { bets: true } },
+        },
+        orderBy: { openAt: 'asc' },
+      });
+      let rebuild = false;
+      if (pending.length >= 2) {
+        const gap = pending[1].openAt.getTime() - pending[0].openAt.getTime();
+        if (Math.abs(gap - intervalMs) > 2000) rebuild = true;
+      }
+      if (!rebuild) {
+        for (const row of pending) {
+          const wantLock = row.openAt.getTime() - prepMs;
+          if (Math.abs(row.lockAt.getTime() - wantLock) > 1000) {
+            rebuild = true;
+            break;
+          }
+        }
+      }
+      if (rebuild) {
+        const emptyIds = pending.filter((r) => r._count.bets === 0).map((r) => r.id);
+        if (emptyIds.length) {
+          await this.prisma.lotteryIssue.deleteMany({ where: { id: { in: emptyIds } } });
+        }
+      } else {
+        for (const row of pending) {
+          if (row._count.bets > 0) continue;
+          const wantLock = new Date(row.openAt.getTime() - prepMs);
+          if (Math.abs(row.lockAt.getTime() - wantLock.getTime()) > 500) {
+            await this.prisma.lotteryIssue.update({
+              where: { id: row.id },
+              data: { lockAt: wantLock },
+            });
+          }
+        }
+      }
+    }
+
+    // 找最晚一期的 openAt；清过旧短号后必须从对齐墙钟重铺，勿接在旧连续号时间轴后面
+    const last = racingStaleCleared
+      ? null
+      : await this.prisma.lotteryIssue.findFirst({
+          where: { gameId: game.id, status: { in: ['PENDING', 'LOCKED'] } },
+          orderBy: { openAt: 'desc' },
+        });
 
     let nextOpen = last
       ? new Date(last.openAt.getTime() + intervalSec * 1000)
       : this._nextAlignedTime(intervalSec);
 
     for (let i = 0; i < ahead; i++) {
-      const lockAt = new Date(nextOpen.getTime() - 10_000); // 封盘提前 10s
+      const lockAt = new Date(nextOpen.getTime() - prepMs);
       const issueNo = genIssueNo(nextOpen, intervalSec, gameCode);
       const { serverSeed, serverSeedHash } = genSeedPair();
 
       await this.prisma.lotteryIssue.upsert({
         where: { gameId_issueNo: { gameId: game.id, issueNo } },
-        update: {},
+        /* 已存在的待开期也刷新 lockAt，避免封盘窗变更后仍沿用旧 lock */
+        update: { lockAt },
         create: {
           gameId: game.id, configVer: activeConfig.version, issueNo, status: 'PENDING',
           openAt: nextOpen, lockAt, serverSeed, serverSeedHash,
@@ -199,12 +272,20 @@ export class LotteryService {
     });
     if (!config) return;
 
-    const drawResult = gameDef.draw(
-      issue.serverSeed!, 'server', 1,
+    const payTable = config.payTable as unknown as LotteryPayTable;
+    const pendingBets = await this.prisma.bet.findMany({
+      where: { issueId: issue.id, status: 'PENDING' },
+      select: { amount: true, payload: true, playerId: true },
+    });
+    const drawResult = await this.pickDrawWithControl(
+      issue.game.code,
+      issue.serverSeed!,
+      gameDef,
+      payTable,
+      pendingBets,
     );
 
-    const payTable = config.payTable as unknown as LotteryPayTable;
-
+    const bigWins: Array<{ betId: string; playerId: string; amount: number; payout: number }> = [];
     // 在事务内结算所有注单
     await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       // CAS 抢占：事务第一条语句拿下期号行锁并推进状态，
@@ -229,7 +310,12 @@ export class LotteryService {
         const payload = bet.payload as unknown as LotteryBetPayload;
         const amt = asMoney(bet.amount);
         const hitKey = gameDef.judge(payload, drawResult, payTable);
-        const odds = hitKey ? (payTable[hitKey]?.multiplier ?? 0) : 0;
+        /* 和局退本：即使库内 payTable 尚未写入 refund，也按 1 倍退本 */
+        const odds = hitKey
+          ? (hitKey === 'refund'
+              ? (payTable[hitKey]?.multiplier ?? 1)
+              : (payTable[hitKey]?.multiplier ?? 0))
+          : 0;
         const raw = hitKey ? roundMoney(amt * odds) : 0;
         const { win: payout, capped } = capWin(amt, raw);
         if (capped) {
@@ -255,14 +341,24 @@ export class LotteryService {
         if (settled.count === 0) continue;
 
         settledFlow = roundMoney(settledFlow + amt);
+        if (!isRefund && payout >= Math.max(amt * 50, 100_000)) {
+          bigWins.push({ betId: bet.id, playerId: bet.playerId, amount: amt, payout });
+        }
+
+        const flyMeta = (bet.payload as { fly?: {
+          type?: string; id?: string; flying?: boolean; agentUserId?: string; roomId?: string;
+        } } | null)?.fly;
+        const houseType = (flyMeta?.type as OwnerType) || 'PLATFORM';
+        const houseId = flyMeta?.id || PLATFORM_OWNER_ID;
+        const flying = !!flyMeta?.flying;
 
         if (won) {
           await this.points.transferInTx(
             tx,
             {
-              type: 'PLATFORM',
-              id: PLATFORM_OWNER_ID,
-              idempotencyKey: `win_plat_${bet.id}`,
+              type: houseType,
+              id: houseId,
+              idempotencyKey: `win_house_${bet.id}`,
             },
             {
               type: 'PLAYER',
@@ -273,6 +369,20 @@ export class LotteryService {
             payout,
             { bizType: 'WIN', refType: 'issue', refId: issue.id },
           );
+        }
+
+        if (this.flyDisk && !isRefund) {
+          await this.flyDisk.applyFlyLossInTx(tx, flyMeta?.agentUserId, flying, amt, payout);
+        }
+        if (this.flyRebate && !isRefund) {
+          await this.flyRebate.payAgentShareInTx(tx, {
+            betId: bet.id,
+            playerId: bet.playerId,
+            validFlow: amt,
+            flying,
+            roomId: flyMeta?.roomId,
+            agentUserId: flyMeta?.agentUserId,
+          });
         }
 
         // 多级代理佣金（idemScope 用 bet.id 保证每注独立分润）
@@ -295,6 +405,33 @@ export class LotteryService {
       await this.roomChat.fanOutIssueDrawn(issue.game.code, issue.issueNo, nums);
     } catch {
       /* 聊天失败不影响开奖 */
+    }
+
+    for (const w of bigWins) {
+      await this.risk.record({
+        type: 'BIG_WIN',
+        level: w.payout >= 1_000_000 ? 'CRITICAL' : 'WARN',
+        targetId: w.playerId,
+        fingerprint: `bw:lottery:${w.betId}`,
+        dedupeMs: 24 * 3600_000,
+        detail: {
+          playerId: w.playerId,
+          totalAmount: w.amount,
+          totalPayout: w.payout,
+          gameCode: issue.game.code,
+          issueId: issue.id,
+          issueNo: issue.issueNo,
+          betId: w.betId,
+          summary: `${issue.game.code} 派彩 ${w.payout}（下注 ${w.amount}）`,
+        },
+      });
+    }
+
+    /* 控奖目标回血金额：结算后检查是否达成并自动结束 */
+    try {
+      if (this.control) await this.control.refreshGoalExhaustion(issue.game.code);
+    } catch {
+      /* 不影响开奖 */
     }
   }
 
@@ -399,7 +536,17 @@ export class LotteryService {
 
       for (let i = 0; i < bets.length; i++) {
         const b = bets[i]!;
-        const payload: LotteryBetPayload = { betType: b.betType, value: b.betValue };
+        const house = await this.houseForPlayer(playerId);
+        const { P } = this.flyDisk
+          ? await this.flyDisk.resolvePlayerRate(playerId, house.roomId)
+          : { P: 0.018 };
+        const payload: LotteryBetPayload & { fly?: object } = {
+          betType: b.betType, value: b.betValue,
+          fly: {
+            type: house.type, id: house.id, flying: house.flying,
+            roomId: house.roomId, agentUserId: house.agentUserId, P,
+          },
+        };
         const bet = await tx.bet.create({
           data: {
             betNo: businessNo('LB'),
@@ -422,9 +569,9 @@ export class LotteryService {
             idempotencyKey: `lottery_bet_player_${bet.id}`,
           },
           {
-            type: 'PLATFORM',
-            id: PLATFORM_OWNER_ID,
-            idempotencyKey: `lottery_bet_plat_${bet.id}`,
+            type: (payload as { fly?: { type: OwnerType; id: string } }).fly?.type || 'PLATFORM',
+            id: (payload as { fly?: { type: OwnerType; id: string } }).fly?.id || PLATFORM_OWNER_ID,
+            idempotencyKey: `lottery_bet_house_${bet.id}`,
           },
           b.amount,
           { bizType: 'BET', refType: 'issue', refId: issue.id },
@@ -629,13 +776,29 @@ export class LotteryService {
     return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       await this.lockIssueForBet(tx, issue.id);
 
+      const house = await this.houseForPlayer(playerId);
+      const { P } = this.flyDisk
+        ? await this.flyDisk.resolvePlayerRate(playerId, house.roomId)
+        : { P: 0.018 };
+      const payloadWithFly = {
+        ...payload,
+        fly: {
+          type: house.type,
+          id: house.id,
+          flying: house.flying,
+          roomId: house.roomId,
+          agentUserId: house.agentUserId,
+          P,
+        },
+      };
+
       const bet = await tx.bet.create({
         data: {
           betNo: businessNo('LB'),
           clientRequestId,
           playerId, gameId: game.id,
           issueId: issue.id,
-          betType, payload: payload as never,
+          betType, payload: payloadWithFly as never,
           amount, status: 'PENDING',
         },
       });
@@ -649,9 +812,9 @@ export class LotteryService {
           idempotencyKey: `lottery_bet_player_${bet.id}`,
         },
         {
-          type: 'PLATFORM',
-          id: PLATFORM_OWNER_ID,
-          idempotencyKey: `lottery_bet_plat_${bet.id}`,
+          type: house.type,
+          id: house.id,
+          idempotencyKey: `lottery_bet_house_${bet.id}`,
         },
         amount,
         { bizType: 'BET', refType: 'issue', refId: issue.id },
@@ -715,12 +878,13 @@ export class LotteryService {
         });
         if (claimed.count === 0) continue;
 
+        const cFly = (bet.payload as { fly?: { type?: OwnerType; id?: string } } | null)?.fly;
         await this.points.transferInTx(
           tx,
           {
-            type: 'PLATFORM',
-            id: PLATFORM_OWNER_ID,
-            idempotencyKey: `lottery_cancel_plat_${bet.id}`,
+            type: cFly?.type || 'PLATFORM',
+            id: cFly?.id || PLATFORM_OWNER_ID,
+            idempotencyKey: `lottery_cancel_house_${bet.id}`,
           },
           {
             type: 'PLAYER',
@@ -742,6 +906,91 @@ export class LotteryService {
 
       return { issueNo: issue.issueNo, count, refunded };
     });
+  }
+
+
+  /**
+   * 控奖：按「单房+单游戏+本局总下注」庄家留存比例，在 N 个候选开奖中
+   * 挑「该房派彩最接近 总下注×(1-留存%)」的结果。
+   * 该房该局无注单则跳过；仅一笔也控。多房同时控时按各房误差×下注额加权折中。
+   */
+  private async pickDrawWithControl(
+    gameCode: string,
+    serverSeed: string,
+    gameDef: LotteryGameDef,
+    payTable: LotteryPayTable,
+    pendingBets: { amount: unknown; payload: unknown; playerId?: string }[],
+  ): Promise<DrawResult> {
+    const policies = this.control
+      ? await this.control.getActiveHoldPolicies(gameCode)
+      : [];
+    const tries = policies.length ? CONTROL_FIXED_CANDIDATE_TRIES : 1;
+
+    type RoomBucket = { roomId: string; bets: typeof pendingBets; stake: number };
+    const byRoom = new Map<string, RoomBucket>();
+    for (const b of pendingBets) {
+      const fly = (b.payload as { fly?: { roomId?: string } } | null)?.fly;
+      const rid = fly?.roomId;
+      if (!rid) continue;
+      let bucket = byRoom.get(rid);
+      if (!bucket) {
+        bucket = { roomId: rid, bets: [], stake: 0 };
+        byRoom.set(rid, bucket);
+      }
+      bucket.bets.push(b);
+      bucket.stake += asMoney(b.amount);
+    }
+
+    const active = policies
+      .map((p) => {
+        const bucket = byRoom.get(p.roomId);
+        if (!bucket || bucket.bets.length < CONTROL_MIN_BET_COUNT) return null;
+        const targetPayout = roundMoney(bucket.stake * (1 - p.holdRatio));
+        return { policy: p, bucket, targetPayout };
+      })
+      .filter((x): x is NonNullable<typeof x> => !!x);
+
+    if (!active.length) {
+      return gameDef.draw(serverSeed, 'server', 1);
+    }
+
+    let best = gameDef.draw(serverSeed, 'server', 1);
+    let bestScore = Number.POSITIVE_INFINITY;
+    for (let nonce = 1; nonce <= tries; nonce++) {
+      const cand = nonce === 1 ? best : gameDef.draw(serverSeed, 'server', nonce);
+      let score = 0;
+      for (const a of active) {
+        const pay = this.estimatePayout(gameDef, payTable, cand, a.bucket.bets);
+        const err = Math.abs(pay - a.targetPayout);
+        score += err * Math.max(a.bucket.stake, 1);
+      }
+      if (score < bestScore) {
+        bestScore = score;
+        best = cand;
+      }
+    }
+
+    this.logger.log(
+      `control hold game=${gameCode} rooms=${active.length} tries=${tries} score~=${Math.round(bestScore)}`,
+    );
+    return best;
+  }
+
+  private estimatePayout(
+    gameDef: LotteryGameDef,
+    payTable: LotteryPayTable,
+    draw: DrawResult,
+    pendingBets: { amount: unknown; payload: unknown }[],
+  ) {
+    let total = 0;
+    for (const b of pendingBets) {
+      const payload = (b.payload || {}) as LotteryBetPayload;
+      const hit = gameDef.judge(payload, draw, payTable);
+      if (!hit) continue;
+      const mult = payTable[hit]?.multiplier ?? 0;
+      total += asMoney(b.amount) * mult;
+    }
+    return total;
   }
 
   // ─── 查询 ─────────────────────────────────────────────
