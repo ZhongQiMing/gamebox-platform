@@ -2,9 +2,6 @@ import http from './http'
 import type {
   BetHistoryRowDTO,
   GameItemDTO,
-  MahjongActiveSessionDTO,
-  MahjongSpinRequestDTO,
-  MahjongSpinResultDTO,
 } from '@gamebox/shared'
 
 export type GameItem = GameItemDTO
@@ -91,6 +88,20 @@ export const gamesApi = {
       clientRequestId,
     }),
 
+  /** 查询可猜大小的当局赢分（从历史返回时恢复 UI） */
+  fruitPendingGamble: () =>
+    http.get<
+      { pendingGambleAmount: number; balance: number; roundId?: string },
+      { pendingGambleAmount: number; balance: number; roundId?: string }
+    >('/bet/fruit/pending-gamble'),
+
+  /** 退币/放弃猜大小：清服务器 pendingGambleAmount */
+  fruitAbandonGamble: () =>
+    http.post<{ ok: boolean; balance: number }, { ok: boolean; balance: number }>(
+      '/bet/fruit/abandon-gamble',
+      {},
+    ),
+
   bcbmSpin: (
     bets: Record<string, number>,
     clientRequestId: string,
@@ -102,14 +113,6 @@ export const gamesApi = {
       clientRequestId,
       clientSeed,
     }),
-
-  mahjongSpin: (request: MahjongSpinRequestDTO) =>
-    http.post<MahjongSpinResultDTO, MahjongSpinResultDTO>('/bet/mahjong/spin', request),
-
-  mahjongActiveSession: () =>
-    http.get<MahjongActiveSessionDTO | null, MahjongActiveSessionDTO | null>(
-      '/bet/mahjong/session',
-    ),
 
   betHistory: () =>
     http.get<BetHistoryRowDTO[], BetHistoryRowDTO[]>('/bet/history'),

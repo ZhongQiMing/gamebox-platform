@@ -23,25 +23,25 @@ import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { useWalletStore } from '@/stores/wallet'
 import { useRoomStore } from '@/stores/room'
+import { gamesApi } from '@/api/games'
 import { lotteryApi } from '@/api/lottery'
 import { roomsApi } from '@/api/rooms'
 import { rechargeApi } from '@/api/recharge'
 import http from '@/api/http'
+import { useToast } from '@/composables/useToast'
 
 const ASSET_GAMES: Record<string, string> = {
-  bjsc: '/games-assets/bjsc/index.html?v=140',
-  ssc: '/games-assets/ssc/index.html?v=157',
-  ffc: '/games-assets/ffc/index.html?v=149',
-  'speed-racing': '/games-assets/speed-racing/index.html?v=201',
-  'speed-boat': '/games-assets/speed-boat/index.html?v=125',
-  kuai3: '/games-assets/kuai3/index.html?v=140',
-  lhc: '/games-assets/lhc/index.html?v=141',
-  zhajinhua: '/games-assets/zhajinhua/index.html?v=317',
-  douniu: '/games-assets/douniu/index.html?v=142',
-  baccarat: '/games-assets/baccarat/index.html?v=37',
-  longhu: '/games-assets/longhu/index.html?v=33',
-  mahjong: '/games-assets/mahjong/index.html',
-  'slots-mahjong': '/games-assets/mahjong/index.html',
+  bjsc: '/games-assets/bjsc/index.html?v=141',
+  ssc: '/games-assets/ssc/index.html?v=158',
+  ffc: '/games-assets/ffc/index.html?v=150',
+  'speed-racing': '/games-assets/speed-racing/index.html?v=204',
+  'speed-boat': '/games-assets/speed-boat/index.html?v=127',
+  kuai3: '/games-assets/kuai3/index.html?v=141',
+  lhc: '/games-assets/lhc/index.html?v=176',
+  zhajinhua: '/games-assets/zhajinhua/index.html?v=338',
+  douniu: '/games-assets/douniu/index.html?v=158',
+  baccarat: '/games-assets/baccarat/index.html?v=49',
+  longhu: '/games-assets/longhu/index.html?v=47',
 }
 
 /** H5 gameCode → 服务端 lottery/table code */
@@ -53,6 +53,7 @@ const AVATAR_FALLBACK = '/images/avatars/001.jpg'
 
 const route = useRoute()
 const router = useRouter()
+const { toast } = useToast()
 const userStore = useUserStore()
 const walletStore = useWalletStore()
 const roomStore = useRoomStore()
@@ -96,8 +97,6 @@ const gameTitle = computed(() => {
     douniu: '斗牛',
     baccarat: '百家乐',
     longhu: '龙虎斗',
-    mahjong: '麻将胡了',
-    'slots-mahjong': '麻将胡了',
   }
   return titles[gameCode.value] || '游戏'
 })
@@ -702,7 +701,21 @@ async function onGameMessage(ev: MessageEvent) {
 
 onMounted(async () => {
   if (!ASSET_GAMES[gameCode.value]) {
-    router.back()
+    router.replace('/lobby')
+    return
+  }
+  const serverCode = SERVER_GAME_CODE[gameCode.value] || gameCode.value
+  try {
+    const list = await gamesApi.list()
+    const entry = list.find((g) => g.code === serverCode)
+    if (!entry || entry.status !== 'ONLINE') {
+      toast(entry?.status === 'MAINTENANCE' ? '该游戏维护中，暂不可进入' : '该游戏已下架')
+      router.replace('/lobby')
+      return
+    }
+  } catch {
+    toast('无法确认游戏状态，请稍后重试')
+    router.replace('/lobby')
     return
   }
   try {
