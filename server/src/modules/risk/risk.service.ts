@@ -1,12 +1,17 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import type { RiskLevel } from './risk.types';
 
 export interface RiskEventInput {
   type: string;
-  level?: 'INFO' | 'WARN' | 'CRITICAL';
+  level?: RiskLevel;
   targetId?: string;
   detail?: Record<string, unknown>;
+  /** 去重指纹；同 type+target+fingerprint 在窗口内只记一次 */
+  fingerprint?: string;
+  /** 去重窗口毫秒，默认 6 小时 */
+  dedupeMs?: number;
 }
 
 @Injectable()
@@ -28,12 +33,34 @@ export class RiskService {
     tx: Prisma.TransactionClient | PrismaService,
     input: RiskEventInput,
   ): Promise<void> {
+    if (input.fingerprint && input.targetId) {
+      const since = new Date(Date.now() - (input.dedupeMs ?? 6 * 3600_000));
+      const exists = await tx.riskEvent.findFirst({
+        where: {
+          type: input.type,
+          targetId: input.targetId,
+          createdAt: { gte: since },
+          detail: {
+            path: ['fingerprint'],
+            equals: input.fingerprint,
+          },
+        },
+        select: { id: true },
+      });
+      if (exists) return;
+    }
+
+    const detail = {
+      ...(input.detail ?? {}),
+      ...(input.fingerprint ? { fingerprint: input.fingerprint } : {}),
+    };
+
     await tx.riskEvent.create({
       data: {
         type: input.type,
         level: input.level ?? 'INFO',
         targetId: input.targetId,
-        detail: input.detail as Prisma.InputJsonValue | undefined,
+        detail: detail as Prisma.InputJsonValue,
       },
     });
   }
