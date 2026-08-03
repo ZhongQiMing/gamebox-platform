@@ -1,10 +1,11 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { RebateService } from './rebate.service';
 import { RebateController } from './rebate.controller';
 import { PointsModule } from '../points/points.module';
+import { ConsoleModule } from '../console/console.module';
 
 @Module({
-  imports: [PointsModule],
+  imports: [PointsModule, forwardRef(() => ConsoleModule)],
   providers: [RebateService],
   controllers: [RebateController],
   exports: [RebateService],

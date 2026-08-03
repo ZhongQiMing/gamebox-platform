@@ -9,10 +9,12 @@ export const CATEGORY_REBATE_RATE: Record<GameCategory, number> = {
   TABLE: 0.005,
 };
 
-/** 个别游戏覆盖（0 = 不参与回水） */
-export const GAME_REBATE_OVERRIDES: Record<string, number> = {
-  'fruit-machine': 0,
-};
+/**
+ * 个别游戏覆盖（0 = 不参与回水）。
+ * 水果机已参与：走 ARCADE 默认 0.5%（与奔驰宝马等同）；聊天室彩票为 LOTTERY 0.8%。
+ * 开奖押注写 Bet.validFlow；猜大小 validFlow=0（零边缘，不计回水）。
+ */
+export const GAME_REBATE_OVERRIDES: Record<string, number> = {};
 
 export function resolveRebateRate(
   gameCode: string,

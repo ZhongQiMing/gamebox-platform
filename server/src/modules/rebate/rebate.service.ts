@@ -3,18 +3,20 @@ import { Cron } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
 import { asMoney, formatMoney, roundMoney } from '@gamebox/shared';
 import { PrismaService } from '../../prisma/prisma.service';
-import { PLATFORM_OWNER_ID, PointsService } from '../points/points.service';
+import { PLATFORM_OWNER_ID, PointsService, type OwnerType } from '../points/points.service';
+import { FlyDiskService } from '../console/fly-disk.service';
 import {
   calcRebateFromFlows,
   resolveRebateRate,
   type GameRebateFlow,
 } from './rebate-rates';
+import { shanghaiRangeBounds, type TimeRangeKey } from '../../common/shanghai-range';
 
 const TZ_OFFSET_MS = 8 * 3600 * 1000;
 const SCAN_DAYS = 30;
 const RATE_CACHE_MS = 5 * 60 * 1000;
 
-type RangeKey = 'today' | 'yesterday' | 'thisweek' | 'lastweek' | 'thismonth';
+type RangeKey = TimeRangeKey;
 
 function shanghaiParts(d = new Date()) {
   const t = d.getTime() + TZ_OFFSET_MS;
@@ -59,27 +61,6 @@ function dateAtUtcMidnight(key: string) {
   return new Date(Date.UTC(y, m - 1, d));
 }
 
-function rangeBounds(key: RangeKey): [number, number] {
-  const sh = shanghaiParts();
-  const DAY = 86400000;
-  const today0 = Date.UTC(sh.y, sh.m - 1, sh.day) - TZ_OFFSET_MS;
-  const weekday = (new Date(today0 + TZ_OFFSET_MS).getUTCDay() + 6) % 7;
-  const week0 = today0 - weekday * DAY;
-  const month0 = Date.UTC(sh.y, sh.m - 1, 1) - TZ_OFFSET_MS;
-  switch (key) {
-    case 'today':
-      return [today0, today0 + DAY];
-    case 'yesterday':
-      return [today0 - DAY, today0];
-    case 'thisweek':
-      return [week0, week0 + 7 * DAY];
-    case 'lastweek':
-      return [week0 - 7 * DAY, week0];
-    case 'thismonth':
-      return [month0, Date.now() + DAY];
-  }
-}
-
 interface UnclaimedSlice {
   date: string;
   validFlow: number;
@@ -98,6 +79,7 @@ export class RebateService {
   constructor(
     private prisma: PrismaService,
     private points: PointsService,
+    private flyDisk: FlyDiskService,
   ) {}
 
   private async ensureRateMap() {
@@ -141,27 +123,29 @@ export class RebateService {
           validFlow: { gt: 0 },
           settledAt: { gte: rangeStart, lt: rangeEnd },
         },
-        select: { validFlow: true, gameId: true, settledAt: true },
+        select: { validFlow: true, gameId: true, settledAt: true, payload: true },
       }),
     ]);
 
-    const lastPeriodByDate = new Map<string, Date>();
+    const { P: defaultP } = await this.flyDisk.resolvePlayerRate(playerId);
+
+    /* 一日一领：已有结算的日期整日不再进待领（避免领完仍显示、点领取却报「已领取」） */
+    const claimedDates = new Set<string>();
     for (const s of settlements) {
-      const key = dateKeyFromParts({
-        y: s.rebateDate.getUTCFullYear(),
-        m: s.rebateDate.getUTCMonth() + 1,
-        day: s.rebateDate.getUTCDate(),
-      });
-      const prev = lastPeriodByDate.get(key);
-      if (!prev || s.periodEnd > prev) lastPeriodByDate.set(key, s.periodEnd);
+      claimedDates.add(
+        dateKeyFromParts({
+          y: s.rebateDate.getUTCFullYear(),
+          m: s.rebateDate.getUTCMonth() + 1,
+          day: s.rebateDate.getUTCDate(),
+        }),
+      );
     }
 
     const flowByDateGame = new Map<string, Map<string, number>>();
     for (const b of bets) {
       if (!b.settledAt) continue;
       const dateKey = dateKeyFromDate(b.settledAt);
-      const cutoff = lastPeriodByDate.get(dateKey);
-      if (cutoff && b.settledAt <= cutoff) continue;
+      if (claimedDates.has(dateKey)) continue;
 
       let gameMap = flowByDateGame.get(dateKey);
       if (!gameMap) {
@@ -179,7 +163,7 @@ export class RebateService {
           gameCode: meta?.code ?? gameId,
           gameName: meta?.name ?? '未知游戏',
           validFlow,
-          rate: meta?.rate ?? 0,
+          rate: defaultP,
         };
       });
       const calc = calcRebateFromFlows(items);
@@ -223,13 +207,14 @@ export class RebateService {
           },
         });
 
+        const payer = await this.resolveRebatePayer(playerId, dateKey);
         const { in: ledger } = await this.points.transferInTx(
           tx,
           {
-            type: 'PLATFORM',
-            id: PLATFORM_OWNER_ID,
-            remark: `${dateKey} 回水`,
-            idempotencyKey: `plat_${idem}`,
+            type: payer.type,
+            id: payer.id,
+            remark: `${dateKey} 回水出资`,
+            idempotencyKey: `payer_${idem}`,
           },
           {
             type: 'PLAYER',
@@ -271,31 +256,29 @@ export class RebateService {
       games: [] as GameRebateFlow[],
     };
 
-    const [from, to] = rangeBounds(range);
+    const [from, to] = shanghaiRangeBounds(range);
     const historyRows = await this.prisma.dailyRebateSettlement.findMany({
-      where: { playerId },
+      where: {
+        playerId,
+        claimedAt: { gte: from, lt: to },
+      },
       orderBy: { claimedAt: 'desc' },
-      take: 100,
+      take: 200,
     });
 
-    const history = historyRows
-      .filter((r) => {
-        const t = r.claimedAt.getTime();
-        return t >= from && t < to;
-      })
-      .map((r) => ({
-        id: r.id,
-        date: dateKeyFromParts({
-          y: r.rebateDate.getUTCFullYear(),
-          m: r.rebateDate.getUTCMonth() + 1,
-          day: r.rebateDate.getUTCDate(),
-        }),
-        validFlow: asMoney(r.validFlow),
-        amount: asMoney(r.amount),
-        claimType: r.claimType as 'AUTO' | 'MANUAL',
-        claimedAt: r.claimedAt.toISOString(),
-        games: (r.gameDetail as GameRebateFlow[] | null) ?? [],
-      }));
+    const history = historyRows.map((r) => ({
+      id: r.id,
+      date: dateKeyFromParts({
+        y: r.rebateDate.getUTCFullYear(),
+        m: r.rebateDate.getUTCMonth() + 1,
+        day: r.rebateDate.getUTCDate(),
+      }),
+      validFlow: asMoney(r.validFlow),
+      amount: asMoney(r.amount),
+      claimType: r.claimType as 'AUTO' | 'MANUAL',
+      claimedAt: r.claimedAt.toISOString(),
+      games: (r.gameDetail as GameRebateFlow[] | null) ?? [],
+    }));
 
     return {
       claimableTotal,
@@ -353,5 +336,33 @@ export class RebateService {
       }
     }
     this.log.log(`daily rebate ${yesterdayKey}: settled ${ok}/${players.length} players`);
+  }
+
+  /** 领取出资方：当日若有飞盘注单则从 ROOM 出，否则从房间代理出 */
+  private async resolveRebatePayer(
+    playerId: string,
+    dateKey: string,
+  ): Promise<{ type: OwnerType; id: string }> {
+    const [from, to] = boundsForDateKey(dateKey);
+    const bets = await this.prisma.bet.findMany({
+      where: {
+        playerId,
+        status: { in: ['WON', 'LOST'] },
+        validFlow: { gt: 0 },
+        settledAt: { gte: from, lt: to },
+      },
+      select: { payload: true },
+      take: 500,
+    });
+    for (const b of bets) {
+      const fly = (b.payload as {
+        fly?: { flying?: boolean; roomId?: string };
+      } | null)?.fly;
+      if (fly?.flying && fly.roomId) return { type: 'ROOM', id: fly.roomId };
+    }
+    const house = await this.flyDisk.resolveHouse(playerId);
+    if (house.agentUserId) return { type: 'AGENT', id: house.agentUserId };
+    if (house.type !== 'PLATFORM') return { type: house.type, id: house.id };
+    return { type: 'PLATFORM', id: PLATFORM_OWNER_ID };
   }
 }
