@@ -7,6 +7,7 @@ import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
+import { requestIdMiddleware } from './common/middleware/request-id.middleware';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
@@ -14,6 +15,8 @@ async function bootstrap() {
   const isProd = (config.get<string>('NODE_ENV') ?? 'development') === 'production';
 
   app.useStaticAssets(join(process.cwd(), 'uploads'), { prefix: '/uploads/' });
+
+  app.use(requestIdMiddleware);
 
   app.use(
     helmet({

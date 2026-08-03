@@ -24,7 +24,7 @@ import { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
-import { PointsService, PLATFORM_OWNER_ID } from '../points/points.service';
+import { PointsService, PLATFORM_OWNER_ID, type OwnerType } from '../points/points.service';
 import { CommissionService } from '../agents/commission.service';
 import { GameConfigCache } from '../game-core/game-config.cache';
 import { genServerSeed } from '../game-core/fairness.util';
@@ -71,12 +71,21 @@ import {
 import type { TableHistoryItem } from './table.types';
 import { ConsoleControlService } from '../console/console-control.service';
 import { FlyDiskService } from '../console/fly-disk.service';
+import { FlyRebateService } from '../console/fly-rebate.service';
 import {
   CONTROL_FIXED_CANDIDATE_TRIES,
   CONTROL_MIN_BET_COUNT,
 } from '../console/control.constants';
 import { holdScore, holdTargetPayout } from '../console/control-pick.util';
 import type { TableOutcome } from './table-rules';
+
+type BetFlyMeta = {
+  type: OwnerType;
+  id: string;
+  flying: boolean;
+  roomId?: string;
+  agentUserId?: string;
+};
 
 /** 覆盖 settle + 最长 draw 窗口，transition 内还会续期 */
 const LEADER_TTL_MS = 30_000;
@@ -108,7 +117,39 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
     @Optional() @Inject(forwardRef(() => ConsoleControlService))
     private control?: ConsoleControlService,
     @Optional() private flyDisk?: FlyDiskService,
+    @Optional() private flyRebate?: FlyRebateService,
   ) {}
+
+  /** 注单 payload 上的飞盘对手盘；缺省回退平台池 */
+  private flyFromBet(bet: { payload?: unknown }): BetFlyMeta {
+    const fly = (bet.payload as { fly?: Partial<BetFlyMeta> } | null)?.fly;
+    return {
+      type: (fly?.type as OwnerType) || 'PLATFORM',
+      id: fly?.id || PLATFORM_OWNER_ID,
+      flying: !!fly?.flying,
+      roomId: fly?.roomId,
+      agentUserId: fly?.agentUserId,
+    };
+  }
+
+  /**
+   * 派彩/退款用的真实对手盘。
+   * 修复前下注写死 PLATFORM（幂等键 table_bet_plat_*），即使 payload.fly 写了 ROOM/AGENT，
+   * 钱仍在平台池——必须原路退/派，且不再动飞盘占用。
+   */
+  private async resolveBetHouseInTx(
+    tx: Prisma.TransactionClient,
+    bet: { id: string; payload?: unknown },
+  ): Promise<BetFlyMeta> {
+    const legacy = await tx.pointsLedger.findUnique({
+      where: { idempotencyKey: `table_bet_plat_${bet.id}` },
+      select: { id: true },
+    });
+    if (legacy) {
+      return { type: 'PLATFORM', id: PLATFORM_OWNER_ID, flying: false };
+    }
+    return this.flyFromBet(bet);
+  }
 
   async onModuleInit() {
     await this.redis.subscribe(TABLE_BROADCAST_CHANNEL, (message) => {
@@ -429,20 +470,21 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  /** 单注退款：平台池 → 玩家（加锁顺序与派彩一致） */
+  /** 单注退款：原对手盘（ROOM/AGENT/PLATFORM）→ 玩家 */
   private async refundOneBetInTx(
     tx: Prisma.TransactionClient,
-    bet: { id: string; playerId: string; amount: number },
+    bet: { id: string; playerId: string; amount: number; payload?: unknown },
     roundId: string,
     reason: string,
   ) {
+    const house = await this.resolveBetHouseInTx(tx, bet);
     await this.points.transferInTx(
       tx,
       {
-        type: 'PLATFORM',
-        id: PLATFORM_OWNER_ID,
+        type: house.type,
+        id: house.id,
         remark: reason,
-        idempotencyKey: `table_refund_plat_${bet.id}`,
+        idempotencyKey: `table_refund_house_${bet.id}`,
       },
       {
         type: 'PLAYER',
@@ -527,16 +569,18 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
             bigWins.push({ betId: bet.id, playerId: bet.playerId, amount: amt, payout });
           }
 
+          const house = await this.resolveBetHouseInTx(tx, bet);
+
           if (payout > 0) {
             const resultTag = String(outcome.result || outcome.winner || '');
             const tag = `${room.gameName} ${resultTag}${refundOnly ? ' 退本' : ''}`;
             await this.points.transferInTx(
               tx,
               {
-                type: 'PLATFORM',
-                id: PLATFORM_OWNER_ID,
+                type: house.type,
+                id: house.id,
                 remark: `${tag} 派彩`,
-                idempotencyKey: `table_win_plat_${bet.id}`,
+                idempotencyKey: `table_win_house_${bet.id}`,
               },
               {
                 type: 'PLAYER',
@@ -547,6 +591,28 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
               payout,
               { bizType: 'WIN', refType: 'round', refId: roundId },
             );
+          }
+
+          if (!refundOnly) {
+            if (this.flyDisk) {
+              await this.flyDisk.applyFlyLossInTx(
+                tx,
+                house.agentUserId,
+                house.flying,
+                amt,
+                payout,
+              );
+            }
+            if (this.flyRebate) {
+              await this.flyRebate.payAgentShareInTx(tx, {
+                betId: bet.id,
+                playerId: bet.playerId,
+                validFlow: amt,
+                flying: house.flying,
+                roomId: house.roomId,
+                agentUserId: house.agentUserId,
+              });
+            }
           }
 
           /* 回水统一由 RebateService 按 Bet.validFlow 日结发放，此处不再局内发放 */
@@ -677,13 +743,17 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
     let roundId = room.roundId;
     const house = this.flyDisk
       ? await this.flyDisk.resolveHouse(playerId)
-      : { type: 'PLATFORM' as const, id: PLATFORM_OWNER_ID, flying: false as boolean };
+      : { type: 'PLATFORM' as const, id: PLATFORM_OWNER_ID, flying: false as boolean, roomId: undefined as string | undefined, agentUserId: undefined as string | undefined };
+    const { P } = this.flyDisk
+      ? await this.flyDisk.resolvePlayerRate(playerId, house.roomId)
+      : { P: 0.018 };
     const flyPayload = {
       type: house.type,
       id: house.id,
       flying: house.flying,
       roomId: house.roomId,
       agentUserId: house.agentUserId,
+      P,
     };
     try {
       await this.prisma.$transaction(async (tx) => {
@@ -795,10 +865,10 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
             idempotencyKey: `table_bet_player_${bet.id}`,
           },
           {
-            type: 'PLATFORM',
-            id: PLATFORM_OWNER_ID,
+            type: house.type,
+            id: house.id,
             remark: `${room.gameName} 注资 ${room.roundNo}`,
-            idempotencyKey: `table_bet_plat_${bet.id}`,
+            idempotencyKey: `table_bet_house_${bet.id}`,
           },
           amount,
           { bizType: 'BET', refType: 'round', refId: roundId! },
@@ -1171,9 +1241,9 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
+  /** 只经 Redis 广播；本机订阅回调里再推，避免本地+回环各推一遍 */
   private async publishSnapshot(room: RedisRoomState) {
     const snap = this.buildSnapshot(room);
-    this.broadcastFn?.(room.gameCode, snap);
     await this.redis.publish(TABLE_BROADCAST_CHANNEL, JSON.stringify(snap));
   }
 

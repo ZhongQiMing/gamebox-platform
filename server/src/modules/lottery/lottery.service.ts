@@ -277,7 +277,7 @@ export class LotteryService {
       where: { issueId: issue.id, status: 'PENDING' },
       select: { amount: true, payload: true, playerId: true },
     });
-    const drawResult = await this.pickDrawWithControl(
+    const { result: drawResult, nonce: drawNonce } = await this.pickDrawWithControl(
       issue.game.code,
       issue.serverSeed!,
       gameDef,
@@ -296,6 +296,7 @@ export class LotteryService {
           status: 'DRAWN',
           drawNumbers: JSON.stringify(drawResult.numbers),
           drawnAt: new Date(),
+          nonce: drawNonce,
         },
       });
       if (claimed.count === 0) return;
@@ -920,7 +921,7 @@ export class LotteryService {
     gameDef: LotteryGameDef,
     payTable: LotteryPayTable,
     pendingBets: { amount: unknown; payload: unknown; playerId?: string }[],
-  ): Promise<DrawResult> {
+  ): Promise<{ result: DrawResult; nonce: number }> {
     const policies = this.control
       ? await this.control.getActiveHoldPolicies(gameCode)
       : [];
@@ -951,10 +952,11 @@ export class LotteryService {
       .filter((x): x is NonNullable<typeof x> => !!x);
 
     if (!active.length) {
-      return gameDef.draw(serverSeed, 'server', 1);
+      return { result: gameDef.draw(serverSeed, 'server', 1), nonce: 1 };
     }
 
     let best = gameDef.draw(serverSeed, 'server', 1);
+    let bestNonce = 1;
     let bestScore = Number.POSITIVE_INFINITY;
     for (let nonce = 1; nonce <= tries; nonce++) {
       const cand = nonce === 1 ? best : gameDef.draw(serverSeed, 'server', nonce);
@@ -967,13 +969,14 @@ export class LotteryService {
       if (score < bestScore) {
         bestScore = score;
         best = cand;
+        bestNonce = nonce;
       }
     }
 
     this.logger.log(
-      `control hold game=${gameCode} rooms=${active.length} tries=${tries} score~=${Math.round(bestScore)}`,
+      `control hold game=${gameCode} rooms=${active.length} tries=${tries} nonce=${bestNonce} score~=${Math.round(bestScore)}`,
     );
-    return best;
+    return { result: best, nonce: bestNonce };
   }
 
   private estimatePayout(
@@ -1020,7 +1023,7 @@ export class LotteryService {
       take: limit,
       select: {
         id: true, issueNo: true, drawNumbers: true, drawnAt: true,
-        openAt: true, serverSeed: true, serverSeedHash: true, totalFlow: true,
+        openAt: true, serverSeed: true, serverSeedHash: true, nonce: true, totalFlow: true,
       },
     });
   }

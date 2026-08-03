@@ -77,8 +77,8 @@ export function isControlPolicyGameOk(code: string | null | undefined): boolean 
   return isControlExecutableCode(code);
 }
 
-/** 运营不再手调深度：生效策略统一用此候选次数 */
-export const CONTROL_FIXED_CANDIDATE_TRIES = 12;
+/** 运营不再手调深度：生效策略统一用此候选次数（同种子翻页挑最接近留存） */
+export const CONTROL_FIXED_CANDIDATE_TRIES = 30;
 
 /** @deprecated */
 export function controlCandidateTries(_strength?: number): number {

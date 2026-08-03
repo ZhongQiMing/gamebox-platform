@@ -2,7 +2,13 @@ import {
   Injectable, BadRequestException, NotFoundException, ForbiddenException,
 } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
-import { asMoney, roundMoney } from '@gamebox/shared';
+import {
+  asMoney,
+  PLAYER_DOWN_MIN,
+  PLAYER_FUND_MAX,
+  PLAYER_UP_MIN,
+  roundMoney,
+} from '@gamebox/shared';
 import { resolveTimeWindow } from '../../common/shanghai-range';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PointsService } from '../points/points.service';
@@ -69,8 +75,12 @@ export class RechargeService {
 
   /** 玩家申请上分（RECHARGE） */
   async applyRecharge(playerId: string, amount: number, channel?: string) {
-    if (!Number.isInteger(amount) || amount < 200) throw new BadRequestException('上分最低 200 积分');
-    if (amount > 10_000_000) throw new BadRequestException('单笔上分不超过 1000 万');
+    if (!Number.isInteger(amount) || amount < PLAYER_UP_MIN) {
+      throw new BadRequestException(`上分最低 ${PLAYER_UP_MIN} 积分`);
+    }
+    if (amount > PLAYER_FUND_MAX) {
+      throw new BadRequestException(`单笔上分不超过 ${PLAYER_FUND_MAX}`);
+    }
 
     return this.prisma.rechargeOrder.create({
       data: {
@@ -86,8 +96,11 @@ export class RechargeService {
 
   /** 玩家申请下分：立即扣余额 + 建单，客服通过即完成；驳回则退回余额 */
   async applyWithdraw(playerId: string, amount: number) {
-    if (!Number.isInteger(amount) || amount < 500) {
-      throw new BadRequestException('下分最低 500 积分');
+    if (!Number.isInteger(amount) || amount < PLAYER_DOWN_MIN) {
+      throw new BadRequestException(`下分最低 ${PLAYER_DOWN_MIN} 积分`);
+    }
+    if (amount > PLAYER_FUND_MAX) {
+      throw new BadRequestException(`单笔下分不超过 ${PLAYER_FUND_MAX}`);
     }
 
     // 检查余额是否足够（乐观检查，结合事务保证）
@@ -188,6 +201,10 @@ export class RechargeService {
         const quota = asMoney(agent.pointsQuota);
         real = roundMoney(Math.min(amount, quota));
         fake = roundMoney(amount - real);
+        await this.points.lockOwnersInTx(tx, [
+          { type: 'AGENT', id: agentUserId },
+          { type: 'PLAYER', id: order.playerId },
+        ]);
         if (real > 0) {
           await this.points.creditInTx(tx, 'AGENT', agentUserId, -real, 'TRANSFER_OUT', {
             refType: 'recharge',

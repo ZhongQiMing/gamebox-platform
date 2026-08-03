@@ -2,7 +2,8 @@ import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/commo
 import { Prisma } from '@prisma/client';
 import { asMoney } from '@gamebox/shared';
 import { PrismaService } from '../../prisma/prisma.service';
-import { genRobotBet, pickRobotWinners, robotRoster } from './room-chat-atmosphere';
+import { genRobotBet, robotRoster } from './room-chat-atmosphere';
+import { pickRobotWinnersByDraw } from './room-chat-robot-settle';
 import {
   CHAT_LOTTERY_GAMES,
   isChatLotteryGame,
@@ -15,6 +16,7 @@ import {
   type RoomChatVerifyUser,
 } from './room-chat.types';
 import { formatLotteryPlayLabel } from '../lottery/play-label';
+import type { LotteryPayTable } from '../lottery/lottery.types';
 
 @Injectable()
 export class RoomChatService {
@@ -455,8 +457,16 @@ export class RoomChatService {
     if (!rooms.length) return;
     const resultPayload: RoomChatResultPayload = { issueNo, nums };
 
-    /* 期号 / 全期中奖注单只查一次，按房成员过滤 */
+    /* 期号 / 全期中奖注单只查一次，按房成员过滤；赔率与真人结算同一份 */
     const game = await this.prisma.game.findUnique({ where: { code: gameCode } });
+    const payRow = game
+      ? await this.prisma.gameConfig.findFirst({
+          where: { gameId: game.id, active: true },
+          select: { payTable: true },
+          orderBy: { version: 'desc' },
+        })
+      : null;
+    const payTable = (payRow?.payTable || null) as LotteryPayTable | null;
     const issue = game
       ? await this.prisma.lotteryIssue.findUnique({
           where: { gameId_issueNo: { gameId: game.id, issueNo } },
@@ -500,7 +510,8 @@ export class RoomChatService {
         name: u.name,
         plays: u.tags.map((t) => ({ play: t.play, amount: t.amount })),
       }));
-      const robotWins = pickRobotWinners(room.id, gameCode, issueNo, robotBets);
+      /* 机器人按真实开奖+赔率结算（钱不入账）；禁止随机点名中奖 */
+      const robotWins = pickRobotWinnersByDraw(gameCode, nums, robotBets, payTable);
 
       const memberSet = new Set(membersByRoom.get(room.id) || []);
       const byPlayer = new Map<string, RoomChatVerifyUser>();

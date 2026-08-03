@@ -3,7 +3,7 @@
  * - 飞盘：从 ROOM 即时划 agentShare=flow*(T-P) 给代理
  * - 玩家份额 flow*P 在领取自助回水时按注单上的 P/出资方划转（见 RebateService）
  */
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { roundMoney } from '@gamebox/shared';
 import type { Prisma } from '@prisma/client';
 import { PointsService } from '../points/points.service';
@@ -11,8 +11,6 @@ import { FlyDiskService } from './fly-disk.service';
 
 @Injectable()
 export class FlyRebateService {
-  private readonly log = new Logger(FlyRebateService.name);
-
   constructor(
     private points: PointsService,
     private fly: FlyDiskService,
@@ -37,29 +35,26 @@ export class FlyRebateService {
     const agentShare = roundMoney(flow * A);
     if (agentShare <= 0) return;
 
-    try {
-      await this.points.transferInTx(
-        tx,
-        {
-          type: 'ROOM',
-          id: opts.roomId,
-          idempotencyKey: `fly_rebate_agent_out_${opts.betId}`,
-        },
-        {
-          type: 'AGENT',
-          id: opts.agentUserId,
-          idempotencyKey: `fly_rebate_agent_in_${opts.betId}`,
-        },
-        agentShare,
-        {
-          bizType: 'REBATE',
-          refType: 'bet',
-          refId: opts.betId,
-          remark: `飞盘返水代理 ${(A * 100).toFixed(2)}%`,
-        },
-      );
-    } catch (e) {
-      this.log.warn(`agent rebate failed bet=${opts.betId}: ${(e as Error).message}`);
-    }
+    // 失败抛给外层结算事务回滚；禁止 catch 后装成功
+    await this.points.transferInTx(
+      tx,
+      {
+        type: 'ROOM',
+        id: opts.roomId,
+        idempotencyKey: `fly_rebate_agent_out_${opts.betId}`,
+      },
+      {
+        type: 'AGENT',
+        id: opts.agentUserId,
+        idempotencyKey: `fly_rebate_agent_in_${opts.betId}`,
+      },
+      agentShare,
+      {
+        bizType: 'REBATE',
+        refType: 'bet',
+        refId: opts.betId,
+        remark: `飞盘返水代理 ${(A * 100).toFixed(2)}%`,
+      },
+    );
   }
 }

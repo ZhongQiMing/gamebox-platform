@@ -77,7 +77,32 @@ export class PointsService {
   constructor(private prisma: PrismaService) {}
 
   /**
-   * 事务内转账：自动保证「PLATFORM 侧先加锁」，避免与其他资金流互相等待。
+   * 多账户同事务时先按 ownerId 排序加行锁，再改余额。
+   * 用于「代理扣真分 + 玩家加全额」等金额不对称、无法单笔 transferInTx 的场景，
+   * 避免与反向转账（如下分）互相等待。
+   */
+  async lockOwnersInTx(
+    tx: Prisma.TransactionClient,
+    owners: Array<{ type: OwnerType; id: string }>,
+  ) {
+    const uniq = new Map<string, OwnerType>();
+    for (const o of owners) {
+      if (!o.id) continue;
+      uniq.set(o.id, o.type);
+    }
+    const sorted = [...uniq.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+    for (const [ownerId, ownerType] of sorted) {
+      await tx.pointsAccount.upsert({
+        where: { ownerId },
+        update: {},
+        create: { ownerType: ownerType as never, ownerId },
+      });
+      await tx.$queryRaw`SELECT id FROM "PointsAccount" WHERE "ownerId" = ${ownerId} FOR UPDATE`;
+    }
+  }
+
+  /**
+   * 事务内转账：自动保证「PLATFORM/ROOM 侧先加锁」，其余按 ownerId 排序。
    * 两侧幂等键独立传入，便于沿用各引擎既有的键命名。
    */
   async transferInTx(
@@ -85,18 +110,20 @@ export class PointsService {
     from: { type: OwnerType; id: string; idempotencyKey?: string; remark?: string },
     to: { type: OwnerType; id: string; idempotencyKey?: string; remark?: string },
     amount: number,
-    opts: LedgerOpts & { bizType: BizType } = { bizType: 'ADJUST' },
+    opts: LedgerOpts & { bizType: BizType; bizTypeIn?: BizType } = { bizType: 'ADJUST' },
   ) {
     amount = roundMoney(amount);
     if (amount <= 0) throw new BadRequestException('转账金额必须 > 0');
+    const bizOut = opts.bizType;
+    const bizIn = opts.bizTypeIn ?? opts.bizType;
     const debit = () =>
-      this.creditInTx(tx, from.type, from.id, -amount, opts.bizType, {
+      this.creditInTx(tx, from.type, from.id, -amount, bizOut, {
         ...opts,
         remark: from.remark ?? opts.remark,
         idempotencyKey: from.idempotencyKey,
       });
     const credit = () =>
-      this.creditInTx(tx, to.type, to.id, amount, opts.bizType, {
+      this.creditInTx(tx, to.type, to.id, amount, bizIn, {
         ...opts,
         remark: to.remark ?? opts.remark,
         idempotencyKey: to.idempotencyKey,
@@ -191,7 +218,7 @@ export class PointsService {
     });
   }
 
-  /** 标准转账：A 扣，B 加，同事务两条流水 */
+  /** 标准转账：A 扣，B 加，同事务两条流水（加锁顺序与 transferInTx 一致） */
   async transfer(
     from: { type: OwnerType; id: string },
     to: { type: OwnerType; id: string },
@@ -206,15 +233,13 @@ export class PointsService {
     return this.prisma.$transaction(async (tx) => {
       const outKey = opts.idempotencyKey ? `${opts.idempotencyKey}:OUT` : undefined;
       const inKey = opts.idempotencyKey ? `${opts.idempotencyKey}:IN` : undefined;
-      const out = await this.creditInTx(tx, from.type, from.id, -amount, bizOut, {
-        ...opts,
-        idempotencyKey: outKey,
-      });
-      const inn = await this.creditInTx(tx, to.type, to.id, amount, bizIn, {
-        ...opts,
-        idempotencyKey: inKey,
-      });
-      return { out, in: inn };
+      return this.transferInTx(
+        tx,
+        { type: from.type, id: from.id, idempotencyKey: outKey, remark: opts.remark },
+        { type: to.type, id: to.id, idempotencyKey: inKey, remark: opts.remark },
+        amount,
+        { ...opts, bizType: bizOut, bizTypeIn: bizIn },
+      );
     });
   }
 }

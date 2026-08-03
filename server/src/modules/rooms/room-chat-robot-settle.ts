@@ -330,7 +330,11 @@ export function settleRobotPlay(
   }
   const hitKey = bundle.game.judge(bet, draw, bundle.pay);
   if (!hitKey) return { winAmount: 0, profit: -amt };
-  const mult = Number(bundle.pay[hitKey]?.multiplier) || 0;
+  /* 与 lottery.service 一致：和局退本即使库内无 refund 条目也按 1 倍 */
+  const mult =
+    hitKey === 'refund'
+      ? Number(bundle.pay[hitKey]?.multiplier) || 1
+      : Number(bundle.pay[hitKey]?.multiplier) || 0;
   if (!(mult > 0)) return { winAmount: 0, profit: -amt };
   const winAmount = money2(amt * mult);
   return { winAmount, profit: money2(winAmount - amt) };

@@ -1,6 +1,6 @@
 /**
  * 代理房间月费：按小时扫描到期房间（支持精确到分的扣费时间）。
- * - 代理余额足够 → 扣至平台账户，推进 nextBillAt（保留原时分）
+ * - 代理余额足够 → 扣至平台账户，推进 nextBillAt（保留原时分）——同事务
  * - 不足 → 房间改为 FROZEN，写 AdminLog 作「欠费通知」；不推进账期，下轮重试
  * - 欠费冻结后若补足成功 → 自动恢复 OPEN
  */
@@ -82,71 +82,91 @@ export class RoomBillingService {
         continue;
       }
       const agentUserId = room.ownerAgent.userId;
-      const acc = await this.prisma.pointsAccount.findUnique({
-        where: { ownerId: agentUserId },
-      });
-      const bal = asMoney(acc?.balance ?? 0);
       const periodKey = room.nextBillAt?.toISOString().slice(0, 10) ?? now.toISOString().slice(0, 10);
-
-      if (bal < fee) {
-        if (room.status !== 'FROZEN') {
-          await this.prisma.room.update({
-            where: { id: room.id },
-            data: { status: 'FROZEN' },
-          });
-        }
-        if (sysOp) {
-          await this.adminLog.log(sysOp, 'ROOM_BILL_FREEZE', room.id, {
-            roomNo: room.roomNo,
-            name: room.name,
-            fee,
-            balance: bal,
-            agentUserId,
-            message: '代理账户余额不足，房间已冻结；请充值后系统将自动扣费并解冻',
-          });
-        }
-        frozen += 1;
-        continue;
-      }
+      const idemBase = `room_bill_${room.id}_${periodKey}`;
 
       try {
-        await this.points.transfer(
-          { type: 'AGENT', id: agentUserId },
-          { type: 'PLATFORM', id: PLATFORM_OWNER_ID },
-          fee,
-          {
-            bizTypeOut: 'FEE',
-            bizTypeIn: 'FEE',
-            refType: 'room_monthly',
-            refId: room.id,
-            remark: `房间月费「${room.name}」`,
-            idempotencyKey: `room_bill_${room.id}_${periodKey}`,
-          },
-        );
-        const billedAt = now;
-        // 下一期保留原设定的扣费时分
-        const next = computeNextBillAt(
-          billedAt,
-          room.billingDay,
-          room.nextBillAt ?? billedAt,
-        );
-        await this.prisma.room.update({
-          where: { id: room.id },
-          data: {
-            lastBilledAt: billedAt,
-            nextBillAt: next,
-            status: room.status === 'FROZEN' ? 'OPEN' : room.status,
-          },
-        });
-        if (sysOp) {
-          await this.adminLog.log(sysOp, 'ROOM_BILL_OK', room.id, {
-            roomNo: room.roomNo,
-            fee,
-            agentUserId,
-            nextBillAt: next,
-            unfroze: room.status === 'FROZEN',
+        const result = await this.prisma.$transaction(async (tx) => {
+          const acc = await tx.pointsAccount.findUnique({
+            where: { ownerId: agentUserId },
           });
+          const bal = asMoney(acc?.balance ?? 0);
+          if (bal < fee) {
+            return { kind: 'insufficient' as const, balance: bal };
+          }
+
+          await this.points.transferInTx(
+            tx,
+            {
+              type: 'AGENT',
+              id: agentUserId,
+              remark: `房间月费「${room.name}」`,
+              idempotencyKey: `${idemBase}:OUT`,
+            },
+            {
+              type: 'PLATFORM',
+              id: PLATFORM_OWNER_ID,
+              remark: `房间月费「${room.name}」`,
+              idempotencyKey: `${idemBase}:IN`,
+            },
+            fee,
+            {
+              bizType: 'FEE',
+              refType: 'room_monthly',
+              refId: room.id,
+              remark: `房间月费「${room.name}」`,
+            },
+          );
+
+          const billedAt = now;
+          const next = computeNextBillAt(
+            billedAt,
+            room.billingDay,
+            room.nextBillAt ?? billedAt,
+          );
+          await tx.room.update({
+            where: { id: room.id },
+            data: {
+              lastBilledAt: billedAt,
+              nextBillAt: next,
+              status: room.status === 'FROZEN' ? 'OPEN' : room.status,
+            },
+          });
+
+          if (sysOp) {
+            await this.adminLog.logInTx(tx, sysOp, 'ROOM_BILL_OK', room.id, {
+              roomNo: room.roomNo,
+              fee,
+              agentUserId,
+              nextBillAt: next,
+              unfroze: room.status === 'FROZEN',
+            });
+          }
+
+          return { kind: 'ok' as const, next };
+        });
+
+        if (result.kind === 'insufficient') {
+          if (room.status !== 'FROZEN') {
+            await this.prisma.room.update({
+              where: { id: room.id },
+              data: { status: 'FROZEN' },
+            });
+          }
+          if (sysOp) {
+            await this.adminLog.log(sysOp, 'ROOM_BILL_FREEZE', room.id, {
+              roomNo: room.roomNo,
+              name: room.name,
+              fee,
+              balance: result.balance,
+              agentUserId,
+              message: '代理账户余额不足，房间已冻结；请充值后系统将自动扣费并解冻',
+            });
+          }
+          frozen += 1;
+          continue;
         }
+
         ok += 1;
       } catch (e) {
         this.log.warn(`bill room=${room.id}: ${(e as Error).message}`);

@@ -84,33 +84,30 @@ export class CommissionService {
       // 挂靠佣金由房间运营代理出资（非平台池）
       const payerId = await this.resolvePayerAgentId(tx, sourceUser.id, ancestors);
       if (!payerId) continue;
-      try {
-        const { in: ledger } = await this.points.transferInTx(
-          tx,
-          { type: 'AGENT', id: payerId, idempotencyKey: `${key}:OUT` },
-          { type: ownerType, id: beneficiaryUserId, idempotencyKey: `${key}:IN` },
+      // 资金动作失败必须抛出，由外层结算事务回滚；禁止 catch 后装成功
+      const { in: ledger } = await this.points.transferInTx(
+        tx,
+        { type: 'AGENT', id: payerId, idempotencyKey: `${key}:OUT` },
+        { type: ownerType, id: beneficiaryUserId, idempotencyKey: `${key}:IN` },
+        amount,
+        { bizType: 'COMMISSION', refType: 'round', refId: refRoundId },
+      );
+
+      const recordExists = await tx.commissionRecord.findFirst({ where: { ledgerId: ledger.id } });
+      if (recordExists) continue;
+
+      await tx.commissionRecord.create({
+        data: {
+          beneficiaryId: beneficiaryUserId,
+          sourceUserId: sourceUser.id,
+          level: i + 1,
+          sourceRoundId: refRoundId,
+          baseFlow: validFlow,
+          rate: differentialRate,
           amount,
-          { bizType: 'COMMISSION', refType: 'round', refId: refRoundId },
-        );
-
-        const recordExists = await tx.commissionRecord.findFirst({ where: { ledgerId: ledger.id } });
-        if (recordExists) continue;
-
-        await tx.commissionRecord.create({
-          data: {
-            beneficiaryId: beneficiaryUserId,
-            sourceUserId: sourceUser.id,
-            level: i + 1,
-            sourceRoundId: refRoundId,
-            baseFlow: validFlow,
-            rate: differentialRate,
-            amount,
-            ledgerId: ledger.id,
-          },
-        });
-      } catch {
-        continue;
-      }
+          ledgerId: ledger.id,
+        },
+      });
     }
   }
 

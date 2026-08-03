@@ -7,11 +7,11 @@ import { IsInt, IsOptional, IsString, Min, Max, MaxLength } from 'class-validato
 import { Type } from 'class-transformer';
 
 export class ApplyRechargeDto {
-  @IsInt() @Min(200) @Max(10_000_000) @Type(() => Number) amount!: number;
+  @IsInt() @Min(200) @Max(200_000) @Type(() => Number) amount!: number;
   @IsOptional() @IsString() channel?: string;
 }
 export class ApplyWithdrawDto {
-  @IsInt() @Min(500) @Max(10_000_000) @Type(() => Number) amount!: number;
+  @IsInt() @Min(500) @Max(200_000) @Type(() => Number) amount!: number;
 }
 export class RejectDto {
   @IsString() @MaxLength(200) reason!: string;

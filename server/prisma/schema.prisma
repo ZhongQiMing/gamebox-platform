@@ -474,6 +474,8 @@ model LotteryIssue {
   drawnAt     DateTime?
   serverSeed  String? // 可证明公平
   serverSeedHash String?
+  /// 开奖页码：复算 seed:server:nonce；自然开奖为 1
+  nonce       Int?
   totalFlow   Decimal     @default(0) @db.Decimal(18, 2)
   createdAt   DateTime    @default(now())
 

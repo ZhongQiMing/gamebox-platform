@@ -95,14 +95,23 @@ export class ActivityService {
           },
         });
         const idKey = `activity_${activityId}_${playerId}`;
-        await this.points.creditInTx(tx, 'PLATFORM', PLATFORM_OWNER_ID, -reward, 'ACTIVITY', {
-          idempotencyKey: `${idKey}_plat`,
-          remark: `活动:${act.title}`,
-        });
-        const ledger = await this.points.creditInTx(tx, 'PLAYER', playerId, reward, 'ACTIVITY', {
-          idempotencyKey: `${idKey}_player`,
-          remark: `活动奖励:${act.title}`,
-        });
+        const { in: ledger } = await this.points.transferInTx(
+          tx,
+          {
+            type: 'PLATFORM',
+            id: PLATFORM_OWNER_ID,
+            remark: `活动:${act.title}`,
+            idempotencyKey: `${idKey}_plat`,
+          },
+          {
+            type: 'PLAYER',
+            id: playerId,
+            remark: `活动奖励:${act.title}`,
+            idempotencyKey: `${idKey}_player`,
+          },
+          reward,
+          { bizType: 'ACTIVITY', remark: `活动奖励:${act.title}` },
+        );
         const granted = await tx.activityClaim.update({
           where: { id: claim.id },
           data: { status: 'GRANTED', ledgerId: ledger.id },

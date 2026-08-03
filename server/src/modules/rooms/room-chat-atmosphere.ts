@@ -366,32 +366,4 @@ export function genRobotBet(
   return { name: who.name, avatar: who.avatar, text, plays, totalAmount };
 }
 
-export function pickRobotWinners(
-  roomId: string,
-  gameCode: string,
-  issueNo: string,
-  robotBets: Array<{ name: string; plays: RoomChatPlayLine[] }>,
-): Array<{ name: string; tags: Array<{ play: string; amount: number }>; winAmount: number; profit: number }> {
-  const rnd = mulberry32(hashSeed(`${roomId}:${gameCode}:${issueNo}:win`));
-  const out: Array<{
-    name: string;
-    tags: Array<{ play: string; amount: number }>;
-    winAmount: number;
-    profit: number;
-  }> = [];
-  for (const b of robotBets) {
-    if (rnd() > 0.42) continue;
-    const tags = b.plays.filter(() => rnd() > 0.35);
-    const use = tags.length ? tags : b.plays.slice(0, 1);
-    const winAmount = use.reduce((s, p) => s + Math.round(p.amount * (1.8 + rnd() * 1.2) * 100) / 100, 0);
-    const stake = use.reduce((s, p) => s + p.amount, 0);
-    out.push({
-      name: b.name,
-      tags: use.map((p) => ({ play: p.play, amount: p.amount })),
-      winAmount,
-      profit: winAmount - stake,
-    });
-  }
-  out.sort((a, b) => b.profit - a.profit);
-  return out.slice(0, 8);
-}
+/* 中奖核对请用 room-chat-robot-settle.pickRobotWinnersByDraw（真实开奖+赔率，钱不入账） */

@@ -6,7 +6,14 @@
 import {
   BadRequestException, ForbiddenException, Injectable, NotFoundException,
 } from '@nestjs/common';
-import { asMoney, isValidMoney, roundMoney } from '@gamebox/shared';
+import {
+  asMoney,
+  isValidMoney,
+  PLAYER_DOWN_MIN,
+  PLAYER_FUND_MAX,
+  PLAYER_UP_MIN,
+  roundMoney,
+} from '@gamebox/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PointsService, PLATFORM_OWNER_ID, type OwnerType } from '../points/points.service';
 import { AdminLogService } from '../admin/admin-log.service';
@@ -174,14 +181,30 @@ export class ConsoleWalletService {
     const idemBase = `console_quota_${actor.id}_${toUserId}_${stamp}_${amount}`;
 
     await this.prisma.$transaction(async (tx) => {
-      await this.points.creditInTx(tx, fromType, fromId, -amount, 'TRANSFER_OUT', {
-        operatorId: actor.id, remark, refType: 'console_quota', refId: toUserId,
-        idempotencyKey: `${idemBase}:OUT`,
-      });
-      await this.points.creditInTx(tx, toType, toUserId, amount, 'TRANSFER_IN', {
-        operatorId: actor.id, remark, refType: 'console_quota', refId: actor.id,
-        idempotencyKey: `${idemBase}:IN`,
-      });
+      await this.points.transferInTx(
+        tx,
+        {
+          type: fromType,
+          id: fromId,
+          remark,
+          idempotencyKey: `${idemBase}:OUT`,
+        },
+        {
+          type: toType,
+          id: toUserId,
+          remark,
+          idempotencyKey: `${idemBase}:IN`,
+        },
+        amount,
+        {
+          bizType: 'TRANSFER_OUT',
+          bizTypeIn: 'TRANSFER_IN',
+          operatorId: actor.id,
+          remark,
+          refType: 'console_quota',
+          refId: toUserId,
+        },
+      );
       await tx.agent.upsert({
         where: { userId: toUserId },
         update: { pointsQuota: { increment: amount } },
@@ -227,20 +250,30 @@ export class ConsoleWalletService {
         );
       }
 
-      await this.points.creditInTx(tx, staffType, fromUserId, -amount, 'TRANSFER_OUT', {
-        operatorId: actor.id,
-        remark,
-        refType: 'console_quota_recall',
-        refId: actor.id,
-        idempotencyKey: `${idemBase}:OUT`,
-      });
-      await this.points.creditInTx(tx, toType, toId, amount, 'TRANSFER_IN', {
-        operatorId: actor.id,
-        remark,
-        refType: 'console_quota_recall',
-        refId: fromUserId,
-        idempotencyKey: `${idemBase}:IN`,
-      });
+      await this.points.transferInTx(
+        tx,
+        {
+          type: staffType,
+          id: fromUserId,
+          remark,
+          idempotencyKey: `${idemBase}:OUT`,
+        },
+        {
+          type: toType,
+          id: toId,
+          remark,
+          idempotencyKey: `${idemBase}:IN`,
+        },
+        amount,
+        {
+          bizType: 'TRANSFER_OUT',
+          bizTypeIn: 'TRANSFER_IN',
+          operatorId: actor.id,
+          remark,
+          refType: 'console_quota_recall',
+          refId: fromUserId,
+        },
+      );
       await tx.agent.update({
         where: { userId: fromUserId },
         data: { pointsQuota: { decrement: amount } },
@@ -274,7 +307,8 @@ export class ConsoleWalletService {
     }
     const amount = roundMoney(amountRaw);
     if (!isValidMoney(amount) || amount <= 0) throw new BadRequestException('金额无效');
-    if (amount > ISSUE_MAX) throw new BadRequestException(`单笔上限 ${ISSUE_MAX}`);
+    if (amount < PLAYER_UP_MIN) throw new BadRequestException(`上分最低 ${PLAYER_UP_MIN}`);
+    if (amount > PLAYER_FUND_MAX) throw new BadRequestException(`单笔上分不超过 ${PLAYER_FUND_MAX}`);
 
     const player = await this.prisma.user.findUnique({
       where: { id: playerId },
@@ -321,6 +355,12 @@ export class ConsoleWalletService {
 
       const payerType = 'AGENT' as OwnerType;
       const payerId = agentUserId;
+
+      /* 真分与玩家到账金额可能不等，先按固定顺序锁两边，再按原业务扣/加 */
+      await this.points.lockOwnersInTx(tx, [
+        { type: payerType, id: payerId },
+        { type: 'PLAYER', id: playerId },
+      ]);
 
       if (real > 0) {
         await this.points.creditInTx(tx, payerType, payerId, -real, 'TRANSFER_OUT', {
@@ -391,6 +431,8 @@ export class ConsoleWalletService {
     }
     const amount = roundMoney(amountRaw);
     if (!isValidMoney(amount) || amount <= 0) throw new BadRequestException('金额无效');
+    if (amount < PLAYER_DOWN_MIN) throw new BadRequestException(`下分最低 ${PLAYER_DOWN_MIN}`);
+    if (amount > PLAYER_FUND_MAX) throw new BadRequestException(`单笔下分不超过 ${PLAYER_FUND_MAX}`);
 
     const player = await this.prisma.user.findUnique({
       where: { id: playerId },
@@ -416,20 +458,30 @@ export class ConsoleWalletService {
       });
       if (existedOut) return true;
 
-      await this.points.creditInTx(tx, 'PLAYER', playerId, -amount, 'TRANSFER_OUT', {
-        operatorId: actor.id,
-        remark: remark ?? '控制台下分',
-        refType: 'console_debit',
-        refId: actor.id,
-        idempotencyKey: idemOut,
-      });
-      await this.points.creditInTx(tx, toType, toId, amount, 'TRANSFER_IN', {
-        operatorId: actor.id,
-        remark: remark ?? '回收玩家下分',
-        refType: 'console_debit',
-        refId: playerId,
-        idempotencyKey: `${idemBase}:IN`,
-      });
+      await this.points.transferInTx(
+        tx,
+        {
+          type: 'PLAYER',
+          id: playerId,
+          remark: remark ?? '控制台下分',
+          idempotencyKey: idemOut,
+        },
+        {
+          type: toType,
+          id: toId,
+          remark: remark ?? '回收玩家下分',
+          idempotencyKey: `${idemBase}:IN`,
+        },
+        amount,
+        {
+          bizType: 'TRANSFER_OUT',
+          bizTypeIn: 'TRANSFER_IN',
+          operatorId: actor.id,
+          remark: remark ?? '控制台下分',
+          refType: 'console_debit',
+          refId: playerId,
+        },
+      );
 
       // 下分回冲真分库存（不超过当前 flyCover，避免虚增）
       let coverBack = 0;
