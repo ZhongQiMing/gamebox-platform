@@ -1,13 +1,29 @@
 <template>
   <div class="login-wrap">
     <div class="login-box">
-      <div class="login-logo">♛ <span>GoldHub Admin</span></div>
+      <div class="login-logo">♛ <span>运营控制台</span></div>
+      <p class="hint">超管 / 房主 / 代理 / 子账号 统一入口</p>
+      <el-tag v-if="envLabel" size="small" type="warning" effect="plain" class="env">{{ envLabel }}</el-tag>
       <el-form :model="form" :rules="rules" ref="formRef" label-position="top">
         <el-form-item label="用户名" prop="username">
-          <el-input v-model="form.username" placeholder="admin" size="large" @keyup.enter="doLogin" />
+          <el-input
+            v-model="form.username"
+            placeholder="请输入用户名"
+            size="large"
+            autocomplete="username"
+            @keyup.enter="doLogin"
+          />
         </el-form-item>
         <el-form-item label="密码" prop="password">
-          <el-input v-model="form.password" type="password" placeholder="密码" size="large" show-password @keyup.enter="doLogin" />
+          <el-input
+            v-model="form.password"
+            type="password"
+            placeholder="请输入密码"
+            size="large"
+            show-password
+            autocomplete="current-password"
+            @keyup.enter="doLogin"
+          />
         </el-form-item>
         <el-button type="primary" size="large" :loading="loading" @click="doLogin" style="width:100%;margin-top:8px">
           登 录
@@ -18,7 +34,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import type { FormInstance } from 'element-plus'
@@ -30,6 +46,12 @@ const store = useAdminStore()
 const formRef = ref<FormInstance>()
 const loading = ref(false)
 const form = ref({ username: '', password: '' })
+
+const envLabel = computed(() => {
+  if (import.meta.env.PROD && import.meta.env.MODE === 'production') return ''
+  if (import.meta.env.DEV) return '当前为开发环境'
+  return `当前环境：${import.meta.env.MODE || 'unknown'}`
+})
 
 const rules = {
   username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
@@ -43,8 +65,8 @@ async function doLogin() {
   loading.value = true
   try {
     const res = await http.post<AuthResult, AuthResult>('/auth/login', form.value)
-    if (res.user.role !== 'ADMIN' && res.user.role !== 'BRANCH') {
-      ElMessage.error('该账号无后台权限')
+    if (!['ADMIN', 'BRANCH', 'AGENT', 'PROXY'].includes(res.user.role)) {
+      ElMessage.error('该账号无控制台权限（需超管/房主/代理/子账号）')
       return
     }
     store.setAuth(res.user, res.token)
@@ -72,13 +94,22 @@ async function doLogin() {
   border-radius: 12px;
   padding: 40px;
   box-shadow: 0 8px 40px rgba(0,0,0,0.4);
+  position: relative;
 }
 .login-logo {
   font-size: 22px;
   font-weight: 700;
   color: #d4a93c;
-  text-align: center;
-  margin-bottom: 32px;
+  margin-bottom: 6px;
 }
-.login-logo span { color: #303133; margin-left: 8px; }
+.hint {
+  font-size: 13px;
+  color: #909399;
+  margin: 0 0 18px;
+}
+.env {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+}
 </style>

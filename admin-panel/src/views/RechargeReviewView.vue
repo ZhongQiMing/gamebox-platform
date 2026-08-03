@@ -1,31 +1,20 @@
 <template>
-  <div>
-    <div class="page-header">
-      <h2>💰 上下分审核</h2>
+  <div class="ops-page">
+    <PageHeader title="上下分审核" subtitle="玩家发起的上分/下分申请；通过后与控制台上下分同一套真分/飞盘规则" />
+
+    <div class="ops-filter">
+      <el-select v-model="filter.type" placeholder="全部类型" clearable style="width:140px" @change="load">
+        <el-option label="上分" value="UP" /><el-option label="下分" value="DOWN" />
+      </el-select>
+      <el-select v-model="filter.status" placeholder="全部状态" clearable style="width:140px" @change="load">
+        <el-option label="待审核" value="PENDING" />
+        <el-option label="已通过" value="APPROVED" />
+        <el-option label="已拒绝" value="REJECTED" />
+      </el-select>
+      <el-button type="primary" @click="load">查询</el-button>
     </div>
 
-    <!-- 筛选栏 -->
-    <el-card shadow="never" style="margin-bottom:16px">
-      <el-row :gutter="12" align="middle">
-        <el-col :span="5">
-          <el-select v-model="filter.type" placeholder="全部类型" clearable @change="load">
-            <el-option label="上分" value="UP" /><el-option label="下分" value="DOWN" />
-          </el-select>
-        </el-col>
-        <el-col :span="5">
-          <el-select v-model="filter.status" placeholder="全部状态" clearable @change="load">
-            <el-option label="待审核" value="PENDING" />
-            <el-option label="已通过" value="APPROVED" />
-            <el-option label="已拒绝" value="REJECTED" />
-          </el-select>
-        </el-col>
-        <el-col :span="4">
-          <el-button type="primary" @click="load">查询</el-button>
-        </el-col>
-      </el-row>
-    </el-card>
-
-    <el-card shadow="never">
+    <div class="ops-table-wrap">
       <el-table :data="list" v-loading="loading" stripe>
         <el-table-column label="订单号" prop="orderNo" width="200" />
         <el-table-column label="玩家" width="140">
@@ -66,16 +55,15 @@
         </el-table-column>
       </el-table>
       <el-pagination
-        style="margin-top:16px;justify-content:flex-end;display:flex"
+        class="pager"
         :total="total"
         :page-size="filter.pageSize"
         :current-page="filter.page"
         layout="total,prev,pager,next"
         @current-change="(p: number) => { filter.page = p; load() }"
       />
-    </el-card>
+    </div>
 
-    <!-- 拒绝弹窗 -->
     <el-dialog v-model="rejectVisible" title="拒绝原因" width="400px">
       <el-input v-model="rejectReason" type="textarea" rows="3" placeholder="请输入拒绝原因" />
       <template #footer>
@@ -89,6 +77,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import PageHeader from '@/components/PageHeader.vue'
 import { reviewApi, type ReviewOrder } from '@/api/admin'
 
 const list = ref<ReviewOrder[]>([])
@@ -154,3 +143,7 @@ function fmtTime(s: string) {
 
 onMounted(load)
 </script>
+
+<style scoped>
+.pager { margin-top: 14px; display: flex; justify-content: flex-end; }
+</style>
