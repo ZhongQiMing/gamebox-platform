@@ -33,18 +33,23 @@ export class RechargeController {
     return this.svc.applyWithdraw(u.id, dto.amount);
   }
 
-  /** GET /api/recharge/my — 我的充提记录 */
+  /** GET /api/recharge/my — 我的充提记录（range 或 from/to） */
   @Get('my')
   my(
     @CurrentUser() u: { id: string },
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
-    @Query('pageSize', new DefaultValuePipe(20), ParseIntPipe) pageSize: number,
+    @Query('pageSize', new DefaultValuePipe(50), ParseIntPipe) pageSize: number,
+    @Query('range') range?: string,
+    @Query('from') fromStr?: string,
+    @Query('to') toStr?: string,
   ) {
-    return this.svc.myOrders(u.id, page, pageSize);
+    const from = fromStr != null && fromStr !== '' ? Number(fromStr) : undefined;
+    const to = toStr != null && toStr !== '' ? Number(toStr) : undefined;
+    return this.svc.myOrders(u.id, page, Math.min(pageSize, 200), from, to, range);
   }
 
-  /** GET /api/recharge/pending — 待审核列表（代理/管理员） */
-  @Roles('AGENT', 'BRANCH', 'ADMIN')
+  /** GET /api/recharge/pending — 待审核列表（代理/代分） */
+  @Roles('AGENT', 'PROXY')
   @Get('pending')
   pending(
     @CurrentUser() u: { id: string },
@@ -53,15 +58,15 @@ export class RechargeController {
     return this.svc.pendingOrders(u.id, page);
   }
 
-  /** PATCH /api/recharge/:id/approve — 审批通过（代理/管理员） */
-  @Roles('AGENT', 'BRANCH', 'ADMIN')
+  /** PATCH /api/recharge/:id/approve — 审批通过（代理/代分） */
+  @Roles('AGENT', 'PROXY')
   @Patch(':id/approve')
   approve(@Param('id') id: string, @CurrentUser() u: { id: string }) {
     return this.svc.approveRecharge(id, u.id);
   }
 
-  /** PATCH /api/recharge/:id/reject — 拒绝（代理/管理员） */
-  @Roles('AGENT', 'BRANCH', 'ADMIN')
+  /** PATCH /api/recharge/:id/reject — 拒绝（代理/代分） */
+  @Roles('AGENT', 'PROXY')
   @Patch(':id/reject')
   reject(@Param('id') id: string, @CurrentUser() u: { id: string }, @Body() dto: RejectDto) {
     return this.svc.rejectOrder(id, u.id, dto.reason);
