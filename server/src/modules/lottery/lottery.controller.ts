@@ -8,6 +8,7 @@ import { IsArray, IsInt, IsOptional, IsString, Max, MaxLength, Min, ValidateNest
 import { LotteryService } from './lottery.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Public } from '../../common/decorators/public.decorator';
+import { assertCanPlaceBet } from '../../common/utils/assert-player-bet';
 
 interface JwtUser { id: string; uid: string; role: string }
 
@@ -32,6 +33,11 @@ class LotteryBetDto extends LotteryBetItemDto {
   @IsString()
   @MaxLength(100)
   clientRequestId!: string;
+
+  /** 6 位运营房间号（多房隔离必填） */
+  @IsString()
+  @MaxLength(6)
+  roomNo!: string;
 }
 
 class LotteryBetBatchDto {
@@ -44,10 +50,10 @@ class LotteryBetBatchDto {
   @MaxLength(100)
   clientRequestId!: string;
 
-  @IsOptional()
+  /** 6 位运营房间号（多房隔离必填；飞盘/信用与聊天同房） */
   @IsString()
   @MaxLength(6)
-  roomNo?: string;
+  roomNo!: string;
 
   @IsOptional()
   @IsString()
@@ -66,6 +72,7 @@ export class LotteryController {
     @Body() dto: LotteryBetBatchDto,
     @CurrentUser() user: JwtUser,
   ) {
+    assertCanPlaceBet(user.role);
     return this.lottery.placeBetsBatch(user.id, gameCode, dto.bets || [], {
       clientRequestId: dto.clientRequestId,
       roomNo: dto.roomNo,
@@ -80,6 +87,7 @@ export class LotteryController {
     @Body() dto: LotteryBetDto,
     @CurrentUser() user: JwtUser,
   ) {
+    assertCanPlaceBet(user.role);
     return this.lottery.placeBet(
       user.id,
       gameCode,
@@ -87,6 +95,7 @@ export class LotteryController {
       dto.betValue,
       dto.amount,
       dto.clientRequestId,
+      dto.roomNo,
     );
   }
 

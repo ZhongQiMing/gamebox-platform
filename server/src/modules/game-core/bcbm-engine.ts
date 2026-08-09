@@ -34,8 +34,9 @@ import {
 import { businessNo } from './business-id';
 import { RiskService } from '../risk/risk.service';
 import { ConsoleControlService } from '../console/console-control.service';
+import { GlobalSoftControlService } from '../console/global-soft-control.service';
 import { FlyDiskService } from '../console/fly-disk.service';
-import { matchRoomHoldPolicy, pickSeedByHoldTarget } from '../console/control-pick.util';
+import { pickSeedForArcadePool } from '../console/control-pick.util';
 
 const GAME_CODE = 'bcbm';
 const KEY = 'bcbm';
@@ -51,6 +52,8 @@ export interface BcbmSpinInput {
   bets: Record<string, number>;
   clientSeed?: string;
   clientRequestId: string;
+  /** 6 位运营房间号（多房隔离必填） */
+  roomNo?: string;
 }
 
 export interface BcbmWinLine {
@@ -82,6 +85,8 @@ export class BcbmEngine {
     private risk: RiskService,
     @Optional() @Inject(forwardRef(() => ConsoleControlService))
     private control?: ConsoleControlService,
+    @Optional() @Inject(forwardRef(() => GlobalSoftControlService))
+    private globalSoft?: GlobalSoftControlService,
     @Optional() private flyDisk?: FlyDiskService,
   ) {}
 
@@ -124,14 +129,18 @@ export class BcbmEngine {
     const awardWeights = { ...BCBM_DEFAULT_AWARD_WEIGHTS, ...(payCfg.awardWeights ?? {}) };
 
     const house = this.flyDisk
-      ? await this.flyDisk.resolveHouse(playerId)
+      ? await this.flyDisk.resolveHouse(
+          playerId,
+          await this.flyDisk.requireOpsRoomId(playerId, input.roomNo),
+          totalAmount,
+          { requireRoom: true },
+        )
       : null;
-    const policies = this.control
-      ? await this.control.getActiveHoldPolicies(GAME_CODE)
-      : [];
-    const policy = matchRoomHoldPolicy(policies, house?.roomId);
-    const picked = pickSeedByHoldTarget({
-      policy,
+    const globalRt = this.globalSoft
+      ? await this.globalSoft.getArcadeDrawRuntime(GAME_CODE)
+      : null;
+    const softPick = pickSeedForArcadePool({
+      runtime: globalRt,
       stake: totalAmount,
       gen: () => {
         const g = genServerSeed();
@@ -172,7 +181,7 @@ export class BcbmEngine {
       wins,
       rawTotal: totalPayout,
       allocated,
-    } = picked;
+    } = softPick.result;
     const stopCell = BCBM_RING[stopIndex];
     const flyPayload = house
       ? {
@@ -183,11 +192,6 @@ export class BcbmEngine {
           agentUserId: house.agentUserId,
         }
       : undefined;
-
-    const player = await this.prisma.user.findUnique({
-      where: { id: playerId },
-      select: { id: true, agentPath: true },
-    });
 
     const result = await this.prisma.$transaction(async (tx) => {
       const round = await tx.gameRound.create({
@@ -211,6 +215,7 @@ export class BcbmEngine {
         amount: totalAmount,
         gameName: game.name,
         keyPrefix: KEY,
+        house: house ?? undefined,
       });
 
       if (allocated.capped) {
@@ -259,12 +264,11 @@ export class BcbmEngine {
           keyPrefix: KEY,
           stake: amt,
           skipCap: true,
+          house: house ?? undefined,
         });
 
         betResults.push({ position: pos, amount: amt, payout, won });
       }
-
-      await this.settle.applyCommissionInTx(tx, player, totalAmount, round.id);
 
       const paidTotal = allocated.total;
       const outcome: BcbmRoundOutcome = {
@@ -285,13 +289,14 @@ export class BcbmEngine {
           state: 'SETTLED',
           endedAt: new Date(),
           totalFlow: totalAmount,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+           
           outcome: outcome as any,
         },
       });
 
       return { roundId: round.id, betResults, totalPayout: paidTotal, paidWins };
     });
+
 
     if (result.totalPayout >= Math.max(totalAmount * 50, 100_000)) {
       await this.risk.record({
@@ -317,7 +322,8 @@ export class BcbmEngine {
       /* 不影响开奖 */
     }
 
-    const balance = await this.settle.getBalance(playerId);
+    const balRoomId = String(house?.roomId || '').trim();
+    const balance = balRoomId ? await this.settle.getBalance(playerId, balRoomId) : 0;
     return this.toResponse({
       gameCode,
       roundId: result.roundId,
@@ -349,7 +355,10 @@ export class BcbmEngine {
       where: { roundId: bet.round.id },
       select: { betType: true, amount: true, payout: true },
     });
-    const balance = await this.settle.getBalance(playerId);
+    const balRoomId = String(
+      (bet.payload as { fly?: { roomId?: string } } | null)?.fly?.roomId || '',
+    ).trim();
+    const balance = balRoomId ? await this.settle.getBalance(playerId, balRoomId) : 0;
     return this.toResponse({
       gameCode: bet.game.code,
       roundId: bet.round.id,

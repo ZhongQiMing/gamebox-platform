@@ -1,4 +1,8 @@
 # 与仓库根目录 docker-compose.prod.images.yml 保持一致（部署包副本）
+#
+# 跑哪个版本由 .env.prod 里的 GAMEBOX_VERSION 决定，两个应用镜像必须同版本。
+# 别把它改回 latest：latest 是同名覆盖，load 新镜像会把旧镜像的标签摘掉，
+# 服务器上就再也找不到上一版，出事只能回本机重新构建（十几分钟起）。
 services:
   postgres:
     image: postgres:15-alpine
@@ -33,13 +37,20 @@ services:
       - gamebox_redisdata:/data
     networks: [gamebox]
     healthcheck:
-      test: ['CMD', 'redis-cli', 'ping']
+      # 须与上面 command 的分支一致：设了 requirepass 裸 ping 返回 NOAUTH，
+      # 没设时带 -a "" 又会返回 ERR no password is set，两种都会卡死健康检查
+      test:
+        - CMD-SHELL
+        - >-
+          if [ -n "$$REDIS_PASSWORD" ]; then redis-cli -a "$$REDIS_PASSWORD" ping;
+          else redis-cli ping; fi | grep -q PONG
       interval: 5s
       timeout: 3s
       retries: 12
 
   server:
-    image: gamebox-server:latest
+    # 默认值 latest 只为兼容「打版本号之前」的老部署，正常流程一定带版本号
+    image: gamebox-server:${GAMEBOX_VERSION:-latest}
     container_name: gamebox-server
     restart: unless-stopped
     env_file:
@@ -51,23 +62,25 @@ services:
         condition: service_healthy
     networks: [gamebox]
     volumes:
-      - gamebox_uploads:/repo/server/public/uploads
+      - gamebox_uploads:/repo/server/uploads
     healthcheck:
-      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:3001/api/health || exit 1']
+      # 运行镜像基于 node:20-slim，不含 wget/curl；探针走 Node 内置 fetch，端口跟随 PORT
+      test: ['CMD', 'node', 'healthcheck.js']
       interval: 10s
       timeout: 5s
       retries: 12
       start_period: 40s
 
   web:
-    image: gamebox-web:latest
+    image: gamebox-web:${GAMEBOX_VERSION:-latest}
     container_name: gamebox-web
     restart: unless-stopped
     depends_on:
       server:
         condition: service_healthy
     ports:
-      - "8080:80"
+      # 只开本机：TLS 由宿主机 Nginx 终止后反代到 127.0.0.1:8080，容器不直面公网
+      - "127.0.0.1:8080:80"
     networks: [gamebox]
 
 networks:

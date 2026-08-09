@@ -26,7 +26,7 @@ export class RebateController {
     return this.svc.getStatus(u.id, r);
   }
 
-  /** POST /api/rebate/claim — 领取指定日期未结算回水（默认今日） */
+  /** POST /api/rebate/claim — 领指定日；不传 date 则提前领光池内全部 */
   @Post('claim')
   claim(@CurrentUser() u: { id: string }, @Body() dto: ClaimDto) {
     return this.svc.claim(u.id, dto.date);

@@ -7,6 +7,8 @@ import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 import compression from 'vite-plugin-compression'
 
 export default defineConfig({
+  /* 与玩家端共用一个 nginx，管理后台挂在 /admin/ 子路径下 */
+  base: '/admin/',
   plugins: [
     vue(),
     AutoImport({
@@ -41,6 +43,11 @@ export default defineConfig({
   },
   server: {
     port: 3001,
-    proxy: { '/api': { target: 'http://localhost:3000', changeOrigin: true } },
+    proxy: {
+      '/api': { target: 'http://localhost:3000', changeOrigin: true },
+      '/uploads': { target: 'http://localhost:3000', changeOrigin: true },
+      /* 与玩家端共用 /images 素材（默认房间图等） */
+      '/images': { target: 'http://localhost:5173', changeOrigin: true },
+    },
   },
 })

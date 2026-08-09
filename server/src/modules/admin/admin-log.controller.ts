@@ -10,18 +10,22 @@ import {
   listActionOptions,
   summarizeAdminLog,
 } from './admin-log.labels';
+import { ConsoleScopeService } from '../console/console-scope.service';
 
 @Controller('admin/logs')
 @Roles('ADMIN', 'BRANCH', 'AGENT', 'PROXY')
 export class AdminLogController {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private scope: ConsoleScopeService,
+  ) {}
 
   @Get('meta')
   meta() {
     return { actions: listActionOptions() };
   }
 
-  /** ADMIN 全量；BRANCH/AGENT/PROXY 仅本人操作日志 */
+  /** ADMIN 全量；BRANCH 仅本人操作 + 授权房间相关；AGENT/PROXY 仅本人 */
   @Get()
   async list(
     @CurrentUser() user: { id: string; role: string },
@@ -32,8 +36,23 @@ export class AdminLogController {
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page = 1,
     @Query('pageSize', new DefaultValuePipe(20), ParseIntPipe) pageSize = 20,
   ) {
-    const where: Prisma.AdminLogWhereInput =
-      user.role === 'ADMIN' ? {} : { operatorId: user.id };
+    let where: Prisma.AdminLogWhereInput = { operatorId: user.id };
+    if (user.role === 'ADMIN') {
+      where = {};
+    } else if (user.role === 'BRANCH') {
+      const roomIds = await this.scope.branchRoomIds({ id: user.id, role: 'BRANCH' });
+      const userIds = await this.scope.scopedUserIds({ id: user.id, role: 'BRANCH' });
+      const targets = [
+        ...roomIds,
+        ...(userIds || []).filter((id) => id !== user.id),
+      ];
+      where = {
+        OR: [
+          { operatorId: user.id },
+          ...(targets.length ? [{ target: { in: targets } }] : []),
+        ],
+      };
+    }
 
     if (action) where.action = action;
     if (from || to) {
@@ -160,7 +179,7 @@ export class AdminLogController {
 }
 
 function roleLabel(role: string): string {
-  if (role === 'ADMIN') return '超管';
+  if (role === 'ADMIN') return '管理员';
   if (role === 'BRANCH') return '房主';
   if (role === 'AGENT') return '代理';
   if (role === 'PROXY') return '子账号';

@@ -66,6 +66,16 @@ const ZODIAC_RE = /^[鼠牛虎兔龙蛇马羊猴鸡狗猪]$/;
 const WUXING_SET = new Set(['金', '木', '水', '火', '土']);
 const LIANMA_PLAYS = new Set(['四全中', '三中二', '三全中', '二全中', '二中特', '特串']);
 
+/** 每种连码玩法可能命中的赔率键（与 judge 分支一一对应） */
+const LIANMA_ODDS_KEYS: Record<string, string[]> = {
+  四全中: ['siQuanZhong'],
+  三全中: ['sanQuanZhong'],
+  三中二: ['sanZhongSan', 'sanZhongEr'],
+  二全中: ['erQuanZhong'],
+  二中特: ['erZhongTeTe', 'erZhongTe'],
+  特串: ['teChuan'],
+};
+
 function lianmaNeed(play: string): number {
   if (play === '四全中') return 4;
   if (play === '三全中' || play === '三中二') return 3;
@@ -234,6 +244,18 @@ export const lhcGame: LotteryGameDef = {
         wuxing: wuxingOf(special),
       },
     };
+  },
+
+  /**
+   * 连码一个 betType 能命中多个赔率键（四全中 9000 / 三全中 670 …），
+   * 按赔率限红时必须取这一注可能拿到的最高倍率，否则 9000 倍那档漏过限制。
+   */
+  maxOdds(bet: LotteryBetPayload, payTable: LotteryPayTable): number {
+    if (bet.betType !== 'lianma') return payTable[bet.betType]?.multiplier ?? 0;
+    const j = parseJsonValue<LianmaVal>(bet.value);
+    if (!j || !LIANMA_PLAYS.has(j.play)) return 0;
+    const keys = LIANMA_ODDS_KEYS[j.play] ?? [];
+    return keys.reduce((max, k) => Math.max(max, payTable[k]?.multiplier ?? 0), 0);
   },
 
   judge(bet: LotteryBetPayload, draw: DrawResult, _payTable: LotteryPayTable): string | null {

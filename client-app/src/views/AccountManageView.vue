@@ -41,25 +41,73 @@
           </div>
         </button>
 
-        <div class="am-row am-row--switch">
-          <span class="am-label">游 戏 音 效</span>
-          <div class="am-value">
-            <label class="am-switch">
-              <input type="checkbox" v-model="soundOn" @change="onSoundChange">
-              <span class="am-switch-track"><span class="am-switch-thumb"></span></span>
-            </label>
+        <div class="am-audio-block">
+          <div class="am-row am-row--switch">
+            <span class="am-label">游 戏 音 效</span>
+            <div class="am-value">
+              <label class="am-switch">
+                <input type="checkbox" v-model="soundOn" @change="onSoundChange">
+                <span class="am-switch-track"><span class="am-switch-thumb"></span></span>
+              </label>
+            </div>
+          </div>
+          <div class="am-row am-row--slider" :class="{ 'is-off': !soundOn }">
+            <span class="am-slider-label">音量</span>
+            <input
+              class="am-slider"
+              type="range"
+              min="0"
+              max="100"
+              step="1"
+              :disabled="!soundOn"
+              v-model.number="sfxVol"
+              @input="onSfxVolInput"
+            >
+            <span class="am-slider-val">{{ sfxVol }}</span>
           </div>
         </div>
 
-        <div class="am-row am-row--switch">
-          <span class="am-label">背 景 音 乐</span>
-          <div class="am-value">
-            <label class="am-switch">
-              <input type="checkbox" v-model="bgmOn" @change="onBgmChange">
-              <span class="am-switch-track"><span class="am-switch-thumb"></span></span>
-            </label>
+        <div class="am-audio-block">
+          <div class="am-row am-row--switch">
+            <span class="am-label">背 景 音 乐</span>
+            <div class="am-value">
+              <label class="am-switch">
+                <input type="checkbox" v-model="bgmOn" @change="onBgmChange">
+                <span class="am-switch-track"><span class="am-switch-thumb"></span></span>
+              </label>
+            </div>
+          </div>
+          <div class="am-row am-row--slider" :class="{ 'is-off': !bgmOn }">
+            <span class="am-slider-label">音量</span>
+            <input
+              class="am-slider"
+              type="range"
+              min="0"
+              max="100"
+              step="1"
+              :disabled="!bgmOn"
+              v-model.number="bgmVol"
+              @input="onBgmVolInput"
+            >
+            <span class="am-slider-val">{{ bgmVol }}</span>
           </div>
         </div>
+
+        <button type="button" class="am-row" @click="router.push('/privacy')">
+          <span class="am-label">隐 私 政 策</span>
+          <div class="am-value">
+            <span class="am-text-muted">查看</span>
+            <span class="am-arrow">›</span>
+          </div>
+        </button>
+
+        <button type="button" class="am-row" @click="router.push('/close-account')">
+          <span class="am-label">注 销 账 号</span>
+          <div class="am-value">
+            <span class="am-text-muted">不可恢复</span>
+            <span class="am-arrow">›</span>
+          </div>
+        </button>
       </div>
 
       <div class="lobby-spacer"></div>
@@ -100,7 +148,16 @@ import { useUserStore } from '@/stores/user'
 import { useToast } from '@/composables/useToast'
 import { useBodyClass } from '@/composables/useBodyClass'
 import { userApi } from '@/api/user'
-import { isClickSoundOn, setClickSoundOn, isAppBgmOn, setAppBgmOn } from '@/composables/appSoundPrefs'
+import {
+  isClickSoundOn,
+  setClickSoundOn,
+  isAppBgmOn,
+  setAppBgmOn,
+  getAppSfxVolumePercent,
+  setAppSfxVolumePercent,
+  getAppBgmVolumePercent,
+  setAppBgmVolumePercent,
+} from '@/composables/appSoundPrefs'
 import { useClickSound } from '@/composables/useClickSound'
 import AppModal from '@/components/AppModal.vue'
 import '@/assets/account-manage.css'
@@ -116,6 +173,8 @@ const avatarSrc = computed(() => userStore.profile?.avatar || '/images/avatars/0
 const fileInput = ref<HTMLInputElement | null>(null)
 const soundOn = ref(true)
 const bgmOn = ref(true)
+const sfxVol = ref(80)
+const bgmVol = ref(80)
 const showNickModal = ref(false)
 const nickDraft = ref('')
 const uploading = ref(false)
@@ -123,6 +182,8 @@ const uploading = ref(false)
 onMounted(() => {
   soundOn.value = isClickSoundOn()
   bgmOn.value = isAppBgmOn()
+  sfxVol.value = getAppSfxVolumePercent()
+  bgmVol.value = getAppBgmVolumePercent()
 })
 
 function pickAvatar() {
@@ -190,14 +251,23 @@ function onSoundChange() {
   setClickSoundOn(soundOn.value)
   if (soundOn.value) {
     playClick()
-    toast('游戏音效已开启（含大厅与各游戏）')
+    toast('游戏音效已开启（含开奖动画音与各游戏）')
   } else {
-    toast('游戏音效已关闭（含大厅与各游戏）')
+    toast('游戏音效已关闭（含开奖动画音与各游戏）')
   }
 }
 
 function onBgmChange() {
   setAppBgmOn(bgmOn.value)
   toast(bgmOn.value ? '背景音乐已开启（含各游戏）' : '背景音乐已关闭（含各游戏）')
+}
+
+function onSfxVolInput() {
+  setAppSfxVolumePercent(sfxVol.value)
+  if (soundOn.value) playClick()
+}
+
+function onBgmVolInput() {
+  setAppBgmVolumePercent(bgmVol.value)
 }
 </script>

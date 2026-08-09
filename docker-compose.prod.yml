@@ -1,7 +1,12 @@
-# 服务器测试部署：独立于 docker-compose.yml（那个是本机开发数据库）
+# ⚠️ 本文件只用于「在服务器上现场构建」这种应急场景，正式发版不要用它。
+#
+# 它引用的是 :latest 标签。latest 是同名覆盖：新镜像一 build 就把旧镜像的标签摘掉，
+# 服务器上再也找不到上一版，出事只能回本机重新构建（十几分钟起）。
+# 正式发版一律走 docker-compose.prod.images.yml + scripts/deploy-on-server.sh，
+# 那条路径的镜像带不可变版本号，能一键回滚，也有日志轮转/资源上限/时区。
+#
 # 本机构建：docker compose -f docker-compose.prod.yml --env-file .env.prod build
 # 服务器运行：docker load 导入镜像后 docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
-#            （image 与 build 同时声明时，本地已有同名镜像就直接用，不会触发重新构建）
 # .env.prod 只需提供 DB_PASSWORD，其余后端环境变量在 server/.env.production 中配置
 services:
   postgres:
@@ -15,14 +20,38 @@ services:
     volumes:
       - gamebox_pgdata:/var/lib/postgresql/data
     networks: [gamebox]
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U gamebox -d gamebox']
+      interval: 5s
+      timeout: 5s
+      retries: 12
 
   redis:
     image: redis:7-alpine
     container_name: gamebox-redis
     restart: unless-stopped
+    command: >
+      sh -c 'if [ -n "$$REDIS_PASSWORD" ]; then
+        redis-server --appendonly yes --requirepass "$$REDIS_PASSWORD";
+      else
+        redis-server --appendonly yes;
+      fi'
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     volumes:
       - gamebox_redisdata:/data
     networks: [gamebox]
+    healthcheck:
+      # 须与上面 command 的分支一致：设了 requirepass 裸 ping 返回 NOAUTH，
+      # 没设时带 -a "" 又会返回 ERR no password is set，两种都会卡死健康检查
+      test:
+        - CMD-SHELL
+        - >-
+          if [ -n "$$REDIS_PASSWORD" ]; then redis-cli -a "$$REDIS_PASSWORD" ping;
+          else redis-cli ping; fi | grep -q PONG
+      interval: 5s
+      timeout: 3s
+      retries: 12
 
   server:
     image: gamebox-server:latest
@@ -33,10 +62,21 @@ services:
     restart: unless-stopped
     env_file:
       - server/.env.production
-    depends_on: [postgres, redis]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     networks: [gamebox]
     volumes:
-      - gamebox_uploads:/repo/server/public/uploads
+      - gamebox_uploads:/repo/server/uploads
+    healthcheck:
+      # 运行镜像基于 node:20-slim，不含 wget/curl；探针走 Node 内置 fetch，端口跟随 PORT
+      test: ['CMD', 'node', 'healthcheck.js']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
 
   web:
     image: gamebox-web:latest
@@ -45,9 +85,12 @@ services:
       dockerfile: client-app/Dockerfile
     container_name: gamebox-web
     restart: unless-stopped
-    depends_on: [server]
+    depends_on:
+      server:
+        condition: service_healthy
     ports:
-      - "8080:80"
+      # 只开本机：TLS 由宿主机 Nginx 终止后反代到 127.0.0.1:8080，容器不直面公网
+      - "127.0.0.1:8080:80"
     networks: [gamebox]
 
 networks:

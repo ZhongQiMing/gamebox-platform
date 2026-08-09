@@ -122,8 +122,10 @@ $(function () {
     else if (typeof syncServerSnapshot === 'function') syncServerSnapshot();
   }
   const REVEALED_STORAGE_KEY = 'bjsc_revealed_v1';
+  const PLAYED_ANIM_STORAGE_KEY = 'bjsc_played_anim_v1';
   const CLOSED_STORAGE_KEY = 'bjsc_closed_v1';
   let revealedIssues = new Set();
+  let playedAnimIssues = new Set();
   /** 进房后首次拉到历史头：只对齐顶栏，不往聊天推「进房前已开奖」 */
   let historyHeadBootstrapped = false;
   let lastBetText = '';
@@ -576,6 +578,8 @@ $(function () {
     if (!serverSynced || !serverCurrent) return false;
     const open = serverCurrent.status === 'PENDING' && Date.now() < new Date(serverCurrent.lockAt).getTime();
     if (!open) return false;
+    /* 开奖仪式未回到 betting：禁止下注（避免冲线后、开盘线前误注下一期） */
+    if (roomChat && typeof roomChat.isBettingOpen === 'function' && !roomChat.isBettingOpen()) return false;
     /* 仅冻结「仍是封盘那一期」；已换新期以服务端 lockAt 为准 */
     if (roomBetFrozen && sealedIssueNo && String(serverCurrent.issueNo) === String(sealedIssueNo)) return false;
     return true;
@@ -1035,7 +1039,7 @@ $(function () {
       <td class="cell-gy">${r.gy.replace(/\s+/g, '')}</td><td class="cell-lh">${r.lh}</td></tr>`).join(''));
   }
 
-  const PK10_RACE_SRC = './media/pk10-race/index.html?v=7&embed=1';
+  const PK10_RACE_SRC = './media/pk10-race/index.html?v=13&embed=1';
   /**
    * 对齐 s8kj168 官网：红绿灯 3s → 绿灯后竞速时段自由跑 → finishgame → 再等 10s
    * 冲线/领奖台由 main.js 原速播放。
@@ -1043,6 +1047,17 @@ $(function () {
   const PK10_RACE_COUNTDOWN_SEC = 3;
   const PK10_RACE_MID_MS = 15000;
   const PK10_RACE_AFTER_FINISH_MS = 10000;
+  /** finishgame 内冲线画面（与 race-host FINISH_VISUAL_MS / flashlight 对齐） */
+  const PK10_RACE_FINISH_VISUAL_MS = 3300;
+  /**
+   * 与极速赛车同一套：mid 只许拉长，让「冲线出号」对齐 openAt；
+   * 领奖台 after 仍原速播，onDone 自然落在 openAt 之后（中奖/开盘消息已到）。
+   * 旧写法用 after 算 MID_MAX，整场被卡死在 openAt，播完空等 WIN/OPEN → 卡住再闪。
+   */
+  const PK10_RACE_MID_MAX_MS = Math.max(
+    PK10_RACE_MID_MS,
+    PREP_SEC * 1000 - PK10_RACE_COUNTDOWN_SEC * 1000 - PK10_RACE_FINISH_VISUAL_MS - 500
+  );
   const PK10_RACE_NATIVE_W = 1334;
   const PK10_RACE_NATIVE_H = 780;
 
@@ -1067,25 +1082,59 @@ $(function () {
     opts = opts || {};
     const meta = gyMeta(nums);
     const lh = lhRow(nums);
+    const gyText = String(meta.text || '').replace(/\s+/g, ' ').trim();
     const order = pk10RaceOrderStr(nums);
     const issueShow = String(issue || '').trim();
+    const settled = !!opts.settle;
     let srcQ = PK10_RACE_SRC;
     if (issueShow) srcQ += '&issue=' + encodeURIComponent(issueShow);
     if (order) srcQ += '&order=' + encodeURIComponent(order);
-    if (opts.settle) srcQ += '&settle=1';
+    if (settled) srcQ += '&settle=1';
     return (
-      '<div class="bjsc-race-card is-reveal" data-issue="' + issueShow + '" data-nums="' + order + '">' +
+      '<div class="bjsc-race-card' + (settled ? ' is-reveal is-settled' : ' is-drawing') +
+        '" data-issue="' + issueShow + '" data-nums="' + order +
+        '" data-gy="' + gyText + '" data-lh="' + lh + '">' +
         '<div class="bjsc-race-card__stage">' +
           '<iframe class="bjsc-race-card__frame" title="北京赛车开奖动画" src="' + srcQ +
             '" data-nums="' + order + '" data-issue="' + issueShow + '" allow="autoplay" loading="eager"></iframe>' +
         '</div>' +
-        '<footer class="bjsc-race-card__foot">' +
-          '<div class="bjsc-race-card__pill"><span class="k">冠亚和</span><span class="v">' +
-            String(meta.text || '').replace(/\s+/g, ' ').trim() + '</span></div>' +
-          '<div class="bjsc-race-card__pill"><span class="k">1-5龙虎</span><span class="v">' + lh + '</span></div>' +
+        '<footer class="bjsc-race-card__foot' + (settled ? ' is-show' : ' is-hidden') + '">' +
+          '<div class="bjsc-race-card__pill"><span class="k">冠亚和</span><span class="v bjsc-race-card__gy">' +
+            (settled ? gyText : '—') + '</span></div>' +
+          '<div class="bjsc-race-card__pill"><span class="k">1-5龙虎</span><span class="v bjsc-race-card__lh">' +
+            (settled ? lh : '—') + '</span></div>' +
         '</footer>' +
       '</div>'
     );
+  }
+
+  function revealRaceCardFoot(card, nums, opts) {
+    if (!card) return;
+    opts = opts || {};
+    let gy = String(card.getAttribute('data-gy') || '').trim();
+    let lh = String(card.getAttribute('data-lh') || '').trim();
+    if (Array.isArray(nums) && nums.length === 10) {
+      gy = String(gyMeta(nums).text || '').replace(/\s+/g, ' ').trim();
+      lh = lhRow(nums);
+      card.setAttribute('data-gy', gy);
+      card.setAttribute('data-lh', lh);
+    }
+    const gyEl = card.querySelector('.bjsc-race-card__gy');
+    const lhEl = card.querySelector('.bjsc-race-card__lh');
+    if (gyEl && gy) gyEl.textContent = gy;
+    if (lhEl && lh) lhEl.textContent = lh;
+    const foot = card.querySelector('.bjsc-race-card__foot');
+    if (foot) {
+      foot.classList.remove('is-hidden');
+      foot.classList.add('is-show');
+    }
+    card.classList.remove('is-drawing', 'is-hold-black');
+    /* 直播播完勿再加 is-reveal：入场动画会整卡从透明淡入，像闪一下 */
+    card.classList.add('is-settled');
+    if (!opts.noEnterAnim) card.classList.add('is-reveal');
+    card.removeAttribute('data-hold-black');
+    card._holdBlackExempt = true;
+    if (window.LotteryHoldTip) LotteryHoldTip.clear(card);
   }
 
   function fitRaceFrame(card) {
@@ -1100,6 +1149,7 @@ $(function () {
     frame.style.transform = 'scale(' + s + ')';
     frame.style.left = ((w - PK10_RACE_NATIVE_W * s) / 2) + 'px';
     frame.style.top = ((h - PK10_RACE_NATIVE_H * s) / 2) + 'px';
+    card.classList.add('is-frame-ready');
   }
 
   function postToRaceFrame(frame, payload) {
@@ -1127,9 +1177,11 @@ $(function () {
       window.removeEventListener('message', onMsg);
       if (typeof cb === 'function') cb(!!ok);
     };
-    const hasApi = function () {
+    /* 必须等 iframe boot（__ready / ready 消息），不能仅凭 API 对象存在就 play */
+    const isBooted = function () {
       try {
-        return !!(frame.contentWindow && frame.contentWindow.BjscPk10Race);
+        const api = frame.contentWindow && frame.contentWindow.BjscPk10Race;
+        return !!(api && api.__ready && typeof api.play === 'function');
       } catch (e) {
         return false;
       }
@@ -1137,24 +1189,21 @@ $(function () {
     const onMsg = function (ev) {
       const d = ev && ev.data;
       if (!d || d.source !== 'bjsc-pk10-race') return;
-      if (d.action === 'ready' && ev.source === frame.contentWindow) finish(true);
+      if (d.action === 'ready' && ev.source === frame.contentWindow && isBooted()) finish(true);
     };
     window.addEventListener('message', onMsg);
-    if (hasApi()) {
+    if (isBooted()) {
       finish(true);
       return;
     }
     frame.addEventListener('load', function () {
-      setTimeout(function () {
-        if (hasApi()) finish(true);
-        else finish(true);
-      }, 80);
+      setTimeout(function () { if (isBooted()) finish(true); }, 80);
     });
-    /* ready 可能已先发出：轮询 API 出现 */
     let n = 0;
     pollTimer = setInterval(function () {
       n += 1;
-      if (hasApi() || n >= 40) finish(!!hasApi() || n >= 40);
+      if (isBooted()) finish(true);
+      else if (n >= 80) finish(false);
     }, 50);
   }
 
@@ -1172,65 +1221,187 @@ $(function () {
       if (typeof opts.onDone === 'function') opts.onDone(false);
       return;
     }
+    card.classList.remove('is-hold-black');
+    if (window.LotteryHoldTip) LotteryHoldTip.clear(card);
+    card.removeAttribute('data-hold-black');
+    card.setAttribute('data-playing', '1');
+    card._bjscLiveAnim = true;
     fitRaceFrame(card);
-    requestAnimationFrame(function () { fitRaceFrame(card); });
-    whenRaceFrameReady(frame, function () {
+    card.classList.add('is-playing');
+    requestAnimationFrame(function () {
       fitRaceFrame(card);
+      card.classList.add('is-playing');
+    });
+    card._bjscNumsNotified = false;
+    card._bjscDoneOnce = false;
+    whenRaceFrameReady(frame, function (ready) {
+      fitRaceFrame(card);
+      const onNumbersReady = function () {
+        if (card._bjscNumsNotified) return;
+        card._bjscNumsNotified = true;
+        if (typeof notifyDrawBarNumbersReady === 'function') {
+          notifyDrawBarNumbersReady(issue, nums, 10);
+        }
+      };
+      const onMsg = function (ev) {
+        const d = ev && ev.data;
+        if (!d || d.source !== 'bjsc-pk10-race' || d.action !== 'finish') return;
+        if (ev.source !== frame.contentWindow) return;
+        onNumbersReady();
+      };
       const doneWrap = function (ok) {
+        if (card._bjscDoneOnce) return;
+        card._bjscDoneOnce = true;
+        window.removeEventListener('message', onMsg);
+        /*
+         * 先标 is-settled 再摘 is-playing，避免中间一帧 iframe 被 CSS 藏掉；
+         * 直播收尾禁止 is-reveal 入场动画（否则领奖台再淡入一次）。
+         */
+        card.classList.add('is-settled', 'is-frame-ready');
+        revealRaceCardFoot(card, nums, { noEnterAnim: true });
+        card.classList.remove('is-playing', 'is-hold-black', 'is-drawing');
+        if (window.LotteryHoldTip) LotteryHoldTip.clear(card);
+        card.removeAttribute('data-playing');
+        card.removeAttribute('data-hold-black');
+        card._bjscLiveAnim = false;
+        card._bjscPlayedLive = true;
+        card._bjscSettled = true;
+        card._holdBlackExempt = true;
+        onNumbersReady();
+        /* 领奖台尾段播完：再开盘线 + 顶栏倒计时 */
+        if (typeof notifyDrawCeremonyReady === 'function') {
+          notifyDrawCeremonyReady(issue);
+        }
         if (window.BjscAudio && BjscAudio.endRaceCeremony) BjscAudio.endRaceCeremony();
         if (typeof opts.onDone === 'function') opts.onDone(ok);
       };
-      if (window.BjscAudio && BjscAudio.startRaceCeremony) {
-        BjscAudio.unlock && BjscAudio.unlock();
-        BjscAudio.startRaceCeremony({
-          countdownSec: PK10_RACE_COUNTDOWN_SEC,
-          midRaceMs: PK10_RACE_MID_MS,
-        });
+      if (!ready) {
+        card.classList.remove('is-playing');
+        card.removeAttribute('data-playing');
+        card._bjscLiveAnim = false;
+        try { settleRaceCard(card, nums); } catch (e) { /* ignore */ }
+        onNumbersReady();
+        if (typeof notifyDrawCeremonyReady === 'function') {
+          notifyDrawCeremonyReady(issue);
+        }
+        card._bjscDoneOnce = true;
+        card._holdBlackExempt = true;
+        if (window.BjscAudio && BjscAudio.endRaceCeremony) BjscAudio.endRaceCeremony();
+        if (typeof opts.onDone === 'function') opts.onDone(false);
+        return;
       }
+      window.addEventListener('message', onMsg);
+      const cdSec = opts.countdownSec != null ? Number(opts.countdownSec) : PK10_RACE_COUNTDOWN_SEC;
+      let midMs = opts.midRaceMs != null ? Number(opts.midRaceMs) : PK10_RACE_MID_MS;
+      const afterMs = opts.afterFinishMs != null ? Number(opts.afterFinishMs) : PK10_RACE_AFTER_FINISH_MS;
+      const finishVisualMs = opts.finishVisualMs != null ? Number(opts.finishVisualMs) : PK10_RACE_FINISH_VISUAL_MS;
+      /*
+       * 出号点 = finishgame + 冲线画面，对齐 openAt（与极速赛车相同）。
+       * mid 只许拉长；领奖台 after=10s 继续播，onDone ≈ openAt + (after-visual)。
+       */
+      if (opts.midRaceMs == null && serverCurrent && String(serverCurrent.issueNo || '') === String(issue || '')) {
+        const openAt = new Date(serverCurrent.openAt).getTime();
+        if (Number.isFinite(openAt)) {
+          const remain = openAt - Date.now();
+          const cdMs = Math.max(0, cdSec) * 1000;
+          const targetMid = remain - cdMs - finishVisualMs - 200;
+          if (Number.isFinite(targetMid) && targetMid >= PK10_RACE_MID_MS) {
+            midMs = Math.min(PK10_RACE_MID_MAX_MS, targetMid);
+          }
+        }
+      }
+      const numbersAtMs = Math.max(0, cdSec) * 1000 + Math.max(0, midMs) + Math.max(0, finishVisualMs);
+      const totalMs = Math.max(0, cdSec) * 1000 + Math.max(0, midMs) + Math.max(0, afterMs);
+      /* 兜底从真正开播起算，避免 iframe ready 慢时提前 forceSettle */
+      try {
+        if (roomChat && typeof roomChat.scheduleRevealReady === 'function') {
+          let armMs = Math.max(totalMs, numbersAtMs) + 1200;
+          if (serverCurrent && String(serverCurrent.issueNo || '') === String(issue || '')) {
+            const openAt = new Date(serverCurrent.openAt).getTime();
+            if (Number.isFinite(openAt)) {
+              armMs = Math.max(armMs, openAt - Date.now() + 1200);
+            }
+          }
+          roomChat.scheduleRevealReady(issue, armMs);
+        }
+      } catch (eArm) { /* ignore */ }
+      try {
+        if (window.BjscAudio && BjscAudio.startRaceCeremony) {
+          if (BjscAudio.unlock) BjscAudio.unlock();
+          BjscAudio.startRaceCeremony({
+            countdownSec: cdSec,
+            midRaceMs: midMs,
+            afterFinishMs: afterMs,
+            finishVisualMs: finishVisualMs,
+          });
+        }
+      } catch (eAudio) { /* 音效失败不得阻断开奖动画 */ }
       const w = frame.contentWindow;
       if (w && w.BjscPk10Race && typeof w.BjscPk10Race.play === 'function') {
-        w.BjscPk10Race.play(order, {
-          issue: issue,
-          countdownSec: PK10_RACE_COUNTDOWN_SEC,
-          midRaceMs: PK10_RACE_MID_MS,
-          afterFinishMs: PK10_RACE_AFTER_FINISH_MS,
-          onDone: doneWrap,
-        });
-        return;
+        try {
+          w.BjscPk10Race.play(order, {
+            issue: issue,
+            countdownSec: cdSec,
+            midRaceMs: midMs,
+            afterFinishMs: afterMs,
+            finishVisualMs: finishVisualMs,
+            onFinish: onNumbersReady,
+            onDone: doneWrap,
+          });
+          return;
+        } catch (ePlay) { /* 改走 postMessage */ }
       }
       postToRaceFrame(frame, {
         action: 'play',
         order: order,
         issue: issue,
-        countdownSec: PK10_RACE_COUNTDOWN_SEC,
-        midRaceMs: PK10_RACE_MID_MS,
-        afterFinishMs: PK10_RACE_AFTER_FINISH_MS,
+        countdownSec: cdSec,
+        midRaceMs: midMs,
+        afterFinishMs: afterMs,
+        finishVisualMs: finishVisualMs,
       });
-      setTimeout(function () { doneWrap(true); }, resultRevealDurationMs());
+      setTimeout(onNumbersReady, numbersAtMs);
+      setTimeout(function () { doneWrap(true); }, totalMs || resultRevealDurationMs());
     });
   }
 
+  /**
+   * 软落定：只调 iframe API + 露脚，禁止改 src。
+   * 改 src 加 settle=1 会整页重载；直播已播完再调 settle()/winnerpage 也会闪一下。
+   */
   function settleRaceCard(card, nums) {
+    if (card && (card.classList.contains('is-playing') || card.getAttribute('data-playing') === '1' || card._bjscLiveAnim)) {
+      return; /* 竞速中禁止打断 */
+    }
+    /* 本页已完整播过：只保证脚注/可见，勿再调 iframe settle（会重跑领奖台） */
+    if (card && card._bjscPlayedLive) {
+      revealRaceCardFoot(card, nums, { noEnterAnim: true });
+      card.classList.add('is-settled', 'is-frame-ready');
+      card._bjscSettled = true;
+      card._holdBlackExempt = true;
+      fitRaceFrame(card);
+      return;
+    }
+    const alreadySettled = !!(card && (card._bjscSettled || card.classList.contains('is-settled')));
+    if (card) {
+      card.removeAttribute('data-hold-black');
+      card.classList.remove('is-hold-black', 'is-drawing');
+      if (window.LotteryHoldTip) LotteryHoldTip.clear(card);
+    }
+    revealRaceCardFoot(card, nums, alreadySettled ? { noEnterAnim: true } : null);
+    if (card) {
+      card._bjscSettled = true;
+      card._holdBlackExempt = true;
+    }
+    fitRaceFrame(card);
+    requestAnimationFrame(function () { fitRaceFrame(card); });
+    if (alreadySettled) return;
     const frame = card && card.querySelector('.bjsc-race-card__frame');
     let order = '';
     if (Array.isArray(nums) && nums.length === 10) order = pk10RaceOrderStr(nums);
     else order = String((card && card.getAttribute('data-nums')) || (frame && frame.getAttribute('data-nums')) || '').trim();
     const issue = raceCardIssue(card, null);
     if (!frame || !order) return;
-    /* 若 iframe 还不是 settle 模式，改 src 让其自落领奖台（最稳） */
-    try {
-      const cur = String(frame.getAttribute('src') || '');
-      if (cur && cur.indexOf('settle=1') < 0) {
-        let next = cur;
-        if (next.indexOf('order=') < 0) next += '&order=' + encodeURIComponent(order);
-        next += '&settle=1';
-        if (next.indexOf('v=') >= 0) next = next.replace(/([?&]v=)\d+/, '$17');
-        frame.setAttribute('src', next);
-        fitRaceFrame(card);
-        return;
-      }
-    } catch (e) { /* fall through to API settle */ }
-    fitRaceFrame(card);
     whenRaceFrameReady(frame, function () {
       fitRaceFrame(card);
       const w = frame.contentWindow;
@@ -1240,6 +1411,74 @@ $(function () {
       }
       postToRaceFrame(frame, { action: 'settle', order: order, issue: issue });
     });
+  }
+
+  function isServerDrawingIssue(issue) {
+    issue = String(issue || '').trim();
+    if (!issue || !serverCurrent) return false;
+    if (String(serverCurrent.issueNo || '') !== issue) return false;
+    const st = String(serverCurrent.status || '');
+    const lockAt = new Date(serverCurrent.lockAt).getTime();
+    const now = Date.now();
+    return st === 'LOCKED' || (st === 'PENDING' && Number.isFinite(lockAt) && now >= lockAt);
+  }
+
+  function holdBlackRaceCard(card) {
+    if (!card) return false;
+    if (card.classList.contains('is-playing') || card.getAttribute('data-playing') === '1' || card._bjscLiveAnim) return false;
+    /* 本页已播完/揭晓：禁止快照再压黑（否则会 setRevealPending 清掉 winFlushed，卡住开盘线） */
+    if (card._holdBlackExempt || card._bjscSettled) return false;
+    if (card.getAttribute('data-hold-black') === '1' && card.classList.contains('is-hold-black')) {
+      if (window.LotteryHoldTip) LotteryHoldTip.ensure(card, '.bjsc-race-card__stage');
+      return true;
+    }
+
+    card.setAttribute('data-hold-black', '1');
+    card._bjscSettled = false;
+    card.classList.remove('is-reveal', 'is-settled', 'is-result-shown', 'is-frame-ready');
+    card.classList.add('is-drawing', 'is-hold-black');
+    const foot = card.querySelector('.bjsc-race-card__foot');
+    if (foot) {
+      foot.classList.add('is-hidden');
+      foot.classList.remove('is-show');
+    }
+    const gyEl = card.querySelector('.bjsc-race-card__gy');
+    const lhEl = card.querySelector('.bjsc-race-card__lh');
+    if (gyEl) gyEl.textContent = '—';
+    if (lhEl) lhEl.textContent = '—';
+    /* 压黑只藏画面，不改 iframe.src，避免重载露出放大 Logo */
+    if (window.LotteryHoldTip) LotteryHoldTip.ensure(card, '.bjsc-race-card__stage');
+    return true;
+  }
+
+  /** 刷新/重进：开奖中压黑幕，避免泄底 */
+  function holdBlackLockedRaceCards() {
+    if (!serverCurrent) return;
+    const issue = String(serverCurrent.issueNo || '').trim();
+    if (!issue || !isServerDrawingIssue(issue)) return;
+    let newlyHeld = false;
+    $('#chatFeed .bjsc-race-card, #chatDock .bjsc-race-card').each(function () {
+      const card = this;
+      if (String(card.getAttribute('data-issue') || '').trim() !== issue) return;
+      const frame = card.querySelector('.bjsc-race-card__frame');
+      const src = frame ? String(frame.getAttribute('src') || '') : '';
+      if (card.getAttribute('data-hold-black') === '1' && card.classList.contains('is-hold-black') && src.indexOf('settle=1') < 0) return;
+      if (holdBlackRaceCard(card)) newlyHeld = true;
+    });
+    if (!newlyHeld || !roomChat) return;
+    /* 仪式已过揭晓/已在等开盘：勿重置 revealDone/winFlushed */
+    if (roomChat.isRevealReady && roomChat.isRevealReady(issue)) return;
+    if (typeof roomChat.getPhase === 'function' && roomChat.getPhase() === 'settled') return;
+    if (typeof roomChat.beginCeremonyHold === 'function') roomChat.beginCeremonyHold(issue);
+    if (typeof roomChat.setRevealPending === 'function') roomChat.setRevealPending(issue);
+    const openAt = new Date(serverCurrent.openAt).getTime();
+    const readyMs = resultRevealDurationMs() + 1400;
+    const remain = Number.isFinite(openAt)
+      ? Math.max(1200, openAt - Date.now() + 600)
+      : readyMs;
+    if (typeof roomChat.scheduleRevealReady === 'function') {
+      roomChat.scheduleRevealReady(issue, Math.min(remain, readyMs + 400));
+    }
   }
 
   const CHAT_KEEP = 50;
@@ -1318,6 +1557,8 @@ $(function () {
     if (!App.fetchMyLotteryBets) return;
     App.fetchMyLotteryBets(SERVER_GAME, issue).then(function (res) {
       const list = (res && res.list) || [];
+      /* 派彩已入账：立刻拉余额，避免顶栏积分仍停在扣注后 */
+      refreshAfterServerSettle();
       if (list.length && typeof refineUserStatsFromServer === 'function') refineUserStatsFromServer(issue, list);
       if (typeof buildMineLineHtmlFromServer !== 'function' || typeof applyMineLineToWinHtml !== 'function') return;
       const mine = buildMineLineHtmlFromServer(issue, list);
@@ -1347,7 +1588,55 @@ $(function () {
     });
   }
 
-  const roomChat = LotteryRoomChat.create({
+  function hasResultAnimated(issue) {
+    issue = String(issue || '').trim();
+    if (!issue) return false;
+    if (typeof isServerDrawingIssue === 'function' && isServerDrawingIssue(issue)) return false;
+    return playedAnimIssues.has(issue);
+  }
+  function markResultAnimated(issue) {
+    issue = String(issue || '').trim();
+    if (!issue) return;
+    playedAnimIssues.add(issue);
+    try {
+      localStorage.setItem(PLAYED_ANIM_STORAGE_KEY, JSON.stringify(Array.from(playedAnimIssues).slice(-120)));
+    } catch (e) { /* ignore */ }
+  }
+  function forceSettleResultCard(issue) {
+    issue = String(issue || '').trim();
+    $('#chatFeed .bjsc-race-card, #chatDock .bjsc-race-card').each(function () {
+      const card = this;
+      if (issue && String(card.getAttribute('data-issue') || '').trim() !== issue) return;
+      /* 竞速/领奖台仍在播：勿掐动画，只保证脚注；仪式在 onDone 再推进 */
+      if (card.classList.contains('is-playing') || card.getAttribute('data-playing') === '1' || card._bjscLiveAnim) {
+        let numsPlay = null;
+        const rawPlay = String(card.getAttribute('data-nums') || '').trim();
+        if (rawPlay) {
+          const arrP = rawPlay.split(',').map(Number);
+          if (arrP.length === 10) numsPlay = arrP;
+        }
+        revealRaceCardFoot(card, numsPlay, { noEnterAnim: true });
+        card._holdBlackExempt = true;
+        return;
+      }
+      card.classList.remove('is-playing');
+      card.removeAttribute('data-playing');
+      card._bjscLiveAnim = false;
+      let nums = null;
+      const raw = String(card.getAttribute('data-nums') || '').trim();
+      if (raw) {
+        const arr = raw.split(',').map(Number);
+        if (arr.length === 10) nums = arr;
+      }
+      settleRaceCard(card, nums);
+      card._bjscSettled = true;
+      card._holdBlackExempt = true;
+      if (typeof persistBotCardHtml === 'function') persistBotCardHtml(card);
+    });
+  }
+
+  let roomChat = null;
+  roomChat = LotteryRoomChat.create({
     gameCode: SERVER_GAME,
     appendMsg: appendMsg,
     clearFeed: function () {
@@ -1357,6 +1646,9 @@ $(function () {
     getUserName: function () { return user.name; },
     robotFallbackName: (typeof ROBOT !== 'undefined' && ROBOT.name) ? ROBOT.name : '机器人',
     fmtTime: typeof fmtTime === 'function' ? fmtTime : undefined,
+    hasResultAnimated: hasResultAnimated,
+    markResultAnimated: markResultAnimated,
+    onRevealDeadline: forceSettleResultCard,
     buildBetHtml: function (p) {
       return (typeof escapeHtml === 'function') ? escapeHtml(String(p.text || '')) : String(p.text || '');
     },
@@ -1370,8 +1662,13 @@ $(function () {
       const nums = Array.isArray(p.nums) ? p.nums.map(Number) : [];
       const issue = String(p.issueNo || msg.issueNo || '');
       if (typeof resultCardHtml !== 'function') return '开奖 ' + issue;
-      /* 历史/非直播：URL settle 直落领奖台；直播揭晓不加 settle，由 playRaceCard 播完整场 */
-      const settle = !(ctx && ctx.live && ctx.animate);
+      /* 历史先进黑卡，避免先进房泄底再压黑 */
+      const settle = !!(
+        ctx &&
+        ctx.live &&
+        !ctx.animate &&
+        !(typeof isServerDrawingIssue === 'function' && isServerDrawingIssue(issue))
+      );
       return resultCardHtml(nums, issue, { settle: settle });
     },
     buildBetVerifyHtml: function (p) { return buildBetVerifyFromPayload(p); },
@@ -1389,8 +1686,14 @@ $(function () {
     onResultMeta: function (p, msg) {
       const nums = Array.isArray(p.nums) ? p.nums.map(Number) : [];
       const issue = String(p.issueNo || msg.issueNo || '');
-      if (typeof revealedIssues !== 'undefined' && revealedIssues.add) revealedIssues.add(issue);
+      if (issue) {
+        revealedIssues.add(issue);
+        saveRevealedIssues();
+      }
       if (nums.length) lastDraw = nums.slice();
+    },
+    onNumbersRevealed: function (issue) {
+      if (typeof paintDrawBarAfterReveal === 'function') paintDrawBarAfterReveal(issue);
     },
     onWinVerifyUnlocked: function () {
       /* 解冻只在开盘线刷出（onCeremonyComplete），仪式中禁止下注 */
@@ -1413,6 +1716,8 @@ $(function () {
       if (phase === 'betting') {
         roomBetFrozen = false;
         sealedIssueNo = '';
+        drawBarRevealIssue = '';
+        drawCeremonyReadyIssue = '';
         if (window.BjscAudio && BjscAudio.onBetting) BjscAudio.onBetting();
         if (typeof requestLotteryResync === 'function') requestLotteryResync();
         else if (typeof syncServerSnapshot === 'function') syncServerSnapshot();
@@ -1436,27 +1741,59 @@ $(function () {
     afterResultAppended: function (ctx) {
       const issue = ctx.issue;
       const nums = Array.isArray(ctx.payload.nums) ? ctx.payload.nums.map(Number) : [];
-      const card = $(
+      const issueKey = String(issue || '').trim();
+      const $cards = $(
         '#chatDock .bjsc-race-card, #chatFeed .bjsc-race-card, #chatDock .bjsc-result-card, #chatFeed .bjsc-result-card'
-      ).last()[0];
+      );
+      const card = (issueKey
+        ? $cards.filter(function () {
+            return String(this.getAttribute('data-issue') || '').trim() === issueKey;
+          })
+        : $cards
+      ).last()[0] || $cards.last()[0];
       const readyMs = resultRevealDurationMs() + 800;
       if (card && card.classList.contains('bjsc-race-card')) {
         if (ctx.animate && ctx.live && nums.length === 10) {
           ctx.setRevealPending(issue);
-          card._bjscLiveAnim = true;
-          /* 完整播完以 scheduleRevealReady 为准；onDone 只做落盘标记 */
           playRaceCard(card, nums, {
+            issue: issueKey,
             onDone: function () {
               card._bjscLiveAnim = false;
               card._bjscSettled = true;
+              card._holdBlackExempt = true;
               if (typeof persistBotCardHtml === 'function') persistBotCardHtml(card);
             },
           });
-          ctx.scheduleRevealReady(issue, readyMs);
+          /* scheduleRevealReady 改在 play 真正开播后武装（见 playRaceCard） */
+        } else if (ctx.live && !ctx.animate) {
+          const phaseIss = (roomChat && roomChat.getPhaseIssue)
+            ? String(roomChat.getPhaseIssue() || '')
+            : '';
+          const holding = isServerDrawingIssue(issue) || (
+            typeof isCeremonyHolding === 'function' &&
+            isCeremonyHolding() &&
+            phaseIss &&
+            phaseIss === String(issue || '')
+          );
+          if (holding) {
+            holdBlackRaceCard(card);
+            ctx.setRevealPending(issue);
+            const openAt = serverCurrent && new Date(serverCurrent.openAt).getTime();
+            const remain = Number.isFinite(openAt)
+              ? Math.max(1200, openAt - Date.now() + 600)
+              : readyMs;
+            ctx.scheduleRevealReady(issue, Math.min(remain, readyMs + 400));
+          } else {
+            settleRaceCard(card, nums.length === 10 ? nums : null);
+            card._bjscSettled = true;
+            ctx.setRevealReadyFlag(issue, true);
+          }
         } else {
-          settleRaceCard(card, nums.length === 10 ? nums : null);
-          card._bjscSettled = true;
+          /* 历史回放：保持黑卡，等 snapshot holdBlack */
           ctx.setRevealReadyFlag(issue, true);
+          if (typeof holdBlackLockedRaceCards === 'function') {
+            setTimeout(function () { try { holdBlackLockedRaceCards(); } catch (eR) { /* ignore */ } }, 0);
+          }
         }
         return;
       }
@@ -1512,7 +1849,27 @@ $(function () {
   function persistBotCardHtml(card) {
     if (!card || !chatLog.length) return;
     const issue = String(card.getAttribute('data-issue') || '').trim();
-    const html = card.outerHTML;
+    /*
+     * 只改写入 chatLog 的 HTML 字符串，加上 settle=1。
+     * 禁止改直播 iframe.src：否则冲线后再整页重载会闪一下。
+     */
+    let html = card.outerHTML;
+    if (card.classList.contains('bjsc-race-card')) {
+      html = html.replace(
+        /(<iframe[^>]*class="[^"]*bjsc-race-card__frame[^"]*"[^>]*src=")([^"]+)(")/,
+        function (_m, a, src, c) {
+          let next = String(src || '');
+          if (next.indexOf('settle=1') < 0) next += (next.indexOf('?') >= 0 ? '&' : '?') + 'settle=1';
+          return a + next + c;
+        }
+      );
+      if (html.indexOf('is-frame-ready') < 0) {
+        html = html.replace('bjsc-race-card ', 'bjsc-race-card is-frame-ready ');
+      }
+      if (html.indexOf('is-settled') < 0) {
+        html = html.replace('bjsc-race-card ', 'bjsc-race-card is-settled ');
+      }
+    }
     for (let i = chatLog.length - 1; i >= 0; i--) {
       const m = chatLog[i];
       if (!m || !m.robot) continue;
@@ -1526,9 +1883,22 @@ $(function () {
 
   /** 进房/同步后：竞速卡瞬落领奖台；旧 Canvas 卡仍走 bindStage */
   function settleRestoredResultCards() {
+    const holdIssue = (roomChat && typeof roomChat.getCeremonyHoldIssue === 'function')
+      ? String(roomChat.getCeremonyHoldIssue() || '').trim()
+      : '';
+    const phaseIssue = (roomChat && typeof roomChat.getPhaseIssue === 'function')
+      ? String(roomChat.getPhaseIssue() || '').trim()
+      : '';
     $('#chatFeed .bjsc-race-card').each(function () {
       const card = this;
       if (card._bjscLiveAnim || card._bjscSettled) return;
+      if (card.classList.contains('is-playing') || card.getAttribute('data-playing') === '1') return;
+      const issue = String(card.getAttribute('data-issue') || '').trim();
+      if (issue && isServerDrawingIssue(issue)) return;
+      /* 当期开奖仪式中的卡：交给 playRaceCard，禁止被 snapshot 强制 settle */
+      if (issue && ((holdIssue && issue === holdIssue) || (phaseIssue && issue === phaseIssue))) {
+        if (isCeremonyHolding()) return;
+      }
       settleRaceCard(card, null);
       card._bjscSettled = true;
     });
@@ -2652,6 +3022,10 @@ $(function () {
       const list = JSON.parse(localStorage.getItem(REVEALED_STORAGE_KEY) || '[]');
       if (Array.isArray(list)) revealedIssues = new Set(list.slice(-120).map(String));
     } catch (e) { revealedIssues = new Set(); }
+    try {
+      const played = JSON.parse(localStorage.getItem(PLAYED_ANIM_STORAGE_KEY) || '[]');
+      if (Array.isArray(played)) playedAnimIssues = new Set(played.slice(-120).map(String));
+    } catch (e2) { playedAnimIssues = new Set(); }
   }
   function saveRevealedIssues() {
     try { localStorage.setItem(REVEALED_STORAGE_KEY, JSON.stringify(Array.from(revealedIssues).slice(-120))); } catch (e) { /* ignore */ }
@@ -2670,16 +3044,103 @@ $(function () {
       return phase === 'drawing' || phase === 'revealing' || phase === 'settled';
     } catch (e) { return false; }
   }
-  /** 开奖仪式中：顶栏用上一期；揭晓完再跟历史头 */
+  function upsertHistoryHeadFromDraw(issue, nums) {
+    const iss = String(issue || '').trim();
+    if (!iss || !Array.isArray(nums) || nums.length !== 10) return null;
+    const row = {
+      issue: iss,
+      nums: nums.slice(),
+      gy: gyMeta(nums).text,
+      lh: lhRow(nums),
+    };
+    const idx = historyRows.findIndex(function (r) { return String(r.issue) === iss; });
+    if (idx >= 0) historyRows[idx] = Object.assign({}, historyRows[idx], row);
+    else historyRows.unshift(row);
+    if (historyRows.length > 80) historyRows.length = 80;
+    return row;
+  }
+  /** 滚号/揭晓中：顶栏压上一期；号码揭完后立刻跟历史头（含 snapshot 轮询勿再压回去） */
   function pickDrawBarRow(rows) {
     if (!rows || !rows.length) return null;
     try {
+      const phase = roomChat && roomChat.getPhase ? String(roomChat.getPhase() || '') : '';
       const hold = roomChat && roomChat.getPhaseIssue ? String(roomChat.getPhaseIssue() || '') : '';
-      if (isCeremonyHolding() && hold && String(rows[0].issue) === hold) {
+      const revealed = isDrawBarUnlocked(hold) ||
+        !!(roomChat && roomChat.isRevealReady && roomChat.isRevealReady(hold));
+      if (!revealed && (phase === 'drawing' || phase === 'revealing') && hold && String(rows[0].issue) === hold) {
         return rows[1] || null;
       }
     } catch (e) { /* ignore */ }
     return rows[0];
+  }
+  /**
+   * 冲线出号：只刷顶部历史栏。
+   * 开盘线 / 顶栏倒计时要等领奖台尾动画播完 → notifyDrawCeremonyReady。
+   */
+  let drawBarRevealIssue = '';
+  let drawCeremonyReadyIssue = '';
+  function notifyDrawBarNumbersReady(issue, nums, expectLen) {
+    try {
+      const iss = String(issue || '').trim();
+      const need = expectLen > 0 ? expectLen : 0;
+      if (Array.isArray(nums) && (!need || nums.length === need)) {
+        lastDraw = nums.slice();
+        if (iss && typeof upsertHistoryHeadFromDraw === 'function') {
+          upsertHistoryHeadFromDraw(iss, nums);
+        }
+      }
+      if (iss) drawBarRevealIssue = iss;
+      if (typeof paintDrawBarAfterReveal === 'function') paintDrawBarAfterReveal(iss);
+    } catch (e) { /* ignore */ }
+  }
+  /** 领奖台/尾动画结束：中奖核对 → 开盘线 → 解冻 → 顶栏倒计时 */
+  function notifyDrawCeremonyReady(issue) {
+    try {
+      const iss = String(issue || '').trim();
+      if (iss && drawCeremonyReadyIssue === iss) return;
+      if (iss) drawCeremonyReadyIssue = iss;
+      if (roomChat && typeof roomChat.advanceReveal === 'function') {
+        roomChat.advanceReveal(iss);
+      }
+      if (typeof refreshAfterServerSettle === 'function') refreshAfterServerSettle();
+      if (iss && typeof applyRoomWinVerifyMineLine === 'function') applyRoomWinVerifyMineLine(iss);
+      if (typeof requestLotteryResync === 'function') requestLotteryResync();
+      else if (typeof syncServerSnapshot === 'function') syncServerSnapshot();
+      if (typeof tick === 'function') {
+        try { tick(); } catch (eTick) { /* ignore */ }
+      }
+      [200, 600, 1200].forEach(function (ms) {
+        setTimeout(function () {
+          try {
+            if (typeof refreshAfterServerSettle === 'function') refreshAfterServerSettle();
+            if (iss && typeof applyRoomWinVerifyMineLine === 'function') applyRoomWinVerifyMineLine(iss);
+            if (typeof requestLotteryResync === 'function') requestLotteryResync();
+            if (typeof tick === 'function') tick();
+          } catch (e2) { /* ignore */ }
+        }, ms);
+      });
+    } catch (e) { /* ignore */ }
+  }
+  function isDrawBarUnlocked(issue) {
+    const iss = String(issue || '').trim();
+    return !!(iss && drawBarRevealIssue && drawBarRevealIssue === iss);
+  }
+  /** 结果卡号码已出齐：顶栏马上对齐，不跟中奖核对/开盘线抢时间 */
+  function paintDrawBarAfterReveal(issueHint) {
+    try {
+      const iss = String(issueHint || '').trim();
+      if (iss && lastDraw && lastDraw.length === 10 && typeof upsertHistoryHeadFromDraw === 'function') {
+        upsertHistoryHeadFromDraw(iss, lastDraw);
+      }
+      let row = null;
+      if (iss && Array.isArray(historyRows)) {
+        row = historyRows.find(function (r) { return String(r.issue) === iss; }) || null;
+      }
+      if (!row && historyRows && historyRows[0]) row = historyRows[0];
+      if (row && typeof renderDrawBar === 'function') renderDrawBar(row);
+      if (typeof flashDrawBarReveal === 'function') flashDrawBarReveal();
+      if (typeof renderDrawTable === 'function') renderDrawTable();
+    } catch (e) { /* ignore */ }
   }
 
   function syncServerSnapshot() {
@@ -2690,10 +3151,25 @@ $(function () {
       const rows = parseServerHistory(snapshot && snapshot.history);
       const headChanged = rows[0] && (!historyRows[0] || rows[0].issue !== historyRows[0].issue);
       historyRows = rows;
-      if (rows.length) {
-        lastDraw = rows[0].nums.slice();
+      try {
+        const holdIss = roomChat && roomChat.getPhaseIssue ? String(roomChat.getPhaseIssue() || '') : '';
+        if (
+          holdIss &&
+          (isDrawBarUnlocked(holdIss) || (roomChat && roomChat.isRevealReady && roomChat.isRevealReady(holdIss))) &&
+          lastDraw && lastDraw.length === 10
+        ) {
+          upsertHistoryHeadFromDraw(holdIss, lastDraw);
+        }
+      } catch (eKeepHead) { /* ignore */ }
+      if (historyRows.length) {
+        const holdNow = roomChat && roomChat.getPhaseIssue ? String(roomChat.getPhaseIssue() || '') : '';
+        if (!(isDrawBarUnlocked(holdNow) || (roomChat && roomChat.isRevealReady && roomChat.isRevealReady(holdNow)))) {
+          lastDraw = historyRows[0].nums.slice();
+        } else if (!lastDraw || !lastDraw.length) {
+          lastDraw = historyRows[0].nums.slice();
+        }
         /* 仪式未结束前顶栏仍显示上一期，避免比结果卡更早露号 */
-        const barRow = pickDrawBarRow(rows);
+        const barRow = pickDrawBarRow(historyRows);
         if (barRow) renderDrawBar(barRow);
       } else if (typeof renderDrawBar === 'function') {
         try { renderDrawBar(null); } catch (e) { /* ignore */ }
@@ -2715,6 +3191,7 @@ $(function () {
       renderDrawTable();
       if (!isCeremonyHolding() && serverCurrent && serverCurrent.issueNo) setCurIssueDisplay(String(serverCurrent.issueNo));
       settleRestoredResultCards();
+      try { holdBlackLockedRaceCards(); } catch (eHold) { /* ignore */ }
       if (rows[0]) {
         const holdIss = roomChat && roomChat.getPhaseIssue ? String(roomChat.getPhaseIssue() || '') : '';
         if (!(isCeremonyHolding() && holdIss && String(rows[0].issue) === holdIss)) {
@@ -2762,6 +3239,13 @@ $(function () {
           sealedIssueNo = '';
         }
       } else if (status === 'LOCKED' || (status === 'PENDING' && now >= lockAt)) {
+        /*
+         * 开盘线已出但快照仍停在上期：只催同步，勿先改成「同步中」再跳倒计时（会闪）。
+         */
+        if (phase === 'betting') {
+          requestLotteryResync();
+          return;
+        }
         updateCountdownDrawing();
         if (Number.isFinite(new Date(serverCurrent.openAt).getTime()) &&
             now >= new Date(serverCurrent.openAt).getTime()) {
@@ -2834,7 +3318,38 @@ $(function () {
       } catch (e) { /* ignore */ }
     }
   }
-  /* === chat-rail handlers (bjsc) === */
+  
+  /* 右侧四钮：默认收起，点梯子展开/收起 */
+  (function initRailLadder() {
+    const KEY = 'bjsc_rail_collapsed';
+    const room = document.querySelector('.bjsc-room');
+    const btn = document.getElementById('btnRailToggle');
+    if (!room || !btn) return;
+    let collapsed = true;
+    try {
+      const saved = localStorage.getItem(KEY);
+      if (saved === '0') collapsed = false;
+      if (saved === '1') collapsed = true;
+    } catch (e) { /* ignore */ }
+    function apply() {
+      room.classList.toggle('is-rail-collapsed', collapsed);
+      btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      btn.title = collapsed ? '展开菜单' : '收起菜单';
+      const arrow = btn.querySelector('.bjsc-rail-ladder__arrow');
+      if (arrow) arrow.textContent = collapsed ? '▼' : '▲';
+      try { localStorage.setItem(KEY, collapsed ? '1' : '0'); } catch (e) { /* ignore */ }
+      if (typeof layoutRail === 'function') layoutRail();
+    }
+    apply();
+    btn.addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      collapsed = !collapsed;
+      apply();
+    });
+  })();
+
+/* === chat-rail handlers (bjsc) === */
 
   function playCatRulesHtml(cat) {
     const id = (cat && cat.id) || '';

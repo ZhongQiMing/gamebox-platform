@@ -42,6 +42,6 @@ export const agentApi = {
   team: (page = 1) => http.get<Paged<TeamMember>, Paged<TeamMember>>('/agent/team', { params: { page } }),
   commissions: (page = 1) =>
     http.get<Paged<CommissionItem>, Paged<CommissionItem>>('/agent/commissions', { params: { page } }),
-  hang: (friendUid: string, underUid: string) =>
-    http.post<HangResult, HangResult>('/agent/hang', { friendUid, underUid }),
+  hang: (friendUid: string, underUid: string, roomId?: string) =>
+    http.post<HangResult, HangResult>('/agent/hang', { friendUid, underUid, roomId }),
 }

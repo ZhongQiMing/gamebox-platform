@@ -91,39 +91,36 @@ export const BCBM_RING: readonly BcbmRingCell[] = (() => {
     };
   };
   /**
-   * 停点权重严格取 round(900 / 倍率)，使 12 个仓位的普通开奖 RTP 全部落在 82%±1%。
-   * 早先的权重只是「大致反比」，红/绿奔驰与红宝马单独就超过 100%，是平台负期望。
-   * 12 仓覆盖全部赔付格时，普通开奖 RTP 的数学上限为 1/Σ(1/倍率) ≈ 83.1%，
-   * 剩余部分由大三元 / 大四喜等大奖补足到目标 RTP（见 BCBM_DEFAULT_AWARD_WEIGHTS）。
-   * 改权重后必须跑 `pnpm audit:rtp arcade`。
+   * 停点权重：低倍仓更易停（小奖常有），高倍仓更难停（大奖少）。
+   * 取 round(1400 / 倍率)；改后跑 `pnpm audit:rtp arcade`。
    */
   return [
-    mk('vw_red', 129),
-    mk('vw_green', 180),
-    mk('vw_yellow', 225),
+    mk('vw_red', 200),
+    mk('vw_green', 280),
+    mk('vw_yellow', 350),
     mk('free', 0) /* 视觉格，不进普通停点池 */,
-    mk('benz_red', 20),
-    mk('benz_green', 24),
-    mk('benz_yellow', 33),
-    mk('bmw_red', 41),
-    mk('bmw_green', 56),
-    mk('bmw_yellow', 69),
-    mk('audi_red', 75),
-    mk('audi_green', 90),
-    mk('audi_yellow', 150),
-    mk('vw_red', 129),
-    mk('vw_green', 180),
-    mk('vw_yellow', 225),
+    mk('benz_red', 12),
+    mk('benz_green', 16),
+    mk('benz_yellow', 26),
+    mk('bmw_red', 32),
+    mk('bmw_green', 50),
+    mk('bmw_yellow', 70),
+    mk('audi_red', 85),
+    mk('audi_green', 110),
+    mk('audi_yellow', 200),
+    mk('vw_red', 200),
+    mk('vw_green', 280),
+    mk('vw_yellow', 350),
     mk('free', 0) /* 视觉格，不进普通停点池 */,
-    mk('benz_red', 20),
-    mk('benz_green', 24),
-    mk('benz_yellow', 33),
-    mk('bmw_red', 41),
-    mk('bmw_green', 56),
-    mk('bmw_yellow', 69),
-    mk('audi_red', 75),
-    mk('audi_green', 90),
-    mk('audi_yellow', 150),
+    mk('benz_red', 12),
+    mk('benz_green', 16),
+    mk('benz_yellow', 26),
+    mk('bmw_red', 32),
+    mk('bmw_green', 50),
+    mk('bmw_yellow', 70),
+    mk('audi_red', 85),
+    mk('audi_green', 110),
+    mk('audi_yellow', 200),
   ];
 })();
 
@@ -168,26 +165,24 @@ export const BCBM_AWARD_LABELS: Record<BcbmAwardType, string> = {
 };
 
 /**
- * 大奖权重（分母 1000）。
+ * 奖型权重（分母 1000）。
  *
- * sanyuan / sixi / fast / uturn / drift 是「无条件全额赔付整组仓位」，不受灯环权重约束：
- * 押满 12 仓时大三元·奔驰一把赔 110 倍、全民漂移一把赔 205 倍，
- * 因此权重必须是千分位量级，否则单靠大奖就能把 RTP 顶到 200% 以上。
- * 这里让大奖合计补足约 13 个百分点，与普通开奖的 82% 合成目标 RTP。
+ * 手感：普通停灯占绝大多数；大三元/四喜/狂飙/漂移等极稀。
+ * 特殊奖无条件赔整组仓位，权重必须很低，否则 RTP 会被顶穿。
  */
 export const BCBM_DEFAULT_AWARD_WEIGHTS: Record<BcbmAwardType, number> = {
-  normal: 950,
+  normal: 978,
   free: 0,
   sanyuan_benz: 1,
-  sanyuan_bmw: 2,
-  sanyuan_audi: 4,
-  sanyuan_vw: 8,
+  sanyuan_bmw: 1,
+  sanyuan_audi: 2,
+  sanyuan_vw: 3,
   sixi_red: 1,
-  sixi_green: 2,
-  sixi_yellow: 3,
-  fast: 5,
-  uturn: 8,
-  lightning: 15,
+  sixi_green: 1,
+  sixi_yellow: 2,
+  fast: 2,
+  uturn: 3,
+  lightning: 5,
   drift: 1,
 };
 

@@ -1,6 +1,7 @@
 import axios from 'axios'
-import type { AxiosResponse } from 'axios'
+import type { AxiosResponse, InternalAxiosRequestConfig } from 'axios'
 import { useStaffStore } from '@/stores/staff'
+import { API_BASE } from './apiBase'
 
 interface Envelope<T = unknown> {
   code: number
@@ -8,14 +9,38 @@ interface Envelope<T = unknown> {
   message: string
 }
 
+type StaffConfig = InternalAxiosRequestConfig & { __staffToken?: string }
+
 const staffHttp = axios.create({
-  baseURL: '/api',
+  baseURL: API_BASE,
   timeout: 15000,
 })
 
-staffHttp.interceptors.request.use((config) => {
-  const token = localStorage.getItem('staff_token')
-  if (token) config.headers.Authorization = `Bearer ${token}`
+function readCsrfCookie(): string {
+  const m = document.cookie.match(/(?:^|;\s*)gb_csrf=([^;]+)/)
+  return m ? decodeURIComponent(m[1]) : ''
+}
+
+function tokenOf(config?: StaffConfig): string {
+  if (!config) return ''
+  if (config.__staffToken) return config.__staffToken
+  const headers = config.headers as { get?: (k: string) => unknown; Authorization?: unknown; authorization?: unknown }
+  const raw = typeof headers?.get === 'function'
+    ? headers.get('Authorization') ?? headers.get('authorization')
+    : headers?.Authorization ?? headers?.authorization
+  const s = Array.isArray(raw) ? raw[0] : raw
+  if (typeof s !== 'string') return ''
+  return s.startsWith('Bearer ') ? s.slice(7) : ''
+}
+
+staffHttp.interceptors.request.use((config: StaffConfig) => {
+  const token = localStorage.getItem('staff_token') || ''
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`
+    config.__staffToken = token
+  }
+  const csrf = readCsrfCookie()
+  if (csrf) config.headers['X-CSRF-Token'] = csrf
   return config
 })
 
@@ -27,14 +52,26 @@ staffHttp.interceptors.response.use(
   },
   (err) => {
     if (err.response?.status === 401) {
-      const staff = useStaffStore()
-      const kind = staff.loginKind || 'agent'
-      staff.logout()
-      if (!window.location.pathname.startsWith('/staff/login')) {
-        window.location.replace(`/staff/login/${kind}`)
+      const current = localStorage.getItem('staff_token') || ''
+      const reqToken = tokenOf(err.config as StaffConfig | undefined)
+      /*
+       * 必须「请求票 === 当前票」才踢会话。
+       * AxiosHeaders 读不到 Authorization 时绝不能用 !reqToken 兜底，否则任意 401 都会误踢刚登录的人。
+       */
+      if (current && reqToken && reqToken === current) {
+        const staff = useStaffStore()
+        const kind = staff.loginKind || 'agent'
+        staff.logout()
+        if (!window.location.pathname.startsWith('/staff/login')) {
+          window.location.replace(`/staff/login/${kind}`)
+        }
       }
     }
-    const msg = err.response?.data?.message ?? err.message ?? '网络异常'
+    const raw = err.response?.data?.message ?? err.message ?? '网络异常'
+    const msg =
+      err.response?.status === 429 || /too many requests|throttler/i.test(String(raw))
+        ? '尝试过于频繁，请稍后再试'
+        : String(raw)
     return Promise.reject(new Error(msg))
   },
 )

@@ -68,7 +68,8 @@ export function drawBaccaratFromDeck(deck: FaceCard[]): BaccaratOutcome {
       pp = handPoint(player);
     }
     if (bankerNeedsDraw(bp, playerDrew, p3Point)) {
-      banker.push(deck[next++]);
+      /* 全局最后一张补牌，之后不再取牌，故不必再推进 next */
+      banker.push(deck[next]);
       bankerDrew = true;
       bp = handPoint(banker);
     }

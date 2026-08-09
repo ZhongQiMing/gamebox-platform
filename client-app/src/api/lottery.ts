@@ -77,7 +77,7 @@ export const lotteryApi = {
   betBatch: (
     gameCode: string,
     bets: Array<{ betType: string; betValue?: string; amount: number }>,
-    extra: { clientRequestId: string; roomNo?: string; chatText?: string },
+    extra: { clientRequestId: string; roomNo: string; chatText?: string },
   ) =>
     http.post<
       { issueNo: string; count: number; totalAmount: number; bets: unknown[]; chatPosted?: boolean },

@@ -826,7 +826,8 @@ body.jsr-bg::after {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 10px calc(var(--jsr-gap) + var(--rail-w)) 12px var(--jsr-gap);
+  /* 右侧不预留侧栏空位：聊天铺满，四个按钮叠在消息上方（微信式） */
+  padding: 10px var(--jsr-gap) 12px;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -954,7 +955,7 @@ body.jsr-bg::after {
 .jsr-msg.is-robot .jsr-msg__bubble,
 .jsr-msg.is-robot .jsr-msg__bubble--bot {
   display: block;
-  max-width: min(380px, 98%);
+  max-width: min(320px, 98%);
   padding: 0;
   background: transparent;
   border: none;
@@ -2976,6 +2977,16 @@ body.jsr-bg::after {
   gap: 2px;
   width: 44px;
 }
+.jsr-room.is-rail-compact .jsr-rail-ladder {
+  width: 26px;
+  height: 26px;
+}
+.jsr-room.is-rail-compact .jsr-rail-ladder__arrow {
+  font-size: 10px;
+}
+.jsr-room.is-rail-compact .jsr-rail-stack {
+  gap: 6px;
+}
 .jsr-room.is-rail-compact .jsr-rail-ic {
   width: 34px;
   height: 34px;
@@ -3044,7 +3055,7 @@ body.jsr-bg::after {
 
 /* ── 开奖结果卡（黑金体系，与房间主界面同调） ── */
 .jsr-result-card {
-  width: min(380px, 100%);
+  width: min(320px, 100%);
   border-radius: 10px;
   overflow: hidden;
   background: linear-gradient(145deg, rgba(22, 17, 11, 0.98), rgba(10, 8, 5, 0.99));
@@ -3163,9 +3174,66 @@ body.jsr-bg::after {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   width: var(--rail-w, 56px);
   pointer-events: none;
+}
+.jsr-rail-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-height: 420px;
+  opacity: 1;
+  overflow: hidden;
+  transition: max-height 0.22s ease, opacity 0.18s ease, margin 0.18s ease;
+}
+.jsr-room.is-rail-collapsed .jsr-rail-stack {
+  max-height: 0;
+  opacity: 0;
+  margin: 0;
+  pointer-events: none;
+}
+/* 收起/展开：三角箭头 + 外圈，收起▼ 展开▲ */
+.jsr-rail-ladder {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1.5px solid rgba(244, 211, 107, 0.78);
+  border-radius: 50%;
+  background: linear-gradient(180deg, rgba(42, 34, 18, 0.92), rgba(18, 14, 10, 0.88));
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 2px 6px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 230, 150, 0.18);
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.12s ease;
+}
+.jsr-rail-ladder:hover {
+  border-color: rgba(255, 224, 130, 0.95);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 0 10px rgba(244, 211, 107, 0.35),
+    0 2px 6px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 230, 150, 0.28);
+}
+.jsr-rail-ladder__arrow {
+  display: block;
+  font-size: 11px;
+  line-height: 1;
+  color: #f4d36b;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.65);
+  transform: translateY(0.5px);
+}
+.jsr-rail-ladder:active {
+  transform: scale(0.94);
+}
+.jsr-rail-ladder:active .jsr-rail-ladder__arrow {
+  opacity: 0.9;
 }
 .jsr-rail-btn {
   display: flex;
@@ -3425,7 +3493,7 @@ body.jsr-bg::after {
 
 /* ── 开奖竞速卡（嵌入 PK10 finishAnimation / jisusc） ── */
 .jsr-race-card {
-  width: min(380px, 100%);
+  width: min(320px, 100%);
   border-radius: 10px;
   overflow: hidden;
   background: linear-gradient(145deg, rgba(22, 17, 11, 0.98), rgba(10, 8, 5, 0.99));
@@ -3440,7 +3508,7 @@ body.jsr-bg::after {
   width: 100%;
   aspect-ratio: 1334 / 780;
   overflow: hidden;
-  background: #000;
+  background: #0a0806;
   line-height: 0;
 }
 .jsr-race-card__frame {
@@ -3453,6 +3521,15 @@ body.jsr-bg::after {
   transform-origin: 0 0;
   background: #000;
   pointer-events: none;
+  /* 默认藏起：未 scale 时只露出左上角 Logo，像名字被放大 */
+  opacity: 0;
+  visibility: hidden;
+}
+/* 必须先完成 scale，再露画面（开播 / 结算） */
+.jsr-race-card.is-playing.is-frame-ready .jsr-race-card__frame,
+.jsr-race-card.is-settled.is-frame-ready .jsr-race-card__frame {
+  opacity: 1;
+  visibility: visible;
 }
 .jsr-race-card__foot {
   display: grid;
@@ -3461,6 +3538,9 @@ body.jsr-bg::after {
   padding: 8px 10px 10px;
   background: linear-gradient(0deg, rgba(18, 14, 8, 0.96), rgba(22, 17, 11, 0.9));
   border-top: 1px solid rgba(212, 175, 55, 0.14);
+}
+.jsr-race-card__foot.is-hidden {
+  display: none;
 }
 .jsr-race-card__pill {
   display: flex;

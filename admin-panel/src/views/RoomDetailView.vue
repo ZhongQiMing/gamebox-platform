@@ -1,72 +1,266 @@
 <template>
   <div v-loading="loading" class="room-detail">
-    <PageHeader :title="room?.name || '房间详情'" :subtitle="room ? `进房码 ${room.roomNo}` : '加载中…'">
-      <template #actions>
-        <el-button @click="router.push({ name: 'rooms' })">返回房间中心</el-button>
-        <el-button @click="load">刷新</el-button>
-      </template>
-    </PageHeader>
-
-    <!-- 顶部：仅基本信息 -->
-    <section v-if="room" class="basic">
-      <div class="basic-left">
-        <div class="code-block">
-          <span class="k">进房码（固定）</span>
-          <span class="code mono">{{ room.roomNo }}</span>
+    <!-- 副项：房间内各功能页（整页切换，不挤在小滚动区） -->
+    <nav class="room-subnav" aria-label="房间副项">
+      <div class="room-subnav-tabs">
+        <button
+          v-for="t in detailTabs"
+          :key="t.key"
+          type="button"
+          class="room-tab-btn"
+          :class="{
+            active: tab === t.key,
+            alert: t.key === 'join' && pendingJoinCount > 0,
+          }"
+          @click="setTab(t.key)"
+        >
+          {{ t.label }}
+          <span v-if="t.key === 'join' && pendingJoinCount > 0" class="tab-badge">
+            {{ pendingJoinCount > 99 ? '99+' : pendingJoinCount }}
+          </span>
+        </button>
+      </div>
+      <div class="room-subnav-meta">
+        <div class="room-subnav-id">
+          <b>{{ room?.name || '房间详情' }}</b>
+          <span v-if="room">进房码 {{ room.roomNo }}</span>
         </div>
-        <div class="name-row">
-          <h2>{{ room.name }}</h2>
+        <el-button size="small" @click="goBackFromDetail">
+          {{ isAgent || isProxy ? '返回工作台' : '返回房间中心' }}
+        </el-button>
+        <el-button size="small" :loading="loading" @click="load">刷新</el-button>
+      </div>
+    </nav>
+
+    <div class="room-page" :class="{ 'is-fill': tab === 'players' }">
+    <!-- 基础信息：房间资料 + 本房额度 -->
+    <div v-show="tab === 'basic'" class="room-page-pane">
+      <section v-if="room" class="basic-info">
+        <div class="basic-info-hd">
+          <div class="basic-info-title">
+            <button
+              v-if="canEditRoomIcon"
+              type="button"
+              class="room-icon-btn editable"
+              title="修改房间图标"
+              :disabled="iconBusy"
+              @click="pickRoomIcon"
+            >
+              <img class="room-icon-preview" :src="roomIconUrl(room.icon)" alt="房间图标">
+            </button>
+            <img
+              v-else
+              class="room-icon-preview"
+              :src="roomIconUrl(room.icon)"
+              alt="房间图标"
+            >
+            <el-button
+              v-if="canEditRoomIcon"
+              size="small"
+              :loading="iconBusy"
+              @click="pickRoomIcon"
+            >修改</el-button>
+            <h2>{{ room.name }}</h2>
+            <input
+              ref="roomIconInput"
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              hidden
+              @change="onRoomIconPicked"
+            >
+          </div>
           <el-tag size="small" :type="roomStatusTagType(room.status)">
             {{ roomStatusLabel(room.status) }}
           </el-tag>
+          <el-dropdown
+            v-if="canSetRoomStatus"
+            trigger="click"
+            @command="(s: string) => setRoomStatus(s)"
+          >
+            <el-button size="small" plain :loading="statusBusy">房间状态</el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="OPEN" :disabled="room.status === 'OPEN'">营业中</el-dropdown-item>
+                <el-dropdown-item command="MAINTENANCE" :disabled="room.status === 'MAINTENANCE'">维护中</el-dropdown-item>
+                <el-dropdown-item command="FROZEN" :disabled="room.status === 'FROZEN'">已冻结</el-dropdown-item>
+                <el-dropdown-item
+                  v-if="store.profile?.role === 'ADMIN'"
+                  command="CLOSED"
+                  :disabled="room.status === 'CLOSED'"
+                >已关闭</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
         </div>
-      </div>
-      <div class="basic-right">
-        <div class="basic-item">
-          <span class="k">绑定代理</span>
-          <span class="v">{{ agentBrief }}</span>
+        <div class="kv-grid basic-kv">
+          <div class="kv">
+            <div class="k">进房码</div>
+            <div class="v mono">{{ room.roomNo }}</div>
+          </div>
+          <div class="kv">
+            <div class="k">绑定代理</div>
+            <div class="v">{{ agentBrief }}</div>
+          </div>
+          <div class="kv">
+            <div class="k">盘口 / 占成</div>
+            <div class="v">{{ bookBrief }}</div>
+          </div>
+          <div class="kv">
+            <div class="k">结账日</div>
+            <div class="v">{{ settleBrief }}</div>
+          </div>
+          <div class="kv">
+            <div class="k">月费</div>
+            <div class="v">{{ feeText }}</div>
+            <div v-if="room.monthlyFee && room.monthlyFee > 0" class="kv-sub">
+              下次扣费 {{ formatDate(room.nextBillAt) }}
+            </div>
+          </div>
+          <div v-if="room.bookMode === 'CREDIT'" class="kv">
+            <div class="k">{{ room.bookMode === 'CREDIT' ? '合同额度' : '信用额度' }}</div>
+            <div class="v">{{ fmt(room.creditLimit) }}</div>
+          </div>
+          <div class="kv">
+            <div class="k">成员 / 对局</div>
+            <div class="v">{{ room.memberCount ?? 0 }} / {{ room.roundCount ?? 0 }}</div>
+          </div>
+          <div class="kv">
+            <div class="k">创建时间</div>
+            <div class="v">{{ formatDt(room.createdAt) }}</div>
+          </div>
         </div>
-        <div class="basic-item">
-          <span class="k">月费</span>
-          <span class="v">{{ feeText }}</span>
-          <span v-if="room.monthlyFee && room.monthlyFee > 0" class="v-sub">
-            下次扣费 {{ formatDate(room.nextBillAt) }} 00:00
-          </span>
-        </div>
-        <div class="basic-item">
-          <span class="k">成员 / 对局</span>
-          <span class="v">{{ room.memberCount ?? 0 }} / {{ room.roundCount ?? 0 }}</span>
-        </div>
-        <div class="basic-item">
-          <span class="k">创建时间</span>
-          <span class="v">{{ formatDt(room.createdAt) }}</span>
-        </div>
-        <div class="basic-item">
-          <span class="k">房间彩池</span>
-          <span class="v gold">{{ fmt(poolBalance) }}</span>
-          <el-button
-            v-if="canFundRoomPool"
-            size="small"
-            type="primary"
-            plain
-            style="margin-top:6px"
-            @click="openPoolFund"
-          >注资</el-button>
-        </div>
-      </div>
-      <div class="basic-games">
-        <span class="k">开通游戏</span>
-        <div class="chips" v-if="enabledGameLabels.length">
-          <span v-for="g in enabledGameLabels" :key="g" class="chip">{{ g }}</span>
-        </div>
-        <span v-else class="muted">暂无</span>
-      </div>
-    </section>
 
-    <!-- 下方 Tab：详细信息 -->
-    <el-card shadow="never" class="detail-card">
-      <el-tabs v-model="tab">
-        <el-tab-pane label="经营概况" name="overview">
+        <div v-if="room.ownerAgent?.user" class="basic-quota">
+          <div class="basic-quota-hd">
+            <span class="basic-quota-title">{{ room.bookMode === 'CREDIT' ? '本房信用账本' : '本房代理额度' }}</span>
+            <div v-if="canFundMainAgent && room.bookMode !== 'CREDIT'" class="basic-quota-actions">
+              <el-button type="primary" size="small" @click="openAgentFund('up')">上分</el-button>
+              <el-button type="warning" size="small" @click="openAgentFund('down')">下分</el-button>
+            </div>
+            <div v-else-if="canBumpCreditLimit" class="basic-quota-actions">
+              <el-button type="primary" size="small" @click="openBumpCredit">调整信用额度</el-button>
+            </div>
+          </div>
+          <div v-if="room.bookMode === 'CREDIT'" class="money-strip credit-grid">
+            <div class="money-card">
+              <div class="money-label">佣金账户</div>
+              <div class="money-val gold">{{ fmt(room.ownerAgent.balance) }}</div>
+            </div>
+            <div class="money-card">
+              <div class="money-label">代理额度</div>
+              <div class="money-val gold">{{ fmt(room.ownerAgent.pointsQuota) }}</div>
+            </div>
+            <div class="money-card">
+              <div class="money-label">客服额度</div>
+              <div class="money-val">{{ fmt(csQuotaTotal) }}</div>
+            </div>
+            <div class="money-card">
+              <div class="money-label">剩余信用</div>
+              <div class="money-val gold">{{ fmt(creditUnusedPool) }}</div>
+            </div>
+            <div class="money-card">
+              <div class="money-label">玩家持分</div>
+              <div class="money-val">{{ fmt(room.playerPointsTotal) }}</div>
+            </div>
+            <div class="money-card">
+              <div class="money-label">合同额度</div>
+              <div class="money-val">{{ fmt(room.creditLimit) }}</div>
+            </div>
+            <div class="money-card">
+              <div class="money-label">占成比例</div>
+              <div class="money-val">{{ sharePctText }}</div>
+            </div>
+            <div class="money-card">
+              <div class="money-label">超出</div>
+              <div
+                class="money-val"
+                :class="creditExcess > 0 ? 'down' : creditExcess < 0 ? 'up' : ''"
+              >{{ fmt(creditExcess) }}</div>
+            </div>
+          </div>
+          <div v-else-if="isLandlordSide" class="money-strip">
+            <div class="money-card">
+              <div class="money-label">代理余额</div>
+              <div class="money-val gold">{{ fmt(room.ownerAgent.balance) }}</div>
+            </div>
+            <div class="money-card">
+              <div class="money-label">客服额度</div>
+              <div class="money-val">{{ fmt(csQuotaTotal) }}</div>
+            </div>
+            <div class="money-card">
+              <div class="money-label">上盘可飞</div>
+              <div class="money-val">{{ fmt(room.ownerAgent.flyCover) }}</div>
+            </div>
+            <div class="money-card">
+              <div class="money-label">玩家持分</div>
+              <div class="money-val">{{ fmt(room.playerPointsTotal) }}</div>
+            </div>
+            <div class="money-card">
+              <div class="money-label">本房人数</div>
+              <div class="money-val">{{ room.memberCount ?? 0 }}</div>
+            </div>
+          </div>
+          <div v-else class="money-strip">
+            <div class="money-card">
+              <div class="money-label">代理余额</div>
+              <div class="money-val gold">{{ fmt(room.ownerAgent.balance) }}</div>
+            </div>
+            <div class="money-card">
+              <div class="money-label">客服额度</div>
+              <div class="money-val">{{ fmt(csQuotaTotal) }}</div>
+            </div>
+            <div class="money-card">
+              <div class="money-label">上盘可飞</div>
+              <div class="money-val">{{ fmt(room.ownerAgent.flyCover) }}</div>
+            </div>
+            <div class="money-card">
+              <div class="money-label">玩家持分</div>
+              <div class="money-val">{{ fmt(room.playerPointsTotal) }}</div>
+            </div>
+          </div>
+          <div v-if="canSetRoomFly" class="fly-room-bar" :class="`is-${roomFlyMode}`">
+            <div class="fly-room-left">
+              <span class="fly-room-title">整房飞盘</span>
+              <span class="fly-room-now" :class="`tone-${roomFlyMode}`">
+                {{ roomFlyModeLabel }}
+              </span>
+              <span
+                v-if="cashFlySoftClosed"
+                class="fly-room-stat"
+                style="color: var(--el-color-warning)"
+              >上盘额度耗尽·已软关盘</span>
+              <span v-else-if="roomFlyMode === 'mixed'" class="fly-room-stat">
+                开 {{ room.fly?.onCount ?? 0 }} · 关 {{ room.fly?.offCount ?? 0 }}
+              </span>
+              <span v-else class="fly-room-stat">
+                共 {{ room.fly?.memberCount ?? 0 }} 人
+              </span>
+            </div>
+            <div class="fly-room-actions">
+              <button
+                type="button"
+                class="fly-seg fly-seg-on"
+                :class="{ active: roomFlyMode === 'on' }"
+                :disabled="flyBusy || roomFlyMode === 'on'"
+                @click="setRoomFly(true)"
+              >全开</button>
+              <button
+                type="button"
+                class="fly-seg fly-seg-off"
+                :class="{ active: roomFlyMode === 'off' }"
+                :disabled="flyBusy || roomFlyMode === 'off'"
+                @click="setRoomFly(false)"
+              >全关</button>
+            </div>
+          </div>
+        </div>
+      </section>
+      <div v-else class="empty-box">房间加载中…</div>
+    </div>
+
+    <!-- 经营概况：仅输赢统计 -->
+    <div v-show="tab === 'overview'" class="room-page-pane">
+
           <div class="ov">
             <div class="ov-toolbar">
               <el-radio-group v-model="rangeKey" size="small" @change="onRangePreset">
@@ -111,7 +305,6 @@
                   查询
                 </el-button>
               </div>
-              <div class="ov-custom-tip">上海时间 · 左闭右开（结束时刻不含）· 可选快捷区间后点查询</div>
             </div>
 
             <div class="ov-range" v-if="summary?.range">
@@ -119,82 +312,266 @@
               <b>{{ summary.range.fromText || formatDt(summary.range.from) }}</b>
               ～
               <b>{{ summary.range.toText || formatDt(summary.range.to) }}</b>
-              <span class="muted">左闭右开</span>
             </div>
 
-            <section class="ov-block">
-              <div class="ov-block-hd">
-                <h4>输赢汇总</h4>
-                <span class="ov-block-sub">净盈亏 = 庄家盈亏 − 代理佣金（多级分佣记账，非即时返水）</span>
-              </div>
-              <div class="ov-pnl">
-                <div class="kpi hero">
-                  <div class="kpi-k">净盈亏</div>
-                  <div class="kpi-v" :style="{ color: pnlColor(netPnl) }">{{ fmt(netPnl) }}</div>
+            <!-- 代理：统计条对齐房间中心 / 工作台 -->
+            <template v-if="isAgentSide">
+              <section class="ov-block">
+                <div class="ov-block-hd">
+                  <h4>核心指标</h4>
                 </div>
-                <div class="kpi-row cols-4">
-                  <div class="kpi" v-for="k in pnlSideKpis" :key="k.label">
-                    <div class="kpi-k">{{ k.label }}</div>
-                    <div class="kpi-v" :style="{ color: k.color || undefined }">{{ k.value }}</div>
+                <div class="ov-summary" :style="ovSummaryCols(agentCoreKpis.length)">
+                  <div v-for="k in agentCoreKpis" :key="k.label" class="sum-chip">
+                    <span class="sum-label">{{ k.label }}</span>
+                    <span class="sum-val" :style="{ color: k.color || undefined }">{{ k.value }}</span>
                   </div>
                 </div>
-              </div>
-            </section>
+              </section>
 
-            <div class="ov-split">
+              <section class="ov-block">
+                <div class="ov-block-hd">
+                  <h4>玩家上下分</h4>
+                </div>
+                <div class="ov-summary" :style="ovSummaryCols(agentCashKpis.length)">
+                  <div
+                    v-for="k in agentCashKpis"
+                    :key="k.label"
+                    class="sum-chip"
+                    :class="{ hot: k.hot }"
+                  >
+                    <span class="sum-label">{{ k.label }}</span>
+                    <span class="sum-val" :style="{ color: k.color || undefined }">{{ k.value }}</span>
+                  </div>
+                </div>
+              </section>
+
+              <section class="ov-block">
+                <div class="ov-block-hd">
+                  <h4>注单概况</h4>
+                </div>
+                <div class="ov-summary" :style="ovSummaryCols(agentBetKpis.length)">
+                  <div v-for="k in agentBetKpis" :key="k.label" class="sum-chip">
+                    <span class="sum-label">{{ k.label }}</span>
+                    <span class="sum-val" :style="{ color: k.color || undefined }">{{ k.value }}</span>
+                  </div>
+                </div>
+              </section>
+
+              <div class="ov-split ov-split-tables">
+                <section class="ov-block ov-pane">
+                  <div class="ov-pane-hd">
+                    <h4>注单明细</h4>
+                    <el-button size="small" type="primary" plain @click="openGameDetailDlg">查看全部</el-button>
+                  </div>
+                  <div class="ov-pane-body">
+                    <el-table
+                      :data="summary?.byGame || []"
+                      stripe
+                      size="small"
+                      empty-text="该区间暂无注单"
+                      class="ov-fit-table"
+                      table-layout="fixed"
+                    >
+                      <el-table-column label="游戏" show-overflow-tooltip>
+                        <template #default="{ row }: { row: any }">{{ row.gameName || gameLabel(row.gameCode) }}</template>
+                      </el-table-column>
+                      <el-table-column prop="betCount" label="注单" width="56" align="right" />
+                      <el-table-column label="流水" width="88" align="right">
+                        <template #default="{ row }: { row: any }">{{ fmt(row.betFlow) }}</template>
+                      </el-table-column>
+                      <el-table-column label="玩家盈亏" width="88" align="right">
+                        <template #default="{ row }: { row: any }">
+                          <span :style="{ color: pnlColor(gamePnl(row)) }">{{ fmt(gamePnl(row)) }}</span>
+                        </template>
+                      </el-table-column>
+                    </el-table>
+                  </div>
+                </section>
+
+                <section class="ov-block ov-pane">
+                  <div class="ov-pane-hd">
+                    <h4>资金流水</h4>
+                    <el-button
+                      v-if="room?.ownerAgent?.userId"
+                      size="small"
+                      type="primary"
+                      plain
+                      @click="openFundDetailDlg"
+                    >查看全部</el-button>
+                  </div>
+                  <div class="ov-pane-body">
+                    <el-table
+                      v-loading="fundLoading"
+                      :data="fundRows"
+                      stripe
+                      size="small"
+                      empty-text="该区间暂无流水"
+                      class="ov-fit-table"
+                      table-layout="fixed"
+                    >
+                      <el-table-column label="时间" width="88">
+                        <template #default="{ row }: { row: any }">{{ formatDtShort(row.createdAt) }}</template>
+                      </el-table-column>
+                      <el-table-column label="方式" width="64">
+                        <template #default="{ row }: { row: any }">{{ row.method || row.actionLabel }}</template>
+                      </el-table-column>
+                      <el-table-column label="订单号" min-width="120" show-overflow-tooltip>
+                        <template #default="{ row }: { row: any }">{{ row.orderNo || '—' }}</template>
+                      </el-table-column>
+                      <el-table-column label="明细" show-overflow-tooltip>
+                        <template #default="{ row }: { row: any }">
+                          <div class="fund-sub">
+                            {{ row.operator?.nickname || '—' }}
+                            <template v-if="row.counterparty?.nickname"> → {{ row.counterparty.nickname }}</template>
+                          </div>
+                        </template>
+                      </el-table-column>
+                      <el-table-column label="金额" width="96" align="right">
+                        <template #default="{ row }: { row: any }">
+                          <span :class="fundAmtClass(row)">{{ fundAmtText(row) }}</span>
+                        </template>
+                      </el-table-column>
+                    </el-table>
+                  </div>
+                </section>
+              </div>
+            </template>
+
+            <!-- 管理员 / 房主：与代理同一套统计条 -->
+            <template v-else>
+              <section class="ov-block">
+                <div class="ov-block-hd">
+                  <h4>核心指标</h4>
+                </div>
+                <div class="ov-summary" :style="ovSummaryCols(adminCoreKpis.length)">
+                  <div v-for="k in adminCoreKpis" :key="k.label" class="sum-chip">
+                    <span class="sum-label">{{ k.label }}</span>
+                    <span class="sum-val" :style="{ color: k.color || undefined }">{{ k.value }}</span>
+                  </div>
+                </div>
+              </section>
+
               <section class="ov-block">
                 <div class="ov-block-hd">
                   <h4>资金进出</h4>
                 </div>
-                <div class="kpi-row cols-4">
-                  <div class="kpi" v-for="k in cashKpis" :key="k.label">
-                    <div class="kpi-k">{{ k.label }}</div>
-                    <div class="kpi-v" :style="{ color: k.color || undefined }">{{ k.value }}</div>
+                <div class="ov-summary" :style="ovSummaryCols(adminCashKpis.length)">
+                  <div
+                    v-for="k in adminCashKpis"
+                    :key="k.label"
+                    class="sum-chip"
+                    :class="{ hot: k.hot }"
+                  >
+                    <span class="sum-label">{{ k.label }}</span>
+                    <span class="sum-val" :style="{ color: k.color || undefined }">{{ k.value }}</span>
                   </div>
                 </div>
               </section>
 
               <section class="ov-block">
                 <div class="ov-block-hd">
-                  <h4>代理佣金与活跃</h4>
-                  <span class="ov-block-sub">多级代理分佣记账；与飞盘即时返水不是同一笔账</span>
+                  <h4>注单概况</h4>
                 </div>
-                <div class="kpi-row cols-2">
-                  <div class="kpi" v-for="k in extraKpis" :key="k.label">
-                    <div class="kpi-k">{{ k.label }}</div>
-                    <div class="kpi-v" :style="{ color: k.color || undefined }">{{ k.value }}</div>
+                <div class="ov-summary" :style="ovSummaryCols(adminBetKpis.length)">
+                  <div v-for="k in adminBetKpis" :key="k.label" class="sum-chip">
+                    <span class="sum-label">{{ k.label }}</span>
+                    <span class="sum-val" :style="{ color: k.color || undefined }">{{ k.value }}</span>
                   </div>
                 </div>
               </section>
-            </div>
 
-            <section class="ov-block">
-              <div class="ov-block-hd">
-                <h4>游戏明细</h4>
+              <div class="ov-split ov-split-tables">
+                <section class="ov-block ov-pane">
+                  <div class="ov-pane-hd">
+                    <h4>游戏明细</h4>
+                    <el-button size="small" type="primary" plain @click="openGameDetailDlg">查看全部</el-button>
+                  </div>
+                  <div class="ov-pane-body">
+                    <el-table
+                      :data="summary?.byGame || []"
+                      stripe
+                      size="small"
+                      empty-text="该区间暂无注单"
+                      class="ov-fit-table"
+                      table-layout="fixed"
+                    >
+                      <el-table-column label="游戏" show-overflow-tooltip>
+                        <template #default="{ row }: { row: any }">{{ row.gameName || gameLabel(row.gameCode) }}</template>
+                      </el-table-column>
+                      <el-table-column prop="betCount" label="注单" width="56" align="right" />
+                      <el-table-column label="流水" width="88" align="right">
+                        <template #default="{ row }: { row: any }">{{ fmt(row.betFlow) }}</template>
+                      </el-table-column>
+                      <el-table-column label="庄家盈亏" width="88" align="right">
+                        <template #default="{ row }: { row: any }">
+                          <span :style="{ color: pnlColor(row.housePnl) }">{{ fmt(row.housePnl) }}</span>
+                        </template>
+                      </el-table-column>
+                    </el-table>
+                  </div>
+                </section>
+
+                <section class="ov-block ov-pane">
+                  <div class="ov-pane-hd">
+                    <h4>资金流水</h4>
+                    <el-button
+                      v-if="room?.ownerAgent?.userId"
+                      size="small"
+                      type="primary"
+                      plain
+                      @click="openFundDetailDlg"
+                    >查看全部</el-button>
+                  </div>
+                  <div class="ov-pane-body">
+                    <el-table
+                      v-loading="fundLoading"
+                      :data="fundRows"
+                      stripe
+                      size="small"
+                      empty-text="该区间暂无流水"
+                      class="ov-fit-table"
+                      table-layout="fixed"
+                    >
+                      <el-table-column label="时间" width="88">
+                        <template #default="{ row }: { row: any }">{{ formatDtShort(row.createdAt) }}</template>
+                      </el-table-column>
+                      <el-table-column label="方式" width="64">
+                        <template #default="{ row }: { row: any }">{{ row.method || row.actionLabel }}</template>
+                      </el-table-column>
+                      <el-table-column label="订单号" min-width="120" show-overflow-tooltip>
+                        <template #default="{ row }: { row: any }">{{ row.orderNo || '—' }}</template>
+                      </el-table-column>
+                      <el-table-column label="明细" show-overflow-tooltip>
+                        <template #default="{ row }: { row: any }">
+                          <div class="fund-sub">
+                            {{ row.operator?.nickname || '—' }}
+                            <template v-if="row.counterparty?.nickname"> → {{ row.counterparty.nickname }}</template>
+                          </div>
+                        </template>
+                      </el-table-column>
+                      <el-table-column label="金额" width="96" align="right">
+                        <template #default="{ row }: { row: any }">
+                          <span :class="fundAmtClass(row)">{{ fundAmtText(row) }}</span>
+                        </template>
+                      </el-table-column>
+                    </el-table>
+                  </div>
+                </section>
               </div>
-              <el-table :data="summary?.byGame || []" stripe empty-text="该区间暂无注单" size="small">
-                <el-table-column label="游戏" min-width="120">
-                  <template #default="{ row }">{{ row.gameName || gameLabel(row.gameCode) }}</template>
-                </el-table-column>
-                <el-table-column prop="betCount" label="注单" width="90" />
-                <el-table-column label="流水" min-width="120">
-                  <template #default="{ row }">{{ fmt(row.betFlow) }}</template>
-                </el-table-column>
-                <el-table-column label="派彩" min-width="120">
-                  <template #default="{ row }">{{ fmt(row.payout) }}</template>
-                </el-table-column>
-                <el-table-column label="庄家盈亏" min-width="120">
-                  <template #default="{ row }">
-                    <span :style="{ color: pnlColor(row.housePnl) }">{{ fmt(row.housePnl) }}</span>
-                  </template>
-                </el-table-column>
-              </el-table>
-            </section>
+            </template>
           </div>
-        </el-tab-pane>
+    </div>
 
-        <el-tab-pane label="绑定代理" name="agent">
-          <p class="agent-ops-tip">代理上下分与子账号只在此操作</p>
+    <div v-show="tab === 'players'" class="room-page-pane players-pane">
+      <PlayersPanel
+        v-if="room"
+        :room-id="room.id"
+        :book-mode="room.bookMode"
+        :initial-q="playersInitialQ"
+      />
+    </div>
+
+    <div v-show="tab === 'agent'" class="room-page-pane">
           <template v-if="room?.ownerAgent?.user">
             <div class="agent-head">
               <div class="agent-id">
@@ -205,307 +582,339 @@
                 </div>
               </div>
               <div class="agent-actions">
-                <el-button v-if="canFundMainAgent" type="primary" size="small" @click="openAgentFund('up')">上分</el-button>
-                <el-button v-if="canFundMainAgent" type="warning" size="small" @click="openAgentFund('down')">下分</el-button>
-                <el-button v-if="canAddProxy" size="small" @click="proxyVisible = true">开子账号</el-button>
+                <template v-if="canSetDuty">
+                  <span class="duty-label">值班</span>
+                  <el-select
+                    :model-value="agentDutyUserId || ''"
+                    clearable
+                    placeholder="主号自己接"
+                    size="small"
+                    style="width: 200px"
+                    :loading="dutyBusy"
+                    @change="onDutyChange"
+                  >
+                    <el-option
+                      v-for="c in agentChildren"
+                      :key="c.id"
+                      :label="`${c.nickname}（${c.username}）`"
+                      :value="c.id"
+                      :disabled="c.status !== 'ACTIVE'"
+                    />
+                  </el-select>
+                </template>
                 <el-button
                   v-if="canResetAgentPwd"
                   size="small"
-                  text
-                  @click="showResetPwd = !showResetPwd"
-                >{{ showResetPwd ? '收起' : '改密码' }}</el-button>
+                  @click="openResetAgentPwd"
+                >改主号密码</el-button>
               </div>
             </div>
 
-            <div class="money-strip">
-              <div class="money-card primary">
-                <div class="money-label">
-                  可发额度
-                  <el-tooltip placement="top" :show-after="200">
-                    <template #content>
-                      还能给玩家发多少真分<br />上分会加 · 发给玩家会减<br />关盘玩家输一点，额度加回一点 · 飞盘输不加
+            <div class="agent-lists">
+              <div class="agent-sec">
+                <div class="agent-sec-hd">
+                  <span>子账号 <em>{{ agentChildren.length }}</em></span>
+                  <el-button
+                    v-if="canAddProxy"
+                    size="small"
+                    type="primary"
+                    @click="proxyVisible = true"
+                  >开子账号</el-button>
+                </div>
+                <el-table
+                  v-if="agentChildren.length"
+                  :data="agentChildren"
+                  stripe
+                  size="small"
+                  :row-class-name="agentChildRowClass"
+                >
+                  <el-table-column label="名字" min-width="140">
+                    <template #default="{ row }: { row: any }">
+                      <div>
+                        {{ row.nickname }}
+                        <el-tag v-if="row.onDuty" size="small" type="success" effect="plain" style="margin-left:6px">值班</el-tag>
+                      </div>
+                      <div class="sub">{{ row.username }}</div>
                     </template>
-                    <span class="tip-q">?</span>
-                  </el-tooltip>
-                </div>
-                <div class="money-val" :class="quotaTone(room.ownerAgent.pointsQuota)">
-                  {{ fmt(room.ownerAgent.pointsQuota) }}
-                </div>
-              </div>
-              <div class="money-card">
-                <div class="money-label">
-                  飞盘占用
-                  <el-tooltip placement="top" :show-after="200">
-                    <template #content>
-                      已发给玩家、还在桌上的飞盘暴露<br />发给玩家会加 · 玩家输了或下分会减<br />占用为 0 时自动关飞盘
+                  </el-table-column>
+                  <el-table-column label="最近登录" width="120">
+                    <template #default="{ row }: { row: any }">{{ formatDt(row.lastLoginAt) }}</template>
+                  </el-table-column>
+                  <el-table-column label="状态" width="72">
+                    <template #default="{ row }: { row: any }">
+                      <el-tag :type="row.status === 'ACTIVE' ? 'success' : 'info'" size="small" effect="plain">
+                        {{ row.status === 'ACTIVE' ? '正常' : '停用' }}
+                      </el-tag>
                     </template>
-                    <span class="tip-q">?</span>
-                  </el-tooltip>
-                </div>
-                <div class="money-val">{{ fmt(room.ownerAgent.flyCover) }}</div>
-              </div>
-              <div class="money-card">
-                <div class="money-label">
-                  代理余额
-                  <el-tooltip placement="top" :show-after="200">
-                    <template #content>
-                      代理自己口袋（不是玩家余额）<br />上分会加 · 发给玩家会减<br />关盘输赢、返水、月费都走这里
+                  </el-table-column>
+                  <el-table-column
+                    v-if="canRenameProxy || canHardManageProxy"
+                    label="操作"
+                    min-width="120"
+                    align="right"
+                  >
+                    <template #default="{ row }: { row: any }">
+                      <el-button v-if="canRenameProxy" link type="primary" @click="renameProxy(row)">改名字</el-button>
+                      <template v-if="canHardManageProxy">
+                        <el-button link @click="resetProxyPwd(row)">重置密码</el-button>
+                        <el-button
+                          link
+                          :type="row.status === 'ACTIVE' ? 'danger' : 'success'"
+                          @click="toggleProxyStatus(row)"
+                        >{{ row.status === 'ACTIVE' ? '停用' : '启用' }}</el-button>
+                      </template>
                     </template>
-                    <span class="tip-q">?</span>
-                  </el-tooltip>
+                  </el-table-column>
+                </el-table>
+                <div v-else class="empty-line">
+                  <span>{{ canAddProxy ? '暂无子账号' : '暂无子账号' }}</span>
+                  <el-button
+                    v-if="canAddProxy"
+                    size="small"
+                    type="primary"
+                    @click="proxyVisible = true"
+                  >开子账号</el-button>
                 </div>
-                <div class="money-val gold">{{ fmt(room.ownerAgent.balance) }}</div>
               </div>
-              <div class="money-card soft">
-                <div class="money-label">
-                  已发真分
-                  <el-tooltip content="一共给玩家发过多少真分（净额）" placement="top" :show-after="200">
-                    <span class="tip-q">?</span>
-                  </el-tooltip>
+
+              <div class="agent-sec">
+                <div class="agent-sec-hd">
+                  <span>客服账号 <em>{{ csStaffRows.length }}</em></span>
+                  <el-button
+                    v-if="canAddProxy"
+                    size="small"
+                    type="primary"
+                    plain
+                    @click="openCreateCs"
+                  >开客服账号</el-button>
                 </div>
-                <div class="money-val muted">{{ fmt(room.ownerAgent.pointsUsed) }}</div>
+                <el-table
+                  v-if="csStaffRows.length"
+                  :data="csStaffRows"
+                  stripe
+                  size="small"
+                  v-loading="csListLoading"
+                >
+                  <el-table-column label="名字" min-width="140">
+                    <template #default="{ row }: { row: any }">
+                      <div>{{ row.nickname }}</div>
+                      <div class="sub mono">{{ row.username }} · {{ row.uid }}</div>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="额度" width="88" align="right">
+                    <template #default="{ row }: { row: any }">{{ fmt(row.balance) }}</template>
+                  </el-table-column>
+                  <el-table-column label="接单" width="72">
+                    <template #default="{ row }: { row: any }">
+                      <el-tag
+                        size="small"
+                        :type="row.workStatus === 'IDLE' ? 'success' : 'info'"
+                        effect="plain"
+                      >
+                        {{ row.workStatus === 'IDLE' ? '接单中' : '休息' }}
+                      </el-tag>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="状态" width="72">
+                    <template #default="{ row }: { row: any }">
+                      <el-tag :type="row.status === 'ACTIVE' ? 'success' : 'info'" size="small" effect="plain">
+                        {{ row.status === 'ACTIVE' ? '正常' : '停用' }}
+                      </el-tag>
+                    </template>
+                  </el-table-column>
+                  <el-table-column
+                    v-if="canHardManageProxy"
+                    label="操作"
+                    min-width="120"
+                    align="right"
+                  >
+                    <template #default="{ row }: { row: any }">
+                      <el-button link @click="resetCsPwd(row)">重置密码</el-button>
+                      <el-button
+                        link
+                        :type="row.status === 'ACTIVE' ? 'danger' : 'success'"
+                        @click="toggleCsStatus(row)"
+                      >{{ row.status === 'ACTIVE' ? '停用' : '启用' }}</el-button>
+                    </template>
+                  </el-table-column>
+                </el-table>
+                <div v-else class="empty-line">
+                  <span>暂无客服</span>
+                  <el-button
+                    v-if="canAddProxy"
+                    size="small"
+                    type="primary"
+                    plain
+                    @click="openCreateCs"
+                  >开客服账号</el-button>
+                </div>
               </div>
-            </div>
-
-            <p class="mode-line">
-              飞盘开：跟房间盘口池结算，主要动「飞盘占用」· 关盘：跟代理余额赌，玩家输一点可发额度加回一点
-            </p>
-
-            <div v-if="canSetDuty" class="duty-bar">
-              <span class="duty-label">值班</span>
-              <el-select
-                :model-value="agentDutyUserId || ''"
-                clearable
-                placeholder="代理自己接"
-                size="small"
-                style="width: 200px"
-                :loading="dutyBusy"
-                @change="onDutyChange"
-              >
-                <el-option
-                  v-for="c in agentChildren"
-                  :key="c.id"
-                  :label="`${c.nickname}（${c.username}）`"
-                  :value="c.id"
-                  :disabled="c.status !== 'ACTIVE'"
-                />
-              </el-select>
-            </div>
-
-            <div v-if="showResetPwd && canResetAgentPwd" class="reset-inline">
-              <el-input
-                v-model="resetPwd"
-                placeholder="新密码至少 6 位"
-                maxlength="32"
-                show-password
-                size="small"
-                style="width: 220px"
-              />
-              <el-button size="small" @click="regenResetPwd">随机</el-button>
-              <el-button type="primary" size="small" :loading="resettingPwd" @click="onResetPwd">确认重置</el-button>
-            </div>
-
-            <div class="agent-sec">
-              <div class="agent-sec-hd">
-                <span>子账号 <em>{{ agentChildren.length }}</em></span>
-                <el-button v-if="canAddProxy && !agentChildren.length" link type="primary" @click="proxyVisible = true">
-                  开通
-                </el-button>
-              </div>
-              <el-table
-                v-if="agentChildren.length"
-                :data="agentChildren"
-                stripe
-                size="small"
-                :row-class-name="agentChildRowClass"
-              >
-                <el-table-column label="名字" min-width="140">
-                  <template #default="{ row }">
-                    <div>
-                      {{ row.nickname }}
-                      <el-tag v-if="row.onDuty" size="small" type="success" effect="plain" style="margin-left:6px">值班</el-tag>
-                      <el-tag v-if="highlightAgentId === row.id" size="small" type="warning" effect="plain" style="margin-left:6px">定位</el-tag>
-                    </div>
-                    <div class="sub">{{ row.username }}</div>
-                  </template>
-                </el-table-column>
-                <el-table-column label="余额" width="110">
-                  <template #default="{ row }">{{ fmt(row.balance) }}</template>
-                </el-table-column>
-                <el-table-column label="状态" width="80">
-                  <template #default="{ row }">{{ row.status === 'ACTIVE' ? '正常' : '停用' }}</template>
-                </el-table-column>
-                <el-table-column label="" width="160">
-                  <template #default="{ row }">
-                    <el-button
-                      link
-                      type="primary"
-                      @click="highlightAgentId = row.id"
-                    >定位</el-button>
-                    <el-button
-                      v-if="canAgentFund"
-                      link
-                      type="primary"
-                      @click="openAgentFund('up', row.id)"
-                    >上分</el-button>
-                    <el-button
-                      v-if="canAgentFund"
-                      link
-                      type="warning"
-                      @click="openAgentFund('down', row.id)"
-                    >下分</el-button>
-                  </template>
-                </el-table-column>
-              </el-table>
-              <div v-else class="empty-line">暂无 · 可代分上下分</div>
-            </div>
-
-            <div class="agent-sec">
-              <div class="agent-sec-hd">
-                <span>最近资金流水</span>
-              </div>
-              <el-table v-loading="fundLoading" :data="fundRows" stripe size="small" empty-text="暂无记录">
-                <el-table-column label="时间" width="140">
-                  <template #default="{ row }">{{ formatDt(row.createdAt) }}</template>
-                </el-table-column>
-                <el-table-column label="类型" min-width="120">
-                  <template #default="{ row }">{{ row.actionLabel }}</template>
-                </el-table-column>
-                <el-table-column label="金额" width="110">
-                  <template #default="{ row }">
-                    <span :class="row.action === 'QUOTA_RECALL' || row.action === 'CONSOLE_DEBIT' ? 'down' : 'up'">
-                      {{ fundAmtText(row) }}
-                    </span>
-                  </template>
-                </el-table-column>
-                <el-table-column label="操作人" min-width="120">
-                  <template #default="{ row }">{{ row.operator?.nickname || '—' }}</template>
-                </el-table-column>
-                <el-table-column label="对方" min-width="120">
-                  <template #default="{ row }">{{ row.counterparty?.nickname || '—' }}</template>
-                </el-table-column>
-              </el-table>
             </div>
           </template>
-          <div v-else class="empty-box">该房间无专属代理（历史数据）；新房间请在创建时生成</div>
-        </el-tab-pane>
+          <div v-else class="empty-box">本房尚未绑定代理</div>
+    </div>
 
-        <el-tab-pane label="月费账单" name="billing">
-          <el-alert
-            v-if="billingNearDue"
-            type="warning"
-            :closable="false"
-            show-icon
-            style="margin-bottom:12px"
-            :title="billingNearDue"
-          />
-          <div class="kv-grid">
-            <div class="kv">
-              <div class="k">月费金额</div>
-              <div class="v em">{{ feeText }}</div>
-            </div>
-            <div class="kv">
-              <div class="k">扣费规则</div>
-              <div class="v">{{ feeRuleText }}</div>
-            </div>
-            <div class="kv">
-              <div class="k">下次扣费</div>
-              <div class="v">{{ formatDate(room?.nextBillAt) }}</div>
-            </div>
-            <div class="kv">
-              <div class="k">上次扣费</div>
-              <div class="v">{{ formatDt(room?.lastBilledAt) }}</div>
-            </div>
+    <div v-show="tab === 'billing'" class="room-page-pane">
+      <el-alert
+        v-if="room?.bookMode === 'CREDIT'"
+        type="info"
+        :closable="false"
+        show-icon
+        class="billing-alert"
+        title="信用盘月费不自动扣余额：距下次月费≤7天则本期结整笔，大于7天则下期再结。"
+      />
+      <el-alert
+        v-else-if="billingNearDue"
+        type="warning"
+        :closable="false"
+        show-icon
+        class="billing-alert"
+        :title="billingNearDue"
+      />
+      <section class="billing-panel" :class="{ editable: canEditBilling }">
+        <div class="billing-head">
+          <span class="billing-h-k">项目</span>
+          <span class="billing-h-cur">当前</span>
+          <span v-if="canEditBilling" class="billing-h-edit">调整</span>
+        </div>
+        <div class="billing-row">
+          <div class="billing-k">月费金额</div>
+          <div class="billing-cur em">{{ feeText }}</div>
+          <div v-if="canEditBilling" class="billing-edit">
+            <el-input-number
+              v-model="billingForm.monthlyFee"
+              :min="0"
+              :max="10000000"
+              :precision="0"
+              :step="100"
+              controls-position="right"
+              class="billing-control"
+            />
+            <el-button
+              v-if="billingForm.monthlyFee > 0"
+              size="small"
+              @click="billingForm.monthlyFee = 0"
+            >关闭月费</el-button>
           </div>
-          <div v-if="canEditBilling" class="sub-block" style="margin-top:0;padding-top:0;border-top:none">
-            <div class="sub-title">调整月费</div>
-            <el-form label-width="100px" style="max-width:480px">
-              <el-form-item label="月费金额">
-                <el-input-number v-model="billingForm.monthlyFee" :min="0" :max="10000000" :precision="0" :step="1" />
-              </el-form-item>
-              <el-form-item v-if="billingForm.monthlyFee > 0" label="扣费日">
-                <el-input-number v-model="billingForm.billingDay" :min="1" :max="28" />
-              </el-form-item>
-              <el-form-item v-if="billingForm.monthlyFee > 0" label="下次扣费">
-                <el-date-picker
-                  v-model="billingForm.nextBillAt"
-                  type="date"
-                  placeholder="选择日期"
-                  value-format="YYYY-MM-DD"
-                  style="width:180px"
-                />
-              </el-form-item>
-              <el-form-item>
-                <el-button type="primary" :loading="savingBilling" @click="onSaveBilling">保存调整</el-button>
-              </el-form-item>
-            </el-form>
+        </div>
+        <div class="billing-row">
+          <div class="billing-k">{{ room?.bookMode === 'CREDIT' ? '扣费方式' : '每月扣费日' }}</div>
+          <div class="billing-cur">
+            {{ room?.bookMode === 'CREDIT' ? '结账计入（≤7天进本期）' : feeRuleText }}
           </div>
-        </el-tab-pane>
+          <div v-if="canEditBilling && room?.bookMode !== 'CREDIT'" class="billing-edit">
+            <el-input-number
+              v-model="billingForm.billingDay"
+              :min="1"
+              :max="28"
+              :disabled="billingForm.monthlyFee <= 0"
+              controls-position="right"
+              class="billing-control"
+            />
+          </div>
+          <div v-else-if="canEditBilling" class="billing-edit muted">—</div>
+        </div>
+        <div class="billing-row">
+          <div class="billing-k">{{ room?.bookMode === 'CREDIT' ? '下次月费日' : '下次执行日' }}</div>
+          <div class="billing-cur">{{ formatDate(room?.nextBillAt) }}</div>
+          <div v-if="canEditBilling" class="billing-edit">
+            <el-date-picker
+              v-model="billingForm.nextBillAt"
+              type="date"
+              placeholder="选择日期"
+              value-format="YYYY-MM-DD"
+              :disabled="billingForm.monthlyFee <= 0"
+              class="billing-control"
+            />
+          </div>
+        </div>
+        <div class="billing-row">
+          <div class="billing-k">{{ room?.bookMode === 'CREDIT' ? '交割入口' : '扣费账户' }}</div>
+          <div class="billing-cur">
+            {{ room?.bookMode === 'CREDIT' ? '房间「占成结账」' : agentBrief }}
+          </div>
+          <div v-if="canEditBilling" class="billing-edit muted">—</div>
+        </div>
+        <div v-if="room?.bookMode !== 'CREDIT'" class="billing-row">
+          <div class="billing-k">上次扣费</div>
+          <div class="billing-cur">{{ formatDt(room?.lastBilledAt) }}</div>
+          <div v-if="canEditBilling" class="billing-edit muted">—</div>
+        </div>
+        <div v-if="canEditBilling" class="billing-foot">
+          <el-button type="primary" :loading="savingBilling" @click="onSaveBilling">保存调整</el-button>
+        </div>
+      </section>
+    </div>
 
-        <el-tab-pane v-if="isAdmin || ownerRows.length" label="可见房主" name="owners">
-          <el-alert
-            type="info"
-            :closable="false"
-            show-icon
-            style="margin-bottom:12px"
-            title="只有列表里的房主能看见并管理本房。去掉后立即不可见。超管始终可见全部房间。"
+    <div v-show="tab === 'owners' && isAdmin" class="room-page-pane">
+      <div class="owners-toolbar">
+        <el-select
+          v-model="ownerUserId"
+          filterable
+          clearable
+          size="small"
+          placeholder="选择房主账号"
+          class="owners-select"
+        >
+          <el-option
+            v-for="a in branchOptions"
+            :key="a.id"
+            :label="`${a.nickname}（${a.username} · ${a.uid}）`"
+            :value="a.id"
           />
-          <div v-if="ownerRows.length" class="owner-list">
-            <div v-for="o in ownerRows" :key="o.key" class="owner-item">
-              <div>
-                <div class="owner-name">{{ o.nickname }}</div>
-                <div class="owner-meta">
-                  <span>账号 {{ o.username }}</span>
-                  <span>UID {{ o.uid }}</span>
-                </div>
-              </div>
+        </el-select>
+        <el-button type="primary" size="small" @click="onGrant">授权可见</el-button>
+      </div>
+      <div class="owners-panel">
+        <el-table
+          :data="ownerRows"
+          stripe
+          size="small"
+          empty-text="暂无授权房主，上方选择后点「授权可见」"
+          class="owners-table"
+        >
+          <el-table-column label="房主" min-width="160">
+            <template #default="{ row }: { row: any }">
+              <span class="cell-name">{{ row.nickname }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="账号" min-width="140">
+            <template #default="{ row }: { row: any }">
+              <span class="cell-text">{{ row.username }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="UID" min-width="120">
+            <template #default="{ row }: { row: any }">
+              <span class="cell-text">{{ row.uid }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="100" align="right">
+            <template #default="{ row }: { row: any }">
               <el-button
-                v-if="isAdmin && o.userId"
+                v-if="row.userId"
                 link
                 type="danger"
-                @click="onRevoke(o.userId, o.nickname)"
+                @click="onRevoke(row.userId, row.nickname)"
               >取消可见</el-button>
-            </div>
-          </div>
-          <div v-else class="empty-box">
-            尚未授权任何房主（仅超管可见）
-          </div>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
+    </div>
 
-          <div v-if="isAdmin" class="sub-block">
-            <div class="sub-title">授权房主可见</div>
-            <el-form label-width="100px" style="max-width:480px">
-              <el-form-item label="选择房主">
-                <el-select
-                  v-model="ownerUserId"
-                  filterable
-                  clearable
-                  placeholder="请选择房主账号"
-                  style="width:100%"
-                >
-                  <el-option
-                    v-for="a in branchOptions"
-                    :key="a.id"
-                    :label="`${a.nickname}（${a.uid}）`"
-                    :value="a.id"
-                  />
-                </el-select>
-              </el-form-item>
-              <el-form-item>
-                <el-button type="primary" @click="onGrant">授权可见</el-button>
-              </el-form-item>
-            </el-form>
-          </div>
-        </el-tab-pane>
-
-        <el-tab-pane label="游戏设置" name="games">
+    <div v-show="tab === 'games'" class="room-page-pane">
           <div class="games-toolbar">
             <div class="games-summary">
-              本房已开放 <b>{{ openGameCount }}</b> / {{ gameRows.length }} 款
+              已开放 <b>{{ openGameCount }}</b> / {{ gameRows.length }} 款
             </div>
             <div class="games-policy">
-              回水总额 T = {{ pctText(rebatePolicy.totalRate) }}（平台规则）
-              · 默认玩家 P = {{ pctText(agentDefaultRebate) }}（未单独设置的玩家按此）
+              回水总额 {{ pctText(rebatePolicy.totalRate) }}
+              · 默认玩家回水 {{ pctText(agentDefaultRebate) }}
             </div>
+          </div>
+          <div class="games-tip">
+            本页「开放」只控制本房是否提供该游戏。玩家大厅显示「维护中」时，请到超管
+            <b>游戏管理</b> 把平台状态改成「上架」（每日 04:00–06:00 会自动进维护窗）。
           </div>
 
           <div class="game-list">
@@ -517,91 +926,86 @@
             >
               <div class="gr-name">
                 <div class="gr-title">{{ row.label }}</div>
-                <el-tag size="small" :type="row.enabled ? 'success' : 'info'" effect="plain">
+                <el-switch
+                  v-if="!roomReadonly"
+                  :model-value="row.enabled"
+                  inline-prompt
+                  active-text="开"
+                  inactive-text="关"
+                  :loading="togglingGame === row.gameCode"
+                  @change="(v: string | number | boolean) => toggleGameEnabled(row, !!v)"
+                />
+                <el-tag v-else size="small" :type="row.enabled ? 'success' : 'info'" effect="plain">
                   {{ row.enabled ? '已开放' : '已关闭' }}
                 </el-tag>
               </div>
 
               <div class="gr-stats">
                 <div class="gr-stat">
-                  <span class="gk">机器人</span>
-                  <span class="gv">{{ row.enabled ? row.robotCount : '—' }}</span>
-                </div>
-                <div class="gr-stat">
-                  <span class="gk">总额 T</span>
-                  <span class="gv">{{ row.enabled ? pctText(rebatePolicy.totalRate) : '—' }}</span>
-                </div>
-                <div class="gr-stat">
-                  <span class="gk">默认 P</span>
+                  <span class="gk">玩家回水</span>
                   <span class="gv">{{ row.enabled ? `${row.rebatePct}%` : '—' }}</span>
                 </div>
                 <div class="gr-stat">
-                  <span class="gk">代理 A</span>
+                  <span class="gk">代理回水</span>
                   <span class="gv gold">{{ row.enabled ? `${agentRebatePct(row.rebatePct)}%` : '—' }}</span>
                 </div>
               </div>
 
               <div class="gr-action">
-                <el-button @click="openGameDetail(row)">{{ roomReadonly ? '查看' : '详情' }}</el-button>
+                <el-button
+                  :disabled="!row.enabled && roomReadonly"
+                  @click="openGameDetail(row)"
+                >{{ roomReadonly ? '查看回水' : '设置回水' }}</el-button>
               </div>
             </div>
           </div>
-        </el-tab-pane>
+    </div>
 
-        <el-tab-pane v-if="isAgent || isProxy" label="玩家" name="players">
-          <PlayersPanel :room-id="id" />
-        </el-tab-pane>
-      </el-tabs>
-    </el-card>
+    <div v-show="tab === 'robots'" class="room-page-pane">
+          <RoomRobotsPanel v-if="room" :room-id="room.id" :readonly="roomReadonly" />
+    </div>
 
-    <el-dialog
+    <div v-show="tab === 'settle'" class="room-page-pane">
+          <RoomSettlePanel v-if="room" :room-id="room.id" :readonly="settleReadonly" />
+    </div>
+
+    <div v-show="tab === 'join'" class="room-page-pane">
+      <JoinReviewPanel
+        v-if="room"
+        :room-id="room.id"
+        :readonly="!canReviewJoin"
+        @pending="onJoinPending"
+        @changed="onJoinChanged"
+      />
+    </div>
+    </div>
+
+    <DeskDialog
       v-model="showGameDlg"
       :title="gameDlg.label ? `游戏设置 · ${gameDlg.label}` : '游戏设置'"
       width="480px"
-      align-center
-      destroy-on-close
-      class="game-dlg"
+      dialog-class="game-dlg"
     >
-      <el-alert
-        v-if="roomReadonly"
-        type="info"
-        :closable="false"
-        show-icon
-        title="代分账号只读：可查看配置，修改请使用代理主账号"
-        style="margin-bottom:12px"
-      />
       <div class="gd-section">
-        <div class="gd-sec-h">基础</div>
+        <div class="gd-sec-h">开放与回水</div>
         <div class="gd-basic">
           <div class="gd-basic-item">
             <div class="gd-k">对本房开放</div>
             <el-switch v-model="gameDlg.enabled" active-text="开放" inactive-text="关闭" :disabled="roomReadonly" />
           </div>
-          <div class="gd-basic-item">
-            <div class="gd-k">氛围机器人</div>
-            <el-input-number
-              v-model="gameDlg.robotCount"
-              :min="0"
-              :max="50"
-              :disabled="!gameDlg.enabled || roomReadonly"
-            />
-          </div>
         </div>
       </div>
 
       <div class="gd-section" :class="{ dim: !gameDlg.enabled }">
-        <div class="gd-sec-h">
-          回水分配
-          <span class="gd-sec-tip">默认 P 写入房主代理；玩家列表可再单独覆盖</span>
-        </div>
+        <div class="gd-sec-h">回水分配</div>
 
         <div class="gd-metrics">
           <div class="gd-metric">
-            <div class="gd-metric-k">总额 T</div>
+            <div class="gd-metric-k">回水总额</div>
             <div class="gd-metric-v">{{ pctText(rebatePolicy.totalRate) }}</div>
           </div>
           <div class="gd-metric main">
-            <div class="gd-metric-k">默认玩家 P</div>
+            <div class="gd-metric-k">默认玩家回水</div>
             <div class="gd-metric-edit">
               <el-input-number
                 v-model="gameDlg.rebatePct"
@@ -615,10 +1019,10 @@
               />
               <span class="unit">%</span>
             </div>
-            <div class="gd-metric-range">{{ playerMinPct }}% ~ {{ playerMaxPct }}%</div>
+            <div class="gd-metric-range">可调 {{ playerMinPct }}% ~ {{ playerMaxPct }}%</div>
           </div>
           <div class="gd-metric">
-            <div class="gd-metric-k">代理 A</div>
+            <div class="gd-metric-k">代理回水</div>
             <div class="gd-metric-v gold">{{ agentRebatePct(gameDlg.rebatePct) }}%</div>
           </div>
         </div>
@@ -633,7 +1037,7 @@
         </div>
 
         <div class="gd-example">
-          <div class="gd-ex-label">举例（流水 10,000）</div>
+          <div class="gd-ex-label">流水 10,000 时</div>
           <div class="gd-ex-nums">
             <span>玩家 <b>{{ examplePlayer }}</b></span>
             <span>代理 <b>{{ exampleAgent }}</b></span>
@@ -644,29 +1048,97 @@
 
       <template #footer>
         <el-button @click="showGameDlg = false">{{ roomReadonly ? '关闭' : '取消' }}</el-button>
+        <span class="win-footer-grow" />
         <el-button v-if="!roomReadonly" type="primary" :loading="savingGame" @click="saveGameDetail">保存</el-button>
       </template>
-    </el-dialog>
+    </DeskDialog>
 
-    <el-dialog v-model="showResetCreds" title="密码已重置" width="420px" :close-on-click-modal="false">
-      <el-alert type="warning" :closable="false" show-icon style="margin-bottom:12px">
-        请立即复制交给代理，此密码仅展示一次
+    <DeskDialog
+      v-model="showResetPwd"
+      title="重置主号密码"
+      width="420px"
+      @closed="resetPwd = ''"
+    >
+      <el-form label-position="top">
+        <el-form-item label="账号">
+          <el-input :model-value="room?.ownerAgent?.user?.username || '—'" disabled />
+        </el-form-item>
+        <el-form-item label="新密码" required>
+          <div class="row" style="width:100%;gap:8px">
+            <el-input
+              v-model="resetPwd"
+              type="password"
+              show-password
+              maxlength="32"
+              placeholder="至少 6 位"
+              style="flex:1"
+            />
+            <el-button @click="regenResetPwd">随机</el-button>
+          </div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showResetPwd = false">取消</el-button>
+        <span class="win-footer-grow" />
+        <el-button type="primary" :loading="resettingPwd" @click="onResetPwd">确认重置</el-button>
+      </template>
+    </DeskDialog>
+
+    <DeskDialog
+      v-model="showProxyResetPwd"
+      :title="staffResetKind === 'CS' ? '重置客服密码' : '重置子账号密码'"
+      width="420px"
+      @closed="proxyResetPwd = ''; staffResetKind = 'PROXY'"
+    >
+      <el-form label-position="top">
+        <el-form-item label="账号">
+          <el-input
+            :model-value="proxyResetTarget
+              ? `${proxyResetTarget.username}${proxyResetTarget.nickname ? `（${proxyResetTarget.nickname}）` : ''}`
+              : '—'"
+            disabled
+          />
+        </el-form-item>
+        <el-form-item label="新密码" required>
+          <div class="row" style="width:100%;gap:8px">
+            <el-input
+              v-model="proxyResetPwd"
+              type="password"
+              show-password
+              maxlength="32"
+              placeholder="至少 6 位"
+              style="flex:1"
+            />
+            <el-button @click="regenProxyResetPwd">随机</el-button>
+          </div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showProxyResetPwd = false">取消</el-button>
+        <span class="win-footer-grow" />
+        <el-button type="primary" :loading="proxyResetBusy" @click="doResetProxyPwd">确认重置</el-button>
+      </template>
+    </DeskDialog>
+
+    <DeskDialog v-model="showResetCreds" title="密码已重置" width="420px" :close-on-click-modal="false">
+      <el-alert type="warning" :closable="false" show-icon class="cred-alert">
+        请立即复制交给对方，此密码仅展示一次
       </el-alert>
       <div v-if="resetCreds" class="cred-box">
         <div class="cred-row"><span>用户名</span><b>{{ resetCreds.username }}</b></div>
         <div class="cred-row"><span>新密码</span><b>{{ resetCreds.password }}</b></div>
       </div>
       <template #footer>
-        <el-button type="primary" @click="copyResetCreds">复制</el-button>
         <el-button @click="showResetCreds = false">我已保存</el-button>
+        <span class="win-footer-grow" />
+        <el-button type="primary" @click="copyResetCreds">复制</el-button>
       </template>
-    </el-dialog>
+    </DeskDialog>
 
-    <el-dialog
+    <DeskDialog
       v-model="fundVisible"
-      :title="fundMode === 'up' ? '上分（可发额度 + 代理余额一起加）' : '下分（从可发额度与代理余额扣回）'"
+      :title="fundMode === 'up' ? '上分' : '下分'"
       width="400px"
-      destroy-on-close
     >
       <el-form label-width="72px">
         <el-form-item label="金额">
@@ -675,32 +1147,41 @@
       </el-form>
       <template #footer>
         <el-button @click="fundVisible = false">取消</el-button>
+        <span class="win-footer-grow" />
         <el-button :type="fundMode === 'up' ? 'primary' : 'warning'" :loading="fundBusy" @click="doAgentFund">
           确认{{ fundMode === 'up' ? '上分' : '下分' }}
         </el-button>
       </template>
-    </el-dialog>
+    </DeskDialog>
 
-    <el-dialog v-model="poolDlg" title="房间彩池注资" width="420px" destroy-on-close align-center>
-      <p class="dialog-hint">从你的账户转入本房间盘口池，供飞盘开启时房间侧结算使用。</p>
-      <el-form label-position="top">
-        <el-form-item label="当前彩池">
-          <b class="gold">{{ fmt(poolBalance) }}</b>
+    <DeskDialog v-model="bumpCreditVisible" title="调整信用额度" width="440px">
+      <p class="muted" style="margin:0 0 12px;font-size:12px;line-height:1.5;color:#64748b">
+        永久调整：<strong>合同额度</strong>与<strong>剩余信用</strong>同步加减。
+        减少时不能超过剩余信用，也不能低于已发出的玩家+客服额度。
+      </p>
+      <el-form label-width="88px">
+        <el-form-item label="方向">
+          <el-radio-group v-model="bumpCreditDirection">
+            <el-radio-button label="up">增加</el-radio-button>
+            <el-radio-button label="down">减少</el-radio-button>
+          </el-radio-group>
         </el-form-item>
-        <el-form-item label="注资金额" required>
-          <el-input-number v-model="poolAmount" :min="1" :precision="2" style="width:100%" />
-        </el-form-item>
-        <el-form-item label="备注">
-          <el-input v-model="poolRemark" maxlength="40" placeholder="可选" />
+        <el-form-item :label="bumpCreditDirection === 'down' ? '减少金额' : '增加金额'">
+          <el-input-number v-model="bumpCreditAmount" :min="1" :max="50000000" style="width:100%" />
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="poolDlg = false">取消</el-button>
-        <el-button type="primary" :loading="poolSaving" @click="doPoolFund">确认注资</el-button>
+        <el-button @click="bumpCreditVisible = false">取消</el-button>
+        <span class="win-footer-grow" />
+        <el-button
+          :type="bumpCreditDirection === 'down' ? 'warning' : 'primary'"
+          :loading="bumpCreditBusy"
+          @click="doBumpCredit"
+        >确认{{ bumpCreditDirection === 'down' ? '减少' : '增加' }}</el-button>
       </template>
-    </el-dialog>
+    </DeskDialog>
 
-    <el-dialog v-model="proxyVisible" title="开通子账号" width="420px" destroy-on-close>
+    <DeskDialog v-model="proxyVisible" title="开通子账号" width="420px">
       <el-form label-width="88px">
         <el-form-item label="登录账号" required>
           <el-input v-model="proxyForm.username" placeholder="8-20位小写字母数字" />
@@ -717,12 +1198,13 @@
       </el-form>
       <template #footer>
         <el-button @click="proxyVisible = false">取消</el-button>
+        <span class="win-footer-grow" />
         <el-button type="primary" :loading="fundBusy" @click="doCreateProxy">确认开通</el-button>
       </template>
-    </el-dialog>
+    </DeskDialog>
 
-    <el-dialog v-model="showProxyCreds" title="子账号已开通" width="420px" :close-on-click-modal="false">
-      <el-alert type="warning" :closable="false" show-icon style="margin-bottom:12px">
+    <DeskDialog v-model="showProxyCreds" title="子账号账号密码" width="420px" :close-on-click-modal="false">
+      <el-alert type="warning" :closable="false" show-icon class="cred-alert">
         请立即复制交给值班/代分人员，此密码仅展示一次
       </el-alert>
       <div v-if="proxyCreds" class="cred-box">
@@ -730,33 +1212,304 @@
         <div class="cred-row"><span>密码</span><b>{{ proxyCreds.password }}</b></div>
       </div>
       <template #footer>
-        <el-button type="primary" @click="copyProxyCreds">复制</el-button>
         <el-button @click="showProxyCreds = false">我已保存</el-button>
+        <span class="win-footer-grow" />
+        <el-button type="primary" @click="copyProxyCreds">复制</el-button>
       </template>
-    </el-dialog>
+    </DeskDialog>
+
+    <DeskDialog
+      v-model="csVisible"
+      title="开客服账号"
+      width="460px"
+      @closed="resetCsForm"
+    >
+      <el-form label-width="100px">
+        <el-form-item label="显示名">
+          <el-input v-model="csForm.nickname" maxlength="20" placeholder="如：早班 / 晚班" />
+        </el-form-item>
+        <el-form-item label="登录用户名">
+          <el-input v-model="csForm.username" placeholder="可选 · 8-20 小写字母数字" />
+        </el-form-item>
+        <el-form-item label="登录密码">
+          <el-input v-model="csForm.password" placeholder="可选 · 默认随机" show-password />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="csVisible = false">取消</el-button>
+        <span class="win-footer-grow" />
+        <el-button type="primary" :loading="csBusy" @click="doCreateCs">确认开通</el-button>
+      </template>
+    </DeskDialog>
+
+    <DeskDialog v-model="showCsCreds" title="客服账号密码" width="420px" :close-on-click-modal="false">
+      <el-alert type="warning" :closable="false" show-icon class="cred-alert">
+        请立即复制交给客服，此密码仅展示一次
+      </el-alert>
+      <div v-if="csCreds" class="cred-box">
+        <div class="cred-row"><span>用户名</span><b>{{ csCreds.username }}</b></div>
+        <div class="cred-row"><span>密码</span><b>{{ csCreds.password }}</b></div>
+        <div v-if="csCreds.nickname" class="cred-row"><span>显示名</span><b>{{ csCreds.nickname }}</b></div>
+      </div>
+      <template #footer>
+        <el-button @click="showCsCreds = false">我已保存</el-button>
+        <span class="win-footer-grow" />
+        <el-button type="primary" @click="copyCsCreds">复制</el-button>
+      </template>
+    </DeskDialog>
+
+    <!-- 游戏明细大弹窗：独立日期 + 游戏类型 -->
+    <DeskDialog
+      v-model="gameDetailVisible"
+      title="游戏明细"
+      width="920px"
+      top="4vh"
+      :align-center="false"
+      dialog-class="ov-detail-dlg"
+      @opened="loadGameDetail"
+    >
+      <div class="dlg-toolbar">
+        <el-date-picker
+          v-model="gameDlgRange"
+          type="datetimerange"
+          unlink-panels
+          :editable="false"
+          :shortcuts="customShortcuts"
+          :default-time="customDefaultTime"
+          range-separator="至"
+          start-placeholder="开始"
+          end-placeholder="结束"
+          format="YYYY-MM-DD HH:mm"
+          value-format="YYYY-MM-DDTHH:mm:ss+08:00"
+          style="width: 360px"
+        />
+        <el-select v-model="gameDlgGameCode" clearable placeholder="全部游戏" style="width: 160px">
+          <el-option
+            v-for="g in GAME_OPTIONS"
+            :key="g.value"
+            :label="g.label"
+            :value="g.value"
+          />
+        </el-select>
+        <el-button type="primary" :loading="gameDlgLoading" @click="onGameDlgQuery">查询</el-button>
+      </div>
+      <div v-if="gameDlgByGame.length" class="dlg-game-sum">
+        <el-table :data="gameDlgByGame" stripe size="small" max-height="200">
+          <el-table-column label="游戏" min-width="120" show-overflow-tooltip>
+            <template #default="{ row }: { row: any }">{{ row.gameName || gameLabel(row.gameCode) }}</template>
+          </el-table-column>
+          <el-table-column prop="betCount" label="注单" width="72" align="right" />
+          <el-table-column label="流水" width="110" align="right">
+            <template #default="{ row }: { row: any }">{{ fmt(row.betFlow) }}</template>
+          </el-table-column>
+          <el-table-column label="派彩" width="110" align="right">
+            <template #default="{ row }: { row: any }">{{ fmt(row.payout) }}</template>
+          </el-table-column>
+          <el-table-column label="庄家盈亏" width="110" align="right">
+            <template #default="{ row }: { row: any }">
+              <span :style="{ color: pnlColor(row.housePnl) }">{{ fmt(row.housePnl) }}</span>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
+      <div class="dlg-sec-title">注单列表 · 共 {{ gameDlgBetTotal }} 笔</div>
+      <el-table
+        v-loading="gameDlgLoading"
+        :data="gameDlgBets"
+        stripe
+        size="small"
+        max-height="380"
+        empty-text="该筛选条件下暂无注单"
+      >
+        <el-table-column label="时间" width="140">
+          <template #default="{ row }: { row: any }">{{ formatDt(row.createdAt) }}</template>
+        </el-table-column>
+        <el-table-column label="玩家" min-width="120" show-overflow-tooltip>
+          <template #default="{ row }: { row: any }">
+            <div>{{ row.playerNickname }}</div>
+            <div class="fund-sub">{{ row.playerUid || row.playerUsername || '—' }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="游戏" width="110" show-overflow-tooltip>
+          <template #default="{ row }: { row: any }">{{ row.gameName || gameLabel(row.gameCode) }}</template>
+        </el-table-column>
+        <el-table-column label="玩法" min-width="90" show-overflow-tooltip>
+          <template #default="{ row }: { row: any }">{{ row.betType || '—' }}</template>
+        </el-table-column>
+        <el-table-column label="下注" width="96" align="right">
+          <template #default="{ row }: { row: any }">{{ fmt(row.amount) }}</template>
+        </el-table-column>
+        <el-table-column label="派彩" width="96" align="right">
+          <template #default="{ row }: { row: any }">{{ fmt(row.payout) }}</template>
+        </el-table-column>
+        <el-table-column label="玩家盈亏" width="100" align="right">
+          <template #default="{ row }: { row: any }">
+            <span :style="{ color: pnlColor(row.playerPnl) }">{{ fmt(row.playerPnl) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="72" align="center">
+          <template #default="{ row }: { row: any }">
+            <el-tag size="small" :type="betStatusType(row.status)" effect="plain">
+              {{ betStatusLabel(row.status) }}
+            </el-tag>
+          </template>
+        </el-table-column>
+      </el-table>
+      <div v-if="gameDlgBetTotal > gameDlgPageSize" class="fund-pager">
+        <el-pagination
+          background
+          layout="prev, pager, next"
+          :total="gameDlgBetTotal"
+          :page-size="gameDlgPageSize"
+          :current-page="gameDlgPage"
+          @current-change="onGameDlgPage"
+        />
+      </div>
+    </DeskDialog>
+
+    <!-- 资金流水大弹窗：独立日期 + 类型 + 汇总 -->
+    <DeskDialog
+      v-model="fundDetailVisible"
+      title="资金流水明细"
+      width="960px"
+      top="4vh"
+      :align-center="false"
+      dialog-class="ov-detail-dlg"
+      @opened="loadFundDetail"
+    >
+      <div class="dlg-toolbar">
+        <el-date-picker
+          v-model="fundDlgRange"
+          type="datetimerange"
+          unlink-panels
+          :editable="false"
+          :shortcuts="customShortcuts"
+          :default-time="customDefaultTime"
+          range-separator="至"
+          start-placeholder="开始"
+          end-placeholder="结束"
+          format="YYYY-MM-DD HH:mm"
+          value-format="YYYY-MM-DDTHH:mm:ss+08:00"
+          style="width: 360px"
+        />
+        <el-select v-model="fundDlgType" style="width: 160px">
+          <el-option label="全部类型" value="all" />
+          <el-option label="额度（下发+回收）" value="quota" />
+          <el-option label="下发额度" value="quota_in" />
+          <el-option label="回收额度" value="quota_out" />
+          <el-option label="玩家上下分" value="player" />
+          <el-option label="玩家上分" value="player_up" />
+          <el-option label="玩家下分" value="player_down" />
+          <el-option label="客服划额" value="cs" />
+          <el-option label="划给客服" value="cs_alloc" />
+          <el-option label="收回客服" value="cs_recall" />
+        </el-select>
+        <el-button type="primary" :loading="fundDlgLoading" @click="onFundDlgQuery">查询</el-button>
+        <span class="fund-toolbar-hint">共 {{ fundDlgTotal }} 笔</span>
+      </div>
+      <div v-if="fundDlgTotals" class="fund-totals dlg-fund-totals">
+        <div class="ft">
+          <span class="ft-k">下发额度</span>
+          <b class="up">{{ fmt(fundDlgTotals.quotaIn) }}</b>
+        </div>
+        <div class="ft">
+          <span class="ft-k">回收额度</span>
+          <b class="down">{{ fmt(fundDlgTotals.quotaOut) }}</b>
+        </div>
+        <div class="ft">
+          <span class="ft-k">玩家上分</span>
+          <b class="up">{{ fmt(fundDlgTotals.playerUp) }}</b>
+        </div>
+        <div class="ft">
+          <span class="ft-k">玩家下分</span>
+          <b class="down">{{ fmt(fundDlgTotals.playerDown) }}</b>
+        </div>
+        <div class="ft">
+          <span class="ft-k">划给客服</span>
+          <b class="down">{{ fmt(fundDlgTotals.csAlloc) }}</b>
+        </div>
+        <div class="ft">
+          <span class="ft-k">收回客服</span>
+          <b class="up">{{ fmt(fundDlgTotals.csRecall) }}</b>
+        </div>
+      </div>
+      <el-table
+        v-loading="fundDlgLoading"
+        :data="fundDlgRows"
+        stripe
+        size="small"
+        max-height="420"
+        empty-text="该筛选条件下暂无记录"
+      >
+        <el-table-column label="时间" width="140">
+          <template #default="{ row }: { row: any }">{{ formatDt(row.createdAt) }}</template>
+        </el-table-column>
+        <el-table-column label="方式" width="80" show-overflow-tooltip>
+          <template #default="{ row }: { row: any }">{{ row.method || row.actionLabel }}</template>
+        </el-table-column>
+        <el-table-column label="订单号" min-width="150" show-overflow-tooltip>
+          <template #default="{ row }: { row: any }">{{ row.orderNo || '—' }}</template>
+        </el-table-column>
+        <el-table-column label="明细" min-width="160" show-overflow-tooltip>
+          <template #default="{ row }: { row: any }">
+            <div>
+              {{ row.operator?.nickname || '—' }}
+              <template v-if="row.counterparty?.nickname"> → {{ row.counterparty.nickname }}</template>
+            </div>
+            <div v-if="row.remark" class="fund-sub">{{ row.remark }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="金额" width="120" align="right">
+          <template #default="{ row }: { row: any }">
+            <span :class="fundAmtClass(row)">{{ fundAmtText(row) }}</span>
+          </template>
+        </el-table-column>
+      </el-table>
+      <div v-if="fundDlgTotal > fundDlgPageSize" class="fund-pager">
+        <el-pagination
+          background
+          layout="prev, pager, next"
+          :total="fundDlgTotal"
+          :page-size="fundDlgPageSize"
+          :current-page="fundDlgPage"
+          @current-change="onFundDlgPage"
+        />
+      </div>
+    </DeskDialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { validateOpsPassword } from '@gamebox/shared'
+import DeskDialog from '@/components/DeskDialog.vue'
 import {
   consoleApi,
+  type AgentAuditFundTotals,
   type AgentAuditRow,
   type AgentDetail,
+  type CsStaffCreated,
+  type CsStaffRow,
+  type ReportRoomBetRow,
   type ReportSummary,
   type RoomGameCfg,
 } from '@/api/console'
 import { useAdminStore } from '@/stores/admin'
-import PageHeader from '@/components/PageHeader.vue'
+import { roomIconUrl } from '@/utils/roomIcon'
+import { newFundOrderNo } from '@/utils/fundOrderNo'
+import RoomRobotsPanel from '@/views/room-detail/RoomRobotsPanel.vue'
+import RoomSettlePanel from '@/views/room-detail/RoomSettlePanel.vue'
+import JoinReviewPanel from '@/views/room-detail/JoinReviewPanel.vue'
 import PlayersPanel from '@/views/PlayersPanel.vue'
 import {
-  GAME_OPTIONS, gameLabel, roomStatusLabel, roomStatusTagType,
+  GAME_OPTIONS, gameLabel, roomStatusLabel, roomStatusTagType, type KpiChip,
 } from '@/utils/labels'
 
 type RoomDetail = {
-  id?: string
+  icon?: string | null
+  id: string
   roomNo?: string
   name?: string
   status?: string
@@ -765,14 +1518,33 @@ type RoomDetail = {
   billingDay?: number
   nextBillAt?: string | null
   lastBilledAt?: string | null
+  overIssueEnabled?: boolean
+  overIssueLimit?: number
+  overIssueUsed?: number
+  bookMode?: 'CASH' | 'CREDIT'
+  agentShareRate?: number
+  creditLimit?: number
+  settleCycle?: 'WEEKLY_MON' | 'MONTHLY_1' | 'MONTHLY_15_30' | string
+  settleWeekday?: number
   createdAt?: string
   memberCount?: number
   roundCount?: number
+  /** 本房玩家当前余额合计 */
+  playerPointsTotal?: number
+  fly?: {
+    onCount: number
+    offCount: number
+    memberCount: number
+    effective: boolean
+    flyCover: number
+  }
   ownerAgent?: {
     agentId?: string
     userId?: string
     balance?: number | null
     pointsQuota?: number
+    diskPoolRemaining?: number
+    csBalances?: number
     pointsUsed?: number
     flyCover?: number
     rebateRate?: number | null
@@ -790,38 +1562,58 @@ type RoomDetail = {
   }>
 }
 
-type StaffOpt = { id: string; uid: string; nickname: string; role: string }
+type StaffOpt = { id: string; uid: string; username: string; nickname: string; role: string }
 
 const route = useRoute()
 const router = useRouter()
 const store = useAdminStore()
 const id = computed(() => String(route.params.id))
 const isAdmin = computed(() => store.profile?.role === 'ADMIN')
+const isBranch = computed(() => store.profile?.role === 'BRANCH')
 const isAgent = computed(() => store.profile?.role === 'AGENT')
 const isProxy = computed(() => store.profile?.role === 'PROXY')
+/** 代理 / 子账号：经营概况用玩家视角 */
+const isAgentSide = computed(() => isAgent.value || isProxy.value)
+/** 管理员 / 房主：额度条用发分视角（上盘额度 / 剩余信用） */
+const isLandlordSide = computed(() => isAdmin.value || isBranch.value)
 /** 代分：房间信息只读 */
 const roomReadonly = computed(() => isProxy.value)
+/** 信用/占成结账：仅管理员、房主可操作；代理/子账号只读对账 */
+const settleReadonly = computed(() => {
+  const r = store.profile?.role
+  return r !== 'ADMIN' && r !== 'BRANCH'
+})
 const canResetAgentPwd = computed(() => store.profile?.role === 'ADMIN' || store.profile?.role === 'BRANCH')
 const canEditBilling = computed(() => store.profile?.role === 'ADMIN' || store.profile?.role === 'BRANCH')
 const canFundMainAgent = computed(() => {
   const me = store.profile?.role
   return me === 'ADMIN' || me === 'BRANCH'
 })
-const canFundRoomPool = computed(() => store.profile?.role === 'ADMIN' || store.profile?.role === 'BRANCH')
-const poolBalance = ref(0)
-const poolDlg = ref(false)
-const poolAmount = ref(1000)
-const poolRemark = ref('')
-const poolSaving = ref(false)
-const canAgentFund = computed(() => {
+/** 信用盘：用「调整信用额度」代替代理上下分 */
+const canBumpCreditLimit = computed(() =>
+  canFundMainAgent.value && room.value?.bookMode === 'CREDIT',
+)
+/** 进房通过/拒绝：主代理与管理/房主；子账号只读 */
+const canReviewJoin = computed(() => {
   const me = store.profile?.role
-  return me === 'ADMIN' || me === 'BRANCH' || me === 'AGENT'
+  return me === 'AGENT' || me === 'ADMIN' || me === 'BRANCH'
 })
+/** 仅管理员/房主可开子账号；代理本人不能开 */
 const canAddProxy = computed(() => {
   if (!room.value?.ownerAgent?.userId) return false
   const me = store.profile?.role
-  if (me === 'ADMIN' || me === 'BRANCH') return true
-  return me === 'AGENT' && room.value.ownerAgent.userId === store.profile?.id
+  return me === 'ADMIN' || me === 'BRANCH'
+})
+/** 重置密码/停用：仅管理员/房主 */
+const canHardManageProxy = computed(() => {
+  if (!room.value?.ownerAgent?.userId) return false
+  const me = store.profile?.role
+  return me === 'ADMIN' || me === 'BRANCH'
+})
+/** 改名字：仅主代理本人（管理员/房主不改名） */
+const canRenameProxy = computed(() => {
+  if (!room.value?.ownerAgent?.userId) return false
+  return store.profile?.role === 'AGENT' && room.value.ownerAgent.userId === store.profile?.id
 })
 /** 值班仅代理本人可设 */
 const canSetDuty = computed(() => {
@@ -829,9 +1621,95 @@ const canSetDuty = computed(() => {
   return !!room.value?.ownerAgent?.userId
     && room.value.ownerAgent.userId === store.profile?.id
 })
+/** 整房飞盘/关盘：仅本房主代理可见可改（信用盘也可开关） */
+const canSetRoomFly = computed(() => {
+  if (store.profile?.role !== 'AGENT') return false
+  return !!room.value?.ownerAgent?.userId
+    && room.value.ownerAgent.userId === store.profile?.id
+})
+/** 开盘状态：管理员/房主/代理；子账号不可改 */
+const canSetRoomStatus = computed(() => {
+  const me = store.profile?.role
+  return me === 'ADMIN' || me === 'BRANCH' || me === 'AGENT'
+})
+/** 房间图标：管理/房主/代理可改；子账号只看 */
+const canEditRoomIcon = computed(() => {
+  const me = store.profile?.role
+  return me === 'ADMIN' || me === 'BRANCH' || me === 'AGENT'
+})
+const roomIconInput = ref<HTMLInputElement | null>(null)
+const iconBusy = ref(false)
+
+function pickRoomIcon() {
+  if (!canEditRoomIcon.value || iconBusy.value) return
+  roomIconInput.value?.click()
+}
+
+function readRoomIconAsDataUrl(file: File): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result || ''))
+    reader.onerror = () => reject(new Error('读取失败'))
+    reader.readAsDataURL(file)
+  })
+}
+
+async function onRoomIconPicked(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file || !room.value) return
+  if (!/^image\/(jpeg|png|webp)$/i.test(file.type)) {
+    ElMessage.warning('请选择 JPG / PNG / WEBP 图片')
+    return
+  }
+  if (file.size > 800 * 1024) {
+    ElMessage.warning('图片请小于 800KB')
+    return
+  }
+  iconBusy.value = true
+  try {
+    const image = await readRoomIconAsDataUrl(file)
+    const res = await consoleApi.uploadRoomIcon(room.value.id, image)
+    room.value = { ...room.value, icon: res.icon || '/images/rooms/default-room.png' }
+    ElMessage.success('房间图标已更新')
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '上传失败')
+  } finally {
+    iconBusy.value = false
+  }
+}
+
+
+/** 整房飞盘当前态：全开 / 全关 / 有人开有人关 */
+const roomFlyMode = computed<'on' | 'off' | 'mixed'>(() => {
+  const on = room.value?.fly?.onCount ?? 0
+  const off = room.value?.fly?.offCount ?? 0
+  if (on > 0 && off === 0) return 'on'
+  if (off > 0 && on === 0) return 'off'
+  if (on > 0 && off > 0) return 'mixed'
+  return 'off'
+})
+const roomFlyModeLabel = computed(() => {
+  if (roomFlyMode.value === 'on') return '全开'
+  if (roomFlyMode.value === 'off') return '全关'
+  return '部分开启'
+})
+/** 现金盘：开关仍开但占用=0 → 实际已走关盘记账 */
+const cashFlySoftClosed = computed(() => {
+  const r = room.value
+  if (!r || r.bookMode === 'CREDIT') return false
+  if (roomFlyMode.value === 'off') return false
+  return Number(r.ownerAgent?.flyCover || 0) <= 0
+})
 
 const loading = ref(false)
+const flyBusy = ref(false)
+const statusBusy = ref(false)
 const summaryLoading = ref(false)
+const betLoading = ref(false)
+const betRows = ref<ReportRoomBetRow[]>([])
+const betTotal = ref(0)
 const resettingPwd = ref(false)
 const savingBilling = ref(false)
 const billingForm = reactive({
@@ -842,7 +1720,61 @@ const billingForm = reactive({
 const room = ref<RoomDetail | null>(null)
 const games = ref<RoomGameCfg[]>([])
 const summary = ref<ReportSummary | null>(null)
-const tab = ref('overview')
+const tab = ref('basic')
+/** 本房待审进房人数；>0 时副导航「进房审核」高亮 */
+const pendingJoinCount = ref(0)
+let joinPollTimer: ReturnType<typeof setInterval> | null = null
+
+const detailTabs = computed(() => {
+  const items = [
+    { key: 'basic', label: '基础信息' },
+    { key: 'overview', label: '经营概况' },
+    { key: 'players', label: '玩家' },
+    { key: 'join', label: '进房审核' },
+    { key: 'agent', label: '绑定代理' },
+    { key: 'billing', label: '月费账单' },
+    ...(isAdmin.value ? [{ key: 'owners', label: '可见房主' }] : []),
+    { key: 'games', label: '游戏设置' },
+    { key: 'robots', label: '机器人托' },
+    { key: 'settle', label: settleReadonly.value ? '占成对账' : '占成结账' },
+  ]
+  return items
+})
+
+function onJoinPending(n: number) {
+  pendingJoinCount.value = Math.max(0, Number(n) || 0)
+}
+
+function onJoinChanged() {
+  void loadJoinPending()
+}
+
+async function loadJoinPending() {
+  const rid = room.value?.id || id.value
+  if (!rid) {
+    pendingJoinCount.value = 0
+    return
+  }
+  try {
+    const res = await consoleApi.joinPending()
+    pendingJoinCount.value = (res.list || []).filter((r) => r.roomId === rid).length
+  } catch {
+    /* 保留上次数量，避免闪断 */
+  }
+}
+
+const playersInitialQ = computed(() => {
+  const q = route.query.q
+  return typeof q === 'string' ? q : ''
+})
+
+function setTab(key: string) {
+  if (tab.value === key) return
+  tab.value = key
+  const q = { ...route.query, tab: key }
+  void router.replace({ query: q })
+}
+
 const highlightAgentId = ref('')
 const rangeKey = ref('today')
 const customRange = ref<[string, string] | null>(null)
@@ -901,19 +1833,79 @@ const showResetPwd = ref(false)
 const resetCreds = ref<{ username: string; password: string } | null>(null)
 const showProxyCreds = ref(false)
 const proxyCreds = ref<{ username: string; password: string } | null>(null)
-const agentDutyUserId = ref<string | null>(null)
-const dutyBusy = ref(false)
+const showProxyResetPwd = ref(false)
+const proxyResetPwd = ref('')
+const proxyResetBusy = ref(false)
+const proxyResetTarget = ref<{ id: string; nickname: string; username: string } | null>(null)
+/** 复用重置密码弹窗：子账号 / 客服 */
+const staffResetKind = ref<'PROXY' | 'CS'>('PROXY')
 const staffList = ref<StaffOpt[]>([])
 const agentChildren = ref<AgentDetail['children']>([])
+const csStaffRows = ref<CsStaffRow[]>([])
+const csListLoading = ref(false)
+const csQuotaTotal = computed(() => {
+  const fromApi = room.value?.ownerAgent?.csBalances
+  if (fromApi != null) return Number(fromApi)
+  return csStaffRows.value.reduce((s, r) => s + Number(r.balance || 0), 0)
+})
+/** 未发信用池 = 代理桌额度 + 客服额度 */
+const creditUnusedPool = computed(() => {
+  const a = room.value?.ownerAgent
+  if (!a) return 0
+  if (a.diskPoolRemaining != null) return Number(a.diskPoolRemaining)
+  return Number(a.pointsQuota || 0) + csQuotaTotal.value
+})
+const creditSum = computed(() => {
+  if (!room.value) return 0
+  return Number(room.value.ownerAgent?.pointsQuota || 0)
+    + Number(room.value.playerPointsTotal || 0)
+    + csQuotaTotal.value
+})
+const creditExcess = computed(() =>
+  creditSum.value - Number(room.value?.creditLimit || 0),
+)
+const agentDutyUserId = ref<string | null>(null)
+const dutyBusy = ref(false)
 const fundRows = ref<AgentAuditRow[]>([])
 const fundLoading = ref(false)
+const fundPreviewPageSize = 12
+/** 资金明细弹窗 */
+const fundDetailVisible = ref(false)
+const fundDlgLoading = ref(false)
+const fundDlgType = ref('all')
+const fundDlgPage = ref(1)
+const fundDlgPageSize = 20
+const fundDlgTotal = ref(0)
+const fundDlgTotals = ref<AgentAuditFundTotals | null>(null)
+const fundDlgRows = ref<AgentAuditRow[]>([])
+const fundDlgRange = ref<[string, string] | null>(null)
+/** 游戏明细弹窗 */
+const gameDetailVisible = ref(false)
+const gameDlgLoading = ref(false)
+const gameDlgGameCode = ref('')
+const gameDlgRange = ref<[string, string] | null>(null)
+const gameDlgByGame = ref<NonNullable<ReportSummary['byGame']>>([])
+const gameDlgBets = ref<ReportRoomBetRow[]>([])
+const gameDlgBetTotal = ref(0)
+const gameDlgPage = ref(1)
+const gameDlgPageSize = 30
+const bumpCreditVisible = ref(false)
+const bumpCreditBusy = ref(false)
+const bumpCreditAmount = ref(10000)
+const bumpCreditDirection = ref<'up' | 'down'>('up')
 const fundVisible = ref(false)
 const fundMode = ref<'up' | 'down'>('up')
 const fundAmount = ref(1000)
 const fundTargetId = ref('')
 const fundBusy = ref(false)
+const fundOrderNo = ref('')
 const proxyVisible = ref(false)
 const proxyForm = reactive({ username: '', password: '', nickname: '' })
+const csVisible = ref(false)
+const csBusy = ref(false)
+const csForm = reactive({ username: '', password: '', nickname: '' })
+const showCsCreds = ref(false)
+const csCreds = ref<CsStaffCreated | null>(null)
 const showGameDlg = ref(false)
 const savingGame = ref(false)
 const rebatePolicy = reactive({ totalRate: 0.05, playerMinRate: 0.018 })
@@ -982,13 +1974,6 @@ function agentRebatePct(playerPct: number) {
 
 const branchOptions = computed(() => staffList.value.filter((a) => a.role === 'BRANCH'))
 
-const enabledGameLabels = computed(() => {
-  const codes = room.value?.enabledGames?.length
-    ? room.value.enabledGames
-    : games.value.filter((g) => g.enabled).map((g) => g.gameCode)
-  return codes.map((c) => gameLabel(c))
-})
-
 const ownerRows = computed(() =>
   (room.value?.ownerGrants || []).map((g, i) => ({
     key: g.owner?.uid || g.ownerId || String(i),
@@ -1011,17 +1996,33 @@ const feeText = computed(() => {
   return `${Math.floor(fee)} / 月`
 })
 
-const feeRuleText = computed(() => {
-  if (!room.value?.monthlyFee || room.value.monthlyFee <= 0) return '—'
-  return `每月 ${room.value.billingDay || 1} 日 上海 0 点`
+const sharePctText = computed(() => {
+  const rate = room.value?.agentShareRate
+  if (rate == null) return '—'
+  const pct = rate <= 1 ? rate * 100 : rate
+  return `${Math.round(pct * 10) / 10}%`
 })
 
-function quotaTone(n?: number | null) {
-  const v = Number(n || 0)
-  if (v <= 0) return 'tone-danger'
-  if (v < 100) return 'tone-warn'
-  return ''
-}
+const bookBrief = computed(() => {
+  const r = room.value
+  if (!r) return '—'
+  const mode = r.bookMode === 'CREDIT' ? 'B 信用盘' : 'A 现金盘'
+  return `${mode} · 占成 ${sharePctText.value}`
+})
+
+const settleBrief = computed(() => {
+  const c = room.value?.settleCycle
+  if (c === 'MONTHLY_15_30' || c === 'MONTHLY_15' || c === 'MONTHLY_30') return '每月 15 号与月末'
+  if (c === 'MONTHLY_1') return '每月 1 号'
+  return '礼拜一'
+})
+
+const feeRuleText = computed(() => {
+  if (!room.value?.monthlyFee || room.value.monthlyFee <= 0) return '已关闭'
+  return `每月 ${room.value.billingDay || 1} 日 0:00（上海）`
+})
+
+const togglingGame = ref('')
 
 /** 3 天内到期或余额不足提示 */
 const billingNearDue = computed(() => {
@@ -1043,37 +2044,107 @@ const netPnl = computed(() => {
   return Number(house ?? 0) - Number(commission ?? 0)
 })
 
-const pnlSideKpis = computed(() => [
-  { label: '庄家盈亏', value: fmt(summary.value?.housePnl), color: pnlColor(summary.value?.housePnl) },
+function ovSummaryCols(n: number) {
+  const cols = Math.max(1, Math.min(6, n || 1))
+  return { gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }
+}
+
+const agentCoreKpis = computed(() => [
+  { label: '挂靠支出', value: fmt(summary.value?.commissionAmount), color: '#f59e0b' },
   { label: '玩家盈亏', value: fmt(summary.value?.playerPnl), color: pnlColor(summary.value?.playerPnl) },
-  { label: '流水合计', value: fmt(summary.value?.betFlow) },
-  { label: '派彩合计', value: fmt(summary.value?.payout) },
+  { label: '本房盈亏', value: fmt(summary.value?.housePnl), color: pnlColor(summary.value?.housePnl) },
+  { label: '流水', value: fmt(summary.value?.betFlow), color: 'var(--desk-accent, #38bdf8)' },
+  { label: '派彩', value: fmt(summary.value?.payout) },
+  { label: '活跃玩家', value: String(summary.value?.activePlayers ?? '—') },
 ])
 
-const cashKpis = computed(() => [
-  { label: '上分合计', value: fmt(summary.value?.upAmount), color: '#d4a93c' },
+const agentBetKpis = computed<KpiChip[]>(() => [
+  { label: '注单数', value: String(summary.value?.betCount ?? '—') },
+  { label: '佣金笔数', value: String(summary.value?.commissionCount ?? '—') },
+  { label: '未结算注单', value: String(summary.value?.pendingBetCount ?? '—') },
+  { label: '未结算流水', value: fmt(summary.value?.pendingBetFlow) },
+])
+
+const agentCashKpis = computed(() => [
+  { label: '上分合计', value: fmt(summary.value?.upAmount), color: '#f59e0b' },
   { label: '上分笔数', value: String(summary.value?.upCount ?? '—') },
   { label: '下分合计', value: fmt(summary.value?.downAmount), color: '#f56c6c' },
   { label: '下分笔数', value: String(summary.value?.downCount ?? '—') },
-  { label: '待审上分', value: String(summary.value?.pendingUp ?? '—') },
-  { label: '待审下分', value: String(summary.value?.pendingDown ?? '—') },
-  { label: '资金净变动', value: fmt(summary.value?.netChange), color: pnlColor(summary.value?.netChange) },
+  {
+    label: '待审上分',
+    value: String(summary.value?.pendingUp ?? '—'),
+    color: (summary.value?.pendingUp ?? 0) > 0 ? '#ef4444' : undefined,
+    hot: (summary.value?.pendingUp ?? 0) > 0,
+  },
+  {
+    label: '待审下分',
+    value: String(summary.value?.pendingDown ?? '—'),
+    color: (summary.value?.pendingDown ?? 0) > 0 ? '#d97706' : undefined,
+    hot: (summary.value?.pendingDown ?? 0) > 0,
+  },
+])
+
+const adminCoreKpis = computed(() => [
+  { label: '净盈亏', value: fmt(netPnl.value), color: pnlColor(netPnl.value) },
+  { label: '庄家盈亏', value: fmt(summary.value?.housePnl), color: pnlColor(summary.value?.housePnl) },
+  { label: '玩家盈亏', value: fmt(summary.value?.playerPnl), color: pnlColor(summary.value?.playerPnl) },
+  { label: '流水', value: fmt(summary.value?.betFlow), color: 'var(--desk-accent, #38bdf8)' },
+  { label: '派彩', value: fmt(summary.value?.payout) },
+  { label: '挂靠支出', value: fmt(summary.value?.commissionAmount), color: '#f59e0b' },
+])
+
+const adminCashKpis = computed(() => [
+  { label: '上分合计', value: fmt(summary.value?.upAmount), color: '#f59e0b' },
+  { label: '上分笔数', value: String(summary.value?.upCount ?? '—') },
+  { label: '下分合计', value: fmt(summary.value?.downAmount), color: '#f56c6c' },
+  { label: '下分笔数', value: String(summary.value?.downCount ?? '—') },
+  {
+    label: '待审上分',
+    value: String(summary.value?.pendingUp ?? '—'),
+    color: (summary.value?.pendingUp ?? 0) > 0 ? '#ef4444' : undefined,
+    hot: (summary.value?.pendingUp ?? 0) > 0,
+  },
+  {
+    label: '待审下分',
+    value: String(summary.value?.pendingDown ?? '—'),
+    color: (summary.value?.pendingDown ?? 0) > 0 ? '#d97706' : undefined,
+    hot: (summary.value?.pendingDown ?? 0) > 0,
+  },
+])
+
+const adminBetKpis = computed<KpiChip[]>(() => [
+  { label: '注单数', value: String(summary.value?.betCount ?? '—') },
+  { label: '佣金笔数', value: String(summary.value?.commissionCount ?? '—') },
+  { label: '活跃玩家', value: String(summary.value?.activePlayers ?? '—') },
   { label: '房间成员', value: String(summary.value?.playerCount ?? room.value?.memberCount ?? '—') },
 ])
 
-const extraKpis = computed(() => [
-  { label: '代理佣金', value: fmt(summary.value?.commissionAmount), color: '#e6a23c' },
-  { label: '佣金笔数', value: String(summary.value?.commissionCount ?? '—') },
-  { label: '活跃玩家', value: String(summary.value?.activePlayers ?? '—') },
-  { label: '注单数', value: String(summary.value?.betCount ?? '—') },
-])
+function gamePnl(row: { housePnl?: number | null; playerPnl?: number | null }) {
+  if (row.playerPnl != null) return Number(row.playerPnl)
+  if (row.housePnl == null) return null
+  return -Number(row.housePnl)
+}
+
+function betStatusLabel(s?: string) {
+  if (s === 'WON') return '赢'
+  if (s === 'LOST') return '输'
+  if (s === 'PENDING') return '未结'
+  if (s === 'CANCELLED' || s === 'CANCELED') return '取消'
+  return s || '—'
+}
+function betStatusType(s?: string): 'success' | 'danger' | 'info' | 'warning' {
+  if (s === 'WON') return 'success'
+  if (s === 'LOST') return 'danger'
+  if (s === 'PENDING') return 'warning'
+  return 'info'
+}
 
 function fmt(n?: number | null) {
   if (n == null) return '—'
   return Number(n).toLocaleString('zh-CN', { minimumFractionDigits: 2 })
 }
 function pnlColor(n?: number | null) {
-  if (n == null) return '#303133'
+  if (n == null) return '#0f172a'
   return n >= 0 ? '#67c23a' : '#f56c6c'
 }
 function formatDate(v?: string | null) {
@@ -1086,13 +2157,21 @@ function formatDt(v?: string | null) {
   if (s.length >= 16) return `${s.slice(0, 10)} ${s.slice(11, 16)}`
   return s.slice(0, 10)
 }
+/** 经营概况右侧流水：MM-DD HH:mm，避免撑出横向滚动 */
+function formatDtShort(v?: string | null) {
+  if (!v) return '—'
+  const s = String(v)
+  if (s.length >= 16) return `${s.slice(5, 10)} ${s.slice(11, 16)}`
+  if (s.length >= 10) return s.slice(5, 10)
+  return s
+}
 
 async function loadStaff() {
   if (!isAdmin.value) return
   try {
     const res = await consoleApi.agents({ page: 1, pageSize: 200, role: 'BRANCH', boundOnly: false })
     staffList.value = res.list.map((a) => ({
-      id: a.id, uid: a.uid, nickname: a.nickname, role: a.role,
+      id: a.id, uid: a.uid, username: a.username, nickname: a.nickname, role: a.role,
     }))
   } catch {
     staffList.value = []
@@ -1106,23 +2185,51 @@ function regenResetPwd() {
   resetPwd.value = `Ag${hex}9`
 }
 
+function summaryRangeParams() {
+  const params: { roomId: string; range?: string; from?: string; to?: string } = {
+    roomId: id.value,
+  }
+  if (rangeKey.value === 'custom') {
+    if (!customRange.value?.[0] || !customRange.value?.[1]) return null
+    params.from = customRange.value[0]
+    params.to = customRange.value[1]
+  } else {
+    params.range = rangeKey.value
+  }
+  return params
+}
+
+async function loadRoomBets() {
+  if (!isAgentSide.value) {
+    betRows.value = []
+    betTotal.value = 0
+    return
+  }
+  const params = summaryRangeParams()
+  if (!params) return
+  betLoading.value = true
+  try {
+    const res = await consoleApi.reportRoomBets({ ...params, page: 1, pageSize: 50 })
+    betRows.value = res.list || []
+    betTotal.value = res.total || 0
+  } catch {
+    betRows.value = []
+    betTotal.value = 0
+  } finally {
+    betLoading.value = false
+  }
+}
+
 async function loadSummary() {
   summaryLoading.value = true
   try {
-    const params: { roomId: string; range?: string; from?: string; to?: string } = {
-      roomId: id.value,
-    }
-    if (rangeKey.value === 'custom') {
-      if (!customRange.value?.[0] || !customRange.value?.[1]) {
-        ElMessage.warning('请选择自定义起止时间')
-        return
-      }
-      params.from = customRange.value[0]
-      params.to = customRange.value[1]
-    } else {
-      params.range = rangeKey.value
+    const params = summaryRangeParams()
+    if (!params) {
+      if (rangeKey.value === 'custom') ElMessage.warning('请选择自定义起止时间')
+      return
     }
     summary.value = await consoleApi.reportSummary(params)
+    await Promise.all([loadRoomBets(), loadFundPreview()])
   } catch (e: unknown) {
     ElMessage.error(
       (e as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message
@@ -1134,8 +2241,148 @@ async function loadSummary() {
   }
 }
 
+/** 侧栏预览：跟上方汇总区间，仅最近几条 */
+async function loadFundPreview() {
+  const uid = room.value?.ownerAgent?.userId
+  if (!uid) {
+    fundRows.value = []
+    return
+  }
+  fundLoading.value = true
+  try {
+    const range = summary.value?.range
+    const res = await consoleApi.agentAudit(uid, {
+      page: 1,
+      pageSize: fundPreviewPageSize,
+      tab: 'fund',
+      from: range?.from,
+      to: range?.to,
+    })
+    fundRows.value = res.list || []
+  } catch {
+    fundRows.value = []
+  } finally {
+    fundLoading.value = false
+  }
+}
+
+function defaultDlgRange(): [string, string] {
+  const r = summary.value?.range
+  if (r?.from && r?.to) return [r.from, r.to]
+  return shanghaiBoundPair(0, 1) as [string, string]
+}
+
+function openGameDetailDlg() {
+  gameDlgRange.value = defaultDlgRange()
+  gameDlgGameCode.value = ''
+  gameDlgPage.value = 1
+  gameDetailVisible.value = true
+}
+
+function openFundDetailDlg() {
+  fundDlgRange.value = defaultDlgRange()
+  fundDlgType.value = 'all'
+  fundDlgPage.value = 1
+  fundDetailVisible.value = true
+}
+
+async function loadGameDetail() {
+  if (!gameDlgRange.value?.[0] || !gameDlgRange.value?.[1]) {
+    ElMessage.warning('请选择日期区间')
+    return
+  }
+  gameDlgLoading.value = true
+  try {
+    const from = gameDlgRange.value[0]
+    const to = gameDlgRange.value[1]
+    const code = gameDlgGameCode.value.trim()
+    const [sum, bets] = await Promise.all([
+      consoleApi.reportSummary({ roomId: id.value, from, to }),
+      consoleApi.reportRoomBets({
+        roomId: id.value,
+        from,
+        to,
+        page: gameDlgPage.value,
+        pageSize: gameDlgPageSize,
+        gameCode: code || undefined,
+      }),
+    ])
+    const games = sum.byGame || []
+    gameDlgByGame.value = code ? games.filter((g) => g.gameCode === code) : games
+    gameDlgBets.value = bets.list || []
+    gameDlgBetTotal.value = bets.total || 0
+  } catch (e: unknown) {
+    gameDlgByGame.value = []
+    gameDlgBets.value = []
+    gameDlgBetTotal.value = 0
+    ElMessage.error(
+      (e as { response?: { data?: { message?: string } } })?.response?.data?.message
+      || (e as Error).message
+      || '加载游戏明细失败',
+    )
+  } finally {
+    gameDlgLoading.value = false
+  }
+}
+
+function onGameDlgQuery() {
+  gameDlgPage.value = 1
+  void loadGameDetail()
+}
+
+function onGameDlgPage(p: number) {
+  gameDlgPage.value = p
+  void loadGameDetail()
+}
+
+async function loadFundDetail() {
+  const uid = room.value?.ownerAgent?.userId
+  if (!uid) return
+  if (!fundDlgRange.value?.[0] || !fundDlgRange.value?.[1]) {
+    ElMessage.warning('请选择日期区间')
+    return
+  }
+  fundDlgLoading.value = true
+  try {
+    const res = await consoleApi.agentAudit(uid, {
+      page: fundDlgPage.value,
+      pageSize: fundDlgPageSize,
+      tab: 'fund',
+      from: fundDlgRange.value[0],
+      to: fundDlgRange.value[1],
+      fundType: fundDlgType.value === 'all' ? undefined : fundDlgType.value,
+    })
+    fundDlgRows.value = res.list || []
+    fundDlgTotal.value = res.total || 0
+    fundDlgTotals.value = res.fundTotals || null
+  } catch (e: unknown) {
+    fundDlgRows.value = []
+    fundDlgTotal.value = 0
+    fundDlgTotals.value = null
+    ElMessage.error(
+      (e as { response?: { data?: { message?: string } } })?.response?.data?.message
+      || (e as Error).message
+      || '加载资金流水失败',
+    )
+  } finally {
+    fundDlgLoading.value = false
+  }
+}
+
+function onFundDlgQuery() {
+  fundDlgPage.value = 1
+  void loadFundDetail()
+}
+
+function onFundDlgPage(p: number) {
+  fundDlgPage.value = p
+  void loadFundDetail()
+}
+
 function onCustomRangeChange(val: [string, string] | null) {
-  if (val?.[0] && val?.[1]) loadSummary()
+  if (val?.[0] && val?.[1]) {
+    loadSummary()
+  }
 }
 
 async function onRangePreset() {
@@ -1167,10 +2414,7 @@ async function load() {
     await loadRebatePolicy()
     games.value = await consoleApi.roomGames(id.value)
     syncGameRows()
-    await loadSummary()
-    await loadStaff()
-    await loadAgentOps()
-    await loadPool()
+    await Promise.all([loadSummary(), loadStaff(), loadAgentOps(), loadJoinPending()])
   } catch {
     ElMessage.error('加载失败')
   } finally {
@@ -1178,67 +2422,35 @@ async function load() {
   }
 }
 
-async function loadPool() {
-  try {
-    const res = await consoleApi.roomPool(id.value) as { balance?: number }
-    poolBalance.value = Number(res?.balance ?? 0)
-  } catch {
-    poolBalance.value = 0
-  }
-}
-
-function openPoolFund() {
-  poolAmount.value = 1000
-  poolRemark.value = ''
-  poolDlg.value = true
-}
-
-async function doPoolFund() {
-  if (!(poolAmount.value > 0)) return ElMessage.warning('请填写注资金额')
-  poolSaving.value = true
-  try {
-    const res = await consoleApi.fundRoom(id.value, poolAmount.value, poolRemark.value || undefined) as {
-      poolBalance?: number
-    }
-    poolBalance.value = Number(res?.poolBalance ?? poolBalance.value)
-    ElMessage.success('房间彩池已注资')
-    poolDlg.value = false
-  } catch (e: unknown) {
-    ElMessage.error((e as { message?: string })?.message || '注资失败')
-  } finally {
-    poolSaving.value = false
-  }
-}
-
 async function loadAgentOps() {
   const uid = room.value?.ownerAgent?.userId
   if (!uid) {
     agentChildren.value = []
-    fundRows.value = []
+    csStaffRows.value = []
     agentDutyUserId.value = null
     return
   }
-  fundLoading.value = true
+  csListLoading.value = true
   try {
-    const [detail, audit] = await Promise.all([
+    const [detail, csList] = await Promise.all([
       consoleApi.agentDetail(uid),
-      consoleApi.agentAudit(uid, { page: 1, pageSize: 15, tab: 'fund' }),
+      consoleApi.csStaffList({ parentAgentUserId: uid }).catch(() => [] as CsStaffRow[]),
     ])
     agentChildren.value = detail.children || []
     agentDutyUserId.value = detail.dutyUserId || null
-    fundRows.value = audit.list || []
+    csStaffRows.value = csList || []
   } catch {
     agentChildren.value = []
-    fundRows.value = []
+    csStaffRows.value = []
     agentDutyUserId.value = null
   } finally {
-    fundLoading.value = false
+    csListLoading.value = false
   }
 }
 
 async function onDutyChange(val: string | null) {
   const root = room.value?.ownerAgent?.userId
-  if (!root) return
+  if (!root || !canSetDuty.value) return
   dutyBusy.value = true
   try {
     await consoleApi.setCsDuty(root, val || null)
@@ -1254,6 +2466,218 @@ async function onDutyChange(val: string | null) {
   } finally {
     dutyBusy.value = false
   }
+}
+
+function goBackFromDetail() {
+  // 代理侧「我的房间」会直达详情；返回列表会再次被跳转，故回工作台
+  if (isAgent.value || isProxy.value) {
+    router.push({ name: 'dashboard' })
+    return
+  }
+  router.push({ name: 'rooms' })
+}
+
+async function setRoomFly(flyEnabled: boolean) {
+  try {
+    await ElMessageBox.confirm(
+      flyEnabled
+        ? (room.value?.bookMode === 'CREDIT'
+          ? '将把本房所有玩家飞盘设为「开」。信用盘开盘后输赢跟平台，占成在结账时按信用账本轧差；个人仍可在「玩家」页单独关掉。'
+          : '将把本房所有玩家飞盘设为「开」。上盘额度大于 0 时跟平台结算；额度耗尽则软关盘只动玩家分；个人仍可在「玩家」页单独关掉。')
+        : (room.value?.bookMode === 'CREDIT'
+          ? '将把本房所有玩家飞盘设为「关」。信用关盘输赢跟代理，占成结账轧差；个人仍可在「玩家」页单独开启。'
+          : '将把本房所有玩家飞盘设为「关」。之后只改玩家房间分，不动上盘额度；个人仍可在「玩家」页单独开启。'),
+      flyEnabled ? '整房开盘' : '整房关盘',
+      {
+        type: 'warning',
+        confirmButtonText: flyEnabled ? '确认开盘' : '确认关盘',
+        cancelButtonText: '取消',
+      },
+    )
+  } catch {
+    return
+  }
+  flyBusy.value = true
+  try {
+    const res = await consoleApi.setRoomFly(id.value, flyEnabled)
+    ElMessage.success(res.message || (flyEnabled ? '已整房开启' : '已整房关闭'))
+    await load()
+  } catch (e: unknown) {
+    ElMessage.error(
+      (e as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message
+      || (e as Error).message
+      || '操作失败',
+    )
+  } finally {
+    flyBusy.value = false
+  }
+}
+
+async function setRoomStatus(status: string) {
+  const label: Record<string, string> = {
+    OPEN: '营业中（开盘）',
+    MAINTENANCE: '维护中',
+    FROZEN: '已冻结',
+    CLOSED: '已关闭',
+  }
+  const tip =
+    status === 'FROZEN' || status === 'CLOSED'
+      ? `确认将房间设为「${label[status] || status}」？玩家将无法正常进入/游戏。`
+      : `确认将房间状态改为「${label[status] || status}」？`
+  try {
+    await ElMessageBox.confirm(tip, '变更开盘状态', {
+      type: status === 'FROZEN' || status === 'CLOSED' ? 'warning' : 'info',
+      confirmButtonText: '确认变更',
+    })
+  } catch {
+    return
+  }
+  statusBusy.value = true
+  try {
+    await consoleApi.setRoomStatus(id.value, status)
+    ElMessage.success('开盘状态已更新')
+    await load()
+  } catch (e: unknown) {
+    ElMessage.error(
+      (e as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message
+      || (e as Error).message
+      || '状态更新失败',
+    )
+  } finally {
+    statusBusy.value = false
+  }
+}
+
+async function renameProxy(row: { id: string; nickname: string }) {
+  try {
+    const { value } = await ElMessageBox.prompt('显示名字（最多 20 字）', '改名字', {
+      confirmButtonText: '保存',
+      cancelButtonText: '取消',
+      inputValue: row.nickname || '',
+      inputPattern: /^.{1,20}$/,
+      inputErrorMessage: '请输入 1～20 个字',
+    })
+    const name = String(value || '').trim()
+    if (!name) return
+    await consoleApi.renameProxyNickname(row.id, name)
+    ElMessage.success('已改名')
+    await loadAgentOps()
+  } catch (e: unknown) {
+    if (e === 'cancel' || e === 'close') return
+    ElMessage.error(
+      (e as { response?: { data?: { message?: string } } })?.response?.data?.message
+      || (e as Error).message
+      || '改名失败',
+    )
+  }
+}
+
+async function toggleProxyStatus(row: { id: string; nickname: string; status: string }) {
+  const next = row.status === 'ACTIVE' ? 'DISABLED' : 'ACTIVE'
+  try {
+    await ElMessageBox.confirm(
+      next === 'DISABLED'
+        ? `停用「${row.nickname}」后将无法登录；若正在值班会自动取消。确定？`
+        : `启用「${row.nickname}」？`,
+      next === 'DISABLED' ? '停用子账号' : '启用子账号',
+      { type: 'warning', confirmButtonText: next === 'DISABLED' ? '停用' : '启用' },
+    )
+  } catch {
+    return
+  }
+  try {
+    await consoleApi.setProxyStatus(row.id, next)
+    ElMessage.success(next === 'DISABLED' ? '已停用' : '已启用')
+    await loadAgentOps()
+  } catch (e: unknown) {
+    ElMessage.error(
+      (e as { response?: { data?: { message?: string } } })?.response?.data?.message
+      || (e as Error).message
+      || '操作失败',
+    )
+  }
+}
+
+function openResetAgentPwd() {
+  regenResetPwd()
+  showResetPwd.value = true
+}
+
+function resetProxyPwd(row: { id: string; nickname: string; username: string }) {
+  staffResetKind.value = 'PROXY'
+  proxyResetTarget.value = row
+  regenProxyResetPwd()
+  showProxyResetPwd.value = true
+}
+
+function regenProxyResetPwd() {
+  const arr = new Uint8Array(4)
+  crypto.getRandomValues(arr)
+  const hex = Array.from(arr, (b) => b.toString(16).padStart(2, '0')).join('')
+  proxyResetPwd.value = staffResetKind.value === 'CS' ? `Cs${hex}9` : `Px${hex}9`
+}
+
+async function doResetProxyPwd() {
+  if (!proxyResetTarget.value) return
+  const proxyResetErr = validateOpsPassword(proxyResetPwd.value.trim())
+  if (proxyResetErr) return ElMessage.warning(proxyResetErr)
+  proxyResetBusy.value = true
+  try {
+    const pwd = proxyResetPwd.value.trim()
+    const res = staffResetKind.value === 'CS'
+      ? await consoleApi.csStaffResetPassword(proxyResetTarget.value.id, pwd)
+      : await consoleApi.resetProxyPassword(proxyResetTarget.value.id, pwd)
+    showProxyResetPwd.value = false
+    if (staffResetKind.value === 'CS') {
+      resetCreds.value = { username: res.username, password: res.password }
+      showResetCreds.value = true
+    } else {
+      proxyCreds.value = { username: res.username, password: res.password }
+      showProxyCreds.value = true
+    }
+    ElMessage.success(res.message || '已重置')
+  } catch (e: unknown) {
+    ElMessage.error(
+      (e as { response?: { data?: { message?: string } } })?.response?.data?.message
+      || (e as Error).message
+      || '重置失败',
+    )
+  } finally {
+    proxyResetBusy.value = false
+  }
+}
+
+async function toggleCsStatus(row: { id: string; nickname: string; status: string }) {
+  const next = row.status === 'ACTIVE' ? 'DISABLED' : 'ACTIVE'
+  try {
+    await ElMessageBox.confirm(
+      next === 'DISABLED'
+        ? `停用「${row.nickname}」后将无法登录，并自动切到休息。确定？`
+        : `启用「${row.nickname}」？`,
+      next === 'DISABLED' ? '停用客服' : '启用客服',
+      { type: 'warning', confirmButtonText: next === 'DISABLED' ? '停用' : '启用' },
+    )
+  } catch {
+    return
+  }
+  try {
+    await consoleApi.csStaffSetStatus(row.id, next)
+    ElMessage.success(next === 'DISABLED' ? '已停用' : '已启用')
+    await loadAgentOps()
+  } catch (e: unknown) {
+    ElMessage.error(
+      (e as { response?: { data?: { message?: string } } })?.response?.data?.message
+      || (e as Error).message
+      || '操作失败',
+    )
+  }
+}
+
+function resetCsPwd(row: { id: string; nickname: string; username: string }) {
+  staffResetKind.value = 'CS'
+  proxyResetTarget.value = row
+  regenProxyResetPwd()
+  showProxyResetPwd.value = true
 }
 
 function regenProxyPwd() {
@@ -1276,9 +2700,20 @@ async function copyProxyCreds() {
 
 function fundAmtText(row: AgentAuditRow) {
   const n = Number(row.amount || 0)
-  if (row.action === 'QUOTA_RECALL' || row.action === 'CONSOLE_DEBIT') return `-${fmt(n)}`
-  if (row.action === 'QUOTA_SELL' || row.action === 'CONSOLE_CREDIT') return `+${fmt(n)}`
-  return fmt(n)
+  const sign = fundAmtNegative(row) ? '-' : '+'
+  return `${sign}${fmt(n)}`
+}
+
+function fundAmtNegative(row: AgentAuditRow) {
+  return (
+    row.action === 'QUOTA_RECALL'
+    || row.action === 'CONSOLE_DEBIT'
+    || row.action === 'CS_STAFF_ALLOC'
+  )
+}
+
+function fundAmtClass(row: AgentAuditRow) {
+  return fundAmtNegative(row) ? 'down' : 'up'
 }
 
 function openAgentFund(mode: 'up' | 'down', targetId?: string) {
@@ -1287,18 +2722,67 @@ function openAgentFund(mode: 'up' | 'down', targetId?: string) {
   fundTargetId.value = uid
   fundMode.value = mode
   fundAmount.value = 1000
+  /* 订单号在开弹窗时定死，连点复用同一键由服务端去重 */
+  fundOrderNo.value = newFundOrderNo(mode)
   fundVisible.value = true
 }
 
+function openBumpCredit() {
+  bumpCreditAmount.value = 10000
+  bumpCreditDirection.value = 'up'
+  bumpCreditVisible.value = true
+}
+
+async function doBumpCredit() {
+  if (!id.value) return
+  const amount = Number(bumpCreditAmount.value)
+  if (!(amount > 0)) {
+    ElMessage.warning('请输入大于 0 的金额')
+    return
+  }
+  bumpCreditBusy.value = true
+  try {
+    const res = await consoleApi.bumpCreditLimit(id.value, {
+      amount,
+      direction: bumpCreditDirection.value,
+    })
+    ElMessage.success(res.message || '已调整信用额度')
+    bumpCreditVisible.value = false
+    await load()
+  } catch (e: unknown) {
+    ElMessage.error(
+      (e as { response?: { data?: { message?: string } } })?.response?.data?.message
+      || (e as Error).message
+      || '失败',
+    )
+  } finally {
+    bumpCreditBusy.value = false
+  }
+}
+
 async function doAgentFund() {
-  if (!fundTargetId.value) return
+  if (!fundTargetId.value || fundBusy.value) return
+  const amount = Number(fundAmount.value)
+  if (!Number.isInteger(amount) || amount <= 0) {
+    ElMessage.warning('金额须为正整数')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确认给该代理${fundMode.value === 'up' ? '上分' : '下分回收'} ${amount.toLocaleString('zh-CN')}？订单号 ${fundOrderNo.value}`,
+      fundMode.value === 'up' ? '代理上分' : '代理下分',
+      { type: 'warning', confirmButtonText: '确认', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
   fundBusy.value = true
   try {
     if (fundMode.value === 'up') {
-      await consoleApi.issue(fundTargetId.value, fundAmount.value)
+      await consoleApi.issue(fundTargetId.value, amount, fundOrderNo.value)
       ElMessage.success('已上分')
     } else {
-      await consoleApi.recall(fundTargetId.value, fundAmount.value)
+      await consoleApi.recall(fundTargetId.value, amount, fundOrderNo.value)
       ElMessage.success('已下分回收')
     }
     fundVisible.value = false
@@ -1321,8 +2805,9 @@ async function doCreateProxy() {
     ElMessage.warning('账号须 8-20 位小写字母数字')
     return
   }
-  if ((proxyForm.password || '').length < 6) {
-    ElMessage.warning('密码至少 6 位')
+  const proxyCreateErr = validateOpsPassword(proxyForm.password || '')
+  if (proxyCreateErr) {
+    ElMessage.warning(proxyCreateErr)
     return
   }
   const username = proxyForm.username.trim().toLowerCase()
@@ -1355,9 +2840,72 @@ async function doCreateProxy() {
   }
 }
 
+function openCreateCs() {
+  resetCsForm()
+  csVisible.value = true
+}
+function resetCsForm() {
+  csForm.username = ''
+  csForm.password = ''
+  csForm.nickname = ''
+}
+
+async function doCreateCs() {
+  const parentId = room.value?.ownerAgent?.userId
+  if (!parentId) {
+    ElMessage.warning('本房无绑定代理')
+    return
+  }
+  const username = csForm.username.trim()
+  if (username && !/^[a-z0-9]{8,20}$/.test(username)) {
+    ElMessage.warning('用户名须 8-20 位小写字母数字')
+    return
+  }
+  const csPwdErr = csForm.password.trim() ? validateOpsPassword(csForm.password.trim()) : null
+  if (csPwdErr) {
+    ElMessage.warning(csPwdErr)
+    return
+  }
+  csBusy.value = true
+  try {
+    const res = await consoleApi.csStaffCreate({
+      parentAgentUserId: parentId,
+      username: username || undefined,
+      password: csForm.password.trim() || undefined,
+      nickname: csForm.nickname.trim() || undefined,
+    })
+    csVisible.value = false
+    csCreds.value = res
+    showCsCreds.value = true
+    ElMessage.success('已开通客服')
+    await loadAgentOps()
+  } catch (e: unknown) {
+    ElMessage.error(
+      (e as { response?: { data?: { message?: string } } })?.response?.data?.message
+      || (e as Error).message
+      || '开通失败',
+    )
+  } finally {
+    csBusy.value = false
+  }
+}
+
+async function copyCsCreds() {
+  if (!csCreds.value) return
+  const text = `用户名：${csCreds.value.username}\n密码：${csCreds.value.password}`
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success('已复制')
+  } catch {
+    ElMessage.warning('复制失败，请手动选中')
+  }
+}
+
 async function onSaveBilling() {
   if (billingForm.monthlyFee > 0 && !billingForm.nextBillAt) {
-    return ElMessage.warning('请设置下次扣费日期')
+    return ElMessage.warning(
+      room.value?.bookMode === 'CREDIT' ? '请设置下次月费日' : '请设置下次扣费日期',
+    )
   }
   savingBilling.value = true
   try {
@@ -1430,6 +2978,28 @@ function openGameDetail(row: GameRow) {
   showGameDlg.value = true
 }
 
+async function toggleGameEnabled(row: GameRow, enabled: boolean) {
+  if (roomReadonly.value) return
+  togglingGame.value = row.gameCode
+  try {
+    await consoleApi.patchRoomGame(id.value, row.gameCode, { enabled })
+    games.value = await consoleApi.roomGames(id.value)
+    syncGameRows()
+    if (room.value) {
+      room.value.enabledGames = games.value.filter((g) => g.enabled).map((g) => g.gameCode)
+    }
+    ElMessage.success(enabled ? `已开放 ${row.label}` : `已关闭 ${row.label}`)
+  } catch (e: unknown) {
+    ElMessage.error(
+      (e as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message
+      || (e as Error).message
+      || '操作失败',
+    )
+  } finally {
+    togglingGame.value = ''
+  }
+}
+
 async function saveGameDetail() {
   if (!gameDlg.gameCode) return
   const pct = Number(gameDlg.rebatePct)
@@ -1442,7 +3012,6 @@ async function saveGameDetail() {
     const rebateRate = Number((pct / 100).toFixed(4))
     await consoleApi.patchRoomGame(id.value, gameDlg.gameCode, {
       enabled: gameDlg.enabled,
-      robotCount: Number(gameDlg.robotCount || 0),
       rebateRate,
     })
     games.value = await consoleApi.roomGames(id.value)
@@ -1452,7 +3021,7 @@ async function saveGameDetail() {
       if (room.value.ownerAgent) room.value.ownerAgent.rebateRate = rebateRate
     }
     showGameDlg.value = false
-    ElMessage.success(`已保存默认 P ${pct}%（代理份额 ${agentRebatePct(pct)}%）；玩家可在列表单独改`)
+    ElMessage.success(`已保存：玩家回水 ${pct}% · 代理回水 ${agentRebatePct(pct)}%`)
   } catch (e: unknown) {
     ElMessage.error(
       (e as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message
@@ -1504,19 +3073,12 @@ async function onRevoke(userId: string, nickname: string) {
 }
 
 async function onResetPwd() {
-  if (resetPwd.value.trim().length < 6) return ElMessage.warning('密码至少 6 位')
-  try {
-    await ElMessageBox.confirm(
-      '重置后旧密码立即失效，代理需用新密码重新登录。是否继续？',
-      '重置代理密码',
-      { type: 'warning', confirmButtonText: '重置', cancelButtonText: '取消' },
-    )
-  } catch {
-    return
-  }
+  const resetErr = validateOpsPassword(resetPwd.value.trim())
+  if (resetErr) return ElMessage.warning(resetErr)
   resettingPwd.value = true
   try {
     const res = await consoleApi.resetAgentPassword(id.value, resetPwd.value.trim())
+    showResetPwd.value = false
     resetCreds.value = { username: res.username, password: res.password }
     showResetCreds.value = true
     resetPwd.value = ''
@@ -1545,8 +3107,15 @@ async function copyResetCreds() {
 
 function applyTabFromQuery() {
   const q = String(route.query.tab || '')
-  if (q === 'agent' || q === 'overview' || q === 'billing' || q === 'games' || q === 'owners' || q === 'players') {
+  if (q === 'owners' && !isAdmin.value) {
+    tab.value = 'basic'
+  } else if (
+    q === 'basic' || q === 'agent' || q === 'overview' || q === 'players' || q === 'join'
+    || q === 'billing' || q === 'games' || q === 'owners' || q === 'robots' || q === 'settle'
+  ) {
     tab.value = q
+  } else if (!q) {
+    tab.value = 'basic'
   }
   const aid = String(route.query.agentId || '')
   if (aid) highlightAgentId.value = aid
@@ -1557,10 +3126,17 @@ function agentChildRowClass({ row }: { row: { id: string } }) {
 }
 
 watch(tab, async (t) => {
-  if (t === 'overview') loadSummary()
+  if (t === 'owners' && !isAdmin.value) {
+    tab.value = 'basic'
+    return
+  }
+  if (t === 'overview') {
+    loadSummary()
+    void loadAgentOps()
+  }
   if (t === 'billing') syncBillingForm()
   if (t === 'agent') loadAgentOps()
-  if (t === 'games') {
+  if (t === 'games' || t === 'robots') {
     await loadRebatePolicy()
     syncGameRows()
   }
@@ -1574,9 +3150,28 @@ watch(
 onMounted(() => {
   applyTabFromQuery()
   void load()
+  joinPollTimer = setInterval(() => { void loadJoinPending() }, 20_000)
+})
+
+onUnmounted(() => {
+  if (joinPollTimer) {
+    clearInterval(joinPollTimer)
+    joinPollTimer = null
+  }
 })
 </script>
 
 <style scoped src="./room-detail/room-detail.css"></style>
+
+<style scoped>
+.basic-info-hd .room-icon-preview {
+  width: 36px;
+  height: 36px;
+  max-width: 36px;
+  max-height: 36px;
+  object-fit: cover;
+  display: block;
+}
+</style>
 
 <style src="./room-detail/room-detail-dialog.css"></style>

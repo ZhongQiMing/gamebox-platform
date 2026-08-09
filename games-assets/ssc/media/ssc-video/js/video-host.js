@@ -45,6 +45,18 @@
     try { global.ifopen = true; } catch (e) { /* ignore */ }
   }
 
+  /** 嵌入/续播：立刻藏掉 LOADING，避免刷新后先闪英文 loading */
+  function hideLoading() {
+    try {
+      var $ = jq();
+      if ($) $('.loading').stop(true, true).hide();
+      else {
+        var ld = document.querySelector('.loading');
+        if (ld) ld.style.display = 'none';
+      }
+    } catch (e) { /* ignore */ }
+  }
+
   /** 滚号控制器（须在 settle 之前声明） */
   var rollCtrl = {
     sel: '#numBig',
@@ -52,6 +64,8 @@
     gapMs: 90,
     running: false,
   };
+  /** play 世代：重叠 play 时旧 mid/after 定时器作废 */
+  var playGen = 0;
 
   function setMuted(muted) {
     try {
@@ -69,12 +83,41 @@
     } catch (e) { /* ignore */ }
   }
 
+  /** 清掉模板里的占位号（原 HTML 写死 21096 / 16双小虎），避免刷新先闪假结果 */
+  function scrubPlaceholderDigits() {
+    var $ = jq();
+    try {
+      var scramble = function (sel) {
+        var nodes = document.querySelectorAll(sel);
+        for (var i = 0; i < nodes.length; i++) {
+          var n = Math.floor(Math.random() * 10);
+          nodes[i].className = 'num' + n;
+          nodes[i].textContent = '';
+        }
+      };
+      scramble('#numBig .box > span');
+      scramble('#litNum .box > span');
+      if ($) {
+        $('#sumNum').text('—');
+        $('#sumSingleDouble').text('—');
+        $('#sumBigSmall').text('—');
+        $('#dragonTiger').text('—');
+      } else {
+        ['sumNum', 'sumSingleDouble', 'sumBigSmall', 'dragonTiger'].forEach(function (id) {
+          var el = document.getElementById(id);
+          if (el) el.textContent = '—';
+        });
+      }
+    } catch (e) { /* ignore */ }
+  }
+
   /**
    * 同步盖牌：上下行翻到 afterbg（正版滚号中状态）
    * 不走 xz3D 的 225ms 动画，避免进房闪三行结果。
    */
   function coverFacesSync() {
     var $ = jq();
+    scrubPlaceholderDigits();
     if (!$ || typeof videoTools === 'undefined') return;
     try {
       $('.codeboxl .perspectiveView').each(function () {
@@ -285,6 +328,10 @@
       if (landed) return;
       landed = true;
       revealColumns(nums);
+      /* 号码真正落到画面后再通知父页（比 settle 返回瞬间更准） */
+      if (typeof opts.onNumbers === 'function') {
+        try { opts.onNumbers(true); } catch (eNum) { /* ignore */ }
+      }
     }
 
     if (!pending) {
@@ -384,6 +431,7 @@
   function startDraw(opts) {
     opts = opts || {};
     ensureOpen();
+    hideLoading();
     if (opts.muted != null) setMuted(!!opts.muted);
     patchRollAnimate();
     try {
@@ -406,23 +454,37 @@
       return 0;
     }
     ensureOpen();
+    hideLoading();
     if (opts.muted != null) setMuted(!!opts.muted);
     var mid = opts.midMs != null ? Number(opts.midMs) : 6000;
     if (!(mid >= 0)) mid = 6000;
+    var gen = ++playGen;
     startDraw(opts);
 
     var slowAt = Math.max(0, mid - 780);
     setTimeout(function () {
+      if (gen !== playGen) return;
       decelerateRoll();
     }, slowAt);
 
+    var after = opts.afterMs != null ? Number(opts.afterMs) : 3400;
+    if (!(after >= 0)) after = 3400;
     setTimeout(function () {
-      settle(nums, opts);
+      if (gen !== playGen) return;
+      /* 平滑落定：onNumbers 在 afterLand；硬落定/无滚号：这里补一次 */
+      var wasRolling = !!(rollCtrl.running || rollCtrl.timer);
+      var ok = settle(nums, opts);
+      if ((!wasRolling || !ok) && typeof opts.onNumbers === 'function') {
+        try { opts.onNumbers(true); } catch (eNum) { /* ignore */ }
+      }
       if (typeof opts.onDone === 'function') {
-        setTimeout(function () { opts.onDone(true); }, 3400);
+        setTimeout(function () {
+          if (gen !== playGen) return;
+          opts.onDone(true);
+        }, after);
       }
     }, mid);
-    return mid + 3400;
+    return mid + after;
   }
 
   function readyPing() {
@@ -440,6 +502,8 @@
     settle: settle,
     startDraw: startDraw,
     play: play,
+    /** 父页须等 boot 完成再 play，否则滚号 DOM/补丁未就绪会「没动画」 */
+    __ready: false,
   };
 
   global.addEventListener('message', function (ev) {
@@ -449,7 +513,14 @@
       play(data.order, {
         issue: data.issue,
         midMs: data.midMs,
+        afterMs: data.afterMs,
         muted: data.muted,
+        onNumbers: function () {
+          try {
+            ev.source && ev.source.postMessage(
+              { source: 'ssc-video', action: 'numbers', ok: true, issue: data.issue || '' }, location.origin);
+          } catch (e0) { /* ignore */ }
+        },
         onDone: function (ok) {
           try {
             ev.source && ev.source.postMessage(
@@ -522,18 +593,22 @@
     var settleNow = /(?:\?|&)settle=1(?:&|$)/.test(q);
     var embed = /(?:\?|&)embed=1(?:&|$)/.test(q);
 
+    /* embed/settle：进页即藏 LOADING */
+    if (embed || settleNow) hideLoading();
+
     if (mo && mo[1] && settleNow) {
+      scrubPlaceholderDigits();
       settle(decodeURIComponent(mo[1]), {
         issue: mi && mi[1] ? decodeURIComponent(mi[1]) : '',
         muted: muted,
       });
     } else if (embed) {
-      /* 直播卡加载：先盖牌，等父页 play，避免一进房三行结果全亮 */
+      /* 直播卡：盖牌待命，开奖中由父页压黑幕，不在此自动开滚 */
       coverFacesSync();
     }
-    /* iframe 尺寸有时晚于 load 才稳定 */
     setTimeout(fitStage, 0);
     setTimeout(fitStage, 120);
+    try { global.SscVideo.__ready = true; } catch (eReady) { /* ignore */ }
     readyPing();
   }
 

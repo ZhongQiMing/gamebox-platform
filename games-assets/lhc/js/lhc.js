@@ -98,8 +98,10 @@ $(function () {
     else if (typeof syncServerSnapshot === 'function') syncServerSnapshot();
   }
   const REVEALED_STORAGE_KEY = 'lhc_revealed_v1';
+  const PLAYED_ANIM_STORAGE_KEY = 'lhc_played_anim_v1';
   const CLOSED_STORAGE_KEY = 'lhc_closed_v1';
   let revealedIssues = new Set();
+  let playedAnimIssues = new Set();
   /** 进房后首次拉到历史头：只对齐顶栏，不往聊天推「进房前已开奖」 */
   let historyHeadBootstrapped = false;
   let lastBetText = '';
@@ -140,6 +142,8 @@ $(function () {
     if (!serverSynced || !serverCurrent) return false;
     const open = serverCurrent.status === 'PENDING' && Date.now() < new Date(serverCurrent.lockAt).getTime();
     if (!open) return false;
+    /* 开奖仪式未回到 betting：禁止下注 */
+    if (roomChat && typeof roomChat.isBettingOpen === 'function' && !roomChat.isBettingOpen()) return false;
     /* 仅冻结「仍是封盘那一期」；已换新期以服务端 lockAt 为准 */
     if (roomBetFrozen && sealedIssueNo && String(serverCurrent.issueNo) === String(sealedIssueNo)) return false;
     return true;
@@ -1565,14 +1569,15 @@ $(function () {
     return true;
   }
 
-  function ballHtml(n, cls) {
+  function ballHtml(n, cls, eager) {
     const c = cls ? ' ' + cls : '';
     const num = String(n).padStart(2, '0');
-    return `<img class="lhc-ball-img${c}" src="./assets/balls/ball_${num}.png" alt="${n}" loading="lazy">`;
+    const loading = eager ? 'eager' : 'lazy';
+    return `<img class="lhc-ball-img${c}" src="./assets/balls/ball_${num}.png" alt="${n}" loading="${loading}">`;
   }
   /** 球号 + 生肖（历史表 / 开奖条） */
-  function ballZodiacHtml(n, cls) {
-    return `<span class="ball-wrap">${ballHtml(n, cls)}<span class="zx">${zodiacOf(n)}</span></span>`;
+  function ballZodiacHtml(n, cls, eager) {
+    return `<span class="ball-wrap">${ballHtml(n, cls, eager)}<span class="zx">${zodiacOf(n)}</span></span>`;
   }
   /** 特码属性：总和 / 大小单双 / 波色 */
   function temaMeta(nums) {
@@ -1612,11 +1617,16 @@ $(function () {
     if (wave === '蓝') return 'is-blue';
     return 'is-green';
   }
+  let lastDrawBarKey = '';
   function renderDrawBar(row) {
     if (!row) return;
+    const key = String(row.issue || '') + '|' + (row.nums || []).join(',');
+    /* 快照轮询勿整段重绘球图，否则 lazy 重载会一闪一闪 */
+    if (key === lastDrawBarKey) return;
+    lastDrawBarKey = key;
     const meta = temaMeta(row.nums);
     setIssueEl($('#barIssue'), row.issue);
-    $('#barBalls').html(row.nums.map(n => ballZodiacHtml(n, 'xs')).join(''));
+    $('#barBalls').html(row.nums.map(n => ballZodiacHtml(n, 'xs', true)).join(''));
     $('#barGy').text(`${meta.sum} ${meta.side}`);
   }
   function renderDrawTable() {
@@ -2236,11 +2246,14 @@ $(function () {
     list.slice(-CHAT_KEEP).forEach((m) => {
       if (!m || !m.html) return;
       let html = m.html;
-      // 兜底：未写回最终态的开奖卡，至少去掉滚动态
-      if (String(html).indexOf('lhc-result-card') >= 0) {
+      /* 本地恢复也先保持黑卡/进行中，禁止把 drawing 强改成 reveal 泄底 */
+      if (String(html).indexOf('lhc-video-card') >= 0 || String(html).indexOf('lhc-result-card') >= 0) {
         html = String(html)
-          .replace(/\bis-drawing\b/g, 'is-reveal')
-          .replace(/\bis-hidden\b/g, 'is-show');
+          .replace(/\bis-reveal\b/g, 'is-drawing')
+          .replace(/\bis-result-shown\b/g, 'is-drawing')
+          .replace(/\bis-settled\b/g, 'is-drawing')
+          .replace(/settle=1/g, 'hold=1')
+          .replace(/\bis-show\b/g, 'is-hidden');
       }
       appendMsg({
         name: m.name || '玩家',
@@ -2271,6 +2284,8 @@ $(function () {
     if (!App.fetchMyLotteryBets) return;
     App.fetchMyLotteryBets(SERVER_GAME, issue).then(function (res) {
       const list = (res && res.list) || [];
+      /* 派彩已入账：立刻拉余额，避免顶栏积分仍停在扣注后 */
+      refreshAfterServerSettle();
       if (list.length && typeof refineUserStatsFromServer === 'function') refineUserStatsFromServer(issue, list);
       if (typeof buildMineLineHtmlFromServer !== 'function' || typeof applyMineLineToWinHtml !== 'function') return;
       const mine = buildMineLineHtmlFromServer(issue, list);
@@ -2300,7 +2315,126 @@ $(function () {
     });
   }
 
-  const roomChat = LotteryRoomChat.create({
+  function hasResultAnimated(issue) {
+    issue = String(issue || '').trim();
+    if (!issue) return false;
+    if (typeof isServerDrawingIssue === 'function' && isServerDrawingIssue(issue)) return false;
+    return playedAnimIssues.has(issue);
+  }
+  function markResultAnimated(issue) {
+    issue = String(issue || '').trim();
+    if (!issue) return;
+    playedAnimIssues.add(issue);
+    try {
+      localStorage.setItem(PLAYED_ANIM_STORAGE_KEY, JSON.stringify(Array.from(playedAnimIssues).slice(-120)));
+    } catch (e) { /* ignore */ }
+  }
+  function forceSettleResultCard(issue) {
+    issue = String(issue || '').trim();
+    $('#chatFeed .lhc-video-card, #chatDock .lhc-video-card, #chatFeed .lhc-result-card, #chatDock .lhc-result-card').each(function () {
+      const card = this;
+      if (issue && String(card.getAttribute('data-issue') || '').trim() !== issue) return;
+      /* 摇珠/尾段仍在播：勿掐动画，只保证脚注；仪式在 onDone 再推进 */
+      if (card.classList.contains('is-playing') || card.getAttribute('data-playing') === '1') {
+        if (window.LhcResultCard && typeof LhcResultCard.revealFoot === 'function') {
+          LhcResultCard.revealFoot(card);
+        }
+        card._holdBlackExempt = true;
+        return;
+      }
+      card.classList.remove('is-playing');
+      card.removeAttribute('data-playing');
+      let nums = null;
+      const raw = String(card.getAttribute('data-nums') || '').trim();
+      if (raw) {
+        const arr = raw.split(',').map(Number);
+        if (arr.length === 7) nums = arr;
+      }
+      if (nums && window.LhcResultCard && typeof LhcResultCard.settle === 'function') {
+        LhcResultCard.settle(card, nums);
+        card._holdBlackExempt = true;
+      }
+    });
+  }
+  /** 服务端仍封盘/开奖中：该期结果卡不可泄底 */
+  function isServerDrawingIssue(issue) {
+    issue = String(issue || '').trim();
+    if (!issue || !serverCurrent) return false;
+    if (String(serverCurrent.issueNo || '') !== issue) return false;
+    const st = String(serverCurrent.status || '');
+    const lockAt = new Date(serverCurrent.lockAt).getTime();
+    const now = Date.now();
+    return st === 'LOCKED' || (st === 'PENDING' && Number.isFinite(lockAt) && now >= lockAt);
+  }
+
+  function parseCardNums7(card) {
+    const raw = String((card && card.getAttribute('data-nums')) || '').trim();
+    if (!raw) return null;
+    const arr = raw.split(/[,\s]+/).map(Number).filter(function (n) { return n >= 1 && n <= 49; });
+    return arr.length === 7 ? arr : null;
+  }
+  /** 刷新/重进：开奖中压黑幕，避免泄底 */
+  function holdBlackLockedResultCards() {
+    if (!serverCurrent) return;
+    const issue = String(serverCurrent.issueNo || '').trim();
+    if (!issue || !isServerDrawingIssue(issue)) return;
+    let newlyHeld = false;
+    $('#chatFeed .lhc-video-card, #chatDock .lhc-video-card').each(function () {
+      const card = this;
+      if (String(card.getAttribute('data-issue') || '').trim() !== issue) return;
+      if (window.LhcResultCard && typeof LhcResultCard.holdBlack === 'function') {
+        if (LhcResultCard.holdBlack(card)) newlyHeld = true;
+      }
+    });
+    if (!newlyHeld || !roomChat) return;
+    /* 仪式已过揭晓/已在等开盘：勿重置 revealDone/winFlushed */
+    if (roomChat.isRevealReady && roomChat.isRevealReady(issue)) return;
+    if (typeof roomChat.getPhase === 'function' && roomChat.getPhase() === 'settled') return;
+    if (typeof roomChat.beginCeremonyHold === 'function') roomChat.beginCeremonyHold(issue);
+    if (typeof roomChat.setRevealPending === 'function') roomChat.setRevealPending(issue);
+    const openAt = new Date(serverCurrent.openAt).getTime();
+    const readyMs = (typeof resultRevealDurationMs === 'function' ? resultRevealDurationMs() : 8000) + 1400;
+    const remain = Number.isFinite(openAt)
+      ? Math.max(1200, openAt - Date.now() + 600)
+      : readyMs;
+    if (typeof roomChat.scheduleRevealReady === 'function') {
+      roomChat.scheduleRevealReady(issue, Math.min(remain, readyMs + 400));
+    }
+  }
+
+  function settleRestoredResultCards() {
+    const holdIssue = (roomChat && typeof roomChat.getCeremonyHoldIssue === 'function')
+      ? String(roomChat.getCeremonyHoldIssue() || '').trim()
+      : '';
+    const phaseIssue = (roomChat && typeof roomChat.getPhaseIssue === 'function')
+      ? String(roomChat.getPhaseIssue() || '').trim()
+      : '';
+    $('#chatFeed .lhc-video-card, #chatFeed .lhc-result-card').each(function () {
+      const card = this;
+      if (card.classList.contains('is-playing') || card.getAttribute('data-playing') === '1') return;
+      const issue = String(card.getAttribute('data-issue') || '').trim();
+      if (issue && isServerDrawingIssue(issue)) return;
+      if (issue && ((holdIssue && issue === holdIssue) || (phaseIssue && issue === phaseIssue))) {
+        if (isCeremonyHolding()) return;
+      }
+      let nums = null;
+      const raw = String(card.getAttribute('data-nums') || '').trim();
+      if (raw) {
+        const arr = raw.split(',').map(Number);
+        if (arr.length === 7) nums = arr;
+      }
+      if (!nums && issue) {
+        const row = historyRows.find(function (r) { return String(r.issue) === issue; });
+        if (row && row.nums && row.nums.length === 7) nums = row.nums;
+      }
+      if (!nums || !window.LhcResultCard || !LhcResultCard.settle) return;
+      LhcResultCard.settle(card, nums);
+    });
+  }
+
+  /* let 而非 const：settleRestored 可能在赋值前被调用，避免 TDZ 整页崩 */
+  let roomChat = null;
+  roomChat = LotteryRoomChat.create({
     gameCode: SERVER_GAME,
     appendMsg: appendMsg,
     clearFeed: function () {
@@ -2310,6 +2444,9 @@ $(function () {
     getUserName: function () { return user.name; },
     robotFallbackName: (typeof ROBOT !== 'undefined' && ROBOT.name) ? ROBOT.name : '机器人',
     fmtTime: typeof fmtTime === 'function' ? fmtTime : undefined,
+    hasResultAnimated: hasResultAnimated,
+    markResultAnimated: markResultAnimated,
+    onRevealDeadline: forceSettleResultCard,
     buildBetHtml: function (p) {
       return (typeof escapeHtml === 'function') ? escapeHtml(String(p.text || '')) : String(p.text || '');
     },
@@ -2322,9 +2459,18 @@ $(function () {
     buildResultHtml: function (p, msg, ctx) {
       const nums = Array.isArray(p.nums) ? p.nums.map(Number) : [];
       const issue = String(p.issueNo || msg.issueNo || '');
-      const liveAnim = !!(ctx && ctx.live && ctx.animate);
+      /*
+       * 历史回放必须先黑卡：若先 settle 再等 snapshot 压黑，会「漏一下再变黑」。
+       * 仅直播且不重播、且服务端已非开奖中，才直接终态。
+       */
+      const settle = !!(
+        ctx &&
+        ctx.live &&
+        !ctx.animate &&
+        !(typeof isServerDrawingIssue === 'function' && isServerDrawingIssue(issue))
+      );
       if (typeof resultCardHtml === 'function') {
-        return resultCardHtml(nums, issue, { settle: !liveAnim });
+        return resultCardHtml(nums, issue, { settle: settle });
       }
       return '开奖 ' + issue;
     },
@@ -2343,8 +2489,17 @@ $(function () {
     onResultMeta: function (p, msg) {
       const nums = Array.isArray(p.nums) ? p.nums.map(Number) : [];
       const issue = String(p.issueNo || msg.issueNo || '');
-      if (typeof revealedIssues !== 'undefined' && revealedIssues.add) revealedIssues.add(issue);
-      if (nums.length) lastDraw = nums.slice();
+      if (issue) {
+        revealedIssues.add(issue);
+        saveRevealedIssues();
+      }
+      if (nums.length === 7) {
+        lastDraw = nums.slice();
+        if (issue) upsertHistoryHeadFromDraw(issue, nums);
+      }
+    },
+    onNumbersRevealed: function (issue) {
+      if (typeof paintDrawBarAfterReveal === 'function') paintDrawBarAfterReveal(issue);
     },
     onWinVerifyUnlocked: function () {
       /* 解冻只在开盘线刷出（onCeremonyComplete），仪式中禁止下注 */
@@ -2367,6 +2522,8 @@ $(function () {
       if (phase === 'betting') {
         roomBetFrozen = false;
         sealedIssueNo = '';
+        drawBarRevealIssue = '';
+        drawCeremonyReadyIssue = '';
         if (typeof requestLotteryResync === 'function') requestLotteryResync();
         else if (typeof syncServerSnapshot === 'function') syncServerSnapshot();
         if (typeof tick === 'function') try { tick(); } catch (e) { /* ignore */ }
@@ -2388,19 +2545,69 @@ $(function () {
       const nums = Array.isArray(ctx.payload.nums) ? ctx.payload.nums.map(Number) : [];
       const issue = ctx.issue;
       const card = $('#chatDock .lhc-video-card, #chatDock .lhc-result-card, #chatFeed .lhc-video-card, #chatFeed .lhc-result-card').last()[0];
-      const readyMs = resultRevealDurationMs() + 400;
+      const readyMs = resultRevealDurationMs() + 800;
       if (card && window.LhcResultCard) {
         if (ctx.animate && ctx.live && LhcResultCard.bindReveal) {
           ctx.setRevealPending(issue);
-          LhcResultCard.bindReveal(card, nums, function () { /* scheduleRevealReady 为准 */ }, {
-            durationMs: resultRevealDurationMs(),
+          let started = false;
+          const openAt = serverCurrent && String(serverCurrent.issueNo || '') === String(issue || '')
+            ? new Date(serverCurrent.openAt).getTime()
+            : NaN;
+          /* scheduleRevealReady 改在 play 真正开播后武装（见 onStarted） */
+          LhcResultCard.bindReveal(card, nums, function () {
+            if (typeof notifyDrawCeremonyReady === 'function') {
+              notifyDrawCeremonyReady(issue);
+            }
+          }, {
+            openAt: openAt,
+            onNumbers: function () {
+              if (typeof notifyDrawBarNumbersReady === 'function') {
+                notifyDrawBarNumbersReady(issue, nums, 7);
+              }
+            },
+            onStarted: function (totalMs, numbersAt) {
+              started = true;
+              let armMs = Math.max(Number(totalMs) || readyMs, Number(numbersAt) || 0) + 1200;
+              if (Number.isFinite(openAt)) {
+                armMs = Math.max(armMs, openAt - Date.now() + 1200);
+              }
+              ctx.scheduleRevealReady(issue, armMs);
+            },
           });
-          ctx.scheduleRevealReady(issue, readyMs);
-        } else if (LhcResultCard.settle) {
-          LhcResultCard.settle(card, nums);
-          ctx.setRevealReadyFlag(issue, true);
+          /* iframe 极端未就绪：约 9s 后仍武装兜底，避免永远卡仪式 */
+          setTimeout(function () {
+            if (!started) ctx.scheduleRevealReady(issue, readyMs);
+          }, 9000);
+        } else if (ctx.live && !ctx.animate) {
+          const phaseIss = (roomChat && roomChat.getPhaseIssue)
+            ? String(roomChat.getPhaseIssue() || '')
+            : '';
+          const holding = isServerDrawingIssue(issue) || (
+            typeof isCeremonyHolding === 'function' &&
+            isCeremonyHolding() &&
+            phaseIss &&
+            phaseIss === String(issue || '')
+          );
+          if (holding) {
+            if (window.LhcResultCard && LhcResultCard.holdBlack) LhcResultCard.holdBlack(card);
+            ctx.setRevealPending(issue);
+            const openAtHold = serverCurrent && new Date(serverCurrent.openAt).getTime();
+            const remain = Number.isFinite(openAtHold)
+              ? Math.max(1200, openAtHold - Date.now() + 600)
+              : readyMs;
+            ctx.scheduleRevealReady(issue, Math.min(remain, readyMs + 400));
+          } else if (LhcResultCard.settle) {
+            LhcResultCard.settle(card, nums);
+            ctx.setRevealReadyFlag(issue, true);
+          } else {
+            ctx.setRevealReadyFlag(issue, true);
+          }
         } else {
+          /* 历史回放：保持黑卡，等 snapshot holdBlack */
           ctx.setRevealReadyFlag(issue, true);
+          if (typeof holdBlackLockedResultCards === 'function') {
+            setTimeout(function () { try { holdBlackLockedResultCards(); } catch (eR) { /* ignore */ } }, 0);
+          }
         }
       } else if (ctx.live && ctx.animate) {
         ctx.setRevealPending(issue);
@@ -2410,7 +2617,7 @@ $(function () {
       }
     },
     getRevealFallbackMs: function () {
-      return resultRevealDurationMs() + 800;
+      return resultRevealDurationMs() + 1000 + 800;
     },
   });
 
@@ -4668,6 +4875,10 @@ $(function () {
       const list = JSON.parse(localStorage.getItem(REVEALED_STORAGE_KEY) || '[]');
       if (Array.isArray(list)) revealedIssues = new Set(list.slice(-120).map(String));
     } catch (e) { revealedIssues = new Set(); }
+    try {
+      const played = JSON.parse(localStorage.getItem(PLAYED_ANIM_STORAGE_KEY) || '[]');
+      if (Array.isArray(played)) playedAnimIssues = new Set(played.slice(-120).map(String));
+    } catch (e2) { playedAnimIssues = new Set(); }
   }
   function saveRevealedIssues() {
     try { localStorage.setItem(REVEALED_STORAGE_KEY, JSON.stringify(Array.from(revealedIssues).slice(-120))); } catch (e) { /* ignore */ }
@@ -4686,16 +4897,103 @@ $(function () {
       return phase === 'drawing' || phase === 'revealing' || phase === 'settled';
     } catch (e) { return false; }
   }
-  /** 开奖仪式中：顶栏用上一期；揭晓完再跟历史头 */
+  function upsertHistoryHeadFromDraw(issue, nums) {
+    const iss = String(issue || '').trim();
+    if (!iss || !Array.isArray(nums) || nums.length !== 7) return null;
+    const row = {
+      issue: iss,
+      nums: nums.slice(),
+      gy: typeof gyMeta === 'function' ? gyMeta(nums).text : '',
+      lh: typeof lhRow === 'function' ? lhRow(nums) : '',
+    };
+    const idx = historyRows.findIndex(function (r) { return String(r.issue) === iss; });
+    if (idx >= 0) historyRows[idx] = Object.assign({}, historyRows[idx], row);
+    else historyRows.unshift(row);
+    if (historyRows.length > 80) historyRows.length = 80;
+    return row;
+  }
+  /** 滚号/揭晓中：顶栏压上一期；号码揭完后立刻跟历史头（含 snapshot 轮询勿再压回去） */
   function pickDrawBarRow(rows) {
     if (!rows || !rows.length) return null;
     try {
+      const phase = roomChat && roomChat.getPhase ? String(roomChat.getPhase() || '') : '';
       const hold = roomChat && roomChat.getPhaseIssue ? String(roomChat.getPhaseIssue() || '') : '';
-      if (isCeremonyHolding() && hold && String(rows[0].issue) === hold) {
+      const revealed = isDrawBarUnlocked(hold) ||
+        !!(roomChat && roomChat.isRevealReady && roomChat.isRevealReady(hold));
+      if (!revealed && (phase === 'drawing' || phase === 'revealing') && hold && String(rows[0].issue) === hold) {
         return rows[1] || null;
       }
     } catch (e) { /* ignore */ }
     return rows[0];
+  }
+  /**
+   * 号码落定：只刷顶部历史栏。
+   * 开盘线 / 顶栏倒计时要等尾动画播完 → notifyDrawCeremonyReady。
+   */
+  let drawBarRevealIssue = '';
+  let drawCeremonyReadyIssue = '';
+  function notifyDrawBarNumbersReady(issue, nums, expectLen) {
+    try {
+      const iss = String(issue || '').trim();
+      const need = expectLen > 0 ? expectLen : 0;
+      if (Array.isArray(nums) && (!need || nums.length === need)) {
+        lastDraw = nums.slice();
+        if (iss && typeof upsertHistoryHeadFromDraw === 'function') {
+          upsertHistoryHeadFromDraw(iss, nums);
+        }
+      }
+      if (iss) drawBarRevealIssue = iss;
+      if (typeof paintDrawBarAfterReveal === 'function') paintDrawBarAfterReveal(iss);
+    } catch (e) { /* ignore */ }
+  }
+  /** 尾动画结束：中奖核对 → 开盘线 → 解冻 → 顶栏倒计时 */
+  function notifyDrawCeremonyReady(issue) {
+    try {
+      const iss = String(issue || '').trim();
+      if (iss && drawCeremonyReadyIssue === iss) return;
+      if (iss) drawCeremonyReadyIssue = iss;
+      if (roomChat && typeof roomChat.advanceReveal === 'function') {
+        roomChat.advanceReveal(iss);
+      }
+      if (typeof refreshAfterServerSettle === 'function') refreshAfterServerSettle();
+      if (iss && typeof applyRoomWinVerifyMineLine === 'function') applyRoomWinVerifyMineLine(iss);
+      if (typeof requestLotteryResync === 'function') requestLotteryResync();
+      else if (typeof syncServerSnapshot === 'function') syncServerSnapshot();
+      if (typeof tick === 'function') {
+        try { tick(); } catch (eTick) { /* ignore */ }
+      }
+      [200, 600, 1200].forEach(function (ms) {
+        setTimeout(function () {
+          try {
+            if (typeof refreshAfterServerSettle === 'function') refreshAfterServerSettle();
+            if (iss && typeof applyRoomWinVerifyMineLine === 'function') applyRoomWinVerifyMineLine(iss);
+            if (typeof requestLotteryResync === 'function') requestLotteryResync();
+            if (typeof tick === 'function') tick();
+          } catch (e2) { /* ignore */ }
+        }, ms);
+      });
+    } catch (e) { /* ignore */ }
+  }
+  function isDrawBarUnlocked(issue) {
+    const iss = String(issue || '').trim();
+    return !!(iss && drawBarRevealIssue && drawBarRevealIssue === iss);
+  }
+  /** 结果卡号码已出齐：顶栏马上对齐，不跟中奖核对/开盘线抢时间 */
+  function paintDrawBarAfterReveal(issueHint) {
+    try {
+      const iss = String(issueHint || '').trim();
+      if (iss && lastDraw && lastDraw.length === 7 && typeof upsertHistoryHeadFromDraw === 'function') {
+        upsertHistoryHeadFromDraw(iss, lastDraw);
+      }
+      let row = null;
+      if (iss && Array.isArray(historyRows)) {
+        row = historyRows.find(function (r) { return String(r.issue) === iss; }) || null;
+      }
+      if (!row && historyRows && historyRows[0]) row = historyRows[0];
+      if (row && typeof renderDrawBar === 'function') renderDrawBar(row);
+      if (typeof flashDrawBarReveal === 'function') flashDrawBarReveal();
+      if (typeof renderDrawTable === 'function') renderDrawTable();
+    } catch (e) { /* ignore */ }
   }
 
   function syncServerSnapshot() {
@@ -4711,9 +5009,24 @@ $(function () {
       try {
         const rows = parseServerHistory(snapshot && snapshot.history);
         historyRows = rows;
+        try {
+          const holdIss = roomChat && roomChat.getPhaseIssue ? String(roomChat.getPhaseIssue() || '') : '';
+          if (
+            holdIss &&
+            (isDrawBarUnlocked(holdIss) || (roomChat && roomChat.isRevealReady && roomChat.isRevealReady(holdIss))) &&
+          lastDraw && lastDraw.length === 7
+          ) {
+            upsertHistoryHeadFromDraw(holdIss, lastDraw);
+          }
+        } catch (eKeepHead) { /* ignore */ }
         if (rows.length) {
+          const holdNow = roomChat && roomChat.getPhaseIssue ? String(roomChat.getPhaseIssue() || '') : '';
+        if (!(isDrawBarUnlocked(holdNow) || (roomChat && roomChat.isRevealReady && roomChat.isRevealReady(holdNow)))) {
           lastDraw = rows[0].nums.slice();
-          const barRow = pickDrawBarRow(rows);
+        } else if (!lastDraw || !lastDraw.length) {
+            lastDraw = rows[0].nums.slice();
+          }
+          const barRow = pickDrawBarRow(historyRows);
           if (barRow) {
             try { renderDrawBar(barRow); } catch (eBar) { /* ignore */ }
           }
@@ -4736,6 +5049,8 @@ $(function () {
         if (!isCeremonyHolding() && serverCurrent && serverCurrent.issueNo) {
           try { setIssueEl($('#curIssue'), serverCurrent.issueNo); } catch (eIss) { /* ignore */ }
         }
+        try { settleRestoredResultCards(); } catch (eSettle) { /* ignore */ }
+        try { holdBlackLockedResultCards(); } catch (eHold) { /* ignore */ }
         if (rows[0]) {
           const holdIss = roomChat && roomChat.getPhaseIssue ? String(roomChat.getPhaseIssue() || '') : '';
           if (!(isCeremonyHolding() && holdIss && String(rows[0].issue) === holdIss)) {
@@ -4769,21 +5084,11 @@ $(function () {
     if (App._lhcServerSynced) serverSynced = true;
     if (App._lhcServerCurrent) serverCurrent = App._lhcServerCurrent;
     const phase = roomChat && roomChat.getPhase ? roomChat.getPhase() : '';
-    const lockMsNow = serverCurrent ? new Date(serverCurrent.lockAt).getTime() : NaN;
-    const serverBettingOpen =
-      !!(serverSynced &&
-        serverCurrent &&
-        String(serverCurrent.status || '') === 'PENDING' &&
-        Number.isFinite(lockMsNow) &&
-        Date.now() < lockMsNow);
     /*
-     * 顶栏以服务端期状态为准：仍可投注时绝不能钉「开奖中」。
-     * 仪式 phase 卡死（缺开盘线 / reveal 未收尾）时也能恢复倒计时。
+     * 仪式中（含出号后尾动画）：顶栏保持「开奖中」。
+     * 倒计时与开盘线一起，等 finishToBetting 回到 betting 再放。
      */
-    if (
-      !serverBettingOpen &&
-      (phase === 'drawing' || phase === 'revealing' || phase === 'settled')
-    ) {
+    if (phase === 'drawing' || phase === 'revealing' || phase === 'settled') {
       const hold = roomChat.getPhaseIssue ? String(roomChat.getPhaseIssue() || '') : '';
       if (hold) {
         if (typeof setCurIssueDisplay === 'function') setCurIssueDisplay(hold);
@@ -4899,7 +5204,38 @@ $(function () {
       } catch (e) { /* ignore */ }
     }
   }
-  /* === chat-rail handlers (lhc) === */
+  
+  /* 右侧四钮：默认收起，点梯子展开/收起 */
+  (function initRailLadder() {
+    const KEY = 'lhc_rail_collapsed';
+    const room = document.querySelector('.lhc-room');
+    const btn = document.getElementById('btnRailToggle');
+    if (!room || !btn) return;
+    let collapsed = true;
+    try {
+      const saved = localStorage.getItem(KEY);
+      if (saved === '0') collapsed = false;
+      if (saved === '1') collapsed = true;
+    } catch (e) { /* ignore */ }
+    function apply() {
+      room.classList.toggle('is-rail-collapsed', collapsed);
+      btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      btn.title = collapsed ? '展开菜单' : '收起菜单';
+      const arrow = btn.querySelector('.lhc-rail-ladder__arrow');
+      if (arrow) arrow.textContent = collapsed ? '▼' : '▲';
+      try { localStorage.setItem(KEY, collapsed ? '1' : '0'); } catch (e) { /* ignore */ }
+      if (typeof layoutRail === 'function') layoutRail();
+    }
+    apply();
+    btn.addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      collapsed = !collapsed;
+      apply();
+    });
+  })();
+
+/* === chat-rail handlers (lhc) === */
 
   /** 官方条文（V66 幸运六合彩游戏规则弹窗），只展示当前玩法 */
   function playCatRulesHtml(cat) {

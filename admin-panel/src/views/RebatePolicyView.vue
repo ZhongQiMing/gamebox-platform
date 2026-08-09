@@ -1,39 +1,21 @@
 <template>
-  <div class="ops-page rebate-page" v-loading="loading">
-    <PageHeader title="回水规则" subtitle="总额 T 固定 · 玩家 P + 代理 A = T">
-      <template #actions>
-        <el-button :loading="loading" @click="load">刷新</el-button>
-        <el-button v-if="isAdmin" type="primary" :loading="saving" @click="save">保存</el-button>
-      </template>
-    </PageHeader>
+  <div class="desk-work rebate-page" v-loading="loading">
+    <div class="desk-panel">
+      <PageHeader title="回水规则">
+        <template #actions>
+          <el-button :loading="loading" @click="load">刷新</el-button>
+          <el-button v-if="isAdmin" type="primary" :loading="saving" @click="save">保存</el-button>
+        </template>
+      </PageHeader>
 
-    <div class="ops-panel main-card">
-      <div class="ops-kpi-row metric-row">
-        <div class="ops-kpi">
-          <div class="ops-kpi__label">总额 T</div>
-          <div class="ops-kpi__value">{{ form.totalPct.toFixed(2) }}%</div>
-        </div>
-        <div class="ops-kpi is-ok">
-          <div class="ops-kpi__label">玩家 P</div>
-          <div class="ops-kpi__value" style="font-size:18px">{{ form.playerMinPct.toFixed(2) }}% ~ {{ (form.totalPct / 2).toFixed(2) }}%</div>
-        </div>
-        <div class="ops-kpi is-gold">
-          <div class="ops-kpi__label">代理 A</div>
-          <div class="ops-kpi__value" style="font-size:18px">{{ previewAPct.toFixed(2) }}%（随 P 变）</div>
-        </div>
-      </div>
-
-      <div class="body-grid">
-        <section class="panel">
-          <div class="panel-title">平台设置</div>
-          <p class="panel-sub">{{ isAdmin ? '保存后对所有房间生效' : '只读，由超管设定' }}</p>
-
-          <div class="field-list">
-            <div class="field-item">
-              <div class="field-hd">
-                <span>回水总额 T</span>
-                <span class="field-unit">%</span>
-              </div>
+      <div class="desk-panel__scroll">
+        <section class="sheet">
+          <div class="row">
+            <div class="label">
+              <div class="name">回水总额</div>
+              <div class="desc">拿去分给玩家和代理的总比例</div>
+            </div>
+            <div class="ctrl">
               <el-input-number
                 v-model="form.totalPct"
                 :min="0"
@@ -42,16 +24,18 @@
                 :precision="2"
                 :disabled="!isAdmin"
                 controls-position="right"
-                class="field-input"
+                class="num"
               />
-              <div class="field-tip">整盘返水比例，玩家 + 代理合计等于它</div>
+              <span class="unit">%</span>
             </div>
+          </div>
 
-            <div class="field-item">
-              <div class="field-hd">
-                <span>玩家下限</span>
-                <span class="field-unit">%</span>
-              </div>
+          <div class="row">
+            <div class="label">
+              <div class="name">玩家回水</div>
+              <div class="desc">房间给玩家时，最低按这个比例</div>
+            </div>
+            <div class="ctrl">
               <el-input-number
                 v-model="form.playerMinPct"
                 :min="0"
@@ -60,112 +44,81 @@
                 :precision="2"
                 :disabled="!isAdmin"
                 controls-position="right"
-                class="field-input"
+                class="num"
               />
-              <div class="field-tip">房间里设玩家回水时，不能低于此值</div>
-            </div>
-
-            <div class="field-item">
-              <div class="field-hd">
-                <span>玩家上限</span>
-                <span class="field-unit">自动</span>
-              </div>
-              <div class="field-readonly">{{ (form.totalPct / 2).toFixed(2) }}% <span class="muted">= T ÷ 2</span></div>
-              <div class="field-tip">保证代理至少一半，玩家不能超过 T/2</div>
+              <span class="unit">%</span>
             </div>
           </div>
 
-          <el-alert
-            v-if="formError"
-            type="warning"
-            :closable="false"
-            show-icon
-            :title="formError"
-            class="form-alert"
-          />
-        </section>
-
-        <section class="panel preview-panel">
-          <div class="panel-title">分配预览</div>
-          <p class="panel-sub">拖动看玩家拿多少时，代理剩多少</p>
-
-          <div class="preview-ctrl">
-            <span class="preview-label">玩家 P</span>
-            <el-slider
-              v-model="previewPPct"
-              :min="sliderMin"
-              :max="sliderMax"
-              :step="0.1"
-              :format-tooltip="(v: number) => `${Number(v).toFixed(2)}%`"
-            />
-            <b class="preview-val">{{ previewPPct.toFixed(2) }}%</b>
-          </div>
-
-          <div class="split-bar">
-            <div class="split-p" :style="{ width: barPlayerWidth }" />
-            <div class="split-a" :style="{ width: barAgentWidth }" />
-          </div>
-          <div class="split-legend">
-            <span><i class="dot p" />玩家 {{ previewPPct.toFixed(2) }}%</span>
-            <span><i class="dot a" />代理 {{ previewAPct.toFixed(2) }}%</span>
-            <span class="muted">合计 {{ form.totalPct.toFixed(2) }}%</span>
-          </div>
-
-          <div class="example">
-            <div class="example-hd">流水 10,000 时</div>
-            <div class="example-grid">
-              <div class="ex-item">
-                <div class="ex-k">玩家</div>
-                <div class="ex-v">{{ fmtMoney(examplePlayer) }}</div>
-              </div>
-              <div class="ex-item">
-                <div class="ex-k">代理</div>
-                <div class="ex-v gold">{{ fmtMoney(exampleAgent) }}</div>
-              </div>
-              <div class="ex-item">
-                <div class="ex-k">合计</div>
-                <div class="ex-v">{{ fmtMoney(exampleTotal) }}</div>
-              </div>
+          <div class="row last">
+            <div class="label">
+              <div class="name">代理回水</div>
+              <div class="desc">{{ form.totalPct.toFixed(2) }}% − {{ form.playerMinPct.toFixed(2) }}%</div>
+            </div>
+            <div class="ctrl">
+              <b class="result">{{ agentPct.toFixed(2) }}</b>
+              <span class="unit">%</span>
             </div>
           </div>
         </section>
-      </div>
 
-      <div class="notes-row">
-        <span><b>T</b> 整盘上限</span>
-        <span><b>P</b> 房间游戏设置里单独调</span>
-        <span><b>A</b> 自动 = T − P</span>
-        <span>改规则后对新流水生效</span>
-        <span v-if="!isAdmin">当前只读，改 T/下限请找超管</span>
+        <el-alert
+          v-if="formError"
+          type="warning"
+          :closable="false"
+          show-icon
+          :title="formError"
+          class="alert"
+        />
+
+        <section v-if="canEditSelfCommission" class="comm">
+          <div class="comm-hd">
+            <div>
+              <div class="comm-title">下级佣金</div>
+              <div class="comm-desc">从代理回水中再分给下级</div>
+            </div>
+            <el-button
+              type="primary"
+              size="small"
+              :disabled="!commDirty"
+              :loading="commSaving"
+              @click="saveMyCommission"
+            >保存</el-button>
+          </div>
+          <div class="comm-status" :class="commDirty ? 'dirty' : 'ok'">
+            <template v-if="commDirty">
+              未保存 {{ draftCommissionPct.toFixed(2) }}% · 当前 {{ savedCommissionPct.toFixed(2) }}%
+            </template>
+            <template v-else>
+              已生效 {{ savedCommissionPct.toFixed(2) }}%
+            </template>
+          </div>
+          <div class="comm-presets" :class="{ disabled: commSaving }">
+            <button
+              v-for="p in commissionPresets"
+              :key="p"
+              type="button"
+              class="chip"
+              :class="{ on: isDraftPreset(p) }"
+              :disabled="commSaving"
+              @click="setDraftCommission(p)"
+            >{{ formatPreset(p) }}%</button>
+            <button
+              type="button"
+              class="chip ghost"
+              :class="{ on: isCustomDraft }"
+              :disabled="commSaving"
+              @click="pickCustomCommission"
+            >自定义</button>
+          </div>
+        </section>
       </div>
     </div>
-
-    <section v-if="canEditSelfCommission" class="side-card">
-      <div class="side-hd">
-        <div>
-          <div class="panel-title">我的挂靠抽成</div>
-          <div class="panel-sub">从代理账户出，不占用回水池 T</div>
-        </div>
-        <el-button type="primary" size="small" :loading="commSaving" @click="saveMyCommission">保存</el-button>
-      </div>
-      <div class="comm-row">
-        <el-input-number
-          v-model="myCommissionPct"
-          :min="0"
-          :max="20"
-          :step="0.1"
-          :precision="2"
-          controls-position="right"
-        />
-        <span class="field-unit">%</span>
-        <span class="field-tip inline">默认 0.2%，与上面 T/P/A 无关</span>
-      </div>
-    </section>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
 import { consoleApi } from '@/api/console'
@@ -185,50 +138,27 @@ const form = reactive({
   totalPct: 5,
   playerMinPct: 1.8,
 })
-const previewPPct = ref(2.5)
-const myCommissionPct = ref(0.2)
+const savedCommissionPct = ref(0.2)
+const draftCommissionPct = ref(0.2)
+const commissionPresets = [0.1, 0.2, 0.5, 1, 2]
+const commDirty = computed(
+  () => Math.abs(draftCommissionPct.value - savedCommissionPct.value) > 1e-9,
+)
+const isCustomDraft = computed(
+  () => !commissionPresets.some((p) => Math.abs(draftCommissionPct.value - p) < 1e-9),
+)
 
-const sliderMin = computed(() => Number(form.playerMinPct.toFixed(2)))
-const sliderMax = computed(() => Number((form.totalPct / 2).toFixed(2)))
-
-const previewAPct = computed(() => Math.max(0, form.totalPct - previewPPct.value))
-const barPlayerWidth = computed(() => {
-  const t = form.totalPct || 1
-  return `${Math.min(100, (previewPPct.value / t) * 100)}%`
-})
-const barAgentWidth = computed(() => {
-  const t = form.totalPct || 1
-  return `${Math.min(100, (previewAPct.value / t) * 100)}%`
-})
-
-const FLOW_DEMO = 10_000
-const examplePlayer = computed(() => FLOW_DEMO * (previewPPct.value / 100))
-const exampleAgent = computed(() => FLOW_DEMO * (previewAPct.value / 100))
-const exampleTotal = computed(() => FLOW_DEMO * (form.totalPct / 100))
+const agentPct = computed(() =>
+  Number(Math.max(0, form.totalPct - form.playerMinPct).toFixed(2)),
+)
 
 const formError = computed(() => {
-  if (form.playerMinPct > form.totalPct / 2 + 1e-9) {
-    return `玩家下限 ${form.playerMinPct}% 不能高于上限 T/2 = ${(form.totalPct / 2).toFixed(2)}%`
+  const maxP = form.totalPct / 2
+  if (form.playerMinPct > maxP + 1e-9) {
+    return `玩家回水 ${form.playerMinPct}% 不能超过总额的一半（${maxP.toFixed(2)}%）`
   }
   return ''
 })
-
-watch(
-  () => [form.playerMinPct, form.totalPct] as const,
-  () => {
-    const lo = sliderMin.value
-    const hi = Math.max(lo, sliderMax.value)
-    if (previewPPct.value < lo) previewPPct.value = lo
-    if (previewPPct.value > hi) previewPPct.value = hi
-  },
-)
-
-function fmtMoney(n: number) {
-  return Number(n || 0).toLocaleString('zh-CN', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })
-}
 
 async function load() {
   loading.value = true
@@ -236,15 +166,15 @@ async function load() {
     const p = await consoleApi.rebatePolicy()
     form.totalPct = Number(((p.totalRate ?? 0.05) * 100).toFixed(2))
     form.playerMinPct = Number(((p.playerMinRate ?? p.minRate ?? 0.018) * 100).toFixed(2))
-    const mid = (form.playerMinPct + form.totalPct / 2) / 2
-    previewPPct.value = Number(mid.toFixed(2))
 
     if (canEditSelfCommission.value && store.profile?.id) {
       try {
         const page = await consoleApi.agents({ page: 1, pageSize: 200 })
         const me = page.list?.find((a) => a.id === store.profile?.id)
         if (me?.commissionRate != null) {
-          myCommissionPct.value = Number((Number(me.commissionRate) * 100).toFixed(2))
+          const pct = Number((Number(me.commissionRate) * 100).toFixed(2))
+          savedCommissionPct.value = pct
+          draftCommissionPct.value = pct
         }
       } catch {
         /* ignore */
@@ -264,7 +194,7 @@ async function save() {
   }
   try {
     await ElMessageBox.confirm(
-      `确认保存回水规则？总额 T=${form.totalPct}% 、玩家下限=${form.playerMinPct}%，将对全平台生效。`,
+      `确认保存回水规则？总额 ${form.totalPct}% 、玩家下限 ${form.playerMinPct}%，将对全平台生效。`,
       '保存回水规则',
       { type: 'warning', confirmButtonText: '确认保存' },
     )
@@ -294,13 +224,63 @@ async function save() {
   }
 }
 
+function formatPreset(p: number) {
+  return Number.isInteger(p) ? String(p) : p.toFixed(1)
+}
+function isDraftPreset(p: number) {
+  return Math.abs(draftCommissionPct.value - p) < 1e-9
+}
+function setDraftCommission(pct: number) {
+  draftCommissionPct.value = Number(pct.toFixed(2))
+}
+
+async function pickCustomCommission() {
+  try {
+    const { value } = await ElMessageBox.prompt(
+      '填写下级佣金比例（0～20），填完后还需点「保存」',
+      '自定义下级佣金',
+      {
+        confirmButtonText: '选用',
+        cancelButtonText: '取消',
+        inputValue: String(draftCommissionPct.value),
+        inputPattern: /^(?:0|[1-9]\d?)(?:\.\d{1,2})?$|^20(?:\.0{1,2})?$/,
+        inputErrorMessage: '请输入 0～20，最多两位小数',
+      },
+    )
+    const pct = Number(value)
+    if (Number.isNaN(pct) || pct < 0 || pct > 20) {
+      ElMessage.warning('比例须在 0～20%')
+      return
+    }
+    setDraftCommission(pct)
+  } catch {
+    /* cancel */
+  }
+}
+
 async function saveMyCommission() {
   const uid = store.profile?.id
   if (!uid) return
+  if (!commDirty.value) {
+    ElMessage.info('没有改动，无需保存')
+    return
+  }
+  const pct = draftCommissionPct.value
+  try {
+    await ElMessageBox.confirm(
+      `确认保存下级佣金为 ${pct.toFixed(2)}%？保存后立即对挂靠流水生效。`,
+      '保存下级佣金',
+      { type: 'warning', confirmButtonText: '确认保存', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
   commSaving.value = true
   try {
-    await consoleApi.setCommissionRate(uid, myCommissionPct.value / 100)
-    ElMessage.success('挂靠比例已保存')
+    await consoleApi.setCommissionRate(uid, pct / 100)
+    savedCommissionPct.value = pct
+    draftCommissionPct.value = pct
+    ElMessage.success(`已保存：下级佣金 ${pct.toFixed(2)}%`)
   } catch (e: unknown) {
     ElMessage.error(
       (e as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message
@@ -316,156 +296,154 @@ onMounted(load)
 </script>
 
 <style scoped>
-.rebate-page { width: 100%; max-width: none; }
-.main-card { padding-top: 4px; }
-.metric-row { margin-bottom: 16px; padding-bottom: 4px; border-bottom: 1px solid var(--ops-border-soft); }
-
-.body-grid {
-  display: grid;
-  grid-template-columns: minmax(280px, 1fr) minmax(320px, 1.2fr);
-  gap: 24px 40px;
-  align-items: stretch;
-}
-.panel { min-width: 0; display: flex; flex-direction: column; width: 100%; }
-.panel-title { font-size: 14px; font-weight: 600; color: #1f2329; }
-.panel-sub { margin: 4px 0 14px; font-size: 12px; color: #8f959e; }
-
-.field-list { display: flex; flex-direction: column; gap: 16px; }
-.field-item { display: flex; flex-direction: column; gap: 6px; }
-.field-hd {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 13px;
-  color: #606266;
-}
-.field-unit { font-size: 12px; color: #c0c4cc; }
-.field-input { width: 180px; max-width: 100%; }
-.field-readonly {
-  min-height: 32px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 16px;
-  font-weight: 650;
-  color: #1f2329;
-}
-.field-tip { font-size: 12px; color: #a8abb2; line-height: 1.45; }
-.field-tip.inline { margin-left: 4px; }
-.muted { color: #c0c4cc; font-size: 12px; font-weight: 400; }
-.form-alert { margin-top: 12px; }
-
-.preview-panel {
-  padding-left: 28px;
-  border-left: 1px solid #f0f2f5;
-  min-height: 100%;
-}
-.preview-ctrl {
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 14px;
-}
-.preview-label { font-size: 13px; color: #606266; white-space: nowrap; }
-.preview-val {
-  min-width: 56px;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-  color: #409eff;
-  font-size: 14px;
+.rebate-page :deep(.ops-header) {
+  margin: 0;
+  padding: 14px 18px 12px;
+  flex-shrink: 0;
 }
 
-.split-bar {
-  display: flex;
-  height: 12px;
-  border-radius: 999px;
-  overflow: hidden;
-  background: #f0f2f5;
-}
-.split-p { background: #67c23a; transition: width 0.15s ease; }
-.split-a { background: #e6a23c; transition: width 0.15s ease; }
-.split-legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 14px;
-  margin-top: 10px;
-  font-size: 12px;
-  color: #606266;
-}
-.dot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  margin-right: 6px;
-  vertical-align: middle;
-}
-.dot.p { background: #67c23a; }
-.dot.a { background: #e6a23c; }
-
-.example {
-  margin-top: auto;
-  padding-top: 16px;
-}
-.example-hd { font-size: 12px; color: #8f959e; margin-bottom: 8px; }
-.example-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-  padding: 12px;
-  background: #fafbfc;
-  border-radius: 10px;
-}
-.ex-item { text-align: center; }
-.ex-k { font-size: 12px; color: #8f959e; }
-.ex-v {
-  margin-top: 4px;
-  font-size: 16px;
-  font-weight: 700;
-  color: #1f2329;
-  font-variant-numeric: tabular-nums;
-}
-.ex-v.gold { color: #d4a93c; }
-
-.notes-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 16px;
-  margin-top: 16px;
-  padding-top: 14px;
-  border-top: 1px solid #f0f2f5;
-  font-size: 12px;
-  color: #8f959e;
-}
-.notes-row b { color: #606266; font-weight: 600; }
-
-.side-card {
-  margin-top: 14px;
-  padding: 16px 18px;
+.sheet {
+  max-width: 720px;
   background: #fff;
-  border: 1px solid #eef0f3;
-  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
-.side-hd {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 12px;
-  margin-bottom: 12px;
+
+.row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) auto;
+  align-items: center;
+  gap: 16px 24px;
+  min-height: 76px;
+  padding: 16px 20px;
+  border-bottom: 1px solid #f1f5f9;
 }
-.comm-row {
+.row.last { border-bottom: 0; }
+.row:hover { background: #fafbfc; }
+
+.label { min-width: 0; }
+.name {
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+  line-height: 1.3;
+}
+.desc {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #94a3b8;
+  line-height: 1.3;
+}
+
+.ctrl {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
 }
-.field-unit { font-size: 13px; color: #606266; }
+.num { width: 140px; }
+.num :deep(.el-input__wrapper) {
+  min-height: 40px;
+  border-radius: 10px;
+  box-shadow: 0 0 0 1px #e2e8f0 inset;
+}
+.num :deep(.el-input__inner) {
+  font-size: 18px;
+  font-weight: 750;
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+}
+.unit {
+  font-size: 13px;
+  font-weight: 700;
+  color: #64748b;
+}
+.result {
+  font-size: 22px;
+  font-weight: 750;
+  color: #d97706;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
 
-@media (max-width: 900px) {
-  .body-grid { grid-template-columns: 1fr; gap: 20px; }
-  .preview-panel { padding-left: 0; border-left: none; border-top: 1px solid #f0f2f5; padding-top: 16px; }
-  .metric-plus { display: none; }
-  .example-grid { grid-template-columns: 1fr; }
+.alert {
+  max-width: 720px;
+  margin-top: 12px;
+}
+
+.comm {
+  margin-top: 16px;
+  max-width: 720px;
+  padding: 16px 20px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+.comm-hd {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.comm-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+}
+.comm-desc {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #94a3b8;
+}
+.comm-status {
+  margin: 12px 0;
+  font-size: 13px;
+}
+.comm-status.ok { color: #16a34a; }
+.comm-status.dirty { color: #d97706; }
+.comm-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.comm-presets.disabled { opacity: 0.6; pointer-events: none; }
+.chip {
+  appearance: none;
+  min-width: 56px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.chip:hover:not(:disabled) {
+  border-color: #cbd5e1;
+  color: #0f172a;
+}
+.chip.on {
+  border-color: #93c5fd;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+.chip.ghost { border-style: dashed; color: #94a3b8; }
+.chip.ghost.on {
+  border-style: solid;
+  color: #1d4ed8;
+}
+.chip:disabled { cursor: default; }
+
+@media (max-width: 640px) {
+  .row {
+    grid-template-columns: 1fr;
+    gap: 10px;
+    min-height: 0;
+  }
 }
 </style>

@@ -187,21 +187,39 @@ function finalizeStaticAssets(): Plugin {
       }
 
       const origin = String(process.env.VITE_ASSET_ORIGIN || '').replace(/\/$/, '')
-      if (!origin || /请改成/.test(origin)) {
-        console.warn(
-          '\n[slim-app] 警告: VITE_ASSET_ORIGIN 未配置成真实域名。瘦包进游戏将无法下载素材。\n',
-        )
-      } else {
-        console.log(`\n[slim-app] 已瘦包。游戏素材将从 ${origin} 按需下载。\n`)
-      }
+      const api = String(process.env.VITE_API_ORIGIN || '').replace(/\/$/, '')
+      console.log(`\n[slim-app] 已瘦包。素材来自 ${origin}，接口指向 ${api}。\n`)
     },
   }
 }
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ command, mode }) => {
   const env = loadEnv(mode, __dirname, '')
   if (env.VITE_SLIM_APP === '1') process.env.VITE_SLIM_APP = '1'
   if (env.VITE_ASSET_ORIGIN) process.env.VITE_ASSET_ORIGIN = env.VITE_ASSET_ORIGIN
+  if (env.VITE_API_ORIGIN) process.env.VITE_API_ORIGIN = env.VITE_API_ORIGIN
+
+  /*
+   * 打 APK 前先卡住占位符。
+   *
+   * 这两个域名没填对，产物是「能装、能开、但用不了」：素材下不来、接口连不上，
+   * 而构建过程一切正常、一句警告都没有。这种错只有等玩家装上才会暴露，
+   * 所以让构建直接失败，不留「先打出来再说」的余地。
+   */
+  if (command === 'build' && env.VITE_SLIM_APP === '1') {
+    const unset = (v?: string) => !v || /CHANGE_TO_YOUR_DOMAIN|请改成/.test(v)
+    const missing = [
+      unset(env.VITE_ASSET_ORIGIN) && 'VITE_ASSET_ORIGIN —— 游戏素材下载地址',
+      unset(env.VITE_API_ORIGIN) && 'VITE_API_ORIGIN —— 后端接口地址',
+    ].filter(Boolean)
+    if (missing.length) {
+      throw new Error(
+        '\n[slim-app] client-app/.env.app 里这些还是占位符，改成真实域名再打包：\n' +
+          missing.map((m) => `  - ${m}`).join('\n') +
+          '\n不改的话打出来的 APK 装上是白屏。\n',
+      )
+    }
+  }
 
   return {
     plugins: [vue(), serveGamesAssetsDev(), finalizeStaticAssets()],

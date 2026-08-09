@@ -5,6 +5,27 @@ export const PLAYER_UP_MIN = 200;
 export const PLAYER_DOWN_MIN = 500;
 export const PLAYER_FUND_MAX = 200_000;
 
+/**
+ * 高赔率玩法的单注上限。
+ *
+ * 六合彩四全中 9000 倍这类玩法，按通用限红 10 万下注，中一次要赔 9 亿，
+ * 撞上 2000 万绝对封顶后玩家也拿不到挂牌赔率——两头不讨好。
+ * 软控帮不上忙：这种单人冷门注不论开不开都会越过单期上下限，
+ * 候选全非法直接回退自然开奖。所以只能在下注口子上限住。
+ */
+export const HIGH_ODDS_THRESHOLD = 500;
+export const HIGH_ODDS_MAX_BET = 50;
+
+/**
+ * 该赔率对应的单注上限；不受限返回 null。
+ * 赔率不是有限数说明赔率表写坏了，此时按限住处理——宁可拦下也不能放它不限额。
+ */
+export function highOddsBetCap(multiplier: number): number | null {
+  if (typeof multiplier !== 'number' || Number.isNaN(multiplier)) return null;
+  if (!Number.isFinite(multiplier)) return HIGH_ODDS_MAX_BET;
+  return multiplier > HIGH_ODDS_THRESHOLD ? HIGH_ODDS_MAX_BET : null;
+}
+
 /** 四舍五入到分（两位小数） */
 export function roundMoney(n: number): number {
   if (!Number.isFinite(n)) return 0;

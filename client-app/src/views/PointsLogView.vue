@@ -64,10 +64,13 @@
         </div>
         <template v-else>
           <div v-for="r in displayList" :key="r.id" class="pl-row">
-            <span class="pl-kind">{{ kindText(r.bizType) }}</span>
+            <span class="pl-kind">{{ rowMethod(r) }}</span>
             <span :class="['pl-amount', r.amount >= 0 ? 'pos' : 'neg']">{{ fmtSigned(r.amount) }}</span>
             <span class="pl-time">{{ fmtTime(r.createdAt) }}</span>
-            <span class="pl-balance">余额 {{ fmtBal(r.balanceAfter) }}</span>
+            <span class="pl-balance">
+              <template v-if="r.orderNo">订单 {{ r.orderNo }} · </template>
+              余额 {{ fmtBal(r.balanceAfter) }}
+            </span>
           </div>
           <div v-if="hasMore" class="pl-more">
             <button type="button" class="pl-more-btn" :disabled="loadingMore" @click="loadMore">
@@ -105,6 +108,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { walletApi, type LedgerItem, type LedgerSummary } from '@/api/wallet'
+import { useRoomStore } from '@/stores/room'
 import { useBodyClass } from '@/composables/useBodyClass'
 import { TIME_RANGES, rangeBounds, formatRangeDateText, type TimeRangeKey } from '@/composables/timeRange'
 import TabBar from '@/components/TabBar.vue'
@@ -113,6 +117,7 @@ import '@/assets/points-log.css'
 useBodyClass('deco-bg')
 
 const router = useRouter()
+const roomStore = useRoomStore()
 
 const FILTERS: { label: string; types: string[] | null }[] = [
   { label: '全 部', types: null },
@@ -191,6 +196,12 @@ const displaySummary = computed(() => {
 const hasMore = computed(() => list.value.length < total.value)
 
 function kindText(t: string) { return KIND_TEXT[t] ?? t }
+function rowMethod(r: LedgerItem) {
+  if (r.method) return r.method
+  if (r.bizType === 'RECHARGE' || r.bizType === 'TRANSFER_IN') return '上分'
+  if (r.bizType === 'WITHDRAW' || r.bizType === 'TRANSFER_OUT') return '下分'
+  return kindText(r.bizType)
+}
 function fmtSigned(n: number) {
   const v = Number(n) || 0
   return (v >= 0 ? '+' : '-') + Math.abs(v).toLocaleString('en-US', {
@@ -213,11 +224,13 @@ function fmtTime(iso: string) {
 async function fetchPage(p: number, append: boolean) {
   const [from, to] = rangeBounds(range.value)
   const types = activeTypes.value
+  const roomNo = String(roomStore.roomNo || '').trim()
   const res = await walletApi.ledger(p, PAGE_SIZE, {
     range: range.value,
     from,
     to,
     ...(types?.length ? { bizTypes: [...types] } : {}),
+    ...(roomNo ? { roomNo } : {}),
   })
   const rows = res.list ?? []
   /* 日期 + 类型本地兜底，防止后端未过滤时 Tab 无效 */

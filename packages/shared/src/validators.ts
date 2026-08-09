@@ -16,12 +16,35 @@ export function validateAccount(account: string): string | null {
   return null;
 }
 
-/** 密码：6-30 位 */
-export function validatePassword(password: string): string | null {
+/**
+ * 密码强度。
+ *
+ * 原来只卡 6～30 位，`111111` 就能过。这是个能提现的账号系统，
+ * 撞库脚本对纯数字六位的成功率高得离谱，所以要求字母+数字混合。
+ * 不强制大小写与符号：门槛再往上抬，玩家改成「把密码写在便签上」，反而更糟。
+ */
+export const PASSWORD_MIN_LEN = 8;
+/** 运营账号（代理/客服/子账号）由后台创建，可以要求更长 */
+export const OPS_PASSWORD_MIN_LEN = 10;
+export const PASSWORD_MAX_LEN = 30;
+
+function checkPassword(password: string, min: number, label: string): string | null {
   if (!password) return '请输入密码';
-  if (password.length < 6) return '密码至少 6 位';
-  if (password.length > 30) return '密码最多 30 位';
+  if (password.length < min) return `${label}至少 ${min} 位`;
+  if (password.length > PASSWORD_MAX_LEN) return `${label}最多 ${PASSWORD_MAX_LEN} 位`;
+  if (!/[A-Za-z]/.test(password)) return `${label}必须包含英文字母`;
+  if (!/[0-9]/.test(password)) return `${label}必须包含数字`;
   return null;
+}
+
+/** 玩家密码：8-30 位，字母+数字 */
+export function validatePassword(password: string): string | null {
+  return checkPassword(password, PASSWORD_MIN_LEN, '密码');
+}
+
+/** 运营账号密码：10-30 位，字母+数字 */
+export function validateOpsPassword(password: string, label = '密码'): string | null {
+  return checkPassword(password, OPS_PASSWORD_MIN_LEN, label);
 }
 
 /** 金额：正数，最多两位小数（与账本 Decimal(18,2) 一致） */

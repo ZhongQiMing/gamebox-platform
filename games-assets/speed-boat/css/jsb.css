@@ -899,7 +899,7 @@ body.jsb-bg::after {
 .jsb-msg.is-robot .jsb-msg__bubble,
 .jsb-msg.is-robot .jsb-msg__bubble--bot {
   display: block;
-  max-width: min(380px, 98%);
+  max-width: min(320px, 98%);
   padding: 0;
   background: transparent;
   border: none;
@@ -2876,6 +2876,16 @@ body.jsb-bg::after {
 
 
 /* 短屏：侧栏压缩，避免压住底部输入 */
+.jsb-room.is-rail-compact .jsb-rail-ladder {
+  width: 26px;
+  height: 26px;
+}
+.jsb-room.is-rail-compact .jsb-rail-ladder__arrow {
+  font-size: 10px;
+}
+.jsb-room.is-rail-compact .jsb-rail-stack {
+  gap: 6px;
+}
 .jsb-room.is-rail-compact .jsb-rail {
   gap: 2px;
   width: 44px;
@@ -2948,7 +2958,7 @@ body.jsb-bg::after {
 
 /* ── 开奖结果卡（黑金体系，与房间主界面同调） ── */
 .jsb-result-card {
-  width: min(380px, 100%);
+  width: min(320px, 100%);
   border-radius: 10px;
   overflow: hidden;
   background: linear-gradient(145deg, rgba(22, 17, 11, 0.98), rgba(10, 8, 5, 0.99));
@@ -3070,6 +3080,64 @@ body.jsb-bg::after {
   gap: 10px;
   width: var(--rail-w, 56px);
   pointer-events: none;
+}
+
+.jsb-rail-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-height: 420px;
+  opacity: 1;
+  overflow: hidden;
+  transition: max-height 0.22s ease, opacity 0.18s ease, margin 0.18s ease;
+}
+.jsb-room.is-rail-collapsed .jsb-rail-stack {
+  max-height: 0;
+  opacity: 0;
+  margin: 0;
+  pointer-events: none;
+}
+/* 收起/展开：三角箭头 + 外圈，收起▼ 展开▲ */
+.jsb-rail-ladder {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1.5px solid rgba(244, 211, 107, 0.78);
+  border-radius: 50%;
+  background: linear-gradient(180deg, rgba(42, 34, 18, 0.92), rgba(18, 14, 10, 0.88));
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 2px 6px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 230, 150, 0.18);
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.12s ease;
+}
+.jsb-rail-ladder:hover {
+  border-color: rgba(255, 224, 130, 0.95);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 0 10px rgba(244, 211, 107, 0.35),
+    0 2px 6px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 230, 150, 0.28);
+}
+.jsb-rail-ladder__arrow {
+  display: block;
+  font-size: 11px;
+  line-height: 1;
+  color: #f4d36b;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.65);
+  transform: translateY(0.5px);
+}
+.jsb-rail-ladder:active {
+  transform: scale(0.94);
+}
+.jsb-rail-ladder:active .jsb-rail-ladder__arrow {
+  opacity: 0.9;
 }
 .jsb-rail-btn {
   display: flex;
@@ -3323,7 +3391,7 @@ body.jsb-bg::after {
 
 /* ── 正版 jisuft_video 竞速开奖卡 ── */
 .jsb-race-card {
-  width: min(380px, 100%);
+  width: min(320px, 100%);
   border-radius: 10px;
   overflow: hidden;
   background: linear-gradient(145deg, rgba(22, 17, 11, 0.98), rgba(10, 8, 5, 0.99));
@@ -3338,7 +3406,7 @@ body.jsb-bg::after {
   width: 100%;
   aspect-ratio: 1334 / 780;
   overflow: hidden;
-  background: #000;
+  background: #0a0806;
   line-height: 0;
 }
 .jsb-race-card__frame {
@@ -3351,6 +3419,18 @@ body.jsb-bg::after {
   transform-origin: 0 0;
   background: #000;
   pointer-events: none;
+  /* 默认藏起：未 scale 时只露出左上角「幸运飞艇」Logo，像名字被放大 */
+  opacity: 0;
+  visibility: hidden;
+}
+/* 必须先完成 scale，再露画面（开播 / 结算） */
+.jsb-race-card.is-playing.is-frame-ready .jsb-race-card__frame,
+.jsb-race-card.is-settled.is-frame-ready .jsb-race-card__frame {
+  opacity: 1;
+  visibility: visible;
+}
+.jsb-race-card__foot.is-hidden {
+  display: none;
 }
 .jsb-race-card__foot {
   display: grid;

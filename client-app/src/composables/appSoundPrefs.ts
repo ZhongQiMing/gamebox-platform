@@ -1,7 +1,11 @@
-/** 账号管理：背景音乐 / 游戏音效（localStorage，全站与游戏共用） */
+/** 账号管理：背景音乐 / 游戏音效（开关 + 音量，全站与游戏共用） */
 
 const SOUND_KEY = 'sound_off'
 const BGM_KEY = 'app_bgm_off'
+/** 音量 0～100；缺省 80 */
+const SFX_VOL_KEY = 'app_sfx_vol'
+const BGM_VOL_KEY = 'app_bgm_vol'
+const DEFAULT_VOL_PERCENT = 80
 
 /** 各游戏单独覆盖键；账号页改开关时清除，使游戏重新跟随账号设置 */
 const GAME_AUDIO_OVERRIDE_KEYS = [
@@ -24,6 +28,21 @@ const GAME_AUDIO_OVERRIDE_KEYS = [
   'bcbm_sound_off',
 ] as const
 
+function clampPercent(n: number): number {
+  if (!Number.isFinite(n)) return DEFAULT_VOL_PERCENT
+  return Math.max(0, Math.min(100, Math.round(n)))
+}
+
+function readVolPercent(key: string): number {
+  try {
+    const raw = localStorage.getItem(key)
+    if (raw == null || raw === '') return DEFAULT_VOL_PERCENT
+    return clampPercent(Number(raw))
+  } catch {
+    return DEFAULT_VOL_PERCENT
+  }
+}
+
 export function isClickSoundOn(): boolean {
   return localStorage.getItem(SOUND_KEY) !== '1'
 }
@@ -43,6 +62,34 @@ export function setAppBgmOn(on: boolean) {
   if (on) localStorage.removeItem(BGM_KEY)
   else localStorage.setItem(BGM_KEY, '1')
   clearGameAudioOverrides()
+  notifyAppAudioPrefChanged()
+}
+
+/** 游戏音效音量 0～1（含聊天室开奖动画音效） */
+export function getAppSfxVolume(): number {
+  return readVolPercent(SFX_VOL_KEY) / 100
+}
+
+export function getAppSfxVolumePercent(): number {
+  return readVolPercent(SFX_VOL_KEY)
+}
+
+export function setAppSfxVolumePercent(n: number) {
+  localStorage.setItem(SFX_VOL_KEY, String(clampPercent(n)))
+  notifyAppAudioPrefChanged()
+}
+
+/** 背景音乐音量 0～1 */
+export function getAppBgmVolume(): number {
+  return readVolPercent(BGM_VOL_KEY) / 100
+}
+
+export function getAppBgmVolumePercent(): number {
+  return readVolPercent(BGM_VOL_KEY)
+}
+
+export function setAppBgmVolumePercent(n: number) {
+  localStorage.setItem(BGM_VOL_KEY, String(clampPercent(n)))
   notifyAppAudioPrefChanged()
 }
 

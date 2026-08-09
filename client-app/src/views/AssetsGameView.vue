@@ -28,20 +28,21 @@ import { lotteryApi } from '@/api/lottery'
 import { roomsApi } from '@/api/rooms'
 import { rechargeApi } from '@/api/recharge'
 import http from '@/api/http'
+import { newFundOrderNo } from '@/utils/fundOrderNo'
 import { useToast } from '@/composables/useToast'
 
 const ASSET_GAMES: Record<string, string> = {
-  bjsc: '/games-assets/bjsc/index.html?v=141',
-  ssc: '/games-assets/ssc/index.html?v=158',
-  ffc: '/games-assets/ffc/index.html?v=150',
-  'speed-racing': '/games-assets/speed-racing/index.html?v=204',
-  'speed-boat': '/games-assets/speed-boat/index.html?v=127',
-  kuai3: '/games-assets/kuai3/index.html?v=141',
-  lhc: '/games-assets/lhc/index.html?v=176',
-  zhajinhua: '/games-assets/zhajinhua/index.html?v=338',
-  douniu: '/games-assets/douniu/index.html?v=158',
-  baccarat: '/games-assets/baccarat/index.html?v=49',
-  longhu: '/games-assets/longhu/index.html?v=47',
+  bjsc: '/games-assets/bjsc/index.html?v=174',
+  ssc: '/games-assets/ssc/index.html?v=194',
+  ffc: '/games-assets/ffc/index.html?v=182',
+  'speed-racing': '/games-assets/speed-racing/index.html?v=241',
+  'speed-boat': '/games-assets/speed-boat/index.html?v=166',
+  kuai3: '/games-assets/kuai3/index.html?v=166',
+  lhc: '/games-assets/lhc/index.html?v=199',
+  zhajinhua: '/games-assets/zhajinhua/index.html?v=361',
+  douniu: '/games-assets/douniu/index.html?v=170',
+  baccarat: '/games-assets/baccarat/index.html?v=61',
+  longhu: '/games-assets/longhu/index.html?v=59',
 }
 
 /** H5 gameCode → 服务端 lottery/table code */
@@ -165,7 +166,7 @@ async function handleLotteryBet(
           : `lot_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
     const res = await lotteryApi.betBatch(code, bets, {
       clientRequestId,
-      roomNo: extra?.roomNo || roomStore.roomNo || undefined,
+      roomNo: extra?.roomNo || roomStore.roomNo || '',
       chatText: extra?.chatText,
     })
     await walletStore.fetchBalance()
@@ -328,10 +329,24 @@ async function handleTableBet(
   side: string,
   amount: number,
   clientKey = '',
+  roomNoFromGame = '',
 ) {
   try {
     const serverCode = SERVER_GAME_CODE[code] || code
-    const body: { side: string; amount: number; clientKey?: string } = { side, amount }
+    const roomNo = String(roomNoFromGame || roomStore.roomNo || '').trim()
+    if (!/^\d{6}$/.test(roomNo)) {
+      postToFrame({
+        type: 'assets-game-bet-err',
+        requestId,
+        message: '请先进入运营房间后再下注',
+      })
+      return
+    }
+    const body: { side: string; amount: number; clientKey?: string; roomNo: string } = {
+      side,
+      amount,
+      roomNo,
+    }
     if (clientKey) body.clientKey = clientKey
     const res = await http.post<
       {
@@ -456,7 +471,12 @@ async function handleTableVerify(requestId: string, code: string, roundNo: strin
 
 async function handleTopup(requestId: string, amount: number, channel: string) {
   try {
-    const order = await rechargeApi.apply(amount, channel)
+    const order = await rechargeApi.apply(
+      amount,
+      channel,
+      roomStore.roomNo || undefined,
+      newFundOrderNo('up'),
+    )
     postToFrame({
       type: 'assets-game-topup-ok',
       requestId,
@@ -474,7 +494,11 @@ async function handleTopup(requestId: string, amount: number, channel: string) {
 
 async function handleWithdraw(requestId: string, amount: number) {
   try {
-    const order = await rechargeApi.withdraw(amount)
+    const order = await rechargeApi.withdraw(
+      amount,
+      roomStore.roomNo || undefined,
+      newFundOrderNo('down'),
+    )
     await walletStore.fetchBalance()
     postToFrame({
       type: 'assets-game-withdraw-ok',
@@ -688,6 +712,7 @@ async function onGameMessage(ev: MessageEvent) {
         String(data.side || ''),
         Number(data.amount) || 0,
         String(data.clientKey || ''),
+        String(data.roomNo || ''),
       )
       return
     }
@@ -704,6 +729,11 @@ onMounted(async () => {
     router.replace('/lobby')
     return
   }
+  /* 先挂 iframe，避免刷新开奖中先卡「加载中」；状态校验并行 */
+  syncLegacyUserOnly()
+  frameReady.value = true
+  window.addEventListener('message', onGameMessage)
+
   const serverCode = SERVER_GAME_CODE[gameCode.value] || gameCode.value
   try {
     const list = await gamesApi.list()
@@ -723,9 +753,6 @@ onMounted(async () => {
   } catch {
     /* 余额拉取失败仍进 iframe，由 H5 再试 */
   }
-  syncLegacyUserOnly()
-  frameReady.value = true
-  window.addEventListener('message', onGameMessage)
 })
 
 onUnmounted(() => {

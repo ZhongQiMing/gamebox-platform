@@ -6,7 +6,7 @@
  *   sum                    猜总和 3-18，value=点数
  *   triplet                任意豹子（三同号通选）
  *   tripletN               指定豹子，value=1-6
- *   dice                   三军，value=1-6；命中键 dice1|dice2|dice3 按出现次数赔
+ *   dice                   三军，value=1-6；出现至少一次即中，多次不加倍
  *   pair                   二同号，value=1-6（恰好 2 次）
  *   straight               三连号通选；value=123 等形式为单选（straightN）
  *   alldiff                三不同号形状（杂六）；value=123 等形式为指定三不同（alldiffN）
@@ -139,11 +139,7 @@ export const kuai3Game: LotteryGameDef = {
       case 'dice': {
         const n = parseDiceNum(bet.value);
         if (n == null) return null;
-        const c = countOf(numbers, n);
-        if (c === 1) return 'dice1';
-        if (c === 2) return 'dice2';
-        if (c === 3) return 'dice3';
-        return null;
+        return countOf(numbers, n) >= 1 ? 'dice1' : null;
       }
       case 'pair': {
         const n = parseDiceNum(bet.value);
@@ -218,9 +214,7 @@ export const kuai3PayTable = {
   sum_16: { multiplier: 21, desc: '和值16' },
   sum_17: { multiplier: 58, desc: '和值17' },
   sum_18: { multiplier: 168, desc: '和值18' },
-  dice1: { multiplier: 2.3, desc: '三军出现1次' },
-  dice2: { multiplier: 3.5, desc: '三军出现2次' },
-  dice3: { multiplier: 4.5, desc: '三军出现3次' },
+  dice1: { multiplier: 2.3, desc: '三军（出现至少1次，多次不加倍）' },
   pair: { multiplier: 11, desc: '二同号' },
   straight: { multiplier: 7.5, desc: '三连号通选' },
   straightN: { multiplier: 28.5, desc: '三连号单选' },

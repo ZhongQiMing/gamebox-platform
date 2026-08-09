@@ -70,13 +70,26 @@ import {
 } from '@gamebox/shared';
 import type { TableHistoryItem } from './table.types';
 import { ConsoleControlService } from '../console/console-control.service';
+import { GlobalSoftControlService } from '../console/global-soft-control.service';
 import { FlyDiskService } from '../console/fly-disk.service';
 import { FlyRebateService } from '../console/fly-rebate.service';
 import {
-  CONTROL_FIXED_CANDIDATE_TRIES,
-  CONTROL_MIN_BET_COUNT,
+  closedDiskDebitBetInTx,
+  closedDiskRefundBetInTx,
+  closedDiskSettleWinInTx,
+} from '../console/player-fund.helper';
+import {
+  CONTROL_PLAYER_WIN_HOUSE_FLOOR,
 } from '../console/control.constants';
-import { holdScore, holdTargetPayout } from '../console/control-pick.util';
+import {
+  decidePeriodGuard,
+  globalDayNetScore,
+  isBetterSoftGlobalPick,
+  periodCandidateLegal,
+  periodLossScore,
+  softBiasScore,
+  type SoftPickRank,
+} from '../console/control-pick.util';
 import type { TableOutcome } from './table-rules';
 
 type BetFlyMeta = {
@@ -85,6 +98,7 @@ type BetFlyMeta = {
   flying: boolean;
   roomId?: string;
   agentUserId?: string;
+  bookMode?: string;
 };
 
 /** 覆盖 settle + 最长 draw 窗口，transition 内还会续期 */
@@ -116,6 +130,8 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
     private risk: RiskService,
     @Optional() @Inject(forwardRef(() => ConsoleControlService))
     private control?: ConsoleControlService,
+    @Optional() @Inject(forwardRef(() => GlobalSoftControlService))
+    private globalSoft?: GlobalSoftControlService,
     @Optional() private flyDisk?: FlyDiskService,
     @Optional() private flyRebate?: FlyRebateService,
   ) {}
@@ -129,13 +145,14 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
       flying: !!fly?.flying,
       roomId: fly?.roomId,
       agentUserId: fly?.agentUserId,
+      bookMode: fly?.bookMode,
     };
   }
 
   /**
    * 派彩/退款用的真实对手盘。
    * 修复前下注写死 PLATFORM（幂等键 table_bet_plat_*），即使 payload.fly 写了 ROOM/AGENT，
-   * 钱仍在平台池——必须原路退/派，且不再动飞盘占用。
+   * 钱仍在平台池——必须原路退/派，且不再动上盘额度。
    */
   private async resolveBetHouseInTx(
     tx: Prisma.TransactionClient,
@@ -163,6 +180,14 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
 
     await this.discoverRooms();
     await this.recoverOrphanRounds();
+    /* 炸金花：启动即建房开跑，无人进房也持续开奖并记路单 */
+    try {
+      await this.getOrCreateRoom('zhajinhua');
+    } catch (err) {
+      this.logger.warn(
+        `预热炸金花房间失败: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
 
     this.tickTimer = setInterval(() => {
       void this.leaderTick();
@@ -379,6 +404,17 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
           continue;
         }
 
+        /* 维护暂停：上架后自动开新局；维护中不推进 */
+        if (room.phase === 'PAUSED') {
+          const gameCfg = await this.configCache.get(gameCode);
+          if (gameCfg?.status === 'ONLINE') {
+            await this.withLeaderRenew(gameCode, () => this.resumeFromPaused(room));
+          } else {
+            await this.publishSnapshot(room);
+          }
+          continue;
+        }
+
         if (Date.now() >= room.phaseEndsAt) {
           await this.withLeaderRenew(gameCode, () => this.transition(room));
         } else {
@@ -393,6 +429,28 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /** 维护结束：从 PAUSED 开新 BETTING 局 */
+  private async resumeFromPaused(room: RedisRoomState) {
+    if (room.phase !== 'PAUSED') return;
+    const { seed, hash } = genServerSeed();
+    const now = Date.now();
+    room.phase = 'BETTING';
+    room.phaseEndsAt = alignedBettingEndsAt(room.gameCode, now);
+    room.serverSeed = seed;
+    room.serverSeedHash = hash;
+    room.nonce += 1;
+    room.roundNo = alignedRoundNo(room.gameCode, now);
+    room.roundId = null;
+    room.outcome = null;
+    room.betSummary = {};
+    if (!(await this.saveRoomCas(room))) {
+      this.logger.warn(`resume PAUSED→BETTING CAS 冲突 ${room.gameCode}`);
+      return;
+    }
+    this.logger.log(`桌台维护结束恢复开局 ${room.gameCode}`);
+    await this.publishSnapshot(room);
+  }
+
   private async transition(room: RedisRoomState) {
     if (room.phase === 'BETTING') {
       room.phase = 'DRAWING';
@@ -404,10 +462,24 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
         this.logger.warn(`transition BETTING→DRAWING CAS 冲突 ${room.gameCode}`);
         return;
       }
-      await this.settle(room);
+      try {
+        if (this.globalSoft) {
+          await this.globalSoft.commitSoftDraw(room.gameCode, picked.softCommit);
+        }
+      } catch {
+        /* 冷却失败不影响开奖 */
+      }
+      const settleTouches = await this.settle(room);
       await this.publishSnapshot(room);
       try {
         if (this.control) await this.control.refreshGoalExhaustion(room.gameCode);
+      } catch {
+        /* 不影响开奖 */
+      }
+      try {
+        if (this.globalSoft && settleTouches.length) {
+          await this.globalSoft.applySoftBiasProgress(settleTouches);
+        }
       } catch {
         /* 不影响开奖 */
       }
@@ -433,6 +505,23 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
         if (stragglers > 0) {
           await this.refundRoundBetsOnly(room.roundId, '投注晚于封盘，退款');
         }
+      }
+
+      /* 维护中：本局已结算完，暂停开新局，勿踢掉结算、勿开新 BETTING */
+      const gameCfg = await this.configCache.get(room.gameCode);
+      if (!gameCfg || gameCfg.status !== 'ONLINE') {
+        room.phase = 'PAUSED';
+        room.phaseEndsAt = Date.now() + 365 * 24 * 3600 * 1000;
+        room.roundId = null;
+        room.outcome = null;
+        room.betSummary = {};
+        if (!(await this.saveRoomCas(room))) {
+          this.logger.warn(`transition SETTLED→PAUSED CAS 冲突 ${room.gameCode}`);
+          return;
+        }
+        this.logger.log(`桌台维护暂停开局 ${room.gameCode}`);
+        await this.publishSnapshot(room);
+        return;
       }
 
       const { seed, hash } = genServerSeed();
@@ -470,7 +559,7 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  /** 单注退款：原对手盘（ROOM/AGENT/PLATFORM）→ 玩家 */
+  /** 单注退款：飞盘原路退平台；关盘从代理退回 */
   private async refundOneBetInTx(
     tx: Prisma.TransactionClient,
     bet: { id: string; playerId: string; amount: number; payload?: unknown },
@@ -478,23 +567,42 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
     reason: string,
   ) {
     const house = await this.resolveBetHouseInTx(tx, bet);
-    await this.points.transferInTx(
-      tx,
-      {
-        type: house.type,
-        id: house.id,
-        remark: reason,
-        idempotencyKey: `table_refund_house_${bet.id}`,
-      },
-      {
-        type: 'PLAYER',
-        id: bet.playerId,
-        remark: reason,
-        idempotencyKey: `table_refund_player_${bet.id}`,
-      },
-      asMoney(bet.amount),
-      { bizType: 'ADJUST', refType: 'round', refId: roundId },
-    );
+    const amt = asMoney(bet.amount);
+    if (house.flying || house.type !== 'AGENT') {
+      const refundRoomId = String(house.roomId || '').trim();
+      if (!refundRoomId) throw new BadRequestException('退注缺少房间');
+      await this.points.transferInTx(
+        tx,
+        {
+          type: 'PLATFORM',
+          id: PLATFORM_OWNER_ID,
+          remark: reason,
+          idempotencyKey: `table_refund_house_${bet.id}`,
+        },
+        {
+          type: 'PLAYER',
+          id: bet.playerId,
+          roomId: refundRoomId,
+          remark: reason,
+          idempotencyKey: `table_refund_player_${bet.id}`,
+        },
+        amt,
+        { bizType: 'ADJUST', refType: 'round', refId: roundId },
+      );
+    } else {
+      await closedDiskRefundBetInTx(tx, this.points, {
+        playerId: bet.playerId,
+        agentUserId: house.agentUserId || house.id,
+        roomId: house.roomId,
+        bookMode: house.bookMode,
+        amount: amt,
+        remark: `${reason}(关盘)`,
+        refType: 'round',
+        refId: roundId,
+        idemPlayer: `table_refund_player_${bet.id}`,
+        idemAgent: `table_refund_agent_${bet.id}`,
+      });
+    }
   }
 
   /** Redis roundId 可能尚未补齐：按 roundNo 找回 PLAYING 局，避免封盘漏结算 */
@@ -509,13 +617,43 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
     return gr.id;
   }
 
-  private async settle(room: RedisRoomState) {
+  /** 当日路单：有注/无注都落 Redis history（空局此前会跳过，导致进房才开始有路） */
+  private async appendRoadHistory(room: RedisRoomState, outcome: NonNullable<RedisRoomState['outcome']>) {
+    const roundNo = String(room.roundNo || '');
+    if (roundNo && room.history.some((h) => String(h.roundNo) === roundNo)) {
+      return;
+    }
+    room.history.unshift({
+      roundNo: room.roundNo,
+      outcome,
+      createdAt: new Date().toISOString(),
+      serverSeed: room.serverSeed,
+      serverSeedHash: room.serverSeedHash,
+      nonce: room.nonce,
+    });
+    room.history = this.pruneHistoryToShanghaiDay(room.history);
+    if (!(await this.saveRoomCas(room))) {
+      this.logger.warn(`写 history CAS 冲突 ${room.gameCode} round=${room.roundNo}`);
+    }
+  }
+
+  private async settle(room: RedisRoomState): Promise<
+    Array<{ roomId: string; playerId: string; stake: number; payout: number }>
+  > {
+    const empty: Array<{ roomId: string; playerId: string; stake: number; payout: number }> = [];
     const outcome = room.outcome;
-    if (!outcome) return;
+    if (!outcome) return empty;
     const roundId = await this.resolveRoundId(room);
-    if (!roundId) return;
+    if (!roundId) {
+      /* 炸金花：无人下注的空局也记路单（其它桌面游戏仍按原逻辑跳过） */
+      if (normalizeGameCode(room.gameCode) === 'zhajinhua') {
+        await this.appendRoadHistory(room, outcome);
+      }
+      return empty;
+    }
 
     const bigWins: Array<{ betId: string; playerId: string; amount: number; payout: number }> = [];
+    const biasTouches: Array<{ roomId: string; playerId: string; stake: number; payout: number }> = [];
     try {
       await this.prisma.$transaction(async (tx) => {
         const claimed = await tx.gameRound.updateMany({
@@ -523,7 +661,7 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
           data: {
             state: 'SETTLED',
             endedAt: new Date(),
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+             
             outcome: outcome as any,
             serverSeed: room.serverSeed,
             nonce: room.nonce,
@@ -570,83 +708,112 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
           }
 
           const house = await this.resolveBetHouseInTx(tx, bet);
-
-          if (payout > 0) {
-            const resultTag = String(outcome.result || outcome.winner || '');
-            const tag = `${room.gameName} ${resultTag}${refundOnly ? ' 退本' : ''}`;
-            await this.points.transferInTx(
-              tx,
-              {
-                type: house.type,
-                id: house.id,
-                remark: `${tag} 派彩`,
-                idempotencyKey: `table_win_house_${bet.id}`,
-              },
-              {
-                type: 'PLAYER',
-                id: bet.playerId,
-                remark: tag,
-                idempotencyKey: `table_win_player_${bet.id}`,
-              },
+          const touchRoomId = String(house.roomId || '').trim();
+          if (touchRoomId && !refundOnly) {
+            biasTouches.push({
+              roomId: touchRoomId,
+              playerId: bet.playerId,
+              stake: amt,
               payout,
-              { bizType: 'WIN', refType: 'round', refId: roundId },
-            );
+            });
+          }
+
+          const resultTag = String(outcome.result || outcome.winner || '');
+          const tag = `${room.gameName} ${resultTag}${refundOnly ? ' 退本' : ''}`;
+          if (house.flying || house.type !== 'AGENT') {
+            if (payout > 0) {
+              const winRoomId = String(house.roomId || '').trim();
+              if (!winRoomId) throw new BadRequestException('派彩缺少房间');
+              await this.points.transferInTx(
+                tx,
+                {
+                  type: 'PLATFORM',
+                  id: PLATFORM_OWNER_ID,
+                  remark: `${tag} 派彩`,
+                  idempotencyKey: `table_win_house_${bet.id}`,
+                },
+                {
+                  type: 'PLAYER',
+                  id: bet.playerId,
+                  roomId: winRoomId,
+                  remark: tag,
+                  idempotencyKey: `table_win_player_${bet.id}`,
+                },
+                payout,
+                { bizType: 'WIN', refType: 'round', refId: roundId },
+              );
+            }
+          } else {
+            await closedDiskSettleWinInTx(tx, this.points, {
+              playerId: bet.playerId,
+              agentUserId: house.agentUserId || house.id,
+              roomId: house.roomId,
+              bookMode: house.bookMode,
+              stake: amt,
+              payout,
+              remark: `${tag}(关盘)`,
+              refType: 'round',
+              refId: roundId,
+              idemPlayer: `table_win_player_${bet.id}`,
+              idemAgent: `table_win_agent_${bet.id}`,
+            });
           }
 
           if (!refundOnly) {
-            if (this.flyDisk) {
+            if (house.flying && this.flyDisk) {
               await this.flyDisk.applyFlyLossInTx(
                 tx,
                 house.agentUserId,
-                house.flying,
+                true,
                 amt,
                 payout,
+                `table_fly_quota_${bet.id}`,
+                house.bookMode,
               );
             }
             if (this.flyRebate) {
-              await this.flyRebate.payAgentShareInTx(tx, {
+              await this.flyRebate.payBetFlowInTx(tx, {
                 betId: bet.id,
                 playerId: bet.playerId,
                 validFlow: amt,
                 flying: house.flying,
                 roomId: house.roomId,
                 agentUserId: house.agentUserId,
+                bookMode: house.bookMode,
+                roundId,
               });
             }
           }
-
-          /* 回水统一由 RebateService 按 Bet.validFlow 日结发放，此处不再局内发放 */
-
-          const player = await tx.user.findUnique({
-            where: { id: bet.playerId },
-            select: { id: true, agentPath: true },
-          });
-          if (player?.agentPath && !refundOnly) {
-            await this.commission.distributeInTx(
-              tx,
-              player,
-              amt,
-              roundId,
-              `table_${bet.id}`,
-            );
-          }
         }
       });
-
-      room.history.unshift({
-        roundNo: room.roundNo,
-        outcome,
-        createdAt: new Date().toISOString(),
-        serverSeed: room.serverSeed,
-        serverSeedHash: room.serverSeedHash,
-        nonce: room.nonce,
-      });
-      room.history = this.pruneHistoryToShanghaiDay(room.history);
-      if (!(await this.saveRoomCas(room))) {
-        this.logger.warn(`settle 写 history CAS 冲突 ${room.gameCode} round=${roundId}`);
+    } catch (err) {
+      this.logger.error(
+        `结算事务失败 ${room.gameCode} round=${roundId}，尝试退款作废`,
+        err instanceof Error ? err.stack : String(err),
+      );
+      try {
+        await this.refundRound(roundId, '结算异常，本局作废退款');
+      } catch (refundErr) {
+        this.logger.error(
+          `退款兜底也失败 round=${roundId}`,
+          refundErr instanceof Error ? refundErr.stack : String(refundErr),
+        );
       }
+      return empty;
+    }
 
-      for (const w of bigWins) {
+    /* 走到这里说明结算事务已提交（catch 分支一律 return）：
+       之后的路单/风控失败不得再触发整局退款 */
+    try {
+      await this.appendRoadHistory(room, outcome);
+    } catch (err) {
+      this.logger.error(
+        `写路单失败 ${room.gameCode} round=${roundId}`,
+        err instanceof Error ? err.stack : String(err),
+      );
+    }
+    for (const w of bigWins) {
+      try {
         await this.risk.record({
           type: 'BIG_WIN',
           level: w.payout >= 1_000_000 ? 'CRITICAL' : 'WARN',
@@ -663,21 +830,82 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
             summary: `${room.gameCode} 派彩 ${w.payout}（下注 ${w.amount}）`,
           },
         });
-      }
-    } catch (err) {
-      this.logger.error(
-        `结算失败 ${room.gameCode} round=${roundId}，尝试退款作废`,
-        err instanceof Error ? err.stack : String(err),
-      );
-      try {
-        await this.refundRound(roundId, '结算异常，本局作废退款');
-      } catch (refundErr) {
-        this.logger.error(
-          `退款兜底也失败 round=${roundId}`,
-          refundErr instanceof Error ? refundErr.stack : String(refundErr),
+      } catch (err) {
+        this.logger.warn(
+          `大额中奖风控记录失败 bet=${w.betId}`,
+          err instanceof Error ? err.message : String(err),
         );
       }
     }
+    return biasTouches;
+  }
+
+  /** 牌桌下注结果（含幂等重放） */
+  private async buildTableBetResult(
+    playerId: string,
+    roomId: string,
+    side: string,
+    amount: number,
+    roundNo: string,
+    phase: string,
+    secondsLeft: number,
+    opsRoomId?: string,
+  ) {
+    const rid = String(opsRoomId || '').trim();
+    const balance = rid
+      ? await this.points.getPlayerBalance(playerId, rid)
+      : 0;
+    return {
+      roomId,
+      side,
+      amount,
+      roundNo,
+      balance,
+      phase,
+      secondsLeft,
+    };
+  }
+
+  /** 按已落库注单重放（DB 级幂等） */
+  private async replayTableBet(
+    playerId: string,
+    roomId: string,
+    bet: {
+      playerId: string;
+      betType: string | null;
+      amount: unknown;
+      roundId: string | null;
+      payload?: unknown;
+    },
+    expectSide: string,
+    expectAmount: number,
+  ) {
+    if (bet.playerId !== playerId) {
+      throw new BadRequestException('clientKey 已被占用');
+    }
+    if (String(bet.betType || '') !== expectSide || asMoney(bet.amount) !== expectAmount) {
+      throw new BadRequestException('clientKey 已被占用');
+    }
+    const room = (await this.loadRoom(roomId)) ?? (await this.getOrCreateRoom(roomId));
+    let roundNo = room.roundNo;
+    if (bet.roundId) {
+      const round = await this.prisma.gameRound.findUnique({
+        where: { id: bet.roundId },
+        select: { roundNo: true },
+      });
+      if (round?.roundNo) roundNo = round.roundNo;
+    }
+    const opsRoomId = (bet.payload as { fly?: { roomId?: string } } | null)?.fly?.roomId;
+    return this.buildTableBetResult(
+      playerId,
+      roomId,
+      expectSide,
+      expectAmount,
+      roundNo,
+      room.phase,
+      secondsLeftOf(room),
+      opsRoomId,
+    );
   }
 
   /** 玩家下注：挂单扣分，封盘后整局结算 */
@@ -685,31 +913,43 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
     const side = String(payload.side || '');
     const amount = payload.amount;
     const roomId = normalizeGameCode(payload.roomId);
-    const clientKey = String(payload.clientKey || '')
-      .trim()
-      .slice(0, 64);
-    const idemKey = clientKey ? `table:idem:${playerId}:${clientKey}` : '';
+    const clientKey = String(payload.clientKey || '').trim();
+    if (clientKey.length < 8 || clientKey.length > 64) {
+      throw new BadRequestException('clientKey 无效');
+    }
+    /* DB 唯一键：与彩票/街机 clientRequestId 同列，加 tb: 前缀隔离 */
+    const clientRequestId = `tb:${clientKey}`;
+    const idemKey = `table:idem:${playerId}:${clientKey}`;
 
-    if (idemKey) {
-      const cached = await this.redis.get(idemKey);
-      if (cached) {
-        try {
-          return JSON.parse(cached) as {
-            roomId: string;
-            side: string;
-            amount: number;
-            roundNo: string;
-            balance: number;
-            phase: string;
-            secondsLeft: number;
-          };
-        } catch {
-          /* 缓存坏了则重走下注 */
-        }
+    const cached = await this.redis.get(idemKey);
+    if (cached) {
+      try {
+        return JSON.parse(cached) as Awaited<ReturnType<TableService['buildTableBetResult']>>;
+      } catch {
+        /* 缓存坏了则走 DB / 新下 */
       }
     }
 
+    const existing = await this.prisma.bet.findUnique({
+      where: { clientRequestId },
+      select: {
+        playerId: true,
+        betType: true,
+        amount: true,
+        roundId: true,
+        payload: true,
+      },
+    });
+    if (existing) {
+      const replayed = await this.replayTableBet(playerId, roomId, existing, side, amount);
+      await this.redis.set(idemKey, JSON.stringify(replayed), 120).catch(() => undefined);
+      return replayed;
+    }
+
     const room = await this.getOrCreateRoom(roomId);
+    if (room.phase === 'PAUSED') {
+      throw new BadRequestException('游戏维护中，本局已结束后暂停开局');
+    }
     if (room.phase !== 'BETTING' || Date.now() >= room.phaseEndsAt) {
       throw new BadRequestException('当前不在下注阶段');
     }
@@ -718,6 +958,9 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
     }
     /* 限红以平台 Game 表为准（后台改完立即生效，不依赖 Redis 旧缓存） */
     const gameCfg = await this.configCache.get(room.gameCode);
+    if (!gameCfg || gameCfg.status !== 'ONLINE') {
+      throw new BadRequestException('游戏维护中，暂停下注');
+    }
     const minBet = Math.max(1, asMoney(gameCfg?.minBet ?? room.minBet) || 1);
     const maxBet = asMoney(gameCfg?.maxBet ?? room.maxBet) || room.maxBet;
     room.minBet = minBet;
@@ -741,18 +984,26 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
 
     const oppSides = oppositeHedgeSides(room.gameCode, side);
     let roundId = room.roundId;
-    const house = this.flyDisk
-      ? await this.flyDisk.resolveHouse(playerId)
-      : { type: 'PLATFORM' as const, id: PLATFORM_OWNER_ID, flying: false as boolean, roomId: undefined as string | undefined, agentUserId: undefined as string | undefined };
-    const { P } = this.flyDisk
-      ? await this.flyDisk.resolvePlayerRate(playerId, house.roomId)
-      : { P: 0.018 };
+    if (!this.flyDisk) {
+      throw new BadRequestException('飞盘服务未就绪，暂不可下注');
+    }
+    const house = await this.flyDisk.resolveHouse(
+      playerId,
+      await this.flyDisk.requireOpsRoomId(playerId, payload.roomNo),
+      amount,
+      { requireRoom: true },
+    );
+    if (!house.roomId) {
+      throw new BadRequestException('请先进入房间再下注');
+    }
+    const { P } = await this.flyDisk.resolvePlayerRate(playerId, house.roomId);
     const flyPayload = {
       type: house.type,
       id: house.id,
       flying: house.flying,
       roomId: house.roomId,
       agentUserId: house.agentUserId,
+      bookMode: house.bookMode,
       P,
     };
     try {
@@ -779,14 +1030,14 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
             ) {
               throw err;
             }
-            const existing = await tx.gameRound.findUnique({
+            const existingRound = await tx.gameRound.findUnique({
               where: { roundNo: room.roundNo },
               select: { id: true, state: true },
             });
-            if (!existing || existing.state !== 'PLAYING') {
+            if (!existingRound || existingRound.state !== 'PLAYING') {
               throw new BadRequestException('本局已封盘');
             }
-            roundId = existing.id;
+            roundId = existingRound.id;
           }
         }
 
@@ -843,9 +1094,11 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
           throw new BadRequestException('局号已切换，请重试');
         }
 
+        /* clientRequestId 唯一：并发同键时后到者 P2002，外层重放 */
         const bet = await tx.bet.create({
           data: {
             betNo: businessNo('TB'),
+            clientRequestId,
             playerId,
             gameId: room.gameId,
             roundId: roundId!,
@@ -856,26 +1109,61 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
           },
         });
 
-        await this.points.transferInTx(
-          tx,
-          {
-            type: 'PLAYER',
-            id: playerId,
-            remark: `${room.gameName}下注 ${side}`,
-            idempotencyKey: `table_bet_player_${bet.id}`,
-          },
-          {
-            type: house.type,
-            id: house.id,
-            remark: `${room.gameName} 注资 ${room.roundNo}`,
-            idempotencyKey: `table_bet_house_${bet.id}`,
-          },
-          amount,
-          { bizType: 'BET', refType: 'round', refId: roundId! },
-        );
+        if (house.flying || house.type !== 'AGENT') {
+          const betRoomId = String(house.roomId || '').trim();
+          if (!betRoomId) throw new BadRequestException('下注缺少房间');
+          await this.points.transferInTx(
+            tx,
+            {
+              type: 'PLAYER',
+              id: playerId,
+              roomId: betRoomId,
+              remark: `${room.gameName}下注 ${side}`,
+              idempotencyKey: `table_bet_player_${bet.id}`,
+            },
+            {
+              type: 'PLATFORM',
+              id: PLATFORM_OWNER_ID,
+              remark: `${room.gameName} 注资 ${room.roundNo}`,
+              idempotencyKey: `table_bet_house_${bet.id}`,
+            },
+            amount,
+            { bizType: 'BET', refType: 'round', refId: roundId! },
+          );
+        } else {
+          await closedDiskDebitBetInTx(tx, this.points, {
+            playerId,
+            agentUserId: house.agentUserId || house.id,
+            roomId: house.roomId,
+            bookMode: house.bookMode,
+            amount,
+            remark: `${room.gameName}下注 ${side}(关盘)`,
+            refType: 'round',
+            refId: roundId!,
+            idemPlayer: `table_bet_player_${bet.id}`,
+            idemAgent: `table_bet_agent_${bet.id}`,
+          });
+        }
       });
     } catch (err) {
       if (err instanceof BadRequestException) throw err;
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        const raced = await this.prisma.bet.findUnique({
+          where: { clientRequestId },
+          select: {
+            playerId: true,
+            betType: true,
+            amount: true,
+            roundId: true,
+            payload: true,
+          },
+        });
+        if (raced) {
+          const replayed = await this.replayTableBet(playerId, roomId, raced, side, amount);
+          await this.redis.set(idemKey, JSON.stringify(replayed), 120).catch(() => undefined);
+          return replayed;
+        }
+      }
       throw err;
     }
 
@@ -900,11 +1188,6 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
       }
     }
 
-    const account = await this.prisma.pointsAccount.findUnique({
-      where: { ownerId: playerId },
-      select: { balance: true },
-    });
-
     const snapRoom = (await this.loadRoom(roomId)) ?? latest;
     if (roundId) {
       void this.riskDetector.onTableBet({
@@ -917,18 +1200,17 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
       });
     }
 
-    const result = {
+    const result = await this.buildTableBetResult(
+      playerId,
       roomId,
       side,
       amount,
-      roundNo: snapRoom.roundNo,
-      balance: asMoney(account?.balance ?? 0),
-      phase: snapRoom.phase,
-      secondsLeft: secondsLeftOf(snapRoom),
-    };
-    if (idemKey) {
-      await this.redis.set(idemKey, JSON.stringify(result), 120).catch(() => undefined);
-    }
+      snapRoom.roundNo,
+      snapRoom.phase,
+      secondsLeftOf(snapRoom),
+      house.roomId,
+    );
+    await this.redis.set(idemKey, JSON.stringify(result), 120).catch(() => undefined);
     return result;
   }
 
@@ -1040,34 +1322,44 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * 控奖：按各运营房本局注单，在候选 nonce 中挑派彩最接近留存目标的结果。
-   * 无生效策略时用本局基数 nonce。
+   * 全站软控统一挑号：
+   * 单期自然亏损未到触发线 → 不干预（偏置/缓刹除外）；
+   * 到线后：铁律只拦亏超上限 → 朝目标亏损率靠拢 → 日账/偏置/缓刹。
+   * 冷却 mark/consume 只通过 softCommit 在 CAS 成功后提交。
    */
   private async pickTableOutcomeWithControl(
     room: RedisRoomState,
-  ): Promise<{ outcome: TableOutcome; nonce: number }> {
+  ): Promise<{ outcome: TableOutcome; nonce: number; softCommit: 'none' | 'mark' | 'consume' }> {
     const baseNonce = room.nonce;
     const defaultOutcome = drawOutcome(room.gameCode, room.serverSeed, baseNonce);
-    const policies = this.control
-      ? await this.control.getActiveHoldPolicies(room.gameCode)
-      : [];
-    if (!policies.length) {
-      return { outcome: defaultOutcome, nonce: baseNonce };
+    const globalRt = this.globalSoft
+      ? await this.globalSoft.getDrawRuntime(room.gameCode)
+      : null;
+
+    if (!globalRt?.needPick) {
+      return {
+        outcome: defaultOutcome,
+        nonce: baseNonce,
+        softCommit: globalRt?.cooldownActive ? 'consume' : 'none',
+      };
     }
 
     const roundId = await this.resolveRoundId(room);
     if (!roundId) {
-      return { outcome: defaultOutcome, nonce: baseNonce };
+      return { outcome: defaultOutcome, nonce: baseNonce, softCommit: 'none' };
     }
 
     const pendingBets = await this.prisma.bet.findMany({
       where: { roundId, status: 'PENDING' },
-      select: { amount: true, betType: true, payload: true },
+      select: { amount: true, betType: true, payload: true, playerId: true },
     });
 
     type Bucket = { roomId: string; bets: typeof pendingBets; stake: number };
     const byRoom = new Map<string, Bucket>();
+    let periodStake = 0;
     for (const b of pendingBets) {
+      const amt = asMoney(b.amount);
+      periodStake = roundMoney(periodStake + amt);
       const rid = (b.payload as { fly?: { roomId?: string } } | null)?.fly?.roomId;
       if (!rid) continue;
       let bucket = byRoom.get(rid);
@@ -1076,54 +1368,181 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
         byRoom.set(rid, bucket);
       }
       bucket.bets.push(b);
-      bucket.stake = roundMoney(bucket.stake + asMoney(b.amount));
+      bucket.stake = roundMoney(bucket.stake + amt);
     }
 
-    const active = policies
-      .map((p) => {
-        const bucket = byRoom.get(p.roomId);
-        if (!bucket || bucket.bets.length < CONTROL_MIN_BET_COUNT) return null;
-        return {
-          policy: p,
-          bucket,
-          targetPayout: roundMoney(holdTargetPayout(bucket.stake, p.holdRatio)),
-        };
-      })
-      .filter((x): x is NonNullable<typeof x> => !!x);
-
-    if (!active.length) {
-      return { outcome: defaultOutcome, nonce: baseNonce };
+    /* 空注/零流水：自然开奖，不占冷却 */
+    if (periodStake <= 1e-9) {
+      return { outcome: defaultOutcome, nonce: baseNonce, softCommit: 'none' };
     }
+
+    const estimatePay = (bets: typeof pendingBets, cand: TableOutcome) => {
+      let pay = 0;
+      for (const b of bets) {
+        const amt = asMoney(b.amount);
+        const raw = calcTablePayout(room.gameCode, b.betType ?? '', cand, amt);
+        pay = roundMoney(pay + capWin(amt, raw).win);
+      }
+      return pay;
+    };
+
+    let brakeKeys = new Set<string>();
+    if (globalRt.playerBrakeEnabled && this.globalSoft) {
+      const brakeTargets: Array<{ playerId: string; roomId: string }> = [];
+      for (const b of pendingBets) {
+        if (!b.playerId) continue;
+        const rid = String(
+          (b.payload as { fly?: { roomId?: string } } | null)?.fly?.roomId || '',
+        ).trim();
+        if (!rid) continue;
+        brakeTargets.push({ playerId: b.playerId, roomId: rid });
+      }
+      brakeKeys = await this.globalSoft.playersNeedingBrake(
+        brakeTargets,
+        globalRt.playerBrakeMultiple,
+      );
+    }
+    const brakeFirst = brakeKeys.size > 0;
+    const biases = globalRt.biases || [];
+
+    const naturalPay = estimatePay(pendingBets, defaultOutcome);
+    const playerCount = new Set(
+      pendingBets.map((b) => b.playerId).filter(Boolean) as string[],
+    ).size;
+    const guard = decidePeriodGuard({
+      periodStake,
+      naturalPayout: naturalPay,
+      playerCount,
+      cycleProfit: globalRt.cycleProfit,
+      params: globalRt.periodGuard,
+    });
+
+    if (!guard.steer && biases.length === 0 && !brakeFirst) {
+      return { outcome: defaultOutcome, nonce: baseNonce, softCommit: 'none' };
+    }
+
+    const tries = Math.max(1, globalRt.tries);
+    const periodCommission = roundMoney(periodStake * (globalRt.commissionRatePct / 100));
+    const dayTol = Math.max(1, periodStake * 0.001 + globalRt.dayF * 0.0005);
 
     let bestOutcome = defaultOutcome;
     let bestNonce = baseNonce;
-    let bestScore = Number.POSITIVE_INFINITY;
-    for (let i = 0; i < CONTROL_FIXED_CANDIDATE_TRIES; i++) {
+    let bestRank: SoftPickRank = {
+      valid: false,
+      day: Number.POSITIVE_INFINITY,
+      bias: Number.POSITIVE_INFINITY,
+      brake: Number.POSITIVE_INFINITY,
+      period: Number.POSITIVE_INFINITY,
+      winners: -1,
+    };
+    let sawLegal = false;
+
+    for (let i = 0; i < tries; i++) {
       const nonce = baseNonce + i;
-      const cand = i === 0
-        ? defaultOutcome
-        : drawOutcome(room.gameCode, room.serverSeed, nonce);
-      let score = 0;
-      for (const a of active) {
-        let pay = 0;
-        for (const b of a.bucket.bets) {
-          const amt = asMoney(b.amount);
-          const raw = calcTablePayout(room.gameCode, b.betType ?? '', cand, amt);
-          pay = roundMoney(pay + capWin(amt, raw).win);
-        }
-        score += holdScore(pay, a.targetPayout, a.bucket.stake);
+      const cand = i === 0 ? defaultOutcome : drawOutcome(room.gameCode, room.serverSeed, nonce);
+      const betPays = pendingBets.map((b) => estimatePay([b], cand));
+      let periodPay = 0;
+      for (const p of betPays) periodPay = roundMoney(periodPay + p);
+
+      if (guard.steer && !periodCandidateLegal({
+        periodStake,
+        periodPayout: periodPay,
+        decision: guard,
+      })) continue;
+      sawLegal = true;
+
+      /* IDLE 仅偏置：不算日账主分 */
+      const day = globalRt.daySteer
+        ? globalDayNetScore({
+          dayF: globalRt.dayF,
+          dayG: globalRt.dayG,
+          dayC: globalRt.dayC,
+          periodStake,
+          periodPayout: periodPay,
+          periodCommission,
+          targetNetPct: globalRt.targetNetPct,
+        })
+        : 0;
+
+      const period = guard.steer
+        ? periodLossScore({
+          periodStake,
+          periodPayout: periodPay,
+          targetLossPct: guard.targetLossPct,
+        })
+        : 0;
+
+      const roomBooks = new Map<string, { stake: number; payout: number }>();
+      const playerPayouts = new Map<string, number>();
+      const winnerIds = new Set<string>();
+      let brake = 0;
+      for (let k = 0; k < pendingBets.length; k++) {
+        const b = pendingBets[k];
+        const pay = betPays[k];
+        if (pay > 1e-9 && b.playerId) winnerIds.add(b.playerId);
+        const rid = String(
+          (b.payload as { fly?: { roomId?: string } } | null)?.fly?.roomId || '',
+        ).trim();
+        if (!rid) continue;
+        const bucket = byRoom.get(rid);
+        const book = roomBooks.get(rid) || { stake: bucket?.stake ?? 0, payout: 0 };
+        book.payout = roundMoney(book.payout + pay);
+        roomBooks.set(rid, book);
+        if (!b.playerId) continue;
+        const key = `${rid}|${b.playerId}`;
+        playerPayouts.set(key, roundMoney((playerPayouts.get(key) ?? 0) + pay));
+        if (brakeKeys.has(key)) brake = roundMoney(brake + pay);
       }
-      if (score < bestScore) {
-        bestScore = score;
+      const biasRes = softBiasScore({
+        biases,
+        roomBooks,
+        playerPayouts,
+        houseFloor: CONTROL_PLAYER_WIN_HOUSE_FLOOR,
+      });
+      if (!biasRes.valid) continue;
+
+      const rank: SoftPickRank = {
+        valid: true,
+        day,
+        bias: biasRes.score,
+        brake,
+        period,
+        winners: winnerIds.size,
+      };
+      if (isBetterSoftGlobalPick(rank, bestRank, dayTol, {
+        brakeFirst,
+        periodFirst: guard.steer,
+      })) {
+        bestRank = rank;
         bestOutcome = cand;
         bestNonce = nonce;
       }
     }
 
+    if (!sawLegal || !bestRank.valid) {
+      this.logger.log(
+        `control global table=${room.gameCode} gear=${globalRt.gear} fallback=natural ` +
+          `biasN=${biases.length} steer=${guard.steer} why=${guard.reason} ` +
+          `dayR=${globalRt.dayR ?? 'n/a'}`,
+      );
+      return { outcome: defaultOutcome, nonce: baseNonce, softCommit: 'none' };
+    }
+
+    const sameAsNatural = bestNonce === baseNonce;
     this.logger.log(
-      `control hold table=${room.gameCode} rooms=${active.length} nonce=${bestNonce} score~=${Math.round(bestScore)}`,
+      `control global table=${room.gameCode} mode=${globalRt.mode} gear=${globalRt.gear} ` +
+        `nonce=${bestNonce} steer=${guard.steer} wipeout=${guard.allowWipeout} ` +
+        `why=${guard.reason} winners=${bestRank.winners} ` +
+        `period~=${Math.round(bestRank.period ?? 0)} day~=${Math.round(bestRank.day)} ` +
+        `bias~=${Math.round(bestRank.bias)} biasN=${biases.length} ` +
+        `brakeN=${brakeKeys.size} brakeFirst=${brakeFirst} ` +
+        `soft=${sameAsNatural ? 'none' : 'mark'}`,
     );
-    return { outcome: bestOutcome, nonce: bestNonce };
+    return {
+      outcome: bestOutcome,
+      nonce: bestNonce,
+      softCommit: sameAsNatural ? 'none' : 'mark',
+    };
   }
 
   /** 赔率表（与 @gamebox/shared 同源） */
@@ -1148,7 +1567,7 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
       if (hit?.serverSeed != null && hit.nonce != null) {
         const hash = createHash('sha256').update(hit.serverSeed).digest('hex');
         const expectedHash = hit.serverSeedHash || hash;
-        let outcomeMatches: boolean | null = null;
+        let outcomeMatches: boolean | null;
         try {
           const recomputed = drawOutcome(code, hit.serverSeed, hit.nonce);
           outcomeMatches = tableOutcomesMatch(code, recomputed, hit.outcome);

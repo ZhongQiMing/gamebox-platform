@@ -22,7 +22,7 @@ export class LotteryScheduler implements OnModuleInit {
     private lottery: LotteryService,
   ) {}
 
-  async onModuleInit() {
+  onModuleInit() {
     /* 启动即灌期号，不等首个 cron；失败不阻塞 Nest 启动 */
     setTimeout(() => {
       void this.preCreate().then(() => this.settle()).catch((e) =>
@@ -50,26 +50,29 @@ export class LotteryScheduler implements OnModuleInit {
     }
   }
 
-  /** 每 2 秒：结算到期期号（缩短 00:00→下一期 空窗） */
+  /** 每 2 秒：先封盘预开奖，再对 openAt 到期期号正式结算派彩 */
   @Cron('*/2 * * * * *')
   async settle() {
     if (this.settling) return;
     this.settling = true;
     try {
       const now = new Date();
-      /* openAt 到期 或 已封盘（lockAt 到）：都可开奖；封盘后立即开奖，openAt 窗口留给前端仪式 */
+
+      /* 1) 封盘 → 预生成号码（动画用），不派彩 */
+      await this.lottery.lockDueIssues().catch((e) =>
+        this.logger.error(`lockDueIssues failed: ${e.message}`),
+      );
+
+      /* 2) 仅 openAt 到期才结算入账（开奖中阶段注单仍 PENDING） */
       const due = await this.prisma.lotteryIssue.findMany({
         where: {
-          OR: [
-            { status: { in: ['PENDING', 'LOCKED'] }, openAt: { lte: now } },
-            { status: 'LOCKED', lockAt: { lte: now } },
-          ],
+          status: { in: ['PENDING', 'LOCKED'] },
+          openAt: { lte: now },
         },
         orderBy: { openAt: 'asc' },
         take: 50,
       });
 
-      // 按游戏分组：同游戏组内串行（保期号时序），组间并发
       const groups = new Map<string, typeof due>();
       for (const issue of due) {
         const arr = groups.get(issue.gameId) ?? [];
@@ -85,10 +88,6 @@ export class LotteryScheduler implements OnModuleInit {
             );
           }
         }),
-      );
-
-      await this.lottery.lockDueIssues().catch((e) =>
-        this.logger.error(`lockDueIssues failed: ${e.message}`),
       );
     } finally {
       this.settling = false;

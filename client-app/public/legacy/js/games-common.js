@@ -31,12 +31,7 @@
   App._bridgeToken = ''
   App._roomNo = ''
 
-  /* URL ?bt=：父页挂载 iframe 时下发，ready/返回前即可带上，减少 postMessage 竞态 */
-  try {
-    const q0 = new URLSearchParams(location.search || '')
-    const bt0 = (q0.get('bt') || '').trim()
-    if (bt0) App._bridgeToken = bt0
-  } catch (_) { /* ignore */ }
+  /* bridgeToken 仅由父页 assets-game-init 下发，禁止写入 iframe URL */
 
   App.getUser = function () {
 
@@ -527,59 +522,87 @@
   /**
    * 牌桌挂单下注（下注阶段扣分，封盘后整局结算）
    * { side, amount } → { balance, roundNo, pending: true }
-   * 连点排队串行提交，不再以「操作过快」打断。
+   * 连点排队串行；同一意图固定 clientKey，超时自动重试同键（配合服务端 DB 幂等防双扣）。
    */
   var _tableBetQueue = []
   var _tableBetBusy = false
+  /** 最近一次失败/超时：同向同额 30s 内再点复用 key，避免「以为失败又点」双扣 */
+  var _tableLastFail = null
+
+  function _newTableClientKey() {
+    return (
+      'tb_' +
+      Date.now().toString(36) +
+      '_' +
+      Math.random().toString(36).slice(2, 10)
+    )
+  }
 
   function _flushTableBetQueue() {
     if (_tableBetBusy) return
     var job = _tableBetQueue.shift()
     if (!job) return
     _tableBetBusy = true
-    var requestId = nextRequestId()
-    var key =
-      job.clientKey ||
-      ('tb_' +
-        Date.now().toString(36) +
-        '_' +
-        Math.random().toString(36).slice(2, 8))
-    var timer = setTimeout(function () {
-      delete App._pending[requestId]
+    var key = job.clientKey
+    var attempts = 0
+    var maxAttempts = 3
+
+    function finishFail(err) {
       _tableBetBusy = false
-      job.reject(new Error('下注超时，请重试'))
-      _flushTableBetQueue()
-    }, 15000)
-    App._pending[requestId] = {
-      resolve: function (data) {
-        clearTimeout(timer)
-        _tableBetBusy = false
-        job.resolve(data)
-        _flushTableBetQueue()
-      },
-      reject: function (err) {
-        clearTimeout(timer)
-        _tableBetBusy = false
-        job.reject(err)
-        _flushTableBetQueue()
-      },
-    }
-    var ok = postToParent({
-      type: 'assets-game-bet',
-      requestId: requestId,
-      kind: 'table',
-      gameCode: job.gameCode,
-      side: job.side,
-      amount: job.amount,
-      clientKey: key,
-    })
-    if (!ok) {
-      clearTimeout(timer)
-      delete App._pending[requestId]
-      _tableBetBusy = false
-      job.reject(new Error('请从大厅进入游戏'))
+      _tableLastFail = {
+        gameCode: job.gameCode,
+        side: job.side,
+        amount: job.amount,
+        clientKey: key,
+        at: Date.now(),
+      }
+      job.reject(err)
       _flushTableBetQueue()
     }
+
+    function sendOnce() {
+      attempts += 1
+      var requestId = nextRequestId()
+      var timer = setTimeout(function () {
+        delete App._pending[requestId]
+        if (attempts < maxAttempts) {
+          sendOnce()
+          return
+        }
+        finishFail(new Error('下注超时，请重试'))
+      }, 15000)
+      App._pending[requestId] = {
+        resolve: function (data) {
+          clearTimeout(timer)
+          _tableBetBusy = false
+          _tableLastFail = null
+          job.resolve(data)
+          _flushTableBetQueue()
+        },
+        reject: function (err) {
+          clearTimeout(timer)
+          /* 业务错误不自动重试；超时已在 timer 里处理 */
+          finishFail(err instanceof Error ? err : new Error(String(err || '下注失败')))
+        },
+      }
+      var ok = postToParent({
+        type: 'assets-game-bet',
+        requestId: requestId,
+        kind: 'table',
+        gameCode: job.gameCode,
+        side: job.side,
+        amount: job.amount,
+        clientKey: key,
+        roomNo: App.getRoomNo() || '',
+      })
+      if (!ok) {
+        clearTimeout(timer)
+        delete App._pending[requestId]
+        finishFail(new Error('请从大厅进入游戏'))
+      }
+    }
+
+    sendOnce()
   }
 
   App.placeTableBet = function (gameCode, side, amount, clientKey) {
@@ -593,11 +616,24 @@
         reject(new Error('下注排队过多，请稍候'))
         return
       }
+      var key = clientKey && String(clientKey).trim()
+      if (
+        !key &&
+        _tableLastFail &&
+        _tableLastFail.gameCode === gameCode &&
+        _tableLastFail.side === side &&
+        Number(_tableLastFail.amount) === Number(amount) &&
+        Date.now() - _tableLastFail.at < 30000
+      ) {
+        key = _tableLastFail.clientKey
+      }
+      if (!key || key.length < 8) key = _newTableClientKey()
+      if (key.length > 64) key = key.slice(0, 64)
       _tableBetQueue.push({
         gameCode: gameCode,
         side: side,
         amount: amount,
-        clientKey: clientKey,
+        clientKey: key,
         resolve: resolve,
         reject: reject,
       })
@@ -1020,6 +1056,8 @@
   App.mountTabbar = function () { /* 游戏内不显示底部 Tab */ }
 
   window.addEventListener('message', function (ev) {
+    /* 只接受同源父页；跨域伪造一律忽略 */
+    if (!ev.origin || ev.origin !== location.origin) return
     const data = ev.data
     if (!data || typeof data !== 'object') return
 
@@ -1038,6 +1076,26 @@
       } else {
         /* lhc.js 等尚未执行完时先打标，脚本末尾看到后补拉 */
         App._pendingResyncLottery = true
+      }
+      return
+    }
+
+    /* 外壳 keep-alive 切回：iframe 内往往收不到 visibilitychange，靠父页通知重对开奖轴 */
+    if (data.type === 'assets-game-resume') {
+      if (typeof App.onAssetsGameResume === 'function') {
+        try { App.onAssetsGameResume(data) } catch (_) { /* ignore */ }
+      }
+      if (typeof App.resyncLottery === 'function') {
+        try { App.resyncLottery() } catch (_) { /* ignore */ }
+      } else {
+        App._pendingResyncLottery = true
+      }
+      return
+    }
+
+    if (data.type === 'assets-game-pause') {
+      if (typeof App.onAssetsGamePause === 'function') {
+        try { App.onAssetsGamePause(data) } catch (_) { /* ignore */ }
       }
       return
     }
@@ -1263,7 +1321,7 @@
     }
   })
 
-  // 通知父页：桥已就绪，请推送 init（走 postToParent 以附带 URL bt）
+  // 通知父页：桥已就绪，请推送 init（token 在 init 回传后才有）
   if (window.parent && window.parent !== window) {
     try {
       postToParent({ type: 'assets-game-ready' })

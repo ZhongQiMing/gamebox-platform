@@ -173,7 +173,7 @@ export function calcZhajinhuaPayout(side: string, outcome: ZhajinhuaOutcome, amo
   const oddsMap = zjhOdds();
   const odds = oddsMap[side];
   if (typeof odds !== 'number') return 0;
-  let win = false;
+  let win: boolean;
   if (side === 'banker') win = outcome.result === 'banker';
   else if (side === 'player') win = outcome.result === 'player';
   else win = sideBetHit(side, outcome.bankerType, outcome.playerType, outcome.result);

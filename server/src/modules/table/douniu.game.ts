@@ -1,5 +1,5 @@
 import { FaceCard, freshDeck, shuffleDeck } from './table-cards';
-import { getTablePayTable, payoutFromProfitOdds } from '@gamebox/shared';
+import { getTablePayTable, payoutForTableSide } from '@gamebox/shared';
 
 export type DouniuSide =
   | 'banker'
@@ -171,11 +171,11 @@ export function drawDouniuFromDeck(raw: FaceCard[]): DouniuOutcome {
 export function calcDouniuPayout(side: string, outcome: DouniuOutcome, amount: number): number {
   const odds = dnOdds()[side];
   if (typeof odds !== 'number') return 0;
-  let win = false;
+  let win: boolean;
   if (side === 'banker') win = outcome.result === 'banker';
   else if (side === 'player') win = outcome.result === 'player';
   else win = sideBetHit(side, outcome.bankerType, outcome.playerType, outcome.result);
-  if (win) return payoutFromProfitOdds(amount, odds);
+  if (win) return payoutForTableSide('douniu', side, amount);
   return 0;
 }
 

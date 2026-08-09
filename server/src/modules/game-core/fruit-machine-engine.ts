@@ -8,10 +8,9 @@ import {
   Injectable, BadRequestException, Logger, NotFoundException,
   Optional, Inject, forwardRef,
 } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { PointsService, PLATFORM_OWNER_ID } from '../points/points.service';
-import { CommissionService } from '../agents/commission.service';
 import { GameConfigCache } from './game-config.cache';
 import { SettlementKernel } from './settlement-kernel';
 import { genServerSeed, deriveRandom, weightedPick } from './fairness.util';
@@ -35,11 +34,15 @@ import {
 import { businessNo } from './business-id';
 import { RiskService } from '../risk/risk.service';
 import { ConsoleControlService } from '../console/console-control.service';
-import { FlyDiskService } from '../console/fly-disk.service';
-import { matchRoomHoldPolicy, pickSeedByHoldTarget } from '../console/control-pick.util';
+import { GlobalSoftControlService } from '../console/global-soft-control.service';
+import { FlyDiskService, type FlyHouse } from '../console/fly-disk.service';
+import { PLATFORM_OWNER_ID } from '../points/points.service';
+import { pickSeedForArcadePool } from '../console/control-pick.util';
 
 const GAME_CODE = 'fruit-machine';
 const KEY = 'fruit';
+/** 覆盖最长报奖动画；超时未揭晓则服务端强制入账（人不在游戏也结） */
+const REVEAL_TIMEOUT_MS = 60_000;
 const log = new Logger('FruitMachineEngine');
 
 interface FruitConfigPayTable {
@@ -53,6 +56,8 @@ export interface FruitSpinInput {
   bets: Record<string, number>;
   clientSeed?: string;
   clientRequestId: string;
+  /** 6 位运营房间号（多房隔离必填） */
+  roomNo?: string;
 }
 
 export interface FruitWinLine {
@@ -71,26 +76,54 @@ interface FruitRoundOutcome {
   totalPayout: number;
   /** 当前可再赌金额；0 表示不可赌 */
   pendingGambleAmount: number;
+  /**
+   * 跑灯动画未结束：注单保持 PENDING，注单页显示「待开奖」。
+   * 客户端 reveal / 进页兜底 / 1 分钟超时 cron 揭晓后清掉。
+   */
+  awaitingReveal?: boolean;
+  /** 各仓位封顶后派彩（与 Bet 行一一对应，供揭晓入账） */
+  betPlan?: Array<{ position: string; amount: number; payout: number; mult: number }>;
 }
 
 @Injectable()
 export class FruitMachineEngine {
   constructor(
     private prisma: PrismaService,
-    private points: PointsService,
-    private commission: CommissionService,
     private configCache: GameConfigCache,
     private risk: RiskService,
     private settle: SettlementKernel,
     @Optional() @Inject(forwardRef(() => ConsoleControlService))
     private control?: ConsoleControlService,
+    @Optional() @Inject(forwardRef(() => GlobalSoftControlService))
+    private globalSoft?: GlobalSoftControlService,
     @Optional() private flyDisk?: FlyDiskService,
   ) {}
+
+  private flyRoomId(payload: unknown): string {
+    return String((payload as { fly?: { roomId?: string } } | null)?.fly?.roomId || '').trim();
+  }
+
+  private async balanceInRoom(playerId: string, roomId?: string | null): Promise<number> {
+    const rid = String(roomId || '').trim();
+    return rid ? this.settle.getBalance(playerId, rid) : 0;
+  }
+
+  private async roomIdFromRound(playerId: string, roundId: string): Promise<string> {
+    const bet = await this.prisma.bet.findFirst({
+      where: { roundId, playerId },
+      orderBy: { createdAt: 'asc' },
+      select: { payload: true },
+    });
+    return this.flyRoomId(bet?.payload);
+  }
 
   async spin(input: FruitSpinInput) {
     const clientRequestId = this.settle.assertClientRequestId(input.clientRequestId);
     const replay = await this.replayIfAny(input.playerId, clientRequestId);
     if (replay) return replay;
+
+    // 上一把若动画中断未揭晓，先入账，避免 PENDING 堆积
+    await this.settleAwaitingReveal(input.playerId);
 
     const { playerId, bets } = input;
     const clientSeed = input.clientSeed?.slice(0, 128) || clientRequestId;
@@ -121,14 +154,18 @@ export class FruitMachineEngine {
     const awardWeights = { ...FRUIT_DEFAULT_AWARD_WEIGHTS, ...(payCfg.awardWeights ?? {}) };
 
     const house = this.flyDisk
-      ? await this.flyDisk.resolveHouse(playerId)
+      ? await this.flyDisk.resolveHouse(
+          playerId,
+          await this.flyDisk.requireOpsRoomId(playerId, input.roomNo),
+          totalAmount,
+          { requireRoom: true },
+        )
       : null;
-    const policies = this.control
-      ? await this.control.getActiveHoldPolicies(GAME_CODE)
-      : [];
-    const policy = matchRoomHoldPolicy(policies, house?.roomId);
-    const picked = pickSeedByHoldTarget({
-      policy,
+    const globalRt = this.globalSoft
+      ? await this.globalSoft.getArcadeDrawRuntime(GAME_CODE)
+      : null;
+    const softPick = pickSeedForArcadePool({
+      runtime: globalRt,
       stake: totalAmount,
       gen: () => {
         const g = genServerSeed();
@@ -169,7 +206,7 @@ export class FruitMachineEngine {
       rawTotal: totalPayout,
       allocated,
       nonce,
-    } = picked;
+    } = softPick.result;
     const flyPayload = house
       ? {
           type: house.type,
@@ -177,13 +214,10 @@ export class FruitMachineEngine {
           flying: house.flying,
           roomId: house.roomId,
           agentUserId: house.agentUserId,
+          /* 房间账本类型：揭晓派彩必须按信用/现金规则分支，不可丢 */
+          bookMode: house.bookMode,
         }
       : undefined;
-
-    const player = await this.prisma.user.findUnique({
-      where: { id: playerId },
-      select: { id: true, agentPath: true },
-    });
 
     const result = await this.prisma.$transaction(async (tx) => {
       // 新开一局即放弃上一把未再赌的当局赢分资格
@@ -210,6 +244,7 @@ export class FruitMachineEngine {
         amount: totalAmount,
         gameName: game.name,
         keyPrefix: KEY,
+        house: house ?? undefined,
       });
 
       if (allocated.capped) {
@@ -221,6 +256,7 @@ export class FruitMachineEngine {
 
       const betResults: Array<{ position: string; amount: number; payout: number; won: boolean }> =
         [];
+      const betPlan: NonNullable<FruitRoundOutcome['betPlan']> = [];
       let first = true;
       for (let i = 0; i < entries.length; i++) {
         const [pos, amt] = entries[i]!;
@@ -228,9 +264,8 @@ export class FruitMachineEngine {
         const symWins = paidWins.filter((w) => w.symbol === sym);
         const payout = allocated.wins[i] ?? 0;
         const mult = symWins.length ? symWins.reduce((s, w) => s + w.mult, 0) : 0;
-        const won = payout > 0;
 
-        const bet = await tx.bet.create({
+        await tx.bet.create({
           data: {
             betNo: businessNo('FR'),
             clientRequestId: first ? clientRequestId : undefined,
@@ -239,32 +274,17 @@ export class FruitMachineEngine {
             roundId: round.id,
             betType: pos,
             amount: amt,
-            status: won ? 'WON' : 'LOST',
-            payout,
-            multiplier: mult,
-            odds: mult,
-            validFlow: amt,
-            settledAt: new Date(),
+            /* 跑灯结束前不揭晓：注单页显示待开奖 */
+            status: 'PENDING',
+            payout: 0,
             ...(flyPayload ? { payload: { fly: flyPayload } as never } : {}),
           },
         });
         first = false;
 
-        await this.settle.creditWinInTx(tx, {
-          playerId,
-          roundId: round.id,
-          betId: bet.id,
-          amount: payout,
-          remark: `${game.name} 命中 ${sym}`,
-          keyPrefix: KEY,
-          stake: amt,
-          skipCap: true,
-        });
-
-        betResults.push({ position: pos, amount: amt, payout, won });
+        betPlan.push({ position: pos, amount: amt, payout, mult });
+        betResults.push({ position: pos, amount: amt, payout, won: payout > 0 });
       }
-
-      await this.settle.applyCommissionInTx(tx, player, totalAmount, round.id);
 
       const paidTotal = allocated.total;
       const outcome: FruitRoundOutcome = {
@@ -273,17 +293,18 @@ export class FruitMachineEngine {
         hitIndexes,
         wins: paidWins,
         totalPayout: paidTotal,
-        pendingGambleAmount: paidTotal > 0 ? paidTotal : 0,
+        pendingGambleAmount: 0,
+        awaitingReveal: true,
+        betPlan,
       };
       await tx.gameRound.update({
         where: { id: round.id },
         data: {
-          state: 'SETTLED',
-          endedAt: new Date(),
+          state: 'PLAYING',
           totalFlow: totalAmount,
           /** 最终消耗的派生次数，供 seed+nonce 逐步复算 */
           nonce,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+           
           outcome: outcome as any,
         },
       });
@@ -291,31 +312,8 @@ export class FruitMachineEngine {
       return { roundId: round.id, betResults, totalPayout: paidTotal, paidWins };
     });
 
-    try {
-      if (this.control) await this.control.refreshGoalExhaustion(GAME_CODE);
-    } catch {
-      /* 不影响开奖 */
-    }
 
-    if (result.totalPayout >= Math.max(totalAmount * 50, 100_000)) {
-      await this.risk.record({
-        type: 'BIG_WIN',
-        level: result.totalPayout >= 1_000_000 ? 'CRITICAL' : 'WARN',
-        targetId: playerId,
-        fingerprint: `bw:${result.roundId}`,
-        dedupeMs: 24 * 3600_000,
-        detail: {
-          playerId,
-          totalAmount,
-          totalPayout: result.totalPayout,
-          gameCode,
-          roundId: result.roundId,
-          summary: `${gameCode} 派彩 ${result.totalPayout}（下注 ${totalAmount}）`,
-        },
-      });
-    }
-
-    const balance = await this.settle.getBalance(playerId);
+    const balance = await this.balanceInRoom(playerId, house?.roomId);
     return {
       gameCode,
       roundId: result.roundId,
@@ -330,19 +328,105 @@ export class FruitMachineEngine {
       balance,
       serverSeed,
       serverSeedHash,
+      awaitingReveal: true,
     };
   }
 
-  /** 查询是否仍有可猜大小的当局赢分（进页恢复 UI） */
-  async getPendingGamble(playerId: string) {
-    const balance = await this.settle.getBalance(playerId);
+  /**
+   * 客户端跑灯/报奖结束后揭晓：派彩入账、注单 WON/LOST，注单页才显示盈亏。
+   * 幂等：已揭晓则回放余额与当局可再赌额度。
+   */
+  async reveal(playerId: string, roundId: string) {
+    if (!roundId) throw new BadRequestException('roundId 无效');
+    const settled = await this.revealRoundIfNeeded(playerId, roundId);
+    const balance = await this.balanceInRoom(
+      playerId,
+      await this.roomIdFromRound(playerId, roundId),
+    );
+    return {
+      ok: true as const,
+      roundId,
+      balance,
+      totalPayout: settled.totalPayout,
+      pendingGambleAmount: settled.pendingGambleAmount,
+    };
+  }
+
+  /**
+   * 每 5 秒扫一次：开局超过 1 分钟仍 awaitingReveal → 强制揭晓。
+   * 人不进游戏、杀进程也不卡「待开奖」；时长留足特殊报奖动画。
+   */
+  @Cron('*/5 * * * * *')
+  async cronForceRevealStale() {
     const game = await this.configCache.get(GAME_CODE);
-    if (!game) return { pendingGambleAmount: 0, balance };
+    if (!game) return;
+    const cutoff = new Date(Date.now() - REVEAL_TIMEOUT_MS);
+    const rows = await this.prisma.gameRound.findMany({
+      where: {
+        gameId: game.id,
+        category: 'ARCADE',
+        state: 'PLAYING',
+        startedAt: { lt: cutoff },
+        playerId: { not: null },
+      },
+      orderBy: { startedAt: 'asc' },
+      take: 40,
+      select: { id: true, playerId: true, outcome: true },
+    });
+    for (const row of rows) {
+      if (!row.playerId) continue;
+      const o = row.outcome as unknown as FruitRoundOutcome | null;
+      if (!o?.awaitingReveal) continue;
+      try {
+        await this.revealRoundIfNeeded(row.playerId, row.id);
+        log.log(`水果机超时强制揭晓 round=${row.id} player=${row.playerId}`);
+      } catch (err) {
+        log.warn(
+          `水果机超时揭晓失败 round=${row.id}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+  }
+
+  /** 无 pending 局时，尽量用 roomNo 解析当前房余额；解析不到则不返回 balance，避免前端被 0 覆盖 */
+  private async tryBalanceByRoomNo(
+    playerId: string,
+    roomNo?: string | null,
+  ): Promise<number | undefined> {
+    const no = String(roomNo || '').trim();
+    if (!/^\d{6}$/.test(no) || !this.flyDisk) return undefined;
+    try {
+      const rid = await this.flyDisk.requireOpsRoomId(playerId, no);
+      return this.balanceInRoom(playerId, rid);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** 查询是否仍有可猜大小的当局赢分（进页恢复 UI） */
+  async getPendingGamble(playerId: string, roomNo?: string) {
+    await this.settleAwaitingReveal(playerId);
+    const game = await this.configCache.get(GAME_CODE);
+    if (!game) {
+      const balance = await this.tryBalanceByRoomNo(playerId, roomNo);
+      return balance == null
+        ? { pendingGambleAmount: 0 }
+        : { pendingGambleAmount: 0, balance };
+    }
     const pending = await this.prisma.$transaction(async (tx) =>
       this.findPendingGambleRoundInTx(tx, playerId, game.id),
     );
-    if (!pending) return { pendingGambleAmount: 0, balance };
+    if (!pending) {
+      const balance = await this.tryBalanceByRoomNo(playerId, roomNo);
+      return balance == null
+        ? { pendingGambleAmount: 0 }
+        : { pendingGambleAmount: 0, balance };
+    }
     const outcome = pending.outcome as unknown as FruitRoundOutcome;
+    const balance = await this.balanceInRoom(
+      playerId,
+      await this.roomIdFromRound(playerId, pending.id),
+    );
     return {
       pendingGambleAmount: Math.max(0, outcome.pendingGambleAmount || 0),
       balance,
@@ -351,13 +435,30 @@ export class FruitMachineEngine {
   }
 
   /** 退币 / 放弃猜大小：清掉当局可再赌额度（积分已在开奖时入账，不扣回） */
-  async abandonGamble(playerId: string) {
+  async abandonGamble(playerId: string, roomNo?: string) {
+    await this.settleAwaitingReveal(playerId);
     const game = await this.configCache.get(GAME_CODE);
-    if (!game) return { ok: true as const, balance: await this.settle.getBalance(playerId) };
+    if (!game) {
+      const balance = await this.tryBalanceByRoomNo(playerId, roomNo);
+      return balance == null ? { ok: true as const } : { ok: true as const, balance };
+    }
+    const pending = await this.findPendingGambleRoundInTx(this.prisma, playerId, game.id);
+    let rid = pending ? await this.roomIdFromRound(playerId, pending.id) : '';
+    if (!rid && roomNo && this.flyDisk) {
+      try {
+        rid = await this.flyDisk.requireOpsRoomId(playerId, roomNo);
+      } catch {
+        rid = '';
+      }
+    }
     await this.prisma.$transaction(async (tx) => {
       await this.clearPendingGambleInTx(tx, playerId, game.id);
     });
-    return { ok: true as const, balance: await this.settle.getBalance(playerId) };
+    if (!rid) {
+      const balance = await this.tryBalanceByRoomNo(playerId, roomNo);
+      return balance == null ? { ok: true as const } : { ok: true as const, balance };
+    }
+    return { ok: true as const, balance: await this.balanceInRoom(playerId, rid) };
   }
 
   private async replayGambleIfAny(playerId: string, clientRequestId: string) {
@@ -379,7 +480,7 @@ export class FruitMachineEngine {
       payout: typeof o.payout === 'number' ? o.payout : bet.payout,
       pendingGambleAmount:
         typeof o.pendingGambleAmount === 'number' ? o.pendingGambleAmount : 0,
-      balance: await this.settle.getBalance(playerId),
+      balance: await this.balanceInRoom(playerId, this.flyRoomId(bet.payload)),
       roundId: bet.round.id,
       betId: bet.id,
       serverSeed: bet.round.serverSeed ?? '',
@@ -395,9 +496,10 @@ export class FruitMachineEngine {
       where: { roundId: bet.round.id },
       select: { betType: true, amount: true, payout: true },
     });
-    const balance = await this.settle.getBalance(playerId);
+    const balance = await this.balanceInRoom(playerId, this.flyRoomId(bet.payload));
     const totalBet = roundBets.reduce((s, b) => s + asMoney(b.amount), 0);
     const totalPayout = o.totalPayout ?? roundBets.reduce((s, b) => s + asMoney(b.payout), 0);
+    const planByPos = new Map((o.betPlan ?? []).map((p) => [p.position, p]));
     return {
       gameCode: bet.game.code,
       roundId: bet.round.id,
@@ -405,30 +507,196 @@ export class FruitMachineEngine {
       stopIndex: o.stopIndex,
       hitIndexes: o.hitIndexes,
       wins: o.wins ?? [],
-      bets: roundBets.map((b) => ({
-        position: b.betType ?? '',
-        amount: asMoney(b.amount),
-        payout: asMoney(b.payout),
-        won: asMoney(b.payout) > 0,
-      })),
+      bets: roundBets.map((b) => {
+        const pos = b.betType ?? '';
+        const plan = planByPos.get(pos);
+        const payout = plan ? plan.payout : asMoney(b.payout);
+        return {
+          position: pos,
+          amount: asMoney(b.amount),
+          payout,
+          won: payout > 0,
+        };
+      }),
       totalBet,
       totalWin: totalPayout,
       totalPayout,
       balance,
       serverSeed: bet.round.serverSeed ?? '',
       serverSeedHash: bet.round.serverSeedHash ?? '',
+      awaitingReveal: !!o.awaitingReveal || bet.round.state === 'PLAYING',
+    };
+  }
+
+  /** 揭晓该玩家所有仍 awaitingReveal 的水果局（进页 / 新开一局兜底） */
+  private async settleAwaitingReveal(playerId: string) {
+    const game = await this.configCache.get(GAME_CODE);
+    if (!game) return;
+    const rows = await this.prisma.gameRound.findMany({
+      where: {
+        playerId,
+        gameId: game.id,
+        state: 'PLAYING',
+        category: 'ARCADE',
+      },
+      orderBy: { startedAt: 'asc' },
+      take: 10,
+      select: { id: true, outcome: true },
+    });
+    for (const row of rows) {
+      const o = row.outcome as unknown as FruitRoundOutcome | null;
+      if (o?.awaitingReveal) {
+        await this.revealRoundIfNeeded(playerId, row.id);
+      }
+    }
+  }
+
+  private async revealRoundIfNeeded(playerId: string, roundId: string) {
+    const round = await this.prisma.gameRound.findFirst({
+      where: { id: roundId, playerId, category: 'ARCADE' },
+      include: {
+        game: { select: { id: true, name: true, code: true } },
+        bets: { orderBy: { createdAt: 'asc' } },
+      },
+    });
+    if (!round) throw new NotFoundException('局不存在');
+    const outcome = round.outcome as unknown as FruitRoundOutcome | null;
+    if (!outcome) throw new BadRequestException('局无开奖结果');
+
+    if (round.state === 'SETTLED' && !outcome.awaitingReveal) {
+      return {
+        totalPayout: Math.max(0, outcome.totalPayout || 0),
+        pendingGambleAmount: Math.max(0, outcome.pendingGambleAmount || 0),
+      };
+    }
+
+    const planByPos = new Map((outcome.betPlan ?? []).map((p) => [p.position, p]));
+    const paidTotal = Math.max(0, outcome.totalPayout || 0);
+    const gameName = round.game.name;
+    const gameCode = round.game.code || GAME_CODE;
+
+    await this.prisma.$transaction(async (tx) => {
+      /* 行锁：并发揭晓（多端同开）会让两笔事务都走到派彩分支。
+         对齐彩票 issue / 牌桌 round 的做法，先锁局行再判状态。 */
+      await tx.$queryRaw`SELECT id FROM "GameRound" WHERE "id" = ${roundId} FOR UPDATE`;
+      const locked = await tx.gameRound.findUnique({
+        where: { id: roundId },
+        select: { state: true, outcome: true },
+      });
+      if (!locked) throw new NotFoundException('局不存在');
+      const lockedOut = locked.outcome as unknown as FruitRoundOutcome | null;
+      if (locked.state === 'SETTLED' && lockedOut && !lockedOut.awaitingReveal) return;
+
+      /* 旧注单可能缺 bookMode：按房间补齐，保证信用/现金规则不串 */
+      let houseForReveal: FlyHouse | undefined;
+      const firstFly = (round.bets[0]?.payload as { fly?: FlyHouse } | null)?.fly;
+      if (firstFly) {
+        houseForReveal = { ...firstFly };
+        if (!houseForReveal.bookMode && houseForReveal.roomId) {
+          const room = await tx.room.findUnique({
+            where: { id: houseForReveal.roomId },
+            select: { bookMode: true },
+          });
+          if (room?.bookMode === 'CREDIT' || room?.bookMode === 'CASH') {
+            houseForReveal.bookMode = room.bookMode;
+          }
+        }
+      }
+
+      for (const bet of round.bets) {
+        /* round.bets 是事务外读的快照，这里的 status 可能已过期，只作快速跳过 */
+        if (bet.status !== 'PENDING') continue;
+        const pos = bet.betType || '';
+        const plan = planByPos.get(pos);
+        const amt = asMoney(bet.amount);
+        const payout = plan ? plan.payout : 0;
+        const mult = plan ? plan.mult : 0;
+
+        /* 先 CAS 抢占注单再派彩：抢不到说明别的事务已结过，跳过不重复出账 */
+        const claimed = await tx.bet.updateMany({
+          where: { id: bet.id, status: 'PENDING' },
+          data: {
+            status: payout > 0 ? 'WON' : 'LOST',
+            payout,
+            multiplier: mult,
+            odds: mult,
+            validFlow: amt,
+            settledAt: new Date(),
+          },
+        });
+        if (claimed.count === 0) continue;
+
+        await this.settle.creditWinInTx(tx, {
+          playerId,
+          roundId: round.id,
+          betId: bet.id,
+          amount: payout,
+          remark: `${gameName} 命中 ${pos}`,
+          keyPrefix: KEY,
+          stake: amt,
+          skipCap: true,
+          house: houseForReveal,
+        });
+      }
+
+      const nextOutcome: FruitRoundOutcome = {
+        ...outcome,
+        awaitingReveal: false,
+        pendingGambleAmount: paidTotal > 0 ? paidTotal : 0,
+      };
+      await tx.gameRound.update({
+        where: { id: round.id },
+        data: {
+          state: 'SETTLED',
+          endedAt: new Date(),
+           
+          outcome: nextOutcome as any,
+        },
+      });
+    });
+
+    try {
+      if (this.control) await this.control.refreshGoalExhaustion(GAME_CODE);
+    } catch {
+      /* 不影响揭晓 */
+    }
+
+    const totalAmount = round.bets.reduce((s, b) => s + asMoney(b.amount), 0);
+    if (paidTotal >= Math.max(totalAmount * 50, 100_000)) {
+      await this.risk.record({
+        type: 'BIG_WIN',
+        level: paidTotal >= 1_000_000 ? 'CRITICAL' : 'WARN',
+        targetId: playerId,
+        fingerprint: `bw:${roundId}`,
+        dedupeMs: 24 * 3600_000,
+        detail: {
+          playerId,
+          totalAmount,
+          totalPayout: paidTotal,
+          gameCode,
+          roundId,
+          summary: `${gameCode} 派彩 ${paidTotal}（下注 ${totalAmount}）`,
+        },
+      });
+    }
+
+    return {
+      totalPayout: paidTotal,
+      pendingGambleAmount: paidTotal > 0 ? paidTotal : 0,
     };
   }
 
   /**
    * 当局赢分「大 / 小」再赌：点数 1–6 小、8–13 大、7 和（退回本金）。
    * 金额必须等于最近一局水果机未消耗的 pendingGambleAmount，禁止用任意余额再赌。
+   * 开奖与主转同一套控奖：单人偏赢/偏输优先，否则房间留存。
    */
   async gamble(input: {
     playerId: string;
     amount: number;
     choice: 'big' | 'small';
     clientRequestId: string;
+    roomNo?: string;
   }) {
     const { playerId, amount, choice } = input;
     const clientRequestId = this.settle.assertClientRequestId(input.clientRequestId);
@@ -442,28 +710,82 @@ export class FruitMachineEngine {
     const replay = await this.replayGambleIfAny(playerId, clientRequestId);
     if (replay) return replay;
 
+    await this.settleAwaitingReveal(playerId);
+
     const game = await this.configCache.get(GAME_CODE);
     const config = game?.configs[0];
     if (!game || game.status !== 'ONLINE' || !config) {
       throw new NotFoundException('水果机未上线或未配置');
     }
 
-    const { seed, hash } = genServerSeed();
-    const clientSeed = `${playerId}:${amount}:${businessNo('FGS')}`;
-    const rnd = deriveRandom(seed, clientSeed, 1);
-    const roll = 1 + Math.floor(rnd * 13); // 1..13
-    let result: 'win' | 'lose' | 'push' = 'push';
-    if (roll === 7) result = 'push';
-    else if (roll <= 6) result = choice === 'small' ? 'win' : 'lose';
-    else result = choice === 'big' ? 'win' : 'lose';
+    /* 再赌必须沿用主转注单 fly.roomId，禁止猜「最近房」 */
+    const pendingSrc = await this.findPendingGambleRoundInTx(this.prisma, playerId, game.id);
+    if (!pendingSrc) throw new BadRequestException('没有可再赌的当局赢分');
+    const srcBet = await this.prisma.bet.findFirst({
+      where: { roundId: pendingSrc.id, playerId },
+      orderBy: { createdAt: 'asc' },
+      select: { payload: true },
+    });
+    const snapRoomId = (srcBet?.payload as { fly?: { roomId?: string } } | null)?.fly?.roomId;
+    if (!snapRoomId) {
+      throw new BadRequestException('当局赢分缺少房间信息，请重新下注后再猜大小');
+    }
+    if (input.roomNo && this.flyDisk) {
+      const fromNo = await this.flyDisk.requireOpsRoomId(playerId, input.roomNo);
+      if (fromNo !== snapRoomId) {
+        throw new BadRequestException('再赌须在原下注房间');
+      }
+    }
+    const house = this.flyDisk
+      ? await this.flyDisk.resolveHouse(playerId, snapRoomId, amount, { requireRoom: true })
+      : { type: 'PLATFORM' as const, id: PLATFORM_OWNER_ID, flying: false as boolean, roomId: snapRoomId };
+    const flyPayload = {
+      type: house.type,
+      id: house.id,
+      flying: house.flying,
+      roomId: house.roomId,
+      agentUserId: house.agentUserId,
+      bookMode: house.bookMode,
+    };
 
-    // 净结算：win +amount / lose -amount / push 0；赢侧走 capWin，续赌额度同步封顶。
-    const rawBack = result === 'win' ? amount * 2 : result === 'push' ? amount : 0;
-    const { win: payoutBack, capped: gambleCapped } = capWin(amount, rawBack);
+    const globalRt = this.globalSoft
+      ? await this.globalSoft.getArcadeDrawRuntime(GAME_CODE)
+      : null;
+    const clientSeed = `${playerId}:${clientRequestId}`;
+    const softPick = pickSeedForArcadePool({
+      runtime: globalRt,
+      stake: amount,
+      gen: () => {
+        const g = genServerSeed();
+        return { seed: g.seed, hash: g.hash };
+      },
+      simulate: (seed) => {
+        const rnd = deriveRandom(seed, clientSeed, 1);
+        const roll = 1 + Math.floor(rnd * 13); // 1..13
+        let result: 'win' | 'lose' | 'push';
+        if (roll === 7) result = 'push';
+        else if (roll <= 6) result = choice === 'small' ? 'win' : 'lose';
+        else result = choice === 'big' ? 'win' : 'lose';
+        const rawBack = result === 'win'
+          ? roundMoney(amount * 2)
+          : result === 'push' ? amount : 0;
+        const { win: payout, capped } = capWin(amount, rawBack);
+        return { payout, roll, result, capped, rawBack };
+      },
+    });
+    const {
+      seed,
+      hash,
+      roll,
+      result,
+      payout: payoutBack,
+      capped: gambleCapped,
+      rawBack,
+    } = softPick.result;
     if (gambleCapped) {
       log.error(`水果机再赌派彩触顶 amount=${amount} 原始=${rawBack} 封顶=${payoutBack}`);
     }
-    const nextPending = result === 'lose' ? 0 : payoutBack;
+
     const audit = await this.prisma.$transaction(async (tx) => {
       const source = await this.findPendingGambleRoundInTx(tx, playerId, game.id);
       if (!source) {
@@ -511,58 +833,51 @@ export class FruitMachineEngine {
           betType: `GAMBLE_${choice.toUpperCase()}`,
           amount,
           status: 'PENDING',
-          payload: { sourceRoundId: source.id, choice, roll, result },
+          payload: { sourceRoundId: source.id, choice, roll, result, fly: flyPayload } as never,
         },
       });
-      await this.points.transferInTx(
-        tx,
-        {
-          type: 'PLAYER',
-          id: playerId,
-          remark: `水果机大小再赌 ${choice} 押注`,
-          idempotencyKey: `fruit_gamble_stake_${bet.id}`,
-        },
-        {
-          type: 'PLATFORM',
-          id: PLATFORM_OWNER_ID,
-          idempotencyKey: `fruit_gamble_stake_plat_${bet.id}`,
-        },
+
+      await this.settle.debitBetInTx(tx, {
+        playerId,
+        roundId: round.id,
         amount,
-        { bizType: 'BET', refType: 'round', refId: round.id },
-      );
-      if (payoutBack > 0) {
-        await this.points.transferInTx(
-          tx,
-          {
-            type: 'PLATFORM',
-            id: PLATFORM_OWNER_ID,
-            idempotencyKey: `fruit_gamble_plat_${bet.id}`,
-          },
-          {
-            type: 'PLAYER',
-            id: playerId,
-            remark: `水果机大小再赌 ${choice} 点数${roll}`,
-            idempotencyKey: `fruit_gamble_${bet.id}`,
-          },
-          payoutBack,
-          { bizType: 'WIN', refType: 'round', refId: round.id },
-        );
-      }
+        gameName: `${game.name}大小再赌`,
+        keyPrefix: `${KEY}_gamble`,
+        house,
+      });
+
+      const { paid } = await this.settle.creditWinInTx(tx, {
+        playerId,
+        roundId: round.id,
+        betId: bet.id,
+        amount: payoutBack,
+        remark: `水果机大小再赌 ${choice} 点数${roll}`,
+        keyPrefix: `${KEY}_gamble`,
+        stake: amount,
+        skipCap: true,
+        /* 猜大小仍是 0 边缘玩法：不刷流水返水/佣金 */
+        skipFlowRebate: true,
+        house,
+      });
+
       await tx.bet.update({
         where: { id: bet.id },
         data: {
           status: result === 'lose' ? 'LOST' : 'WON',
-          payout: payoutBack,
-          odds: payoutBack / amount,
-          multiplier: payoutBack / amount,
-          /* 猜大小是 0 边缘玩法（6赢/6输/1和），不产生有效流水，
-             否则玩家可以零成本刷佣金 */
+          payout: paid,
+          odds: paid / amount,
+          multiplier: paid / amount,
           validFlow: 0,
           settledAt: new Date(),
-          payload: { sourceRoundId: source.id, choice, roll, result },
+          payload: {
+            sourceRoundId: source.id,
+            choice,
+            roll,
+            result,
+            fly: flyPayload,
+          } as never,
         },
       });
-      /* 同上：0 边缘玩法不计流水，也就不参与分佣 */
       await tx.gameRound.update({
         where: { id: round.id },
         data: {
@@ -573,38 +888,41 @@ export class FruitMachineEngine {
             choice,
             roll,
             result,
-            payout: payoutBack,
+            payout: paid,
             sourceRoundId: source.id,
-            pendingGambleAmount: nextPending,
+            pendingGambleAmount: result === 'lose' ? 0 : paid,
           },
         },
       });
       // 赢/和：把可续赌金额写回源局，供下一次 gamble 绑定
-      if (nextPending > 0) {
+      const pendingWrite = result === 'lose' ? 0 : paid;
+      if (pendingWrite > 0) {
         await tx.gameRound.update({
           where: { id: source.id },
           data: {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            outcome: { ...sourceOutcome, pendingGambleAmount: nextPending } as any,
+             
+            outcome: { ...sourceOutcome, pendingGambleAmount: pendingWrite } as any,
           },
         });
       }
-      return { roundId: round.id, betId: bet.id, pendingGambleAmount: nextPending };
+      return { roundId: round.id, betId: bet.id, pendingGambleAmount: pendingWrite, payout: paid };
     });
 
-    const after = await this.prisma.pointsAccount.findUnique({
-      where: { ownerId: playerId },
-      select: { balance: true },
-    });
+
+    try {
+      if (this.control) await this.control.refreshGoalExhaustion(GAME_CODE);
+    } catch {
+      /* 不影响再赌结果 */
+    }
 
     return {
       roll,
       choice,
       result,
       amount,
-      payout: payoutBack,
+      payout: audit.payout,
       pendingGambleAmount: audit.pendingGambleAmount,
-      balance: asMoney(after?.balance ?? 0),
+      balance: await this.balanceInRoom(playerId, house.roomId),
       roundId: audit.roundId,
       betId: audit.betId,
       serverSeed: seed,
@@ -623,7 +941,7 @@ export class FruitMachineEngine {
     await tx.gameRound.update({
       where: { id: pending.id },
       data: {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+         
         outcome: { ...outcome, pendingGambleAmount: 0 } as any,
       },
     });

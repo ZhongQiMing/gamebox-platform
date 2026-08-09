@@ -39,8 +39,15 @@ export const useRoomStore = defineStore('room', () => {
     return approved.value
   }
 
+  /**
+   * 进房申请/重进。
+   * PENDING 不写入 current、不加入 approved（不能进大厅）。
+   */
   async function enter(roomNoInput: string) {
     const room = await roomsApi.enter(roomNoInput)
+    if (room.memberStatus === 'PENDING') {
+      return room
+    }
     setCurrent(room)
     const exists = approved.value.some((r) => r.roomNo === room.roomNo)
     if (!exists) approved.value = [room, ...approved.value]

@@ -16,6 +16,7 @@ import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { AdminLogService } from './admin-log.service';
 import { RISK_TYPE_META, RISK_TYPES, type RiskType } from '../risk/risk.types';
+import { ConsoleScopeService } from '../console/console-scope.service';
 
 @Controller('admin/risk')
 @Roles('ADMIN', 'BRANCH')
@@ -23,6 +24,7 @@ export class RiskAdminController {
   constructor(
     private prisma: PrismaService,
     private adminLog: AdminLogService,
+    private scope: ConsoleScopeService,
   ) {}
 
   @Get('meta')
@@ -78,7 +80,7 @@ export class RiskAdminController {
   }
 
   /**
-   * ADMIN 全量；BRANCH 仅 targetId 落在其代理子树内的事件（无 target 的平台级事件不可见）。
+   * ADMIN 全量；BRANCH 仅授权房间内的代理/玩家相关事件（无 target 的平台级事件不可见）。
    */
   @Get()
   async list(
@@ -254,6 +256,10 @@ export class RiskAdminController {
     role: string;
   }): Promise<Prisma.RiskEventWhereInput> {
     if (user.role === 'ADMIN') return {};
+    if (user.role === 'BRANCH') {
+      const ids = await this.scope.scopedUserIds({ id: user.id, role: user.role });
+      return { targetId: { in: ids?.length ? ids : ['__none__'] } };
+    }
     const me = await this.prisma.user.findUnique({
       where: { id: user.id },
       select: { agentPath: true },
@@ -279,6 +285,13 @@ export class RiskAdminController {
   ) {
     if (user.role === 'ADMIN') return;
     if (!targetId) throw new ForbiddenException('无权处理平台级事件');
+    if (user.role === 'BRANCH') {
+      await this.scope.assertUserInScope(
+        { id: user.id, role: user.role },
+        targetId,
+      );
+      return;
+    }
     const me = await this.prisma.user.findUnique({
       where: { id: user.id },
       select: { agentPath: true },

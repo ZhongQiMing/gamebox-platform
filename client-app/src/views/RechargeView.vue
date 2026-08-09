@@ -159,10 +159,12 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { useWalletStore } from '@/stores/wallet'
+import { useRoomStore } from '@/stores/room'
 import { rechargeApi } from '@/api/recharge'
 import { useToast } from '@/composables/useToast'
 import { useBodyClass } from '@/composables/useBodyClass'
 import { pushCsScoreApply } from '@/composables/csLocalChat'
+import { newFundOrderNo } from '@/utils/fundOrderNo'
 import TabBar from '@/components/TabBar.vue'
 import { PLAYER_DOWN_MIN, PLAYER_FUND_MAX, PLAYER_UP_MIN } from '@gamebox/shared'
 import '@/assets/recharge.css'
@@ -172,6 +174,7 @@ useBodyClass('deco-bg')
 const router = useRouter()
 const userStore = useUserStore()
 const walletStore = useWalletStore()
+const roomStore = useRoomStore()
 const { toast } = useToast()
 
 const avatarSrc = computed(() => userStore.profile?.avatar || '/images/avatars/001.jpg')
@@ -186,6 +189,9 @@ const curPayType = ref('wechat')
 const amountStr = ref('')
 const quickActive = ref<number | null>(null)
 const loading = ref(false)
+/** 当前这笔的订单号与它对应的「类型+金额」，用于连点/重发复用同一个幂等键 */
+const pendingOrderNo = ref('')
+const pendingOrderKey = ref('')
 
 const sheetShow = ref(false)
 const result = ref<{ type: 'up' | 'down'; label: string; time: string } | null>(null)
@@ -248,10 +254,26 @@ async function submit() {
     if (amount > walletStore.balance) { toast('下分金额不能大于当前积分'); return }
   }
 
+  const roomNo = String(roomStore.roomNo || '').trim()
+  if (!/^\d{6}$/.test(roomNo)) {
+    toast('请先进入房间再申请上下分')
+    return
+  }
+  /*
+   * 订单号只在「这一笔金额+类型」变化时才换新：
+   * 连点或超时重发都复用同一个号，服务端按号去重，不会重复建单／重复冻结。
+   */
+  const orderKey = `${curType.value}:${amount}`
+  if (pendingOrderKey.value !== orderKey || !pendingOrderNo.value) {
+    pendingOrderKey.value = orderKey
+    pendingOrderNo.value = newFundOrderNo(curType.value)
+  }
+  const clientRequestId = pendingOrderNo.value
+
   loading.value = true
   try {
     if (curType.value === 'up') {
-      await rechargeApi.apply(amount, curPayType.value)
+      await rechargeApi.apply(amount, curPayType.value, roomNo, clientRequestId)
       pushCsScoreApply({
         uid: userStore.profile?.uid,
         kind: 'up',
@@ -259,7 +281,7 @@ async function submit() {
         channel: curPayType.value,
       })
     } else {
-      await rechargeApi.withdraw(amount)
+      await rechargeApi.withdraw(amount, roomNo, clientRequestId)
       await walletStore.fetchBalance()
       pushCsScoreApply({
         uid: userStore.profile?.uid,
@@ -269,6 +291,9 @@ async function submit() {
     }
     const label = buildLabel(amount)
     result.value = { type: curType.value, label, time: formatTime(Date.now()) }
+    /* 这一笔已成功落单，下一笔必须换新号 */
+    pendingOrderKey.value = ''
+    pendingOrderNo.value = ''
     amountStr.value = ''
     quickActive.value = null
     toast(label)

@@ -247,7 +247,7 @@ body.bjsc-bg::after {
   opacity: 0.35;
   pointer-events: none;
 }
-/* 三栏：倒计时居中按内容撑开，始终一行 */
+/* 三栏：左右均分剩余空间，倒计时居中按内容撑开，避免被挤扁 */
 .bjsc-issue-card__top {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
@@ -315,6 +315,7 @@ body.bjsc-bg::after {
   display: flex;
   align-items: center;
   gap: 4px;
+  flex-shrink: 0;
 }
 /* 开奖中：强制隐藏数字格（作者 display:flex 会盖掉 UA [hidden]） */
 .bjsc-timer__digits[hidden],
@@ -443,11 +444,14 @@ body.bjsc-bg::after {
   display: flex;
   align-items: center;
   gap: 3px;
+  flex-shrink: 0;
 }
 .bjsc-timer__cell {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
+  box-sizing: border-box;
   width: 24px;
   height: 34px;
   border-radius: 5px;
@@ -583,7 +587,7 @@ body.bjsc-bg::after {
   70% { transform: scale(1.08); }
   100% { transform: scale(1); opacity: 1; }
 }
-/* 单行自适应：期号/摘要按内容占位，号码球均分剩余宽度缩放 */
+/* 单行自适应：期号/摘要按内容占位，十球均分剩余宽度缩放 */
 .bjsc-draw-bar__main {
   width: 100%;
   min-width: 0;
@@ -691,7 +695,8 @@ body.bjsc-bg::after {
 }
 .bjsc-draw-bar.is-open .bjsc-draw-panel {
   max-height: 380px;
-  background: var(--bjsc-card);
+  /* 不透明，避免底下聊天透上来显得脏 */
+  background: #1a1410;
   border: 1px solid var(--bjsc-border);
   border-top: 1px solid var(--line);
 }
@@ -700,57 +705,71 @@ body.bjsc-bg::after {
   overflow-y: auto;
   max-height: min(340px, 52vh);
   -webkit-overflow-scrolling: touch;
+  background: #1a1410;
+  padding: 4px 0 6px;
 }
 .bjsc-draw-table {
   width: 100%;
+  min-width: 360px;
   table-layout: fixed;
-  border-collapse: collapse;
-  font-size: clamp(11px, 3vw, 14px);
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: clamp(10px, 2.8vw, 12px);
   color: var(--text-dim);
 }
-.bjsc-draw-table col.col-issue { width: 24%; }
-.bjsc-draw-table col.col-ball { width: 3.6%; }
-.bjsc-draw-table col.col-gy { width: 14%; }
-.bjsc-draw-table col.col-lh { width: 13%; }
+/* 期号收窄，十个名次给足宽度，避免球体重叠挡期号 */
+.bjsc-draw-table col.col-issue { width: 15%; }
+.bjsc-draw-table col.col-ball { width: 5.6%; }
+.bjsc-draw-table col.col-gy { width: 12%; }
+.bjsc-draw-table col.col-lh { width: 17%; }
 .bjsc-draw-table th,
 .bjsc-draw-table td {
-  padding: 3px 0;
+  padding: 5px 1px;
   text-align: center;
   border-bottom: 1px solid rgba(58, 47, 37, 0.8);
   white-space: nowrap;
-  overflow: hidden;
+  overflow: visible;
   vertical-align: middle;
 }
 .bjsc-draw-table thead th {
-  background: var(--bg-elev);
+  position: sticky;
+  top: 0;
+  background: #221a14;
   color: var(--gold);
   font-weight: 600;
   letter-spacing: 0;
-  font-size: clamp(11px, 2.9vw, 14px);
-  z-index: 1;
+  font-size: clamp(9px, 2.4vw, 11px);
+  z-index: 2;
   box-shadow: 0 1px 0 var(--line);
+  padding-top: 6px;
+  padding-bottom: 6px;
 }
 .bjsc-draw-table .bjsc-draw-table__issue {
-  font-size: 12px;
+  font-size: 10px;
   font-weight: 600;
   font-family: ui-monospace, Consolas, monospace;
   color: #f4d36b;
-  letter-spacing: -0.3px;
+  letter-spacing: -0.5px;
   line-height: 1.2;
   text-align: left;
-  padding-left: 4px;
+  padding-left: 6px;
+  padding-right: 2px;
   white-space: nowrap;
 }
 .bjsc-draw-table .cell-gy {
-  font-size: clamp(10px, 2.75vw, 13px);
+  font-size: clamp(9px, 2.4vw, 11px);
   letter-spacing: 0;
+  padding-left: 3px;
+  padding-right: 3px;
 }
 .bjsc-draw-table .cell-lh {
-  font-size: clamp(10px, 2.75vw, 13px);
-  letter-spacing: -0.2px;
+  font-size: clamp(9px, 2.3vw, 11px);
+  letter-spacing: 0.5px;
+  padding-right: 6px;
 }
 .bjsc-draw-table .bjsc-ball.tbl {
   margin: 0 auto;
+  display: inline-flex;
 }
 .bjsc-draw-table tbody tr:nth-child(even) {
   background: rgba(0, 0, 0, 0.2);
@@ -807,7 +826,8 @@ body.bjsc-bg::after {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 10px calc(var(--bjsc-gap) + var(--rail-w)) 12px var(--bjsc-gap);
+  /* 右侧不预留侧栏空位：聊天铺满，四个按钮叠在消息上方（微信式） */
+  padding: 10px var(--bjsc-gap) 12px;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -935,7 +955,7 @@ body.bjsc-bg::after {
 .bjsc-msg.is-robot .bjsc-msg__bubble,
 .bjsc-msg.is-robot .bjsc-msg__bubble--bot {
   display: block;
-  max-width: min(380px, 98%);
+  max-width: min(320px, 98%);
   padding: 0;
   background: transparent;
   border: none;
@@ -2836,6 +2856,56 @@ body.bjsc-bg::after {
 }
 
 /* ---------- 响应式断点 ---------- */
+/* 始终保持「期号 + 倒计时 + 按钮」一行；窄屏只压缩尺寸 */
+@media (max-width: 480px) {
+  .bjsc-issue-card {
+    padding: 8px 8px;
+    margin-left: 8px;
+    margin-right: 8px;
+  }
+  .bjsc-issue-card__top {
+    column-gap: 3px;
+  }
+  .bjsc-cur-issue {
+    font-size: 11px;
+  }
+  .bjsc-cur-issue__tag {
+    font-size: 9px;
+    letter-spacing: 1px;
+  }
+  .bjsc-issue-btn {
+    width: 36px;
+    height: 26px;
+    font-size: 10px;
+  }
+  .bjsc-timer__cell {
+    width: 20px;
+    height: 28px;
+    font-size: 16px;
+  }
+  .bjsc-timer__sep {
+    width: 7px;
+    font-size: 16px;
+  }
+  .bjsc-timer__digits {
+    gap: 2px;
+  }
+  .bjsc-timer__group {
+    gap: 2px;
+  }
+  .bjsc-timer__lbl {
+    font-size: 9px;
+  }
+  .bjsc-draw-bar {
+    margin-left: 8px;
+    margin-right: 8px;
+  }
+  .bjsc-draw-bar__main {
+    padding: 7px 8px;
+    gap: 4px;
+  }
+}
+
 @media (max-width: 380px) {
   .bjsc-head {
     gap: 6px;
@@ -2853,45 +2923,36 @@ body.bjsc-bg::after {
     column-gap: 3px;
   }
 
-  .bjsc-issue-card__top {
-    column-gap: 3px;
-  }
-  .bjsc-issue-card__left {
-    max-width: none;
-  }
   .bjsc-issue-btn {
     width: 34px;
     height: 24px;
     font-size: 9px;
   }
-  .bjsc-cur-issue {
-    font-size: 11px;
-  }
-  .bjsc-timer__cell {
-    width: 22px;
-    height: 30px;
-    font-size: 18px;
-  }
-  .bjsc-timer__sep {
-    width: 8px;
-    font-size: 18px;
-  }
-
-  .bjsc-draw-bar__main {
-    padding: 7px 8px;
-    gap: 4px;
-  }
-  .bjsc-draw-bar__issue {
-    font-size: 10px;
-  }
   .bjsc-timer__cell {
     width: 18px;
     height: 26px;
     font-size: 15px;
+    border-radius: 4px;
   }
   .bjsc-timer__sep {
     width: 6px;
     font-size: 15px;
+  }
+  .bjsc-timer.is-drawing {
+    min-width: 0;
+    padding: 7px 12px 8px;
+  }
+  .bjsc-timer.is-drawing .bjsc-timer__lbl {
+    font-size: 14px;
+    letter-spacing: 0.28em;
+  }
+
+  .bjsc-draw-bar__issue {
+    font-size: 10px;
+  }
+
+  .bjsc-rc-pill .v {
+    font-size: 11px;
   }
 
   .bjsc-rail {
@@ -2910,10 +2971,21 @@ body.bjsc-bg::after {
   }
 }
 
+
 /* 短屏：侧栏压缩，避免压住底部输入 */
 .bjsc-room.is-rail-compact .bjsc-rail {
   gap: 2px;
   width: 44px;
+}
+.bjsc-room.is-rail-compact .bjsc-rail-ladder {
+  width: 26px;
+  height: 26px;
+}
+.bjsc-room.is-rail-compact .bjsc-rail-ladder__arrow {
+  font-size: 10px;
+}
+.bjsc-room.is-rail-compact .bjsc-rail-stack {
+  gap: 6px;
 }
 .bjsc-room.is-rail-compact .bjsc-rail-ic {
   width: 34px;
@@ -2964,7 +3036,7 @@ body.bjsc-bg::after {
 }
 .bjsc-ball.xs { width: 20px; height: 20px; }
 .bjsc-ball.sm { width: 24px; height: 24px; }
-.bjsc-ball.tbl { width: 18px; height: 18px; }
+.bjsc-ball.tbl { width: 16px; height: 16px; }
 .bjsc-ball.play { width: 34px; height: 34px; }
 .bjsc-ball.podium { width: 46px; height: 46px; }
 
@@ -2981,77 +3053,9 @@ body.bjsc-bg::after {
   filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.45));
 }
 
-/* ── 开奖竞速卡（嵌入 PK10 finishAnimation） ── */
-.bjsc-race-card {
-  width: min(380px, 100%);
-  border-radius: 10px;
-  overflow: hidden;
-  background: linear-gradient(145deg, rgba(22, 17, 11, 0.98), rgba(10, 8, 5, 0.99));
-  border: 1px solid rgba(212, 175, 55, 0.28);
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(212, 175, 55, 0.06) inset;
-}
-.bjsc-race-card.is-reveal {
-  animation: bjsc-rc-in 0.4s ease-out both;
-}
-.bjsc-race-card__stage {
-  position: relative;
-  width: 100%;
-  aspect-ratio: 1334 / 780;
-  overflow: hidden;
-  background: #000;
-  line-height: 0;
-}
-.bjsc-race-card__frame {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 1334px;
-  height: 780px;
-  border: 0;
-  transform-origin: 0 0;
-  background: #000;
-  pointer-events: none;
-}
-.bjsc-race-card__foot {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
-  gap: 6px;
-  padding: 8px 10px 10px;
-  background: linear-gradient(0deg, rgba(18, 14, 8, 0.96), rgba(22, 17, 11, 0.9));
-  border-top: 1px solid rgba(212, 175, 55, 0.14);
-}
-.bjsc-race-card__pill {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  min-height: 48px;
-  min-width: 0;
-  padding: 7px 6px;
-  border-radius: 8px;
-  background: rgba(212, 175, 55, 0.06);
-  border: 1px solid rgba(212, 175, 55, 0.18);
-}
-.bjsc-race-card__pill .k {
-  font: 600 11px/1.2 "Noto Sans SC", sans-serif;
-  color: #c8a84a;
-  letter-spacing: 0.5px;
-  white-space: nowrap;
-}
-.bjsc-race-card__pill .v {
-  font: 700 12px/1.3 ui-monospace, Consolas, monospace;
-  color: #f4ecd6;
-  text-align: center;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 100%;
-}
-
-/* ── 开奖结果卡（旧 Canvas 领奖台，兼容历史消息） ── */
+/* ── 开奖结果卡（黑金体系，与房间主界面同调） ── */
 .bjsc-result-card {
-  width: min(380px, 100%);
+  width: min(320px, 100%);
   border-radius: 10px;
   overflow: hidden;
   background: linear-gradient(145deg, rgba(22, 17, 11, 0.98), rgba(10, 8, 5, 0.99));
@@ -3108,7 +3112,7 @@ body.bjsc-bg::after {
 .bjsc-rc-canvas { display: block; width: 100%; height: auto; }
 .bjsc-rc-foot {
   display: grid;
-  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.15fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.1fr);
   gap: 6px;
   padding: 8px 10px 10px;
   background: linear-gradient(0deg, rgba(18, 14, 8, 0.96), rgba(22, 17, 11, 0.9));
@@ -3119,16 +3123,16 @@ body.bjsc-bg::after {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  min-height: 50px;
+  gap: 4px;
+  min-height: 48px;
   min-width: 0;
-  padding: 7px 4px;
+  padding: 6px 4px;
   border-radius: 8px;
   background: rgba(212, 175, 55, 0.06);
   border: 1px solid rgba(212, 175, 55, 0.18);
 }
 .bjsc-rc-pill .k {
-  font: 600 11px/1.2 "Noto Sans SC", sans-serif;
+  font: 600 10px/1.2 "Noto Sans SC", sans-serif;
   color: #c8a84a;
   letter-spacing: 0.5px;
   white-space: nowrap;
@@ -3170,9 +3174,66 @@ body.bjsc-bg::after {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   width: var(--rail-w, 56px);
   pointer-events: none;
+}
+.bjsc-rail-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-height: 420px;
+  opacity: 1;
+  overflow: hidden;
+  transition: max-height 0.22s ease, opacity 0.18s ease, margin 0.18s ease;
+}
+.bjsc-room.is-rail-collapsed .bjsc-rail-stack {
+  max-height: 0;
+  opacity: 0;
+  margin: 0;
+  pointer-events: none;
+}
+/* 收起/展开：三角箭头 + 外圈，收起▼ 展开▲ */
+.bjsc-rail-ladder {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1.5px solid rgba(244, 211, 107, 0.78);
+  border-radius: 50%;
+  background: linear-gradient(180deg, rgba(42, 34, 18, 0.92), rgba(18, 14, 10, 0.88));
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 2px 6px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 230, 150, 0.18);
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.12s ease;
+}
+.bjsc-rail-ladder:hover {
+  border-color: rgba(255, 224, 130, 0.95);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 0 10px rgba(244, 211, 107, 0.35),
+    0 2px 6px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 230, 150, 0.28);
+}
+.bjsc-rail-ladder__arrow {
+  display: block;
+  font-size: 11px;
+  line-height: 1;
+  color: #f4d36b;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.65);
+  transform: translateY(0.5px);
+}
+.bjsc-rail-ladder:active {
+  transform: scale(0.94);
+}
+.bjsc-rail-ladder:active .bjsc-rail-ladder__arrow {
+  opacity: 0.9;
 }
 .bjsc-rail-btn {
   display: flex;
@@ -3401,7 +3462,8 @@ body.bjsc-bg::after {
   align-items: center;
   justify-content: center;
   gap: 3px;
-  min-width: 88px;
+  flex-shrink: 0;
+  min-width: 0;
 }
 .bjsc-timer__lbl {
   font-size: 10px;
@@ -3426,4 +3488,82 @@ body.bjsc-bg::after {
 .bjsc-room.has-keypad .bjsc-rail {
   z-index: 10;
   pointer-events: none;
+}
+
+
+/* ── 开奖竞速卡（嵌入 PK10 finishAnimation / bjsc） ── */
+.bjsc-race-card {
+  width: min(320px, 100%);
+  border-radius: 10px;
+  overflow: hidden;
+  background: linear-gradient(145deg, rgba(22, 17, 11, 0.98), rgba(10, 8, 5, 0.99));
+  border: 1px solid rgba(212, 175, 55, 0.28);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(212, 175, 55, 0.06) inset;
+}
+.bjsc-race-card.is-reveal {
+  animation: bjsc-rc-in 0.4s ease-out both;
+}
+.bjsc-race-card__stage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1334 / 780;
+  overflow: hidden;
+  background: #0a0806;
+  line-height: 0;
+}
+.bjsc-race-card__frame {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1334px;
+  height: 780px;
+  border: 0;
+  transform-origin: 0 0;
+  background: #000;
+  pointer-events: none;
+  /* 默认藏起：未 scale 时只露出左上角 Logo，像名字被放大 */
+  opacity: 0;
+  visibility: hidden;
+}
+/* 必须先完成 scale，再露画面（开播 / 结算） */
+.bjsc-race-card.is-playing.is-frame-ready .bjsc-race-card__frame,
+.bjsc-race-card.is-settled.is-frame-ready .bjsc-race-card__frame {
+  opacity: 1;
+  visibility: visible;
+}
+.bjsc-race-card__foot {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+  gap: 6px;
+  padding: 8px 10px 10px;
+  background: linear-gradient(0deg, rgba(18, 14, 8, 0.96), rgba(22, 17, 11, 0.9));
+  border-top: 1px solid rgba(212, 175, 55, 0.14);
+}
+.bjsc-race-card__foot.is-hidden {
+  display: none;
+}
+.bjsc-race-card__pill {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 48px;
+  min-width: 0;
+  padding: 7px 6px;
+  border-radius: 8px;
+  background: rgba(212, 175, 55, 0.06);
+  border: 1px solid rgba(212, 175, 55, 0.18);
+}
+.bjsc-race-card__pill .k {
+  font-size: 10px;
+  color: rgba(245, 236, 214, 0.55);
+  letter-spacing: 0.5px;
+}
+.bjsc-race-card__pill .v {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--gold-bright, #f4d36b);
+  text-align: center;
+  word-break: break-all;
 }

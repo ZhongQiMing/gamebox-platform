@@ -24,7 +24,7 @@
         <span class="ic">♟</span><span class="lb">返回玩家登录</span><span class="arrow">›</span>
       </div>
       <div v-if="kind === 'branch'" class="menu-item" @click="goOtherLogin">
-        <span class="ic">⚜</span><span class="lb">代理登录</span><span class="arrow">›</span>
+        <span class="ic">⚜</span><span class="lb">代理 / 客服</span><span class="arrow">›</span>
       </div>
       <div v-else class="menu-item" @click="goOtherLogin">
         <span class="ic">♛</span><span class="lb">房主登录</span><span class="arrow">›</span>
@@ -44,7 +44,7 @@
           <span>金</span><span>御</span><span>汇</span>
         </h1>
         <div class="luxe-divider hero-divider"><span></span>◆<span></span></div>
-        <div class="hero-en">{{ kind === 'branch' ? '房 主 登 录' : '代 理 登 录' }}</div>
+        <div class="hero-en">{{ kind === 'branch' ? '房 主 登 录' : '代 理 · 客 服' }}</div>
       </div>
 
       <form class="welcome-form" @submit.prevent>
@@ -54,7 +54,7 @@
             v-model="account"
             type="text"
             class="field"
-            :placeholder="kind === 'branch' ? '房主 / 超管账号' : '代理 / 子账号'"
+            :placeholder="kind === 'branch' ? '房主 / 管理员账号' : '代理 / 子账号 / 客服'"
             maxlength="20"
             autocomplete="username"
           >
@@ -85,7 +85,6 @@
           </button>
         </div>
       </form>
-      <p class="staff-login-tip">手机端可上下分与查流水；控奖、赔率等请用电脑控制台</p>
     </div>
 
     <div class="welcome-footer">
@@ -154,23 +153,28 @@ watch(kind, () => {
 })
 
 function goBack() {
-  if (history.length > 1) router.back()
-  else router.push({ name: 'login' })
+  // 固定回玩家登录，不用 history.back（否则会在房主/代理登录之间来回串）
+  menuOpen.value = false
+  if (staff.isLoggedIn) staff.logout()
+  userStore.clearLocal()
+  router.replace({ name: 'login' })
 }
 function goPlayerLogin() {
   menuOpen.value = false
-  router.push({ name: 'login' })
+  if (staff.isLoggedIn) staff.logout()
+  userStore.clearLocal()
+  router.replace({ name: 'login' })
 }
 function goOtherLogin() {
   menuOpen.value = false
-  router.push({
+  router.replace({
     name: kind.value === 'branch' ? 'staff-login-agent' : 'staff-login-branch',
   })
 }
 
 async function doLogin() {
   if (!account.value.trim()) {
-    toast(kind.value === 'branch' ? '请输入房主账号' : '请输入代理账号')
+    toast(kind.value === 'branch' ? '请输入房主账号' : '请输入账号')
     return
   }
   if (!password.value) {
@@ -187,20 +191,20 @@ async function doLogin() {
     if (kind.value === 'branch') {
       // 房主入口：房主 + 超管（电脑控制台同权，手机可进工作台）
       if (role !== 'BRANCH' && role !== 'ADMIN') {
-        toast('请使用房主或超管账号登录')
+        // 服务端登录已成功并下发了 Cookie，入口不对也要清掉，否则下一次会被 CSRF 卡住
+        void authApi.logout().catch(() => undefined)
+        toast('账号不存在')
         return
       }
-    } else if (role !== 'AGENT' && role !== 'PROXY') {
-      toast('请使用代理或子账号登录')
+    } else if (role !== 'AGENT' && role !== 'PROXY' && role !== 'CS') {
+      void authApi.logout().catch(() => undefined)
+      toast('账号不存在')
       return
     }
-    // 先写入运营会话，再清玩家态（避免中途被当成玩家）
+    // 只清本地玩家态：勿调 userStore.logout()/auth logout，否则会拆掉刚登录下发的 Cookie，
+    // 且并发的玩家 me() 401 曾会误把运营会话整页踢回登录页。
+    userStore.clearLocal()
     staff.setAuth(res.user, res.token, kind.value)
-    userStore.logout()
-    // setAuth 已被 logout 误伤时补写（user.logout 不碰 staff；此处防其它副作用）
-    if (!staff.isLoggedIn) {
-      staff.setAuth(res.user, res.token, kind.value)
-    }
     try {
       if (rememberMe.value) {
         localStorage.setItem(rememberKey(), JSON.stringify({ acc: account.value.trim() }))
@@ -211,7 +215,7 @@ async function doLogin() {
       /* ignore */
     }
     toast(`欢迎 ${res.user.nickname}`)
-    await router.replace({ name: 'staff-home' })
+    await router.replace({ name: staff.homeRouteName() })
   } catch (e: unknown) {
     toast(e instanceof Error ? e.message : '登录失败')
   } finally {

@@ -1,0 +1,82 @@
+/* 开奖动画卡 · 音效开关（只控 SFX，不碰 BGM） */
+/* 期号靠右，音效钮紧挨期号右侧 */
+[class*="-video-card__head"] [class*="__issue"] {
+  margin-left: auto;
+}
+
+.lottery-card-sfx {
+  flex-shrink: 0;
+  box-sizing: border-box;
+  width: 28px;
+  height: 28px;
+  margin: 0 0 0 2px;
+  padding: 0;
+  border: 1px solid rgba(244, 211, 107, 0.45);
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 35% 30%, rgba(255, 236, 170, 0.22), transparent 55%),
+    rgba(28, 20, 10, 0.72);
+  color: #f4d36b;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+  -webkit-tap-highlight-color: transparent;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+  /* 聊天区在 has-play / has-menu 时整栏 pointer-events:none，子钮须显式可点 */
+  pointer-events: auto !important;
+  position: relative;
+  z-index: 40;
+  touch-action: manipulation;
+}
+.lottery-card-sfx:hover {
+  border-color: rgba(244, 211, 107, 0.8);
+  background:
+    radial-gradient(circle at 35% 30%, rgba(255, 236, 170, 0.32), transparent 55%),
+    rgba(40, 28, 14, 0.85);
+}
+.lottery-card-sfx:active {
+  transform: scale(0.94);
+}
+.lottery-card-sfx__icon {
+  width: 16px;
+  height: 16px;
+  display: block;
+  pointer-events: none;
+}
+.lottery-card-sfx.is-off {
+  opacity: 0.78;
+  border-color: rgba(180, 160, 120, 0.4);
+  color: rgba(220, 200, 150, 0.75);
+}
+
+/* 无标题栏的卡：浮在舞台右上角 */
+.lottery-card-sfx--float {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 20; /* 高于正在开奖遮罩 */
+}
+/*
+ * 极速赛车 / 北京赛车：贴在风景条右上（顶栏 114px / 总高 780）。
+ */
+.jsr-race-card__stage .lottery-card-sfx--float,
+.bjsc-race-card__stage .lottery-card-sfx--float {
+  top: 15.6%;
+  right: 1.4%;
+}
+/* 幸运飞艇顶栏较矮（90px / 780），比赛车略靠上 */
+.jsb-race-card__stage .lottery-card-sfx--float {
+  top: 12.2%;
+  right: 1.4%;
+}
+/* 1分快三：避开动画顶栏信息条，略下移 */
+.k3-video-card__stage .lottery-card-sfx--float {
+  top: 8.5%;
+  right: 1.4%;
+}
+.lottery-card-sfx-host {
+  position: relative;
+}

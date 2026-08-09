@@ -1,0 +1,33 @@
+/* 开奖黑幕：正在开奖 + 1～6 点循环省略号 */
+.lot-hold-drawing-tip {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  margin: 0;
+  padding: 0 12px;
+  pointer-events: none;
+  background: #0a0806;
+  color: rgba(244, 211, 107, 0.95);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  line-height: 1.2;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+}
+.lot-hold-drawing-tip[hidden] {
+  display: none !important;
+}
+.lot-hold-drawing-tip__label {
+  flex: 0 0 auto;
+}
+.lot-hold-drawing-tip__dots {
+  display: inline-block;
+  min-width: 6em;
+  text-align: left;
+  letter-spacing: 0.12em;
+  font-variant-numeric: tabular-nums;
+}

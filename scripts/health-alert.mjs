@@ -8,8 +8,8 @@
  * 未配置 TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID 时：只检查、写日志，不发消息。
  * 配好后同一脚本会自动发 Telegram。
  *
- * 宝塔示例（Linux）：
- *   cd /www/wwwroot/your-app && /usr/bin/node scripts/health-alert.mjs >> /tmp/gamebox-health.log 2>&1
+ * 生产由 deploy-on-server.sh 自动写入 crontab（每 5 分钟）：
+ *   node /opt/gamebox-platform/health-alert.mjs >> /opt/gamebox-platform/health-alert.log 2>&1
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -41,8 +41,14 @@ function loadEnvFile(file) {
 
 loadEnvFile(envFile)
 
+/*
+ * 生产默认打 8080：docker-compose.prod 只把 web 容器映射到 127.0.0.1:8080，
+ * server 自己不对宿主机开端口。默认写 3000 的话探活永远连不上，
+ * 于是要么天天误报、要么被当成噪音关掉——两种结果都等于没有告警。
+ * 本机裸跑（server 直接监听 3000）时用 HEALTH_URL 覆盖。
+ */
 const HEALTH_URL =
-  process.env.HEALTH_URL || 'http://127.0.0.1:3000/api/health'
+  process.env.HEALTH_URL || 'http://127.0.0.1:8080/api/health'
 const BOT = (process.env.TELEGRAM_BOT_TOKEN || '').trim()
 const CHAT = (process.env.TELEGRAM_CHAT_ID || '').trim()
 const COOLDOWN_SEC = Math.max(60, Number(process.env.ALERT_COOLDOWN_SEC || 1800))
@@ -82,7 +88,9 @@ async function checkHealth() {
         detail: `HTTP ${res.status} ${JSON.stringify(body)}`,
       }
     }
-    if (body?.status && body.status !== 'ok') {
+    /* 服务端统一包了一层 {code,data,message}，真正的 status 在 data 里 */
+    const status = body?.data?.status ?? body?.status
+    if (status && status !== 'ok' && status !== 'pending') {
       return { ok: false, detail: JSON.stringify(body) }
     }
     return { ok: true, detail: JSON.stringify(body) }

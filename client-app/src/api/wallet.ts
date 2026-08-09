@@ -22,12 +22,28 @@ export interface LedgerPage {
 }
 
 export const walletApi = {
-  balance: () => http.get<{ balance: number }, { balance: number }>('/wallet/balance'),
+  /** 按当前运营房间查余额（传 roomNo 或 roomId） */
+  balance: (room?: { roomNo?: string; roomId?: string }) => {
+    const q = new URLSearchParams()
+    if (room?.roomId) q.set('roomId', room.roomId)
+    else if (room?.roomNo) q.set('roomNo', room.roomNo)
+    const qs = q.toString()
+    return http.get<{ balance: number }, { balance: number }>(
+      `/wallet/balance${qs ? `?${qs}` : ''}`,
+    )
+  },
 
   ledger: (
     page = 1,
     pageSize = 50,
-    opts?: { range?: TimeRangeKey; from?: number; to?: number; bizTypes?: string[] },
+    opts?: {
+      range?: TimeRangeKey
+      from?: number
+      to?: number
+      bizTypes?: string[]
+      roomNo?: string
+      roomId?: string
+    },
   ) => {
     const q = new URLSearchParams()
     q.set('page', String(page))
@@ -40,6 +56,8 @@ export const walletApi = {
     if (opts?.bizTypes?.length) {
       q.set('bizTypes', opts.bizTypes.join(','))
     }
+    if (opts?.roomId) q.set('roomId', opts.roomId)
+    else if (opts?.roomNo) q.set('roomNo', opts.roomNo)
     return http.get<LedgerPage, LedgerPage>(`/wallet/ledger?${q.toString()}`)
   },
 }

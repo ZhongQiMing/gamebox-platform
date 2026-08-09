@@ -26,7 +26,7 @@
         <div v-if="primaryClaim" class="rb-pending">
           <div class="rb-pending-head">
             <span class="rb-pending-date">{{ primaryClaim.date }} 待领</span>
-            <span class="rb-pending-tag">可提前领取</span>
+            <span class="rb-pending-tag">未领次日 06:00 发</span>
           </div>
           <div class="rb-kpi-row">
             <div class="rb-kpi">
@@ -46,20 +46,20 @@
             type="button"
             class="rb-claim-btn"
             :disabled="!!claimingDate"
-            @click="onClaim(primaryClaim.date)"
+            @click="onClaimAll"
           >
-            {{ claimingDate === primaryClaim.date ? '领取中…' : '立即领取' }}
+            {{ claimingDate === '__all__' ? '领取中…' : '全部提前领取' }}
           </button>
         </div>
 
         <div v-else class="rb-status-bar">
-          <span class="rb-status-label">昨日回水已领取</span>
+          <span class="rb-status-label">暂无可领回水</span>
           <span class="rb-status-amount">{{ fmtMoney(status.claimableTotal) }}</span>
         </div>
 
-        <!-- 今日累计：三栏原样 -->
+        <!-- 先进自助池；可提前领；未领则次日 06:00 自动发昨日（不含当日 0–6 点） -->
         <div class="rb-today">
-          <div class="rb-today-title">今日累计（明日结算）</div>
+          <div class="rb-today-title">{{ todayTitle }}</div>
           <div class="rb-kpi-row">
             <div class="rb-kpi">
               <span class="rb-kpi-num">{{ fmtInt(status.today.validFlow) }}</span>
@@ -67,11 +67,11 @@
             </div>
             <div class="rb-kpi">
               <span class="rb-kpi-num">{{ fmtMoney(status.today.estimatedRebate) }}</span>
-              <span class="rb-kpi-label">预计回水</span>
+              <span class="rb-kpi-label">{{ status.today.estimatedRebate > 0 ? '池内可领' : '预计回水' }}</span>
             </div>
             <div class="rb-kpi">
               <span class="rb-kpi-num">06:00</span>
-              <span class="rb-kpi-label">自动发放</span>
+              <span class="rb-kpi-label">自动发昨日</span>
             </div>
           </div>
         </div>
@@ -172,6 +172,10 @@ const extraClaims = computed(() => {
     i => i.amount > 0 && i.date !== primary?.date,
   )
 })
+const todayTitle = computed(() => {
+  if ((status.value.today?.estimatedRebate ?? 0) > 0) return '今日累计（已进回水池，可提前领）'
+  return '今日累计（回水先进池，未领次日 06:00 发）'
+})
 
 function fmtInt(n: number) {
   return (Math.round((Number(n) || 0) * 100) / 100).toLocaleString('en-US', {
@@ -220,6 +224,22 @@ async function onClaim(date: string) {
   claimingDate.value = date
   try {
     const res = await rebateApi.claim(date)
+    showToast(res.message)
+    await walletStore.fetchBalance()
+    await loadStatus(true)
+  } catch (e) {
+    showToast((e as Error).message || '领取失败')
+  } finally {
+    claimingDate.value = ''
+  }
+}
+
+/** 一键领光池内全部（含今日 0–6 点） */
+async function onClaimAll() {
+  if (claimingDate.value) return
+  claimingDate.value = '__all__'
+  try {
+    const res = await rebateApi.claim()
     showToast(res.message)
     await walletStore.fetchBalance()
     await loadStatus(true)

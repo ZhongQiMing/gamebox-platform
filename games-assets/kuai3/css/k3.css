@@ -960,7 +960,7 @@ body.k3-bg::after {
 .k3-msg.is-robot .k3-msg__bubble,
 .k3-msg.is-robot .k3-msg__bubble--bot {
   display: block;
-  max-width: min(380px, 98%);
+  max-width: min(320px, 98%);
   padding: 0;
   background: transparent;
   border: none;
@@ -3090,6 +3090,16 @@ body.k3-bg::after {
 
 
 /* 短屏：侧栏压缩，避免压住底部输入 */
+.k3-room.is-rail-compact .k3-rail-ladder {
+  width: 26px;
+  height: 26px;
+}
+.k3-room.is-rail-compact .k3-rail-ladder__arrow {
+  font-size: 10px;
+}
+.k3-room.is-rail-compact .k3-rail-stack {
+  gap: 6px;
+}
 .k3-room.is-rail-compact .k3-rail {
   gap: 2px;
   width: 44px;
@@ -3162,7 +3172,7 @@ body.k3-bg::after {
 
 /* ?? ??????????????????????? */
 .k3-result-card {
-  width: min(380px, 100%);
+  width: min(320px, 100%);
   border-radius: 10px;
   overflow: hidden;
   background: linear-gradient(145deg, rgba(22, 17, 11, 0.98), rgba(10, 8, 5, 0.99));
@@ -3465,6 +3475,64 @@ body.k3-bg::after {
   width: var(--rail-w, 56px);
   pointer-events: none;
 }
+
+.k3-rail-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-height: 420px;
+  opacity: 1;
+  overflow: hidden;
+  transition: max-height 0.22s ease, opacity 0.18s ease, margin 0.18s ease;
+}
+.k3-room.is-rail-collapsed .k3-rail-stack {
+  max-height: 0;
+  opacity: 0;
+  margin: 0;
+  pointer-events: none;
+}
+/* 收起/展开：三角箭头 + 外圈，收起▼ 展开▲ */
+.k3-rail-ladder {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1.5px solid rgba(244, 211, 107, 0.78);
+  border-radius: 50%;
+  background: linear-gradient(180deg, rgba(42, 34, 18, 0.92), rgba(18, 14, 10, 0.88));
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 2px 6px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 230, 150, 0.18);
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.12s ease;
+}
+.k3-rail-ladder:hover {
+  border-color: rgba(255, 224, 130, 0.95);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 0 10px rgba(244, 211, 107, 0.35),
+    0 2px 6px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 230, 150, 0.28);
+}
+.k3-rail-ladder__arrow {
+  display: block;
+  font-size: 11px;
+  line-height: 1;
+  color: #f4d36b;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.65);
+  transform: translateY(0.5px);
+}
+.k3-rail-ladder:active {
+  transform: scale(0.94);
+}
+.k3-rail-ladder:active .k3-rail-ladder__arrow {
+  opacity: 0.9;
+}
 .k3-rail-btn {
   display: flex;
   flex-direction: column;
@@ -3699,7 +3767,7 @@ body.k3-bg::after {
 
 /* 正版开奖视频卡（替换 Canvas 结果卡） */
 .k3-video-card {
-  width: min(360px, 100%);
+  width: min(320px, 100%);
   border-radius: 10px;
   overflow: hidden;
   background: linear-gradient(145deg, rgba(12, 18, 28, 0.98), rgba(6, 10, 16, 0.99));
@@ -3722,6 +3790,10 @@ body.k3-bg::after {
   background: #152536;
   line-height: 0;
 }
+.k3-video-card.is-hold-black .k3-video-card__frame {
+  opacity: 0 !important;
+  visibility: hidden !important;
+}
 .k3-video-card__frame {
   position: absolute;
   inset: 0;
@@ -3733,7 +3805,10 @@ body.k3-bg::after {
   opacity: 0;
   transition: opacity 0.18s ease-out;
 }
-.k3-video-card.is-frame-ready .k3-video-card__frame {
+/* 开播/落定后才露画面，避免刷新续播时先闪 LOADING */
+.k3-video-card.is-playing.is-frame-ready .k3-video-card__frame,
+.k3-video-card.is-result-shown.is-frame-ready .k3-video-card__frame,
+.k3-video-card.is-settled.is-frame-ready .k3-video-card__frame {
   opacity: 1;
 }
 .k3-video-card__foot {

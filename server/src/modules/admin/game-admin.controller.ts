@@ -8,6 +8,7 @@ import { AdminLogService } from './admin-log.service';
 import { GameOpsScheduler } from './game-ops.scheduler';
 import { GameConfigCache } from '../game-core/game-config.cache';
 import { validateGamePayTable } from '../game-core/game-config.validator';
+import { RETIRED_GAME_CODES } from '../games/retired-games';
 
 @Controller('admin/games')
 @Roles('ADMIN')
@@ -19,8 +20,8 @@ export class GameAdminController {
     private gameOps: GameOpsScheduler,
   ) {}
 
-  /** 已下线目录（代码已移除，DB 若仍残留则列表中隐藏） */
-  private static readonly RETIRED_CODES = ['slots-mahjong', 'mahjong', 'slots'] as const;
+  /** 已下线目录（代码已移除，DB 若仍残留则列表中隐藏）；名单与大厅/引擎共用 */
+  private static readonly RETIRED_CODES = RETIRED_GAME_CODES;
 
   /** 游戏列表（含所有配置版本） */
   @Get()
@@ -41,6 +42,13 @@ export class GameAdminController {
   @Get('ops-schedule')
   opsSchedule() {
     return this.gameOps.getScheduleInfo();
+  }
+
+  /** 手动结束卡死的全站维护，把维护中的游戏全部恢复上架 */
+  @Post('restore-online')
+  async restoreOnline() {
+    const result = await this.gameOps.forceRestoreAllOnline();
+    return { ok: true, ...result };
   }
 
   /**

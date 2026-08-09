@@ -50,4 +50,15 @@ export class RoomsController {
       limit,
     });
   }
+
+  /** GET /api/rooms/:roomNo/games/:gameCode/atmosphere — 桌面气氛托人数 */
+  @SkipThrottle()
+  @Get(':roomNo/games/:gameCode/atmosphere')
+  atmosphere(
+    @CurrentUser() user: { id: string },
+    @Param('roomNo') roomNo: string,
+    @Param('gameCode') gameCode: string,
+  ) {
+    return this.roomChat.atmosphereForPlayer(user.id, roomNo, gameCode);
+  }
 }

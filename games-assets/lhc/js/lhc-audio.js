@@ -1,32 +1,57 @@
 /**
- * 幸运六合彩音效
- * - bg.mp3：房间背景音乐（Inkpot）
- * - bgsound.mp3：开奖摇珠 BGM
- * - one~seven + 1~49：报号
+ * 幸运六合彩 · 三路音频（互不混控）
+ *
+ * 1) music  房间 BGM：bg.mp3
+ * 2) sfx    房间音效：预留（当前无独立房间 SFX）
+ * 3) drawSfx 开奖动画：摇珠 bgsound + 报号 one~seven / 1~49
+ *    - 仅开奖卡喇叭 → setDrawSfxOn
  */
 (function (global) {
   var BASE = '/audio/lhc/';
-  var VER = '2';
+  var VER = '4';
   var LS_KEY = 'lhc_audio_v1';
 
   var ORDINAL = ['one', 'two', 'three', 'four', 'five', 'six', 'seven'];
-  var LOBBY_VOL = 0.42;
-  var LOBBY_DUCK = 0.12;
-  var DRAW_BG_VOL = 0.55;
-
-  function isAppBgmOn() {
+    function isAppBgmOn() {
     try { return localStorage.getItem('app_bgm_off') !== '1'; } catch (e) { return true; }
   }
   function isAppSfxOn() {
     try { return localStorage.getItem('sound_off') !== '1'; } catch (e) { return true; }
   }
-  /* 无本游戏记录时跟随账号管理；有记录则用本游戏覆盖 */
-  var pref = { music: isAppBgmOn(), sfx: isAppSfxOn() };
+
+  var BASE_BGM = 0.4;
+  var BASE_SFX = 0.75;
+  function appBgmLevel() {
+    try { if (global.AppAudioLevel) return AppAudioLevel.getBgm(); } catch (e) {}
+    return 0.8;
+  }
+  function appSfxLevel() {
+    try { if (global.AppAudioLevel) return AppAudioLevel.getSfx(); } catch (e) {}
+    return 0.8;
+  }
+  function musicVol() { return BASE_BGM * appBgmLevel(); }
+  function sfxVol() { return Math.min(1, BASE_SFX * appSfxLevel()); }
+  function lobbyDuckVol() { return musicVol() * 0.3; }
+  function applyLevels() {
+    if (lobbyBgm) {
+      try { lobbyBgm.volume = drawActive ? lobbyDuckVol() : musicVol(); } catch (e) {}
+    }
+    if (drawBg) { try { drawBg.volume = sfxVol(); } catch (e2) {} }
+    activeNodes.forEach(function (n) { try { n.volume = sfxVol(); } catch (e3) {} });
+  }
+
+  var pref = {
+    music: isAppBgmOn(),
+    sfx: isAppSfxOn(),
+    drawSfx: isAppSfxOn(),
+  };
   try {
     var raw = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
     if (raw && typeof raw === 'object') {
       if (typeof raw.music === 'boolean') pref.music = raw.music;
       if (typeof raw.sfx === 'boolean') pref.sfx = raw.sfx;
+      if (typeof raw.drawSfx === 'boolean') pref.drawSfx = raw.drawSfx;
+      else if (typeof raw.sfx === 'boolean') pref.drawSfx = raw.sfx;
     }
   } catch (e) { /* ignore */ }
 
@@ -37,27 +62,29 @@
     } catch (e) { return; }
     pref.music = isAppBgmOn();
     pref.sfx = isAppSfxOn();
+    pref.drawSfx = isAppSfxOn();
     if (pref.music) {
-      try { if (typeof ensureBgm === 'function') ensureBgm(true); } catch (e2) { /* ignore */ }
       try { if (typeof ensureLobbyBgm === 'function') ensureLobbyBgm(true); } catch (e3) { /* ignore */ }
     } else {
-      try { if (bgm) bgm.pause(); } catch (e4) { /* ignore */ }
       try { if (lobbyBgm) lobbyBgm.pause(); } catch (e5) { /* ignore */ }
     }
-    if (!pref.sfx) {
-      try { if (typeof clearCountdownArm === 'function') clearCountdownArm(); } catch (e6) { /* ignore */ }
-      try { if (typeof stopRing === 'function') stopRing(); } catch (e7) { /* ignore */ }
-      try { if (typeof stopDrawSfx === 'function') stopDrawSfx(); } catch (e8) { /* ignore */ }
-      try { if (typeof stopRaceSfx === 'function') stopRaceSfx(); } catch (e9) { /* ignore */ }
+    if (!pref.drawSfx) {
+      try { if (typeof clearDrawTimers === 'function') clearDrawTimers(); } catch (e8) { /* ignore */ }
+      drawActive = false;
+      if (lobbyBgm && pref.music) {
+        try { lobbyBgm.volume = musicVol(); } catch (e9) { /* ignore */ }
+      }
     }
+    applyLevels();
   }
   window.addEventListener('storage', function (ev) {
     if (!ev) return;
-    if (ev.key === 'app_bgm_off' || ev.key === 'sound_off' || ev.key === LS_KEY) syncFromAppIfNeeded();
+    if (ev.key === 'app_bgm_off' || ev.key === 'sound_off' || ev.key === 'app_bgm_vol' || ev.key === 'app_sfx_vol' || ev.key === LS_KEY) { syncFromAppIfNeeded(); applyLevels(); }
   });
   document.addEventListener('visibilitychange', function () {
-    if (!document.hidden) syncFromAppIfNeeded();
+    if (!document.hidden) { syncFromAppIfNeeded(); applyLevels(); }
   });
+  window.addEventListener('app-audio-pref-changed', function () { syncFromAppIfNeeded(); applyLevels(); });
 
   var unlocked = false;
   var lobbyBgm = null;
@@ -80,14 +107,15 @@
     try { n.currentTime = 0; } catch (e2) { /* ignore */ }
   }
 
+  /* ───────── 1) 房间 BGM ───────── */
   function ensureLobbyBgm(playNow) {
     if (!lobbyBgm) {
       lobbyBgm = new Audio(url('bg'));
       lobbyBgm.loop = true;
       lobbyBgm.preload = 'auto';
-      lobbyBgm.volume = LOBBY_VOL;
+      lobbyBgm.volume = musicVol();
     }
-    lobbyBgm.volume = drawActive ? LOBBY_DUCK : LOBBY_VOL;
+    lobbyBgm.volume = drawActive ? lobbyDuckVol() : musicVol();
     if (!pref.music) return;
     if (playNow && lobbyBgm.paused) {
       var p = lobbyBgm.play();
@@ -109,6 +137,23 @@
     ensureLobbyBgm(true);
   }
 
+  function setMusicOn(on) {
+    pref.music = !!on;
+    savePref();
+    if (!pref.music) {
+      stopNode(lobbyBgm);
+    } else if (unlocked) {
+      ensureLobbyBgm(true);
+    }
+  }
+
+  /* ───────── 2) 房间音效（预留） ───────── */
+  function setSfxOn(on) {
+    pref.sfx = !!on;
+    savePref();
+  }
+
+  /* ───────── 3) 开奖动画音效 ───────── */
   function clearDrawTimers() {
     for (var i = 0; i < drawTimers.length; i++) clearTimeout(drawTimers[i]);
     drawTimers = [];
@@ -119,10 +164,10 @@
   }
 
   function playOne(name, vol) {
-    if (!pref.sfx) return null;
+    if (!pref.drawSfx) return null;
     try {
       var a = new Audio(url(name));
-      a.volume = vol == null ? 0.85 : vol;
+      a.volume = sfxVol();
       a.preload = 'auto';
       var p = a.play();
       if (p && p.catch) p.catch(function () {});
@@ -134,16 +179,26 @@
   }
 
   function startDrawBg() {
-    if (!pref.music) return;
+    if (!pref.drawSfx) return;
     stopNode(drawBg);
     try {
       drawBg = new Audio(url('bgsound'));
       drawBg.loop = true;
-      drawBg.volume = DRAW_BG_VOL;
+      drawBg.volume = sfxVol();
       drawBg.preload = 'auto';
       var p = drawBg.play();
       if (p && p.catch) p.catch(function () {});
     } catch (e) { /* ignore */ }
+  }
+
+  function setDrawSfxOn(on) {
+    pref.drawSfx = !!on;
+    savePref();
+    if (!pref.drawSfx) {
+      clearDrawTimers();
+      drawActive = false;
+      ensureLobbyBgm(true);
+    }
   }
 
   function startDrawCeremony(opts) {
@@ -171,10 +226,10 @@
       (function (idx, num) {
         var t0 = spinMs + idx * gapMs;
         drawTimers.push(setTimeout(function () {
-          playOne(ORDINAL[idx], 0.9);
+          playOne(ORDINAL[idx]);
         }, t0));
         drawTimers.push(setTimeout(function () {
-          if (num >= 1 && num <= 49) playOne(String(num), 0.95);
+          if (num >= 1 && num <= 49) playOne(String(num));
         }, t0 + revealMs));
       })(i, nums[i]);
     }
@@ -191,30 +246,18 @@
     ensureLobbyBgm(true);
   }
 
-  function setMusicOn(on) {
-    pref.music = !!on;
-    savePref();
-    if (!pref.music) {
-      stopNode(lobbyBgm);
-      stopNode(drawBg);
-    } else if (unlocked) {
-      ensureLobbyBgm(true);
-    }
-  }
-
-  function setSfxOn(on) {
-    pref.sfx = !!on;
-    savePref();
-  }
-
   global.LhcAudio = {
     unlock: unlock,
     ensureLobbyBgm: ensureLobbyBgm,
     startDrawCeremony: startDrawCeremony,
     endDrawCeremony: endDrawCeremony,
     setMusicOn: setMusicOn,
-    setSfxOn: setSfxOn,
     isMusicOn: function () { return !!pref.music; },
+    setSfxOn: setSfxOn,
     isSfxOn: function () { return !!pref.sfx; },
+    setDrawSfxOn: setDrawSfxOn,
+    isDrawSfxOn: function () { return !!pref.drawSfx; },
+    stopDrawSfx: clearDrawTimers,
+    pref: pref,
   };
 })(typeof window !== 'undefined' ? window : this);

@@ -216,7 +216,7 @@ def write_slot_game(cfg):
     <button type="button" class="{pfx}-btn {pfx}-btn--gold" id="btnBet">下注 100</button>
   </footer>
 </div>
-<script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
+<script src="/legacy/js/jquery-3.7.1.min.js"></script>
 <script src="../../client-app/assets/js/common.js"></script>
 <script src="./js/{pfx}.js"></script>
 </body>

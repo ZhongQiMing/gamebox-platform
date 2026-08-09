@@ -57,6 +57,10 @@
         <div class="register-extra">
           已有账号？<a @click.prevent="router.push('/login')">直接登录 →</a>
         </div>
+
+        <div class="register-extra">
+          注册即表示同意<a @click.prevent="router.push('/privacy')">《隐私政策》</a>
+        </div>
       </form>
     </div>
   </div>

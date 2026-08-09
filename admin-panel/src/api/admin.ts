@@ -1,27 +1,16 @@
 import http from './http'
 
-// ─── Dashboard ───────────────────────────────────────────────
-export const dashboardApi = {
-  stats: () => http.get<DashboardStats, DashboardStats>('/admin/dashboard/stats'),
-  trend: (days = 7) => http.get<TrendPoint[], TrendPoint[]>(`/admin/dashboard/trend?days=${days}`),
-}
-
-export interface DashboardStats {
-  totalPlayers: number
-  todayNew: number
-  activeToday: number
-  platformBalance: number
-  todayBetFlow: number
-  todayPnl: number
-  pendingRecharge: number
-  pendingWithdraw: number
-}
-export interface TrendPoint { date: string; betFlow: number; pnl: number; newUsers: number }
+/* 旧 /admin/dashboard/* 已由 /console/dashboard 替代，前端不再封装。 */
 
 // ─── Recharge / Withdraw review ──────────────────────────────
 export const reviewApi = {
-  list: (params?: { status?: string; type?: string; page?: number; pageSize?: number }) =>
-    http.get<ReviewPage, ReviewPage>('/admin/recharge', { params }),
+  list: (params?: {
+    status?: string
+    type?: string
+    playerId?: string
+    page?: number
+    pageSize?: number
+  }) => http.get<ReviewPage, ReviewPage>('/admin/recharge', { params }),
   approve: (id: string) => http.patch<{ ok: boolean }, { ok: boolean }>(`/recharge/${id}/approve`),
   reject: (id: string, reason: string) =>
     http.patch<{ ok: boolean }, { ok: boolean }>(`/recharge/${id}/reject`, { reason }),
@@ -29,14 +18,75 @@ export const reviewApi = {
 export interface ReviewOrder {
   id: string; orderNo: string; type: string; amount: number; status: string
   channel: string; rejectReason: string | null; createdAt: string; reviewedAt: string | null
+  playerId?: string
   player: { uid: string; nickname: string }
 }
 export interface ReviewPage { total: number; page: number; pageSize: number; list: ReviewOrder[] }
+
+// ─── 客服会话（代理/子账号） ─────────────────────────────────
+export const csConsoleApi = {
+  sessions: () =>
+    http.get<{ list: CsSession[] }, { list: CsSession[] }>('/console/cs/sessions'),
+  messages: (playerId: string, limit = 100) =>
+    http.get<{ list: CsConsoleMessage[] }, { list: CsConsoleMessage[] }>(
+      `/console/cs/sessions/${playerId}/messages`,
+      { params: { limit } },
+    ),
+  reply: (playerId: string, text: string) =>
+    http.post<{ message: CsConsoleMessage }, { message: CsConsoleMessage }>(
+      `/console/cs/sessions/${playerId}/messages`,
+      { text },
+    ),
+  read: (playerId: string) =>
+    http.post<{ ok: boolean }, { ok: boolean }>(`/console/cs/sessions/${playerId}/read`),
+  uploadPayQr: (kind: 'wechat' | 'alipay', dataUrl: string) =>
+    http.post<{ kind: string; url: string }, { kind: string; url: string }>(
+      '/console/cs/pay-qr',
+      { kind, dataUrl },
+    ),
+  deskSettings: () =>
+    http.get<CsDeskSettingsDto, CsDeskSettingsDto>('/console/cs/desk-settings'),
+  saveDeskSettings: (data: {
+    quickReplies: string[]
+    wechatQrs: Array<{ id?: string; url: string; name?: string; note?: string }>
+    alipayQrs: Array<{ id?: string; url: string; name?: string; note?: string }>
+  }) => http.put<CsDeskSettingsDto, CsDeskSettingsDto>('/console/cs/desk-settings', data),
+}
+export interface CsDeskSettingsDto {
+  quickReplies: string[]
+  wechatQrs: Array<{ id: string; url: string; name?: string }>
+  alipayQrs: Array<{ id: string; url: string; name?: string }>
+}
+export interface CsSession {
+  playerId: string
+  uid: string
+  nickname: string
+  avatar: string | null
+  lastText: string
+  lastSender: string
+  lastAt: string
+  unread: number
+}
+export interface CsConsoleMessage {
+  id: string
+  playerId: string
+  sender: string
+  text: string
+  isRead: boolean
+  rechargeOrderId: string | null
+  assigneeId: string | null
+  createdAt: string
+}
 
 // ─── Games management ────────────────────────────────────────
 export const gameAdminApi = {
   list: () => http.get<GameAdmin[], GameAdmin[]>('/admin/games'),
   opsSchedule: () => http.get<GameOpsSchedule, GameOpsSchedule>('/admin/games/ops-schedule'),
+  /** 把卡在维护中的游戏全部恢复上架 */
+  restoreOnline: () =>
+    http.post<{ ok: boolean; restored: number; codes: string[] }, { ok: boolean; restored: number; codes: string[] }>(
+      '/admin/games/restore-online',
+    ),
   reorder: (codes: string[]) =>
     http.post<{ ok: boolean }, { ok: boolean }>('/admin/games/reorder', { codes }),
   setStatus: (code: string, status: string) =>
@@ -73,9 +123,6 @@ export interface GameConfigAdmin {
   id: string; version: number; rtp: number; active: boolean
   payTable: unknown; params: unknown; createdAt: string
 }
-
-/* 多级代理树 / V1–V5 下发：前端已改走 /console/agents 与房间「绑定代理」。
- * 旧 /admin/agents/* 接口仍保留在服务端，供脚本或以后树形页使用，此处不再封装死代码。 */
 
 // ─── Risk events ─────────────────────────────────────────────
 export const riskApi = {
@@ -135,6 +182,52 @@ export interface RiskMeta {
   types: Array<{ value: string; label: string; hint: string }>
   levels: Array<{ value: string; label: string }>
   monitors: Array<{ type: string; label: string; desc: string }>
+}
+
+// ─── Fund reconciliation ─────────────────────────────────────
+export const fundReconApi = {
+  last: () => http.get<{ report: ReconReport | null }, { report: ReconReport | null }>(
+    '/admin/fund-recon',
+  ),
+  run: () => http.post<{ report: ReconReport }, { report: ReconReport }>('/admin/fund-recon/run'),
+  /* 补记等于人工承认一笔差额，服务端要求二次验密 */
+  fixPoints: (id: string, reason: string, adminPassword: string) =>
+    http.post<ReconFixResult, ReconFixResult>(
+      '/admin/fund-recon/fix-points', { id, reason, adminPassword },
+    ),
+  fixQuota: (id: string, reason: string, adminPassword: string) =>
+    http.post<ReconFixResult, ReconFixResult>(
+      '/admin/fund-recon/fix-quota', { id, reason, adminPassword },
+    ),
+}
+export interface ReconFixResult {
+  ok: boolean
+  drift: number
+  balance?: number
+  pointsQuota?: number
+}
+export interface ReconRow {
+  scope: 'ACCOUNT' | 'AGENT' | 'NONE'
+  id: string
+  label: string
+  actual: number
+  expected: number
+  drift: number
+}
+export interface ReconCheck {
+  key: 'points_sum' | 'quota_sum' | 'frozen_orders' | 'negative_balance'
+  label: string
+  hint: string
+  bad: number
+  rows: ReconRow[]
+  fixable: boolean
+}
+export interface ReconReport {
+  checkedAt: string
+  durationMs: number
+  ok: boolean
+  totalBad: number
+  checks: ReconCheck[]
 }
 
 // ─── Admin log ───────────────────────────────────────────────

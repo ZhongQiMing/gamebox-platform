@@ -1,50 +1,44 @@
 <template>
-  <div class="ops-page games-page" v-loading="loading">
-    <PageHeader title="游戏管理" subtitle="平台游戏目录 · 上下架 · 限红 · 爆率版本">
-      <template #actions>
-        <el-button :loading="loading" @click="load">刷新</el-button>
-      </template>
-    </PageHeader>
+  <div class="desk-work games-page" v-loading="loading">
+    <div class="desk-panel">
+      <PageHeader title="游戏管理">
+        <template #actions>
+          <el-button
+            v-if="counts.maint > 0"
+            type="warning"
+            :loading="restoring"
+            @click="onRestoreAll"
+          >
+            全部恢复上架（{{ counts.maint }}）
+          </el-button>
+          <el-button :loading="loading" @click="load">刷新</el-button>
+        </template>
+      </PageHeader>
 
-    <div class="ops-kpi-row">
-      <div class="ops-kpi is-ok">
-        <div class="ops-kpi__label">上架中</div>
-        <div class="ops-kpi__value">{{ counts.online }}</div>
-      </div>
-      <div class="ops-kpi is-warn">
-        <div class="ops-kpi__label">维护中</div>
-        <div class="ops-kpi__value">{{ counts.maint }}</div>
-      </div>
-      <div class="ops-kpi">
-        <div class="ops-kpi__label">已下架</div>
-        <div class="ops-kpi__value">{{ counts.offline }}</div>
-      </div>
-      <div class="ops-kpi" :class="{ 'is-danger': counts.noConfig > 0 }">
-        <div class="ops-kpi__label">未配爆率</div>
-        <div class="ops-kpi__value">{{ counts.noConfig }}</div>
-      </div>
-    </div>
-
-    <section class="ops-panel schedule-block" v-if="opsSchedule">
-      <div class="schedule-hd">
-        <div>
-          <div class="schedule-title">平台定时规则</div>
-          <div class="schedule-sub">时区 {{ opsSchedule.timezone }} · 服务端自动执行</div>
+      <div class="rooms-summary">
+        <div
+          v-for="k in kpis"
+          :key="k.label"
+          class="sum-chip clickable"
+          :class="[{ active: chipFilter === k.filter, hot: k.chipHot }]"
+          @click="onChipClick(k.filter)"
+        >
+          <span class="sum-label">{{ k.label }}</span>
+          <span class="sum-val" :class="k.valTone">{{ k.value }}</span>
         </div>
       </div>
-      <div class="schedule-grid">
-        <div v-for="item in opsSchedule.items" :key="item.key" class="schedule-item">
-          <div class="schedule-time">{{ item.label }}</div>
-          <div class="schedule-desc">{{ item.desc }}</div>
-        </div>
-      </div>
-      <ul class="schedule-notes">
-        <li v-for="(n, i) in opsSchedule.notes" :key="i">{{ n }}</li>
-      </ul>
-    </section>
 
-    <section class="ops-panel">
-      <div class="ops-filter" style="margin: 0 0 14px; padding: 0; border: none; box-shadow: none;">
+      <div v-if="opsSchedule?.items?.length" class="schedule-bar">
+        <span class="schedule-bar__label">平台定时</span>
+        <span
+          v-for="item in opsSchedule.items"
+          :key="item.key"
+          class="schedule-bar__item"
+          :title="item.desc"
+        >{{ item.label }}</span>
+      </div>
+
+      <div class="panel-toolbar">
         <el-radio-group v-model="catFilter" size="small">
           <el-radio-button label="ALL">全部</el-radio-button>
           <el-radio-button label="SLOT">电子</el-radio-button>
@@ -55,94 +49,105 @@
         <el-input
           v-model="keyword"
           clearable
+          size="small"
           placeholder="搜名称 / 代码"
-          style="width: 220px"
+          class="filter-search"
         />
       </div>
 
-      <el-table :data="filteredGames" stripe empty-text="暂无游戏">
-        <el-table-column label="游戏" min-width="160">
-          <template #default="{ row }">
-            <div class="g-name">{{ row.name }}</div>
-            <div class="g-code">{{ row.code }}</div>
-          </template>
-        </el-table-column>
-        <el-table-column label="类型" width="90">
-          <template #default="{ row }">
-            <el-tag size="small" effect="plain">{{ catLabel(row.category) }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="状态" width="130">
-          <template #default="{ row }">
-            <el-select
-              :model-value="row.status"
-              size="small"
-              style="width: 110px"
-              @change="(v: string) => onStatus(row, v)"
-            >
-              <el-option label="上架" value="ONLINE" />
-              <el-option label="维护" value="MAINTENANCE" />
-              <el-option label="下架" value="OFFLINE" />
-            </el-select>
-          </template>
-        </el-table-column>
-        <el-table-column label="限红" min-width="120">
-          <template #default="{ row }">{{ fmtNum(row.minBet) }} ~ {{ fmtNum(row.maxBet) }}</template>
-        </el-table-column>
-        <el-table-column label="目标 RTP" width="100">
-          <template #default="{ row }">
-            <template v-if="activeConfig(row)">
-              {{ pct(activeConfig(row)!.rtp) }}
+      <div class="panel-body">
+        <el-table
+          :data="filteredGames"
+          class="games-table"
+          stripe
+          border
+          size="small"
+          height="100%"
+          empty-text="暂无游戏"
+        >
+          <el-table-column label="游戏" min-width="160">
+            <template #default="{ row }: { row: any }">
+              <div class="g-name">{{ row.name }}</div>
+              <div class="g-code">{{ row.code }}</div>
             </template>
-            <span v-else class="danger-text">未配置</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="生效版本" width="100">
-          <template #default="{ row }">
-            <el-tag v-if="activeConfig(row)" size="small" type="success">
-              v{{ activeConfig(row)!.version }}
-            </el-tag>
-            <span v-else class="muted">—</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="大厅顺序" width="140">
-          <template #default="{ row }">
-            <div class="sort-cell">
-              <span class="sort-no">#{{ lobbyRank(row) }}</span>
-              <el-button
-                link
-                type="primary"
-                :disabled="sortBusy || !canMove(row, -1)"
-                @click="moveGame(row, -1)"
-              >上移</el-button>
-              <el-button
-                link
-                type="primary"
-                :disabled="sortBusy || !canMove(row, 1)"
-                @click="moveGame(row, 1)"
-              >下移</el-button>
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column label="提醒" min-width="120">
-          <template #default="{ row }">
-            <el-tag v-if="!activeConfig(row)" size="small" type="danger" effect="plain">缺爆率</el-tag>
-            <el-tag v-else-if="row.status === 'ONLINE'" size="small" type="success" effect="plain">营业</el-tag>
-            <el-tag v-else-if="row.status === 'MAINTENANCE'" size="small" type="warning" effect="plain">维护</el-tag>
-            <span v-else class="muted">已下架</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="180" fixed="right">
-          <template #default="{ row }">
-            <el-button link type="primary" @click="openBasics(row)">基础设置</el-button>
-            <el-button link type="primary" @click="openConfig(row)">爆率配置</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-    </section>
+          </el-table-column>
+          <el-table-column label="类型" width="90">
+            <template #default="{ row }: { row: any }">
+              <el-tag size="small" effect="plain">{{ catLabel(row.category) }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="状态" width="130">
+            <template #default="{ row }: { row: any }">
+              <el-select
+                :model-value="row.status"
+                size="small"
+                style="width: 110px"
+                @change="(v: string) => onStatus(row, v)"
+              >
+                <el-option label="上架" value="ONLINE" />
+                <el-option label="维护" value="MAINTENANCE" />
+                <el-option label="下架" value="OFFLINE" />
+              </el-select>
+            </template>
+          </el-table-column>
+          <el-table-column label="限红" min-width="120">
+            <template #default="{ row }: { row: any }">{{ fmtNum(row.minBet) }} ~ {{ fmtNum(row.maxBet) }}</template>
+          </el-table-column>
+          <el-table-column label="目标 RTP" width="100">
+            <template #default="{ row }: { row: any }">
+              <template v-if="activeConfig(row)">
+                {{ pct(activeConfig(row)!.rtp) }}
+              </template>
+              <span v-else class="danger-text">未配置</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="生效版本" width="100">
+            <template #default="{ row }: { row: any }">
+              <el-tag v-if="activeConfig(row)" size="small" type="success">
+                v{{ activeConfig(row)!.version }}
+              </el-tag>
+              <span v-else class="muted">—</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="大厅顺序" width="140">
+            <template #default="{ row }: { row: any }">
+              <div class="sort-cell">
+                <span class="sort-no">#{{ lobbyRank(row) }}</span>
+                <el-button
+                  link
+                  type="primary"
+                  :disabled="sortBusy || !canMove(row, -1)"
+                  @click="moveGame(row, -1)"
+                >上移</el-button>
+                <el-button
+                  link
+                  type="primary"
+                  :disabled="sortBusy || !canMove(row, 1)"
+                  @click="moveGame(row, 1)"
+                >下移</el-button>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="提醒" min-width="120">
+            <template #default="{ row }: { row: any }">
+              <el-tag v-if="!activeConfig(row)" size="small" type="danger" effect="plain">缺爆率</el-tag>
+              <el-tag v-else-if="row.status === 'ONLINE'" size="small" type="success" effect="plain">营业</el-tag>
+              <el-tag v-else-if="row.status === 'MAINTENANCE'" size="small" type="warning" effect="plain">维护</el-tag>
+              <span v-else class="muted">已下架</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="180" fixed="right">
+            <template #default="{ row }: { row: any }">
+              <el-button link type="primary" @click="openBasics(row)">基础设置</el-button>
+              <el-button link type="primary" @click="openConfig(row)">爆率配置</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
+    </div>
 
     <!-- 基础设置 -->
-    <el-dialog v-model="basicsVisible" :title="`基础设置 · ${basicsGame?.name || ''}`" width="480px" destroy-on-close>
+    <DeskDialog v-model="basicsVisible" :title="`基础设置 · ${basicsGame?.name || ''}`" width="480px">
       <el-form label-width="96px">
         <el-form-item label="显示名称">
           <el-input v-model="basicsForm.name" maxlength="40" />
@@ -153,43 +158,40 @@
         <el-form-item label="最大下注">
           <el-input-number v-model="basicsForm.maxBet" :min="1" :precision="2" :step="100" style="width:100%" />
         </el-form-item>
-        <el-form-item label="大厅顺序">
-          <div class="form-tip">在列表里用「上移 / 下移」调整，无需手填数字</div>
-        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="basicsVisible = false">取消</el-button>
+        <span class="win-footer-grow" />
         <el-button type="primary" :loading="opLoading" @click="saveBasics">保存</el-button>
       </template>
-    </el-dialog>
+    </DeskDialog>
 
     <!-- 爆率配置 -->
-    <el-dialog
+    <DeskDialog
       v-model="configVisible"
       :title="`爆率配置 · ${configGame?.name || ''}`"
       width="760px"
-      destroy-on-close
-      class="cfg-dlg"
+      dialog-class="cfg-dlg"
     >
       <div class="cfg-sec">
         <div class="cfg-sec-hd">历史版本</div>
         <el-table :data="configHistory" size="small" stripe max-height="220">
           <el-table-column label="版本" prop="version" width="70" />
           <el-table-column label="目标 RTP" width="90">
-            <template #default="{ row }">{{ pct(row.rtp) }}</template>
+            <template #default="{ row }: { row: any }">{{ pct(row.rtp) }}</template>
           </el-table-column>
           <el-table-column label="状态" width="90">
-            <template #default="{ row }">
+            <template #default="{ row }: { row: any }">
               <el-tag :type="row.active ? 'success' : 'info'" size="small">
                 {{ row.active ? '生效中' : '历史' }}
               </el-tag>
             </template>
           </el-table-column>
           <el-table-column label="创建时间" min-width="160">
-            <template #default="{ row }">{{ fmtTime(row.createdAt) }}</template>
+            <template #default="{ row }: { row: any }">{{ fmtTime(row.createdAt) }}</template>
           </el-table-column>
           <el-table-column label="操作" width="100">
-            <template #default="{ row }">
+            <template #default="{ row }: { row: any }">
               <el-button
                 v-if="!row.active"
                 link
@@ -216,7 +218,6 @@
         <el-form label-width="88px" size="default">
           <el-form-item label="目标 RTP">
             <el-input-number v-model="newConfig.rtp" :min="0.5" :max="0.99" :step="0.01" :precision="2" />
-            <span class="form-tip inline">玩家期望返还比例，如 0.95 = 95%</span>
           </el-form-item>
 
           <!-- SLOT / TABLE -->
@@ -227,17 +228,17 @@
               </div>
               <el-table :data="newConfig.items" size="small" class="pay-table">
                 <el-table-column label="奖项名" min-width="140">
-                  <template #default="{ row }">
+                  <template #default="{ row }: { row: any }">
                     <el-input v-model="row.label" size="small" />
                   </template>
                 </el-table-column>
                 <el-table-column label="赔率(x)" width="120">
-                  <template #default="{ row }">
+                  <template #default="{ row }: { row: any }">
                     <el-input-number v-model="row.multiplier" :min="0" :precision="2" size="small" style="width:100%" />
                   </template>
                 </el-table-column>
                 <el-table-column label="权重" width="120">
-                  <template #default="{ row }">
+                  <template #default="{ row }: { row: any }">
                     <el-input-number v-model="row.weight" :min="0" :precision="0" size="small" style="width:100%" />
                   </template>
                 </el-table-column>
@@ -258,12 +259,12 @@
               </div>
               <el-table :data="lotteryRows" size="small" class="pay-table">
                 <el-table-column label="玩法键" min-width="140">
-                  <template #default="{ row }">
+                  <template #default="{ row }: { row: any }">
                     <el-input v-model="row.key" size="small" placeholder="如 big" />
                   </template>
                 </el-table-column>
                 <el-table-column label="赔率" width="140">
-                  <template #default="{ row }">
+                  <template #default="{ row }: { row: any }">
                     <el-input-number v-model="row.multiplier" :min="0.01" :precision="3" size="small" style="width:100%" />
                   </template>
                 </el-table-column>
@@ -284,12 +285,12 @@
               </div>
               <el-table :data="arcadeRows" size="small" class="pay-table">
                 <el-table-column label="奖项键" min-width="140">
-                  <template #default="{ row }">
+                  <template #default="{ row }: { row: any }">
                     <el-input v-model="row.key" size="small" />
                   </template>
                 </el-table-column>
                 <el-table-column label="权重" width="140">
-                  <template #default="{ row }">
+                  <template #default="{ row }: { row: any }">
                     <el-input-number v-model="row.weight" :min="0" :precision="0" size="small" style="width:100%" />
                   </template>
                 </el-table-column>
@@ -306,9 +307,10 @@
 
       <template #footer>
         <el-button @click="configVisible = false">取消</el-button>
+        <span class="win-footer-grow" />
         <el-button type="primary" :loading="opLoading" @click="saveConfig">保存并激活</el-button>
       </template>
-    </el-dialog>
+    </DeskDialog>
   </div>
 </template>
 
@@ -316,15 +318,20 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
+import DeskDialog from '@/components/DeskDialog.vue'
 import { gameAdminApi, type GameAdmin, type GameConfigAdmin, type GameOpsSchedule } from '@/api/admin'
+
+type ChipFilter = 'ONLINE' | 'MAINTENANCE' | 'OFFLINE' | 'noConfig' | ''
 
 const games = ref<GameAdmin[]>([])
 const opsSchedule = ref<GameOpsSchedule | null>(null)
 const loading = ref(false)
 const opLoading = ref(false)
+const restoring = ref(false)
 const sortBusy = ref(false)
 const keyword = ref('')
 const catFilter = ref('ALL')
+const chipFilter = ref<ChipFilter>('')
 
 const basicsVisible = ref(false)
 const basicsGame = ref<GameAdmin | null>(null)
@@ -358,6 +365,38 @@ const counts = computed(() => {
   }
 })
 
+const kpis = computed(() => [
+  {
+    label: '上架中',
+    value: counts.value.online,
+    valTone: 'ok',
+    filter: 'ONLINE' as const,
+  },
+  {
+    label: '维护中',
+    value: counts.value.maint,
+    valTone: 'warn',
+    filter: 'MAINTENANCE' as const,
+  },
+  {
+    label: '已下架',
+    value: counts.value.offline,
+    valTone: '',
+    filter: 'OFFLINE' as const,
+  },
+  {
+    label: '未配爆率',
+    value: counts.value.noConfig,
+    valTone: counts.value.noConfig > 0 ? 'hot' : '',
+    chipHot: counts.value.noConfig > 0,
+    filter: 'noConfig' as const,
+  },
+])
+
+function onChipClick(filter: Exclude<ChipFilter, ''>) {
+  chipFilter.value = chipFilter.value === filter ? '' : filter
+}
+
 /** 大厅完整顺序（不受筛选影响） */
 const lobbyOrdered = computed(() =>
   [...games.value].sort((a, b) => {
@@ -372,6 +411,10 @@ const filteredGames = computed(() => {
   const kw = keyword.value.trim().toLowerCase()
   return lobbyOrdered.value.filter((g) => {
     if (catFilter.value !== 'ALL' && g.category !== catFilter.value) return false
+    if (chipFilter.value === 'ONLINE' && g.status !== 'ONLINE') return false
+    if (chipFilter.value === 'MAINTENANCE' && g.status !== 'MAINTENANCE') return false
+    if (chipFilter.value === 'OFFLINE' && g.status !== 'OFFLINE') return false
+    if (chipFilter.value === 'noConfig' && activeConfig(g)) return false
     if (!kw) return true
     return g.name.toLowerCase().includes(kw) || g.code.toLowerCase().includes(kw)
   })
@@ -495,6 +538,28 @@ async function onStatus(row: GameAdmin, status: string) {
       || (e as Error).message
       || '操作失败',
     )
+  }
+}
+
+async function onRestoreAll() {
+  try {
+    await ElMessageBox.confirm(
+      '将把所有「维护中」且已配置爆率的游戏恢复为上架。房间里的「开放」开关不在此列。',
+      '全部恢复上架',
+      { type: 'warning', confirmButtonText: '恢复上架' },
+    )
+  } catch {
+    return
+  }
+  restoring.value = true
+  try {
+    const res = await gameAdminApi.restoreOnline()
+    ElMessage.success(res.restored ? `已恢复 ${res.restored} 款游戏上架` : '没有需要恢复的游戏')
+    await load()
+  } catch (e: unknown) {
+    ElMessage.error((e as Error).message || '恢复失败')
+  } finally {
+    restoring.value = false
   }
 }
 
@@ -684,33 +749,98 @@ onMounted(load)
 </script>
 
 <style scoped>
-.games-page { width: 100%; max-width: none; }
-.schedule-block { margin-bottom: 14px; }
-.schedule-hd { margin-bottom: 12px; }
-.schedule-title { font-size: 14px; font-weight: 600; color: #303133; }
-.schedule-sub { margin-top: 4px; font-size: 12px; color: #909399; }
-.schedule-grid {
+.games-page :deep(.ops-header) {
+  margin: 0;
+  padding: 14px 18px 12px;
+  flex-shrink: 0;
+}
+.rooms-summary {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0;
+  flex-shrink: 0;
+  border-bottom: 1px solid #e2e8f0;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+}
+.sum-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 10px;
+  min-height: 48px;
+  padding: 0 16px;
+  border-right: 1px solid #f1f5f9;
 }
-.schedule-item {
-  padding: 12px 14px;
-  background: #f5f7fa;
-  border-radius: 8px;
+.sum-chip:last-child { border-right: none; }
+.sum-chip.clickable { cursor: pointer; }
+.sum-chip.clickable:hover { background: #eff6ff; }
+.sum-chip.active { background: #eff6ff; }
+.sum-chip.hot { background: #fff7f7; }
+.sum-label { font-size: 12px; color: #64748b; white-space: nowrap; }
+.sum-val {
+  font-size: 18px;
+  font-weight: 700;
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
 }
-.schedule-time { font-size: 13px; font-weight: 600; color: var(--ops-gold); }
-.schedule-desc { margin-top: 6px; font-size: 12px; color: #606266; line-height: 1.5; }
-.schedule-notes {
-  margin: 12px 0 0;
-  padding-left: 18px;
+.sum-val.ok { color: #16a34a; }
+.sum-val.warn { color: #f59e0b; }
+.sum-val.hot { color: #ef4444; }
+
+.schedule-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  padding: 6px 16px;
   font-size: 12px;
-  color: #909399;
-  line-height: 1.7;
+  color: #64748b;
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
+  flex-shrink: 0;
+}
+.schedule-bar__label {
+  font-weight: 600;
+  color: #475569;
+  white-space: nowrap;
+}
+.schedule-bar__item {
+  color: var(--ops-gold);
+  font-weight: 600;
+  white-space: nowrap;
 }
 
-.g-name { font-weight: 600; color: #303133; }
-.g-code { margin-top: 2px; font-size: 12px; color: #909399; }
+.panel-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  padding: 10px 14px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  border-bottom: 1px solid #e2e8f0;
+  flex-shrink: 0;
+}
+.filter-search { width: 220px; }
+
+.panel-body {
+  flex: 1;
+  min-height: 0;
+  padding: 0;
+  background: #fff;
+}
+.panel-body :deep(.el-table) {
+  --el-table-header-bg-color: #f1f5f9;
+  --el-table-row-hover-bg-color: #eff6ff;
+}
+.panel-body :deep(.el-table th.el-table__cell) {
+  color: #475569;
+  font-weight: 600;
+  background: #f1f5f9 !important;
+}
+.games-table { width: 100%; }
+
+.g-name { font-weight: 600; color: #0f172a; }
+.g-code { margin-top: 2px; font-size: 12px; color: #64748b; }
 .sort-cell {
   display: flex;
   align-items: center;
@@ -720,13 +850,11 @@ onMounted(load)
 .sort-no {
   min-width: 28px;
   font-variant-numeric: tabular-nums;
-  color: #606266;
+  color: #475569;
   font-weight: 600;
 }
-.muted { color: #c0c4cc; }
+.muted { color: #cbd5e1; }
 .danger-text { color: #f56c6c; }
-.form-tip { margin-top: 4px; font-size: 12px; color: #909399; }
-.form-tip.inline { margin: 0 0 0 10px; }
 
 .cfg-sec { margin-bottom: 18px; }
 .cfg-sec-hd {
@@ -737,14 +865,14 @@ onMounted(load)
   margin-bottom: 10px;
   font-size: 14px;
   font-weight: 600;
-  color: #303133;
+  color: #0f172a;
 }
-.cfg-sub { font-size: 12px; font-weight: 400; color: #909399; }
+.cfg-sub { font-size: 12px; font-weight: 400; color: #64748b; }
 .pay-toolbar { margin-bottom: 8px; }
 .pay-table { width: 100%; }
 
 @media (max-width: 900px) {
-  .stat-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .schedule-grid { grid-template-columns: 1fr; }
+  .rooms-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .sum-chip { border-bottom: 1px solid #f1f5f9; }
 }
 </style>

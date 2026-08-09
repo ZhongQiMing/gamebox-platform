@@ -25,13 +25,16 @@ enum UserRole {
   ADMIN // 平台管理员（后台）
   BRANCH // 分公司
   AGENT // 代理
-  PROXY // 代分
+  PROXY // 子账号（只读）
+  CS // 客服（上下分客服）
   PLAYER // 玩家
 }
 
 enum UserStatus {
   ACTIVE
   DISABLED
+  /// 玩家自助注销：个人信息已清除，账目保留；不可登录、不可恢复
+  CLOSED
 }
 
 enum AccountOwnerType {
@@ -39,6 +42,7 @@ enum AccountOwnerType {
   BRANCH
   AGENT
   PROXY
+  CS
   PLAYER
   ROOM // 房间盘口池（ownerId = roomId）
 }
@@ -118,6 +122,7 @@ model User {
   uid          String     @unique // 对外展示 9 位编号（100000000–999999999）
   nickname     String     @unique // 展示名：注册时从昵称池分配，4～6 字，全站唯一
   avatar       String? // /images/avatars/NNN.jpg|png；按轮次不重复分配
+  /// ADMIN 全站有且仅有一名（库有部分唯一索引）；管理员密码无后台重置口，忘了只能改库
   role         UserRole   @default(PLAYER)
   status       UserStatus @default(ACTIVE)
 
@@ -135,44 +140,67 @@ model User {
   /// 会话吊销：改密/停用时自增，JWT 携带的 version 不一致即失效
   tokenVersion Int @default(0)
 
+  /// 登录失败过多被冻结；重置密码后清空
+  loginLockedAt DateTime?
+
   lastLoginAt DateTime?
   lastLoginIp String?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  roomOwnerGrants RoomOwnerGrant[]
-  agent          Agent?
-  bets           Bet[]
-  gameRounds     GameRound[]
-  rechargeOrders RechargeOrder[] @relation("RechargePlayer")
-  reviewedOrders RechargeOrder[] @relation("RechargeReviewer")
-  commissionsAsBeneficiary CommissionRecord[] @relation("CommissionBeneficiary")
-  commissionsAsSource      CommissionRecord[] @relation("CommissionSource")
-  rebates        RebateRecord[]
-  dailyRebates   DailyRebateSettlement[]
-  activityClaims ActivityClaim[]
-  slotFeatureSessions SlotFeatureSession[]
-  feedbacks      Feedback[]
-  csMessages     CsMessage[]
-  ledgerOps      PointsLedger[]  @relation("LedgerOperator")
-  adminLogs      AdminLog[]
-  roomMembers    RoomMember[]
-  riskHandled    RiskEvent[]     @relation("RiskHandledBy")
+  roomOwnerGrants          RoomOwnerGrant[]
+  agent                    Agent?
+  csStaff                  CsStaff?
+  bets                     Bet[]
+  gameRounds               GameRound[]
+  rechargeOrders           RechargeOrder[]         @relation("RechargePlayer")
+  reviewedOrders           RechargeOrder[]         @relation("RechargeReviewer")
+  commissionsAsBeneficiary CommissionRecord[]      @relation("CommissionBeneficiary")
+  commissionsAsSource      CommissionRecord[]      @relation("CommissionSource")
+  rebates                  RebateRecord[]
+  dailyRebates             DailyRebateSettlement[]
+  activityClaims           ActivityClaim[]
+  slotFeatureSessions      SlotFeatureSession[]
+  feedbacks                Feedback[]
+  csMessages               CsMessage[]
+  csDeskSetting            CsDeskSetting?
+  ledgerOps                PointsLedger[]          @relation("LedgerOperator")
+  adminLogs                AdminLog[]
+  roomMembers              RoomMember[]
+  roomHangsAsPlayer        RoomPlayerHang[]        @relation("RoomHangPlayer")
+  roomHangsAsParent        RoomPlayerHang[]        @relation("RoomHangParent")
+  riskHandled              RiskEvent[]             @relation("RiskHandledBy")
 
   @@index([role, status])
+  @@index([role, createdAt]) // 报表按周期统计新增玩家
   @@index([parentId])
   @@index([agentPath])
   @@index([lastLoginIp])
 }
 
-// 代理扩展（role=BRANCH/AGENT/PROXY 的用户拥有一条）
-model Agent {
-  id        String @id @default(cuid())
-  userId    String @unique
-  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+/// 客服/代理桌面设置：快捷话术 + 收款码（多端同步，权威在服务端）
+model CsDeskSetting {
+  id           String   @id @default(cuid())
+  userId       String   @unique
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// string[]
+  quickReplies Json     @default("[]")
+  /// { id, url, name? }[]
+  wechatQrs    Json     @default("[]")
+  /// { id, url, name? }[]
+  alipayQrs    Json     @default("[]")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
 
-  levelId   String?
-  level     AgentLevel? @relation(fields: [levelId], references: [id])
+// 代理扩展（role=BRANCH/AGENT/PROXY 的用户可有一条；CS 不走此表）
+model Agent {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  levelId String?
+  level   AgentLevel? @relation(fields: [levelId], references: [id])
 
   // 自营参数
   commissionRate Float @default(0.002) // 挂靠下级流水分成（默认 0.2%）
@@ -185,12 +213,53 @@ model Agent {
   pointsQuota Decimal @default(0) @db.Decimal(18, 2)
   pointsUsed  Decimal @default(0) @db.Decimal(18, 2)
   /// 飞盘剩余覆盖
-  flyCover Decimal @default(0) @db.Decimal(18, 2)
+  flyCover    Decimal @default(0) @db.Decimal(18, 2)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   rooms Room[]
+}
+
+/// 客服档案（role=CS）：额度在 PointsAccount；佣金点数/接单权重在此
+model CsStaff {
+  id                String   @id @default(cuid())
+  userId            String   @unique
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parentAgentUserId String
+  /// 佣金点数：上/下分金额 × 比例；现金从盘分、信用从剩余信用划给客服（默认 0）
+  wageRate          Float    @default(0)
+  /// 空闲时接单权重（相对值，代理可配 80/20）
+  idleWeight        Int      @default(100)
+  /// IDLE=接单 REST=休息
+  workStatus        String   @default("REST")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([parentAgentUserId, workStatus])
+}
+
+/// 客服上下分佣金账单：现金扣盘分 / 信用扣剩余信用；不够可记未结，有额度后结清
+model CsWageBill {
+  id             String    @id @default(cuid())
+  csUserId       String
+  agentUserId    String
+  playerId       String
+  /// UP=上分佣金 DOWN=下分佣金
+  kind           String
+  fundAmount     Decimal   @db.Decimal(18, 2)
+  wageAmount     Decimal   @db.Decimal(18, 2)
+  wageRate       Float
+  /// PENDING=未结 SETTLED=已结
+  status         String    @default("PENDING")
+  refType        String?
+  refId          String?
+  settledAt      DateTime?
+  settleLedgerId String?
+  createdAt      DateTime  @default(now())
+
+  @@index([csUserId, status, createdAt])
+  @@index([agentUserId, status])
 }
 
 // 代理等级配置（对应原型 team-data 的 V1-V5）
@@ -209,34 +278,67 @@ model AgentLevel {
 // ======================= 房间 / 推荐码 =======================
 
 model Room {
-  id           String     @id @default(cuid())
-  roomNo       String     @unique // 房间号 = 推荐码
-  name         String
-  title        String? // 展示标题（可选，已不在创建表单使用）
-  icon         String?
-  ownerAgentId String?
-  ownerAgent   Agent?     @relation(fields: [ownerAgentId], references: [id])
+  id               String    @id @default(cuid())
+  roomNo           String    @unique // 房间号 = 推荐码
+  name             String
+  title            String? // 展示标题（可选，已不在创建表单使用）
+  icon             String?
+  ownerAgentId     String?
+  ownerAgent       Agent?    @relation(fields: [ownerAgentId], references: [id])
   /// OPEN | MAINTENANCE | FROZEN | CLOSED
-  status       String     @default("OPEN")
-  enabledGames String     @default("[]") // JSON 数组：["ssc","mahjong",...]
+  status           String    @default("OPEN")
+  enabledGames     String    @default("[]") // JSON 数组：["ssc","mahjong",...]
   /// 代理房间月费（从绑定代理账户扣）；0=不收费
-  monthlyFee   Decimal    @default(0) @db.Decimal(18, 2)
+  monthlyFee       Decimal   @default(0) @db.Decimal(18, 2)
   /// 每月扣费日 1-28
-  billingDay   Int        @default(1)
+  billingDay       Int       @default(1)
   /// 下次扣费时间（上海自然日 0 点语义由任务保证）
-  nextBillAt   DateTime?
-  lastBilledAt DateTime?
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
+  nextBillAt       DateTime?
+  lastBilledAt     DateTime?
+  overIssueEnabled Boolean   @default(true)
+  overIssueLimit   Decimal   @default(0) @db.Decimal(18, 2)
+  overIssueUsed    Decimal   @default(0) @db.Decimal(18, 2)
+  bookMode         String    @default("CASH")
+  agentShareRate   Float     @default(0)
+  creditLimit      Decimal   @default(0) @db.Decimal(18, 2)
+  settleCycle      String    @default("WEEKLY_MON")
+  settleWeekday    Int       @default(1)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
-  gameRounds   GameRound[]
-  members      RoomMember[]
-  chatMessages RoomChatMessage[]
-  ownerGrants  RoomOwnerGrant[]
-  gameConfigs  RoomGameConfig[]
+  gameRounds      GameRound[]
+  members         RoomMember[]
+  playerHangs     RoomPlayerHang[]
+  chatMessages    RoomChatMessage[]
+  ownerGrants     RoomOwnerGrant[]
+  gameConfigs     RoomGameConfig[]
   controlPolicies ControlPolicy[]
+  softBiases      GlobalSoftBias[]
+  weekSettles     RoomWeekSettle[]
 
   @@index([nextBillAt, status])
+}
+
+/// 房间内玩家挂靠（与全局 User.parentId 组织树分离；每房独立，跨房不返挂靠佣金）
+model RoomPlayerHang {
+  id        String   @id @default(cuid())
+  roomId    String
+  room      Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  playerId  String
+  player    User     @relation("RoomHangPlayer", fields: [playerId], references: [id], onDelete: Cascade)
+  /// 本房直接上级（玩家或本房代理）
+  parentId  String
+  parent    User     @relation("RoomHangParent", fields: [parentId], references: [id], onDelete: Cascade)
+  /// 本房物化路径（祖先 id），如 /aId/bId/
+  hangPath  String   @default("/")
+  depth     Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([roomId, playerId])
+  @@index([roomId, parentId])
+  @@index([roomId, hangPath])
+  @@index([parentId]) // 跨房统计某上级的挂靠下级
 }
 
 /// 房主(BRANCH) ↔ 房间多对多可见/管辖授权（超管分配）
@@ -264,6 +366,8 @@ model RoomGameConfig {
   maxBet     Decimal? @db.Decimal(18, 2)
   /// 节点回水比例覆盖（null=继承）
   rebateRate Float?
+  /// 机器人托方案 JSON：scheme/betStyle/intensity/winBias/remark
+  robotPlan  Json?
   updatedAt  DateTime @updatedAt
   createdAt  DateTime @default(now())
 
@@ -271,47 +375,157 @@ model RoomGameConfig {
   @@index([gameCode])
 }
 
+model RoomWeekSettle {
+  id                  String    @id @default(cuid())
+  roomId              String
+  room                Room      @relation(fields: [roomId], references: [id], onDelete: Restrict)
+  /// 周起点（上海周一 00:00 对应 UTC）
+  weekStart           DateTime
+  weekEnd             DateTime
+  bookMode            String
+  agentShareRate      Float
+  betFlow             Decimal   @default(0) @db.Decimal(18, 2)
+  housePnl            Decimal   @default(0) @db.Decimal(18, 2)
+  agentShareAmount    Decimal   @default(0) @db.Decimal(18, 2)
+  platformShareAmount Decimal   @default(0) @db.Decimal(18, 2)
+  /// 信用盘：占成应付（平台→代理，可负）
+  grossPay            Decimal   @default(0) @db.Decimal(18, 2)
+  /// 信用盘：结账时口袋余额快照
+  agentPocketAtSettle Decimal   @default(0) @db.Decimal(18, 2)
+  /// 信用盘：本期计入月费
+  monthlyFeePeriod    Decimal   @default(0) @db.Decimal(18, 2)
+  /// 信用盘：实付（平台→代理，可负）= grossPay + pocket − fee
+  settlePay           Decimal   @default(0) @db.Decimal(18, 2)
+  /// NONE=现金盘/无交割 | EVEN=互不找补 | UNPAID=待线下交割 | PAID=已确认收款
+  paymentStatus       String    @default("NONE")
+  paidAt              DateTime?
+  paidById            String?
+  paymentNote         String?
+  /// OPEN=本周进行中 | CLOSED=已关账待结 | SETTLED=已结清（账本关账，≠现金已到账）
+  status              String    @default("OPEN")
+  settledAt           DateTime?
+  settledById         String?
+  creditRestored      Boolean   @default(false)
+  note                String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@unique([roomId, weekStart])
+  @@index([roomId, status])
+  @@index([weekStart])
+  @@index([paymentStatus])
+}
+
 /// 超管控奖策略（房主/代理不可见参数细节）
 model ControlPolicy {
-  id          String    @id @default(cuid())
+  id          String   @id @default(cuid())
   name        String
   roomId      String? // 单房调控必填
-  room        Room?     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  room        Room?    @relation(fields: [roomId], references: [id], onDelete: Cascade)
   gameCode    String? // 指定游戏；null=该房全部已接入游戏（当前=全部彩票）
-  /// HOUSE_HOLD_RATIO：庄家按局留存比例
+  /// HOUSE_HOLD_RATIO | PLAYER_WIN | PLAYER_LOSE
   targetType  String
-  /// 留存比例 0~1，如 0.30 = 30%
+  /// 留存比例 0~1；单人模式可作强度占位
   targetValue Float
-  /// 目标回血金额：该房该范围庄家净赢累计达到后自动结束（EXHAUSTED）
-  goalAmount  Decimal?  @db.Decimal(18, 2)
+  /// 目标回血金额 / 单人目标输赢绝对值
+  goalAmount  Decimal? @db.Decimal(18, 2)
+  /// 单人控奖目标玩家（User.id）；房间留存模式为空
+  playerId    String?
   /// 兼容旧字段；开奖搜索深度已固定，不再手调
-  strength    Float     @default(1)
+  strength    Float    @default(1)
   startAt     DateTime
   /// 安全截止（防止永不结束）；正常以 goalAmount 达成结束
   endAt       DateTime
   /// DRAFT | ACTIVE | HALTED | EXHAUSTED
-  status      String    @default("DRAFT")
+  status      String   @default("DRAFT")
   remark      String?
   createdById String?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   @@index([status, startAt, endAt])
   @@index([roomId, gameCode, status])
+  @@index([playerId, status])
+}
+
+/// 全站全局软控（单行 id=1）：共盘日账 + 街机长期资金池
+model GlobalSoftControl {
+  id                  Int      @id @default(1)
+  /// 总开关：关=不参与开奖挑号（界面与配置仍可改）
+  enabled             Boolean  @default(false)
+  /// 开盘保护：当日流水满此值才允许软控
+  minFlowToControl    Float    @default(50000)
+  /// 目标净留存中轴 R=(G−C)/F %
+  targetNetPct        Float    @default(4)
+  /// 目标带下限%（带内 IDLE）
+  bandLowPct          Float    @default(2)
+  /// 目标带上限%（超出 HALT）
+  bandHighPct         Float    @default(6)
+  /// 单期庄家吃水上限 g/f %
+  maxPeriodWinPct     Float    @default(40)
+  /// 单期亏损触发线兼候选硬顶 %（自然亏超此值才挑号；候选亏超此值非法）
+  maxPeriodLossPct    Float    @default(50)
+  /// STEER（轻微调节）试号数；仅共盘，街机走 arcadeCandidateTries
+  candidateTries      Int      @default(8)
+  /// HALT（偏热回拉）试号数
+  candidateTriesHalt  Int      @default(16)
+  /// BOOST（加强调节）试号数
+  candidateTriesBoost Int      @default(20)
+  /// 单人缓刹：净赢 ≥ 净带入 × 倍数
+  playerBrakeEnabled  Boolean  @default(true)
+  playerBrakeMultiple Float    @default(4)
+  /// 街机+电子资金池目标返还率（派彩/流水）
+  arcadeRtpTarget      Float   @default(0.92)
+  /// 街机池试号数（与共盘 candidateTries 解耦，改共盘不影响街机）
+  arcadeCandidateTries Int     @default(3)
+  /// 街机池统计窗口天数：更早的盈亏永久落袋，不再被挑号吐回
+  arcadePoolWindowDays Int     @default(14)
+  /// 已停用：控后冷却会在冷却期让出防爆权，改由单期金额门约束
+  cooldownEnabled     Boolean  @default(false)
+  /// 慢性失血档位开关：AUTO | FORCE_NORMAL | FORCE_RECOVER
+  gearMode            String   @default("AUTO")
+  updatedAt           DateTime @updatedAt
+}
+
+/// 全站软控下的房间/玩家软偏置（次级排序，不硬拉）
+model GlobalSoftBias {
+  id             String   @id @default(cuid())
+  /// ROOM_RECOVER(回血) | ROOM_RELEASE(放水) | PLAYER_WIN | PLAYER_LOSE
+  kind           String
+  roomId         String
+  room           Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  playerId       String?
+  /// 房间回血/放水：目标比例%（相对该房本期流水）
+  biasPct        Float    @default(3)
+  /// 玩家偏赢/偏输：累计目标金额（元）；房间类为空
+  goalAmount     Decimal? @db.Decimal(18, 2)
+  /// 玩家偏置进度起算时间（创建/再次启用时刷新）
+  progressFrom   DateTime @default(now())
+  /// 玩家偏置已累计进度（净赢/净输），达标后停用
+  progressAmount Decimal  @default(0) @db.Decimal(18, 2)
+  enabled        Boolean  @default(true)
+  remark         String?
+  createdById    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([enabled, kind])
+  @@index([roomId])
+  @@index([playerId])
 }
 
 /// 全局回水政策（超管锁死总返水率与玩家下限）
 model RebatePolicy {
-  id        Int      @id @default(1)
+  id            Int      @id @default(1)
   /// 兼容旧字段：视作玩家比例参考带
-  minRate   Float    @default(0.018)
-  maxRate   Float    @default(0.05)
+  minRate       Float    @default(0.018)
+  maxRate       Float    @default(0.05)
   /// 飞盘流水总返水率 T（默认 5%）；玩家 P∈[playerMinRate, T/2]，代理得 T-P
-  totalRate     Float @default(0.05)
-  playerMinRate Float @default(0.018)
+  totalRate     Float    @default(0.05)
+  playerMinRate Float    @default(0.018)
   /// 分类默认 JSON（遗留，自助回水改按玩家 P）
-  defaults  Json     @default("{}")
-  updatedAt DateTime @updatedAt
+  defaults      Json     @default("{}")
+  updatedAt     DateTime @updatedAt
 }
 
 /// 房间×游戏公共聊天时间线（全员一致；进房只拉历史，不本地造事件）
@@ -320,7 +534,7 @@ model RoomChatMessage {
   roomId       String
   room         Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
   gameCode     String
-  kind         String // bet | close | result | bet_verify | win_verify | system
+  kind         String // bet | chat | close | open | result | bet_verify | win_verify | system
   issueNo      String?
   senderId     String?
   senderName   String
@@ -328,31 +542,32 @@ model RoomChatMessage {
   isRobot      Boolean  @default(false)
   payload      Json
   createdAt    DateTime @default(now())
+  // 部分唯一索引见 migration：RoomChatMessage_system_once_key
+  // (roomId, gameCode, kind, issueNo) WHERE kind IN (close/open/result/bet_verify/win_verify)
 
   @@index([roomId, gameCode, createdAt])
   @@index([roomId, gameCode, id])
   @@index([roomId, gameCode, kind, issueNo])
-  // 部分唯一索引见 migration：RoomChatMessage_system_once_key
-  // (roomId, gameCode, kind, issueNo) WHERE kind IN (close/open/result/bet_verify/win_verify)
 }
 
 /// 玩家与代理房间的绑定（输入房间号进房后写入，用于按代理隔离客户）
 model RoomMember {
-  id        String   @id @default(cuid())
-  playerId  String
-  player    User     @relation(fields: [playerId], references: [id], onDelete: Cascade)
-  roomId    String
-  room      Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
-  status    String   @default("APPROVED") // PENDING | APPROVED | REJECTED
+  id               String   @id @default(cuid())
+  playerId         String
+  player           User     @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  roomId           String
+  room             Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  status           String   @default("APPROVED") // PENDING | APPROVED | REJECTED
   /// 是否飞盘到房间盘口池；关闭则只与代理结算
-  flyEnabled Boolean @default(true)
+  flyEnabled       Boolean  @default(true)
   /// 该玩家回水比例 P（null=用代理 rebateRate 默认）
   playerRebateRate Float?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   @@unique([playerId, roomId])
   @@index([playerId, status])
+  @@index([roomId, status]) // 按房拉成员（客服台/报表/结算/风控高频）
 }
 
 // ======================= 积分账本（变动唯一入口）=======================
@@ -360,19 +575,27 @@ model RoomMember {
 model PointsAccount {
   id        String           @id @default(cuid())
   ownerType AccountOwnerType
-  ownerId   String           @unique // PLATFORM 时为 "PLATFORM"，其余为 userId
+  /// PLATFORM="PLATFORM"；其余为 userId（或历史 ROOM 的 roomId）
+  ownerId   String
+  /// 玩家持分按房隔离：PLAYER 填运营房间 id；非 PLAYER 固定 ''
+  roomId    String           @default("")
   balance   Decimal          @default(0) @db.Decimal(18, 2)
   frozen    Decimal          @default(0) @db.Decimal(18, 2) // 冻结额（下分待审核）
   createdAt DateTime         @default(now())
   updatedAt DateTime         @updatedAt
 
   ledgers PointsLedger[]
+
+  @@unique([ownerType, ownerId, roomId])
+  @@index([ownerType, roomId])
+  @@index([ownerId, roomId]) // 只按 ownerId 查余额时用不上复合唯一（首列是 ownerType）
 }
 
+// 账本是资金唯一凭证：父行（账户/用户/房间）被删时必须报错而不是静默连坐删流水
 model PointsLedger {
   id             String        @id @default(cuid())
   accountId      String
-  account        PointsAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  account        PointsAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
   bizType        LedgerBizType
   amount         Decimal       @db.Decimal(18, 2) // 正入负出
   balanceAfter   Decimal       @db.Decimal(18, 2)
@@ -395,7 +618,9 @@ model RechargeOrder {
   id           String       @id @default(cuid())
   orderNo      String       @unique
   playerId     String
-  player       User         @relation("RechargePlayer", fields: [playerId], references: [id], onDelete: Cascade)
+  player       User         @relation("RechargePlayer", fields: [playerId], references: [id], onDelete: Restrict)
+  /// 运营房间（玩家持分按房；上下分必须落在该房账本）
+  roomId       String?
   type         RechargeType
   amount       Decimal      @db.Decimal(18, 2)
   status       ReviewStatus @default(PENDING)
@@ -409,42 +634,44 @@ model RechargeOrder {
 
   @@index([playerId, createdAt])
   @@index([status, type])
+  @@index([status, createdAt]) // 待审队列列表 + 按时间倒序分页
+  @@index([roomId, status, createdAt]) // 按房资金报表 groupBy
 }
 
 // ======================= 游戏目录 + 爆率/赔率配置 =======================
 
 model Game {
-  id        String       @id @default(cuid())
-  code      String       @unique // ssc / mahjong / slots / bcbm ...
-  name      String
-  category  GameCategory
-  status    GameStatus   @default(OFFLINE)
-  iconUrl   String?
-  entryUrl  String? // games-assets 入口
-  minBet    Decimal      @default(1) @db.Decimal(18, 2)
-  maxBet    Decimal      @default(100000) @db.Decimal(18, 2)
-  sortOrder Int          @default(0)
+  id              String       @id @default(cuid())
+  code            String       @unique // ssc / mahjong / slots / bcbm ...
+  name            String
+  category        GameCategory
+  status          GameStatus   @default(OFFLINE)
+  iconUrl         String?
+  entryUrl        String? // games-assets 入口
+  minBet          Decimal      @default(1) @db.Decimal(18, 2)
+  maxBet          Decimal      @default(100000) @db.Decimal(18, 2)
+  sortOrder       Int          @default(0)
   // 彩票专用：开奖周期（秒），如 SSC=60；非彩票为 null
   drawIntervalSec Int?
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
 
-  configs    GameConfig[]
-  issues     LotteryIssue[]
-  rounds     GameRound[]
-  bets       Bet[]
+  configs             GameConfig[]
+  issues              LotteryIssue[]
+  rounds              GameRound[]
+  bets                Bet[]
   slotFeatureSessions SlotFeatureSession[]
 }
 
 // 爆率/赔率配置：服务端据此裁决结果，前端拿不到、改不了
 // 版本化；同一 game 同时刻只有一条 active
 model GameConfig {
-  id        String   @id @default(cuid())
-  gameId    String
-  game      Game     @relation(fields: [gameId], references: [id], onDelete: Cascade)
-  version   Int      @default(1)
-  active    Boolean  @default(false)
-  rtp       Float    @default(0.95) // 目标返奖率
+  id      String  @id @default(cuid())
+  gameId  String
+  game    Game    @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  version Int     @default(1)
+  active  Boolean @default(false)
+  rtp     Float   @default(0.95) // 目标返奖率
 
   // 电子/街机：奖项+倍率+权重 [{label,multiplier,weight}]
   // 彩票：各玩法赔率 {"big":1.98,"small":1.98,...}
@@ -462,22 +689,22 @@ model GameConfig {
 // ======================= 彩票：期号 + 开奖 =======================
 
 model LotteryIssue {
-  id          String      @id @default(cuid())
-  gameId      String
-  game        Game        @relation(fields: [gameId], references: [id], onDelete: Cascade)
-  configVer   Int         @default(1)
-  issueNo     String // 期号，如 20260613001
-  status      IssueStatus @default(PENDING)
-  openAt      DateTime // 开奖时间
-  lockAt      DateTime // 封盘时间
-  drawNumbers String? // 开奖号码（JSON/字符串）
-  drawnAt     DateTime?
-  serverSeed  String? // 可证明公平
+  id             String      @id @default(cuid())
+  gameId         String
+  game           Game        @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  configVer      Int         @default(1)
+  issueNo        String // 期号，如 20260613001
+  status         IssueStatus @default(PENDING)
+  openAt         DateTime // 开奖时间
+  lockAt         DateTime // 封盘时间
+  drawNumbers    String? // 开奖号码（JSON/字符串）
+  drawnAt        DateTime?
+  serverSeed     String? // 可证明公平
   serverSeedHash String?
   /// 开奖页码：复算 seed:server:nonce；自然开奖为 1
-  nonce       Int?
-  totalFlow   Decimal     @default(0) @db.Decimal(18, 2)
-  createdAt   DateTime    @default(now())
+  nonce          Int?
+  totalFlow      Decimal     @default(0) @db.Decimal(18, 2)
+  createdAt      DateTime    @default(now())
 
   bets Bet[]
 
@@ -495,7 +722,7 @@ model SlotFeatureSession {
   game            Game     @relation(fields: [gameId], references: [id], onDelete: Cascade)
   feature         String
   lockedBetAmount Decimal  @db.Decimal(18, 2)
-  spinsRemaining Int
+  spinsRemaining  Int
   totalWin        Decimal  @default(0) @db.Decimal(18, 2)
   status          String   @default("ACTIVE") // ACTIVE | COMPLETED | EXPIRED
   version         Int      @default(0)
@@ -510,26 +737,26 @@ model SlotFeatureSession {
 // ======================= 棋牌/电子/街机：一局 =======================
 
 model GameRound {
-  id           String   @id @default(cuid())
-  roundNo      String   @unique
-  gameId       String
-  game         Game     @relation(fields: [gameId], references: [id])
-  category     GameCategory
-  configVer    Int      @default(1)
-  roomId       String?
-  room         Room?    @relation(fields: [roomId], references: [id])
+  id             String       @id @default(cuid())
+  roundNo        String       @unique
+  gameId         String
+  game           Game         @relation(fields: [gameId], references: [id])
+  category       GameCategory
+  configVer      Int          @default(1)
+  roomId         String?
+  room           Room?        @relation(fields: [roomId], references: [id])
   // 棋牌为对局发起者/桌主；电子/街机为玩家本人
-  playerId     String?
-  player       User?    @relation(fields: [playerId], references: [id])
-  state        String   @default("SETTLED") // PLAYING | SETTLED | CANCELLED
-  totalFlow    Decimal  @default(0) @db.Decimal(18, 2)
-  outcome      Json? // 开奖/牌局明细
-  serverSeed   String?
+  playerId       String?
+  player         User?        @relation(fields: [playerId], references: [id])
+  state          String       @default("SETTLED") // PLAYING | SETTLED | CANCELLED
+  totalFlow      Decimal      @default(0) @db.Decimal(18, 2)
+  outcome        Json? // 开奖/牌局明细
+  serverSeed     String?
   serverSeedHash String?
-  clientSeed   String?
-  nonce        Int      @default(0)
-  startedAt    DateTime @default(now())
-  endedAt      DateTime?
+  clientSeed     String?
+  nonce          Int          @default(0)
+  startedAt      DateTime     @default(now())
+  endedAt        DateTime?
 
   bets        Bet[]
   commissions CommissionRecord[]
@@ -545,33 +772,35 @@ model GameRound {
 // 彩票：关联 issueId + betType(玩法) + 赔率
 // 棋牌/电子/街机：关联 roundId + action/payload
 model Bet {
-  id           String    @id @default(cuid())
-  betNo        String    @unique
+  id              String  @id @default(cuid())
+  betNo           String  @unique
   clientRequestId String? @unique
-  playerId     String
-  player       User      @relation(fields: [playerId], references: [id], onDelete: Cascade)
-  gameId       String
-  game         Game      @relation(fields: [gameId], references: [id])
+  playerId        String
+  player          User    @relation(fields: [playerId], references: [id], onDelete: Restrict)
+  gameId          String
+  game            Game    @relation(fields: [gameId], references: [id])
 
-  issueId      String?
-  issue        LotteryIssue? @relation(fields: [issueId], references: [id])
-  roundId      String?
-  round        GameRound?    @relation(fields: [roundId], references: [id])
+  issueId String?
+  issue   LotteryIssue? @relation(fields: [issueId], references: [id])
+  roundId String?
+  round   GameRound?    @relation(fields: [roundId], references: [id])
 
-  betType      String? // 玩法（彩票）/ 动作（棋牌）
-  payload      Json? // 投注明细
-  amount       Decimal   @db.Decimal(18, 2) // 下注额
-  odds         Float     @default(0) // 命中赔率
-  multiplier   Float     @default(0) // 命中倍率（电子）
-  payout       Decimal   @default(0) @db.Decimal(18, 2) // 派彩
-  status       BetStatus @default(PENDING)
-  validFlow    Decimal   @default(0) @db.Decimal(18, 2) // 有效流水（算分润/回水用）
-  settledAt    DateTime?
-  createdAt    DateTime  @default(now())
+  betType    String? // 玩法（彩票）/ 动作（棋牌）
+  payload    Json? // 投注明细
+  amount     Decimal   @db.Decimal(18, 2) // 下注额
+  odds       Float     @default(0) // 命中赔率
+  multiplier Float     @default(0) // 命中倍率（电子）
+  payout     Decimal   @default(0) @db.Decimal(18, 2) // 派彩
+  status     BetStatus @default(PENDING)
+  validFlow  Decimal   @default(0) @db.Decimal(18, 2) // 有效流水（算分润/回水用）
+  settledAt  DateTime?
+  createdAt  DateTime  @default(now())
 
   @@index([playerId, createdAt])
   @@index([playerId, gameId, createdAt]) // 玩家按游戏筛注单
+  @@index([playerId, settledAt]) // 玩家回水/报表按结算时间取有效流水
   @@index([gameId, createdAt]) // 运营/报表按游戏统计
+  @@index([status, settledAt]) // 每日回水任务 / 共盘日账全表按结算时间扫描
   @@index([issueId, status])
   @@index([roundId, status])
 }
@@ -582,9 +811,9 @@ model Bet {
 model CommissionRecord {
   id            String     @id @default(cuid())
   beneficiaryId String // 受益代理 userId
-  beneficiary   User       @relation("CommissionBeneficiary", fields: [beneficiaryId], references: [id], onDelete: Cascade)
+  beneficiary   User       @relation("CommissionBeneficiary", fields: [beneficiaryId], references: [id], onDelete: Restrict)
   sourceUserId  String // 产生流水的下线 userId
-  sourceUser    User       @relation("CommissionSource", fields: [sourceUserId], references: [id], onDelete: Cascade)
+  sourceUser    User       @relation("CommissionSource", fields: [sourceUserId], references: [id], onDelete: Restrict)
   level         Int // 第几级（1=直属）
   sourceRoundId String?
   sourceRound   GameRound? @relation(fields: [sourceRoundId], references: [id], onDelete: SetNull)
@@ -598,10 +827,62 @@ model CommissionRecord {
   @@index([sourceUserId, settledAt])
 }
 
+/// 代理盘分（Agent.pointsQuota）变动流水。
+/// 现金盘的额度变动与 PointsLedger 一一对应；信用盘只动额度、不产生积分流水，
+/// 因此本表既是信用盘唯一的账目凭证，也是两种盘型共用的幂等锚点——
+/// 额度与账本必须同进同退，否则重放会让 min(余额, 额度) 口径漂移。
+///
+/// 不变量：SUM(delta) == Agent.pointsQuota，逐个代理都成立。
+/// 唯一写入口是 player-fund.helper.ts 的 writeAgentQuotaInTx，
+/// 任何绕开它直接 update pointsQuota 的代码都会把这条不变量打破。
+model AgentQuotaLedger {
+  id             String   @id @default(cuid())
+  agentUserId    String
+  /// CASH=现金盘（同时动余额） CREDIT=信用盘（只动额度）
+  bookMode       String
+  /// OPEN=建号期初 TRANSFER_IN/OUT=盘分进出 SETTLE=结账校准 REBATE/COMMISSION/ADJUST/BET/WIN
+  bizType        String
+  delta          Decimal  @db.Decimal(18, 2)
+  quotaAfter     Decimal  @db.Decimal(18, 2)
+  refType        String?
+  refId          String?
+  remark         String?
+  idempotencyKey String   @unique
+  createdAt      DateTime @default(now())
+
+  @@index([agentUserId, createdAt])
+}
+
+/// 挂靠佣金欠账：现金盘分不足时先记 PENDING，盘分补足后自动补发
+model CommissionDebt {
+  id               String    @id @default(cuid())
+  /// 出账代理（房间盘分付款人）
+  payerAgentUserId String
+  beneficiaryId    String
+  sourceUserId     String
+  level            Int
+  sourceRoundId    String?
+  /// 幂等键：commission:{scope}:{source}:{beneficiary}
+  idemKey          String    @unique
+  baseFlow         Decimal   @db.Decimal(18, 2)
+  rate             Float
+  amount           Decimal   @db.Decimal(18, 2)
+  /// PENDING=未结 SETTLED=已结 CANCELLED=作废
+  status           String    @default("PENDING")
+  settledAt        DateTime?
+  settleLedgerId   String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([payerAgentUserId, status, createdAt])
+  @@index([beneficiaryId, status])
+  @@index([status, createdAt])
+}
+
 model RebateRecord {
   id            String     @id @default(cuid())
   playerId      String
-  player        User       @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  player        User       @relation(fields: [playerId], references: [id], onDelete: Restrict)
   sourceRoundId String?
   sourceRound   GameRound? @relation(fields: [sourceRoundId], references: [id], onDelete: SetNull)
   personalFlow  Decimal    @db.Decimal(18, 2)
@@ -619,20 +900,21 @@ model RebateRecord {
 model DailyRebateSettlement {
   id         String   @id @default(cuid())
   playerId   String
-  player     User     @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  player     User     @relation(fields: [playerId], references: [id], onDelete: Restrict)
   rebateDate DateTime @db.Date
   validFlow  Decimal  @db.Decimal(18, 2)
   rate       Float
   amount     Decimal  @db.Decimal(18, 2)
-  claimType  String   // AUTO | MANUAL
+  claimType  String // AUTO | MANUAL
   ledgerId   String?
   periodEnd  DateTime @default(now())
   gameDetail Json?
   claimedAt  DateTime @default(now())
 
-  @@unique([playerId, rebateDate])
+  /// 同一自然日可多次领取：领完后新流水从 periodEnd 起重新累计
   @@index([playerId, rebateDate])
   @@index([playerId, claimedAt])
+  @@index([playerId, periodEnd])
 }
 
 // ======================= 活动 / 营销 =======================
@@ -660,7 +942,7 @@ model ActivityClaim {
   activityId   String
   activity     Activity @relation(fields: [activityId], references: [id], onDelete: Cascade)
   playerId     String
-  player       User     @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  player       User     @relation(fields: [playerId], references: [id], onDelete: Restrict)
   rewardPoints Decimal  @default(0) @db.Decimal(18, 2)
   status       String   @default("PENDING") // PENDING | GRANTED | REJECTED
   ledgerId     String?
@@ -673,16 +955,22 @@ model ActivityClaim {
 // ======================= 客服 / 反馈 / 运营 =======================
 
 model CsMessage {
-  id        String   @id @default(cuid())
-  playerId  String
-  player    User     @relation(fields: [playerId], references: [id], onDelete: Cascade)
-  roomNo    String?
-  sender    String // PLAYER | AGENT | SYSTEM
-  text      String
-  isRead    Boolean  @default(false)
-  createdAt DateTime @default(now())
+  id              String   @id @default(cuid())
+  playerId        String
+  player          User     @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  roomNo          String?
+  sender          String // PLAYER | AGENT | SYSTEM
+  text            String
+  isRead          Boolean  @default(false)
+  /// 因本条消息建的上下分单
+  rechargeOrderId String?
+  /// 值班客服（代理或子账号）
+  assigneeId      String?
+  createdAt       DateTime @default(now())
 
   @@index([playerId, roomNo, createdAt])
+  @@index([assigneeId, createdAt])
+  @@index([rechargeOrderId])
 }
 
 model Feedback {
@@ -735,7 +1023,7 @@ model RiskEvent {
 model AdminLog {
   id         String   @id @default(cuid())
   operatorId String
-  operator   User     @relation(fields: [operatorId], references: [id], onDelete: Cascade)
+  operator   User     @relation(fields: [operatorId], references: [id], onDelete: Restrict)
   action     String // RECHARGE_REVIEW | GAME_CONFIG_UPDATE | ADJUST_BALANCE ...
   target     String?
   detail     Json?
@@ -744,6 +1032,7 @@ model AdminLog {
 
   @@index([operatorId, createdAt])
   @@index([action, createdAt])
+  @@index([createdAt]) // 超管全量日志按时间倒序分页（无 where）
 }
 
 // ======================= 注册身份分配状态 =======================
@@ -755,4 +1044,3 @@ model AvatarAssignState {
   usedJson  String   @default("[]") // 本轮已占用的头像序号 JSON number[]
   updatedAt DateTime @updatedAt
 }
-

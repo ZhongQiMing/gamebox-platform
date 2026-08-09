@@ -1,28 +1,41 @@
 /**
- * YoPlay YBEN 音效对照（benz2221.min.js + yp ModuleSound）
+ * 奔驰宝马 · 两路音频（互不混控）
  *
- * ModuleSound.play(res, channel, loop, volume=100)：
+ * 1) music  背景音乐：bgm.mp3 循环
+ *    - setBcbmBgmMuted / setBcbmMusicOn
+ *    - 账号「背景音乐」→ app_bgm_off（无本游戏覆盖时）
+ *    - 对齐官方 SOUND_BGM：静音只 muted，不停轨、不归零进度
+ *
+ * 2) sfx    游戏音效：下注 / 开跑 / 跑灯 / 派彩循环 / 报奖旁白 / ding / flash 等
+ *    - setBcbmSfxMuted / setBcbmSfxOn
+ *    - 账号「音效」→ sound_off（无本游戏覆盖时）
+ *    - 对齐官方 SOUND_SFX stopAtMuted=true：关掉立刻停进行中音效，不影响 BGM
+ *
+ * YoPlay YBEN 对照（benz2221.min.js + yp ModuleSound）：
+ *   ModuleSound.play(res, channel, loop, volume=100)
  *   实际响度 = channelVol(100) * volume * 0.01 * 0.01
- *   例：BGM play(yben_bgm, BGM, -1, 20) → 0.20（第 4 参是音量，不是 delay）
- *
- * 频道静音：
- *   SOUND_BGM  registerChannel(bgm, stopAtMuted=false) → 静音只 muted，不停轨
- *   SOUND_SFX  stopAtMuted=true → 静音停播
- *
- * 资源键：
- *   bgm / bet / spin_start / spin_loop / anticipation
- *   bonus_loop(-1) / bonus_end / payout_loop(-1) / payout_loop2 / payout_fadeout
- *   counting(-1) / counting_end / ding / flash
- *   报奖旁白：announce-sanyuan / sixi / fast / uturn / lightning / drift
+ *   例：BGM play(yben_bgm, BGM, -1, 20) → 0.20
  */
 import type { BcbmAwardType } from '@gamebox/shared'
-import { isAppBgmOn, isClickSoundOn } from '@/composables/appSoundPrefs'
+import {
+  getAppBgmVolume,
+  getAppSfxVolume,
+  isAppBgmOn,
+  isClickSoundOn,
+} from '@/composables/appSoundPrefs'
 import { playOneShot } from '../pg-common/audioPool'
 
 const BASE = '/audio/bcbm'
 
-/** 官方 play(..., -1, 20) → calculatedVolume = 0.20 */
-const BGM_VOLUME = 0.2
+/** 全游戏统一基准（再乘账号音量滑条）；原官方 BGM 约 0.20 */
+const BASE_BGM = 0.4
+const BASE_SFX = 0.75
+function musicVol() {
+  return BASE_BGM * getAppBgmVolume()
+}
+function sfxVol() {
+  return Math.min(1, BASE_SFX * getAppSfxVolume())
+}
 
 const FILES = {
   bgm: `${BASE}/bgm.mp3`,
@@ -51,7 +64,7 @@ const FILES = {
 type SfxKey = keyof typeof FILES
 const cache = new Map<string, HTMLAudioElement>()
 let unlocked = false
-/** 官方 SOUND_BGM / SOUND_SFX 分轨静音 */
+/** 两路静音：music / sfx（对应官方 SOUND_BGM / SOUND_SFX） */
 let bgmMuted = false
 let sfxMuted = false
 
@@ -83,8 +96,8 @@ const ANNOUNCE_URLS = [
   FILES.announceDrift,
 ] as const
 
-const BONUS_LOOP_VOL = 0.55
-const BONUS_LOOP_DUCK_VOL = 0.12
+/** 报奖氛围乐压低比例（相对统一 sfx 音量） */
+const BONUS_LOOP_DUCK_RATIO = 0.2
 
 function getAudio(url: string) {
   let a = cache.get(url)
@@ -97,10 +110,10 @@ function getAudio(url: string) {
 }
 
 /** 一次性音效：走 pg-common 对象池，复用空闲实例，避免高频下注堆积游离 Audio */
-function playUrl(url: string, volume = 0.75) {
+function playUrl(url: string, _volume = 0.75) {
   if (sfxMuted) return null
   unlockBcbmAudio()
-  return playOneShot(url, volume)
+  return playOneShot(url, sfxVol())
 }
 
 function stopEl(el: HTMLAudioElement | null) {
@@ -110,12 +123,12 @@ function stopEl(el: HTMLAudioElement | null) {
   el.loop = false
 }
 
-function playLoop(url: string, volume: number): HTMLAudioElement | null {
+function playLoop(url: string, _volume: number): HTMLAudioElement | null {
   if (sfxMuted) return null
   unlockBcbmAudio()
   const a = getAudio(url)
   a.loop = true
-  a.volume = volume
+  a.volume = sfxVol()
   a.currentTime = 0
   void a.play().catch(() => {})
   return a
@@ -196,7 +209,7 @@ export function playBcbmAnticipation() {
   if (sfxMuted) return
   unlockBcbmAudio()
   anticipEl = new Audio(FILES.anticipation)
-  anticipEl.volume = 0.9
+  anticipEl.volume = sfxVol()
   void anticipEl.play().catch(() => {})
 }
 
@@ -213,7 +226,7 @@ export function startBcbmBgm() {
   unlockBcbmAudio()
   if (!bgmEl) bgmEl = getAudio(FILES.bgm)
   bgmEl.loop = true
-  bgmEl.volume = BGM_VOLUME
+  bgmEl.volume = musicVol()
   bgmEl.muted = bgmMuted
   void bgmEl.play().catch(() => {})
 }
@@ -266,6 +279,98 @@ function persistMute() {
   localStorage.removeItem(LS_LEGACY)
 }
 
+/**
+ * 读取本游戏静音。
+ * 无本游戏记录时跟随个人资料；有记录后只认本游戏开关。
+ */
+function refreshEffectiveMute() {
+  if (typeof localStorage === 'undefined') {
+    bgmMuted = false
+    sfxMuted = false
+    return
+  }
+  const legacy = localStorage.getItem(LS_LEGACY) === '1'
+  if (legacy) {
+    bgmMuted = true
+    sfxMuted = true
+    return
+  }
+  const bgmKey = localStorage.getItem(LS_BGM)
+  const sfxKey = localStorage.getItem(LS_SFX)
+  bgmMuted = bgmKey == null ? !isAppBgmOn() : bgmKey === '1'
+  sfxMuted = sfxKey == null ? !isClickSoundOn() : sfxKey === '1'
+}
+
+/** 立刻停掉 sfx 通道上的一切，不动 BGM */
+export function stopAllBcbmSfx() {
+  stopBcbmSpinLoop()
+  stopBcbmAnticipation()
+  clearBcbmPayout()
+}
+
+function applyBcbmLevels() {
+  if (bgmEl) {
+    try {
+      bgmEl.volume = musicVol()
+    } catch {
+      /* ignore */
+    }
+  }
+  const level = sfxVol()
+  for (const el of [spinEl, anticipEl, payoutLoopEl, countingEl, announceEl]) {
+    if (!el) continue
+    try {
+      el.volume = el === payoutLoopEl && announceEl ? level * BONUS_LOOP_DUCK_RATIO : level
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+/** 账号管理 / storage 变更后重读两路与音量 */
+function syncAudioPrefs() {
+  const prevBgm = bgmMuted
+  const prevSfx = sfxMuted
+  refreshEffectiveMute()
+  if (bgmEl) {
+    bgmEl.muted = bgmMuted
+    if (!bgmMuted && prevBgm) {
+      bgmEl.loop = true
+      bgmEl.volume = musicVol()
+      void bgmEl.play().catch(() => {})
+    }
+  } else if (!bgmMuted && prevBgm) {
+    startBcbmBgm()
+  }
+  if (sfxMuted && !prevSfx) stopAllBcbmSfx()
+  applyBcbmLevels()
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (ev) => {
+    if (!ev) return
+    if (
+      ev.key === 'app_bgm_off' ||
+      ev.key === 'sound_off' ||
+      ev.key === 'app_bgm_vol' ||
+      ev.key === 'app_sfx_vol' ||
+      ev.key === LS_BGM ||
+      ev.key === LS_SFX ||
+      ev.key === LS_LEGACY
+    ) {
+      syncAudioPrefs()
+    }
+  })
+  window.addEventListener('app-audio-pref-changed', () => {
+    syncAudioPrefs()
+  })
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) syncAudioPrefs()
+  })
+}
+
+/* ───────── 1) 背景音乐 ───────── */
+
 /** 官方 setMuted(SOUND_BGM)：只改 muted，不停轨、不归零进度 */
 export function setBcbmBgmMuted(v: boolean) {
   bgmMuted = v
@@ -274,7 +379,7 @@ export function setBcbmBgmMuted(v: boolean) {
     bgmEl.muted = v
     if (!v) {
       bgmEl.loop = true
-      bgmEl.volume = BGM_VOLUME
+      bgmEl.volume = musicVol()
       void bgmEl.play().catch(() => {})
     }
   } else if (!v) {
@@ -282,15 +387,23 @@ export function setBcbmBgmMuted(v: boolean) {
   }
 }
 
+/** 正向 API：开/关背景音乐（与牌桌/水果机 setMusicOn 对齐） */
+export function setBcbmMusicOn(on: boolean) {
+  setBcbmBgmMuted(!on)
+}
+
+/* ───────── 2) 游戏音效 ───────── */
+
 /** 官方 setMuted(SOUND_SFX, stopAtMuted=true)：停掉进行中的循环音效 */
 export function setBcbmSfxMuted(v: boolean) {
   sfxMuted = v
   persistMute()
-  if (v) {
-    stopBcbmSpinLoop()
-    stopBcbmAnticipation()
-    clearBcbmPayout()
-  }
+  if (v) stopAllBcbmSfx()
+}
+
+/** 正向 API：开/关游戏音效（与牌桌/水果机 setSfxOn 对齐） */
+export function setBcbmSfxOn(on: boolean) {
+  setBcbmSfxMuted(!on)
 }
 
 export function isBcbmBgmMuted() {
@@ -301,27 +414,19 @@ export function isBcbmSfxMuted() {
   return sfxMuted
 }
 
-/**
- * 读取本游戏静音。
- * 无本游戏记录时跟随个人资料；有记录后只认本游戏开关。
- */
+export function isBcbmMusicOn() {
+  return !bgmMuted
+}
+
+export function isBcbmSfxOn() {
+  return !sfxMuted
+}
+
 export function initBcbmMuteFromStorage() {
-  if (typeof localStorage === 'undefined') {
-    bgmMuted = false
-    sfxMuted = false
-    return
-  }
-  const legacy = localStorage.getItem(LS_LEGACY) === '1'
-  if (legacy) {
-    bgmMuted = true
-    sfxMuted = true
+  refreshEffectiveMute()
+  if (typeof localStorage !== 'undefined' && localStorage.getItem(LS_LEGACY) === '1') {
     persistMute()
-    return
   }
-  const bgmKey = localStorage.getItem(LS_BGM)
-  const sfxKey = localStorage.getItem(LS_SFX)
-  bgmMuted = bgmKey == null ? !isAppBgmOn() : bgmKey === '1'
-  sfxMuted = sfxKey == null ? !isClickSoundOn() : sfxKey === '1'
 }
 
 export function isBcbmBonusAward(awardType: BcbmAwardType | string) {
@@ -358,18 +463,18 @@ export function playBcbmBonusAnnounce(awardType: BcbmAwardType | string) {
   if (!url) return
 
   stopAnnounce()
-  if (payoutLoopEl) payoutLoopEl.volume = BONUS_LOOP_DUCK_VOL
+  if (payoutLoopEl) payoutLoopEl.volume = sfxVol() * BONUS_LOOP_DUCK_RATIO
 
   const el = new Audio(url)
   el.preload = 'auto'
-  el.volume = 1
+  el.volume = sfxVol()
   announceEl = el
   const restore = () => {
     if (announceEl && announceEl !== el) return
     if (announceEl === el) announceEl = null
     clearAnnounceDuck()
     if (payoutLoopEl && !sfxMuted && !announceEl) {
-      payoutLoopEl.volume = BONUS_LOOP_VOL
+      payoutLoopEl.volume = sfxVol()
     }
   }
   el.addEventListener('ended', restore, { once: true })
@@ -410,7 +515,7 @@ export function startBcbmPayout(opts: {
   const { isBonus, payoutLevel } = opts
   if (isBonus) {
     // 正版 startPayout 立刻 bonus_loop(vol=100)；旁白出现时再压低
-    payoutLoopEl = playLoop(FILES.bonusLoop, BONUS_LOOP_VOL)
+    payoutLoopEl = playLoop(FILES.bonusLoop, sfxVol())
     return
   }
   if (payoutLevel > 1) {

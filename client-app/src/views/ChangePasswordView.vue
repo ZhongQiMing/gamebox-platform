@@ -131,6 +131,7 @@ import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { useToast } from '@/composables/useToast'
 import { useBodyClass } from '@/composables/useBodyClass'
+import { validatePassword } from '@gamebox/shared'
 import http from '@/api/http'
 import TabBar from '@/components/TabBar.vue'
 import '@/assets/password.css'
@@ -165,7 +166,8 @@ const strength = computed(() => {
 
 async function doSubmit() {
   if (!oldPwd.value) { toast('请输入当前密码'); return }
-  if (newPwd.value.length < 6) { toast('新密码至少 6 位'); return }
+  const pwdErr = validatePassword(newPwd.value)
+  if (pwdErr) { toast(pwdErr.replace('密码', '新密码')); return }
   if (newPwd.value === oldPwd.value) { toast('新密码不能与当前密码相同'); return }
   if (newPwd.value !== newPwd2.value) { toast('两次输入的新密码不一致'); return }
 

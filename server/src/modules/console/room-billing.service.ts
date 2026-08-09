@@ -1,7 +1,7 @@
 /**
  * 代理房间月费：按小时扫描到期房间（支持精确到分的扣费时间）。
- * - 代理余额足够 → 扣至平台账户，推进 nextBillAt（保留原时分）——同事务
- * - 不足 → 房间改为 FROZEN，写 AdminLog 作「欠费通知」；不推进账期，下轮重试
+ * - 代理余额足够 → 同事务：占住账期 → 扣至平台 → 推进 nextBillAt（保留原时分）
+ * - 不足 → 房间改为 FROZEN，写 AdminLog；不推进账期，下轮重试
  * - 欠费冻结后若补足成功 → 自动恢复 OPEN
  */
 import { Injectable, Logger } from '@nestjs/common';
@@ -63,6 +63,8 @@ export class RoomBillingService {
         nextBillAt: { lte: now },
         status: { not: 'CLOSED' },
         ownerAgentId: { not: null },
+        /** 信用盘不走余额月费（代理余额恒为 0） */
+        bookMode: { not: 'CREDIT' },
       },
       include: {
         ownerAgent: { select: { id: true, userId: true } },
@@ -77,22 +79,52 @@ export class RoomBillingService {
 
     for (const room of due) {
       const fee = asMoney(room.monthlyFee);
-      if (fee <= 0 || !room.ownerAgent) {
+      if (fee <= 0 || !room.ownerAgent || room.bookMode === 'CREDIT' || !room.nextBillAt) {
         skip += 1;
         continue;
       }
       const agentUserId = room.ownerAgent.userId;
-      const periodKey = room.nextBillAt?.toISOString().slice(0, 10) ?? now.toISOString().slice(0, 10);
+      /** 幂等键绑定本账期 nextBillAt 全文，避免同日多期撞键 */
+      const periodKey = room.nextBillAt.toISOString();
       const idemBase = `room_bill_${room.id}_${periodKey}`;
+      const dueAt = room.nextBillAt;
 
       try {
         const result = await this.prisma.$transaction(async (tx) => {
+          /* 行锁 + 再读：防止多实例同时扣同一账期 */
+          await tx.$executeRaw`SELECT 1 FROM "Room" WHERE id = ${room.id} FOR UPDATE`;
+          const fresh = await tx.room.findUnique({
+            where: { id: room.id },
+            select: {
+              id: true,
+              name: true,
+              roomNo: true,
+              status: true,
+              billingDay: true,
+              monthlyFee: true,
+              nextBillAt: true,
+              bookMode: true,
+            },
+          });
+          if (
+            !fresh
+            || fresh.bookMode === 'CREDIT'
+            || asMoney(fresh.monthlyFee) <= 0
+            || !fresh.nextBillAt
+            || fresh.nextBillAt.getTime() > now.getTime()
+            || fresh.nextBillAt.getTime() !== dueAt.getTime()
+            || fresh.status === 'CLOSED'
+          ) {
+            return { kind: 'skip' as const };
+          }
+
+          const billFee = asMoney(fresh.monthlyFee);
           const acc = await tx.pointsAccount.findUnique({
-            where: { ownerId: agentUserId },
+            where: this.points.accountWhere('AGENT', agentUserId),
           });
           const bal = asMoney(acc?.balance ?? 0);
-          if (bal < fee) {
-            return { kind: 'insufficient' as const, balance: bal };
+          if (bal < billFee) {
+            return { kind: 'insufficient' as const, balance: bal, status: fresh.status };
           }
 
           await this.points.transferInTx(
@@ -100,54 +132,60 @@ export class RoomBillingService {
             {
               type: 'AGENT',
               id: agentUserId,
-              remark: `房间月费「${room.name}」`,
+              remark: `房间月费「${fresh.name}」`,
               idempotencyKey: `${idemBase}:OUT`,
             },
             {
               type: 'PLATFORM',
               id: PLATFORM_OWNER_ID,
-              remark: `房间月费「${room.name}」`,
+              remark: `房间月费「${fresh.name}」`,
               idempotencyKey: `${idemBase}:IN`,
             },
-            fee,
+            billFee,
             {
               bizType: 'FEE',
               refType: 'room_monthly',
-              refId: room.id,
-              remark: `房间月费「${room.name}」`,
+              refId: fresh.id,
+              remark: `房间月费「${fresh.name}」`,
             },
           );
 
           const billedAt = now;
-          const next = computeNextBillAt(
-            billedAt,
-            room.billingDay,
-            room.nextBillAt ?? billedAt,
-          );
-          await tx.room.update({
-            where: { id: room.id },
+          const next = computeNextBillAt(billedAt, fresh.billingDay, fresh.nextBillAt);
+          /* CAS：仅当账期仍是本轮占住的 nextBillAt 时推进 */
+          const advanced = await tx.room.updateMany({
+            where: { id: fresh.id, nextBillAt: dueAt },
             data: {
               lastBilledAt: billedAt,
               nextBillAt: next,
-              status: room.status === 'FROZEN' ? 'OPEN' : room.status,
+              status: fresh.status === 'FROZEN' ? 'OPEN' : fresh.status,
             },
           });
+          if (advanced.count === 0) {
+            throw new Error('账期已被其他实例推进，回滚本笔月费');
+          }
 
           if (sysOp) {
-            await this.adminLog.logInTx(tx, sysOp, 'ROOM_BILL_OK', room.id, {
-              roomNo: room.roomNo,
-              fee,
+            await this.adminLog.logInTx(tx, sysOp, 'ROOM_BILL_OK', fresh.id, {
+              roomNo: fresh.roomNo,
+              fee: billFee,
               agentUserId,
               nextBillAt: next,
-              unfroze: room.status === 'FROZEN',
+              unfroze: fresh.status === 'FROZEN',
+              periodKey,
             });
           }
 
           return { kind: 'ok' as const, next };
         });
 
+        if (result.kind === 'skip') {
+          skip += 1;
+          continue;
+        }
+
         if (result.kind === 'insufficient') {
-          if (room.status !== 'FROZEN') {
+          if (result.status !== 'FROZEN') {
             await this.prisma.room.update({
               where: { id: room.id },
               data: { status: 'FROZEN' },

@@ -91,7 +91,7 @@ export function createFruitAwardFx(deps: FruitAwardFxDeps) {
       setCursor(idx)
       const p = step / totalSteps
       if (p > 0.72) playFruitSfx('tick', 0.35)
-      let delay = 55
+      let delay: number
       if (p < 0.15) delay = 110 - p * 300
       else if (p > 0.7) delay = 55 + (p - 0.7) * 280
       else delay = 38
@@ -455,7 +455,7 @@ export function createFruitAwardFx(deps: FruitAwardFxDeps) {
       if (tip != null) setCursor(tip)
       if (step % 2 === 0) playFruitSfx('trainStep', 0.4 + Math.min(0.35, step * 0.01))
       const p = step / spinSteps
-      let delay = 70
+      let delay: number
       if (p < 0.15) delay = 95
       else if (p > 0.75) delay = 55
       else delay = 48

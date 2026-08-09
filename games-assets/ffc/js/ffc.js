@@ -98,7 +98,7 @@ $(function () {
       case 'anyDigit':
         return { betType: 'anyDigit', betValue: parsed.seg + ':' + parsed.digit };
       case 'group3':
-        return { betType: 'group3', betValue: parsed.seg + ':' + parsed.a + ',' + parsed.b };
+        return { betType: 'group3', betValue: parsed.seg + ':' + parsed.digits.join(',') };
       case 'group6':
         return { betType: 'group6', betValue: parsed.seg + ':' + parsed.digits.join(',') };
       case 'lhh':
@@ -153,8 +153,10 @@ $(function () {
     else if (typeof syncServerSnapshot === 'function') syncServerSnapshot();
   }
   const REVEALED_STORAGE_KEY = 'ffc_revealed_v1';
+  const PLAYED_ANIM_STORAGE_KEY = 'ffc_played_anim_v1';
   const CLOSED_STORAGE_KEY = 'ffc_closed_v1';
   let revealedIssues = new Set();
+  let playedAnimIssues = new Set();
   /** 进房后首次拉到历史头：只对齐顶栏，不往聊天推「进房前已开奖」 */
   let historyHeadBootstrapped = false;
   let lastBetText = '';
@@ -240,9 +242,10 @@ $(function () {
     if ((m = t.match(/^(前三|中三|后三)(豹子|顺子|对子|半顺|杂六)$/))) {
       return { type: 'shape', seg: m[1], shape: m[2], odds: SHAPE_ODDS[m[2]] };
     }
-    if ((m = t.match(/^(前三|中三|后三)组三([0-9])[,，]?([0-9])$/))) {
-      if (m[2] === m[3]) return null;
-      return { type: 'group3', seg: m[1], a: +m[2], b: +m[3], odds: ODDS.group3 };
+    if ((m = t.match(/^(前三|中三|后三)组三([0-9])[,，]?([0-9])[,，]?([0-9])$/))) {
+      const digits = [+m[2], +m[3], +m[4]];
+      if (new Set(digits).size !== 2) return null;
+      return { type: 'group3', seg: m[1], digits, odds: ODDS.group3 };
     }
     if ((m = t.match(/^(前三|中三|后三)组六([0-9])[,，]?([0-9])[,，]?([0-9])$/))) {
       const set = new Set([m[2], m[3], m[4]]);
@@ -344,10 +347,9 @@ $(function () {
         break;
       case 'group3': {
         const seg = segOf(nums, p.seg).slice().sort((a, b) => a - b);
-        const aab = [p.a, p.a, p.b].sort((a, b) => a - b);
-        const abb = [p.a, p.b, p.b].sort((a, b) => a - b);
+        const wanted = p.digits.slice().sort((a, b) => a - b);
         const same = (x, y) => x[0] === y[0] && x[1] === y[1] && x[2] === y[2];
-        win = same(seg, aab) || same(seg, abb);
+        win = same(seg, wanted);
         break;
       }
       case 'group6': {
@@ -443,6 +445,8 @@ $(function () {
     if (!serverSynced || !serverCurrent) return false;
     const open = serverCurrent.status === 'PENDING' && Date.now() < new Date(serverCurrent.lockAt).getTime();
     if (!open) return false;
+    /* 开奖仪式未回到 betting：禁止下注（避免出号后、开盘线前误注下一期） */
+    if (roomChat && typeof roomChat.isBettingOpen === 'function' && !roomChat.isBettingOpen()) return false;
     /* 仅冻结「仍是封盘那一期」；已换新期以服务端 lockAt 为准 */
     if (roomBetFrozen && sealedIssueNo && String(serverCurrent.issueNo) === String(sealedIssueNo)) return false;
     return true;
@@ -508,16 +512,22 @@ $(function () {
     return plays;
   }
 
-  /** 组三复式：选 n 个号 → C(n,2) 注（每注两个不同号，含对子形态） */
+  /** 组三复式：每对号码拆成 AAB / ABB 两注；显式 112 只保留这一注 */
   function expandGroup3Duplex(seg, digitStr) {
+    const raw = String(digitStr || '').split('');
+    if (raw.length === 3 && new Set(raw).size === 2) {
+      const exact = seg + '组三' + raw.join('');
+      return parsePlay(exact) ? [exact] : null;
+    }
     const digits = uniqueDigitChars(digitStr);
     if (digits.length < 2) return null;
     const plays = [];
     for (let i = 0; i < digits.length; i++) {
       for (let j = i + 1; j < digits.length; j++) {
-        const play = seg + '组三' + digits[i] + digits[j];
-        if (!parsePlay(play)) return null;
-        plays.push(play);
+        const aab = seg + '组三' + digits[i] + digits[i] + digits[j];
+        const abb = seg + '组三' + digits[i] + digits[j] + digits[j];
+        if (!parsePlay(aab) || !parsePlay(abb)) return null;
+        plays.push(aab, abb);
       }
     }
     return plays.length ? plays : null;
@@ -678,7 +688,7 @@ $(function () {
       return expandShapePlayPart(t);
     }
 
-    // 组三复式：前三组三012345 → C(n,2) 注（号码与金额必须 /）
+    // 组三复式：每对号码拆 AAB / ABB，共 2×C(n,2) 注（号码与金额必须 /）
     m = t.match(/^(前三|中三|后三)组三([0-9]{2,})$/);
     if (m) return expandGroup3Duplex(m[1], m[2]);
 
@@ -739,7 +749,7 @@ $(function () {
    * - 两面 / 龙虎和 / 无牛·牛牛·牛两面 / 形态：金额可带 / 或不带 /
    * - 凡带选号数字（定位胆、不定位、组三组六、牛几）：号码与金额之间必须 /
    * - 形态可组合：前三豹子顺子、前三中三豹子顺子杂六
-   * - 组三复式 C(n,2)；组六复式 C(n,3)；/金额 = 每注金额
+   * - 组三复式 2×C(n,2)；组六复式 C(n,3)；/金额 = 每注金额
    */
   function parseBetLines(text) {
     const raw = String(text || '').trim().replace(/\s+/g, '');
@@ -1125,7 +1135,7 @@ $(function () {
   }
 
   /** 正版开奖动画：滚号 mid + 出号约 3.2s（对齐 video-host play）；挂牌 1分时时彩 */
-  const FFC_VIDEO_SRC = './media/ssc-video/xyssx_index.html?v=17&embed=1&logo=yf&mute=1';
+  const FFC_VIDEO_SRC = './media/ssc-video/xyssx_index.html?v=28&embed=1&logo=yf&mute=1';
   /** 滚号 6s 后出号；出号后约 3.2s（over→回待机 BGM） */
   const FFC_VIDEO_MID_MS = 6000;
   const FFC_VIDEO_AFTER_MS = 3200;
@@ -1204,28 +1214,78 @@ $(function () {
     opts = opts || {};
     const meta = gyMeta(nums);
     const sideText = String(meta.text || '').replace(/^\d+\s*/, '').replace(/\s+/g, '');
+    const dt = dragonTigerOf(nums);
+    const niuniu = lhRow(nums);
     const order = ffcVideoOrderStr(nums);
     const issueShow = String(issue || '').trim();
+    const settled = !!opts.settle;
     let srcQ = FFC_VIDEO_SRC;
     if (issueShow) srcQ += '&issue=' + encodeURIComponent(issueShow);
     if (order) srcQ += '&order=' + encodeURIComponent(order);
-    if (opts.settle) srcQ += '&settle=1';
+    if (settled) srcQ += '&settle=1';
     return (
-      '<div class="ffc-video-card ffc-bot-card--result is-reveal" data-issue="' + issueShow +
-        '" data-nums="' + order + '" data-sum="' + meta.sum + '">' +
+      '<div class="ffc-video-card ffc-bot-card--result' + (settled ? ' is-reveal is-settled is-frame-ready' : ' is-drawing') +
+        '" data-issue="' + issueShow + '" data-nums="' + order + '" data-sum="' + meta.sum +
+        '" data-side="' + sideText + '" data-dt="' + dt + '" data-nn="' + niuniu + '">' +
+        '<header class="ffc-video-card__head">' +
+          '<span class="ffc-video-card__title">1分时时彩</span>' +
+          '<span class="ffc-video-card__issue">' + (issueShow ? ('第 ' + issueShow + ' 期') : '') + '</span>' +
+        '</header>' +
         '<div class="ffc-video-card__stage">' +
           '<iframe class="ffc-video-card__frame" title="1分时时彩开奖动画" src="' + srcQ +
             '" data-nums="' + order + '" data-issue="' + issueShow +
             '" allow="autoplay" loading="eager"></iframe>' +
         '</div>' +
-        '<footer class="ffc-video-card__foot">' +
-          '<div class="ffc-video-card__pill"><span class="k">和值</span><span class="v">' + meta.sum + '</span></div>' +
-          '<div class="ffc-video-card__pill"><span class="k">双面</span><span class="v">' + sideText + '</span></div>' +
-          '<div class="ffc-video-card__pill"><span class="k">龙虎</span><span class="v">' + dragonTigerOf(nums) + '</span></div>' +
-          '<div class="ffc-video-card__pill"><span class="k">斗牛</span><span class="v">' + lhRow(nums) + '</span></div>' +
+        '<footer class="ffc-video-card__foot' + (settled ? ' is-show' : ' is-hidden') + '">' +
+          '<div class="ffc-video-card__pill"><span class="k">和值</span><span class="v ffc-video-card__sum">' +
+            (settled ? meta.sum : '—') + '</span></div>' +
+          '<div class="ffc-video-card__pill"><span class="k">双面</span><span class="v ffc-video-card__side">' +
+            (settled ? sideText : '—') + '</span></div>' +
+          '<div class="ffc-video-card__pill"><span class="k">龙虎</span><span class="v ffc-video-card__dt">' +
+            (settled ? dt : '—') + '</span></div>' +
+          '<div class="ffc-video-card__pill"><span class="k">斗牛</span><span class="v ffc-video-card__nn">' +
+            (settled ? niuniu : '—') + '</span></div>' +
         '</footer>' +
       '</div>'
     );
+  }
+
+  function revealFfcVideoFoot(card, nums) {
+    if (!card) return;
+    let sum = String(card.getAttribute('data-sum') || '').trim();
+    let side = String(card.getAttribute('data-side') || '').trim();
+    let dt = String(card.getAttribute('data-dt') || '').trim();
+    let nn = String(card.getAttribute('data-nn') || '').trim();
+    if (Array.isArray(nums) && nums.length === 5) {
+      const meta = gyMeta(nums);
+      sum = String(meta.sum);
+      side = String(meta.text || '').replace(/^\d+\s*/, '').replace(/\s+/g, '');
+      dt = dragonTigerOf(nums);
+      nn = lhRow(nums);
+      card.setAttribute('data-sum', sum);
+      card.setAttribute('data-side', side);
+      card.setAttribute('data-dt', dt);
+      card.setAttribute('data-nn', nn);
+    }
+    const sumEl = card.querySelector('.ffc-video-card__sum');
+    const sideEl = card.querySelector('.ffc-video-card__side');
+    const dtEl = card.querySelector('.ffc-video-card__dt');
+    const nnEl = card.querySelector('.ffc-video-card__nn');
+    if (sumEl && sum) sumEl.textContent = sum;
+    if (sideEl && side) sideEl.textContent = side;
+    if (dtEl && dt) dtEl.textContent = dt;
+    if (nnEl && nn) nnEl.textContent = nn;
+    const foot = card.querySelector('.ffc-video-card__foot');
+    if (foot) {
+      foot.classList.remove('is-hidden');
+      foot.classList.add('is-show');
+    }
+    card.classList.remove('is-drawing', 'is-hold-black');
+    card.classList.add('is-settled', 'is-reveal', 'is-frame-ready');
+    card.removeAttribute('data-hold-black');
+    card._holdBlackExempt = true;
+    if (window.LotteryHoldTip) LotteryHoldTip.clear(card);
+    /* 出号同步只走 play 的 onNumbers，勿在揭脚注时 advanceReveal（会误伤动画） */
   }
 
   function postToFfcVideoFrame(frame, payload) {
@@ -1251,11 +1311,17 @@ $(function () {
       done = true;
       if (pollTimer) clearInterval(pollTimer);
       window.removeEventListener('message', onMsg);
+      try {
+        const card = frame.closest && frame.closest('.ffc-video-card');
+        if (card) card.classList.add('is-frame-ready');
+      } catch (e) { /* ignore */ }
       if (typeof cb === 'function') cb(!!ok);
     };
-    const hasApi = function () {
+    /* 必须等 iframe boot（__ready / ready 消息），不能仅凭 SscVideo 对象存在就 play */
+    const isBooted = function () {
       try {
-        return !!(frame.contentWindow && frame.contentWindow.SscVideo);
+        const api = frame.contentWindow && frame.contentWindow.SscVideo;
+        return !!(api && api.__ready && typeof api.play === 'function');
       } catch (e) {
         return false;
       }
@@ -1266,17 +1332,22 @@ $(function () {
       if (d.action === 'ready' && ev.source === frame.contentWindow) finish(true);
     };
     window.addEventListener('message', onMsg);
-    if (hasApi()) {
+    if (isBooted()) {
       finish(true);
       return;
     }
     frame.addEventListener('load', function () {
-      setTimeout(function () { finish(true); }, 80);
+      /* load 后仍等 boot；超时再放行，避免永远不播 */
+      setTimeout(function () {
+        if (isBooted()) finish(true);
+      }, 80);
     });
     let n = 0;
     pollTimer = setInterval(function () {
       n += 1;
-      if (hasApi() || n >= 40) finish(!!hasApi() || n >= 40);
+      if (isBooted()) finish(true);
+      /* 超时仍未 boot：返回 false，禁止带着半初始化 API 去 play */
+      else if (n >= 80) finish(false);
     }, 50);
   }
 
@@ -1291,65 +1362,148 @@ $(function () {
       return;
     }
     /* 标记播放中，防止 snapshot 的 settleRestored 把 iframe 强制 settle 掉 */
+    card.classList.remove('is-hold-black');
+    if (window.LotteryHoldTip) LotteryHoldTip.clear(card);
+    card.removeAttribute('data-hold-black');
     card.classList.add('is-playing');
     card.setAttribute('data-playing', '1');
-    whenFfcVideoReady(frame, function () {
+    card._ffcNumsNotified = false;
+    card._ffcDoneOnce = false;
+    whenFfcVideoReady(frame, function (booted) {
+      const onNumbersReady = function () {
+        if (card._ffcNumsNotified) return;
+        card._ffcNumsNotified = true;
+        if (typeof notifyDrawBarNumbersReady === 'function') {
+          notifyDrawBarNumbersReady(issue, nums, 5);
+        }
+      };
+      const onMsg = function (ev) {
+        const d = ev && ev.data;
+        if (!d || d.source !== 'ssc-video' || d.action !== 'numbers') return;
+        if (ev.source !== frame.contentWindow) return;
+        onNumbersReady();
+      };
       const doneWrap = function (ok) {
-        card.classList.remove('is-playing');
+        if (card._ffcDoneOnce) return;
+        card._ffcDoneOnce = true;
+        window.removeEventListener('message', onMsg);
+        card.classList.remove('is-playing', 'is-hold-black', 'is-drawing');
+        if (window.LotteryHoldTip) LotteryHoldTip.clear(card);
         card.removeAttribute('data-playing');
+        card.removeAttribute('data-hold-black');
+        card._holdBlackExempt = true;
+        revealFfcVideoFoot(card, nums);
+        onNumbersReady();
+        /* 尾动画播完：再开盘线 + 顶栏倒计时 */
+        if (typeof notifyDrawCeremonyReady === 'function') {
+          notifyDrawCeremonyReady(issue);
+        }
         if (window.FfcAudio && FfcAudio.endDrawCeremony) FfcAudio.endDrawCeremony();
         else if (window.FfcAudio && FfcAudio.onRevealDone) FfcAudio.onRevealDone();
         if (typeof opts.onDone === 'function') opts.onDone(ok);
       };
-      if (window.FfcAudio) {
-        if (FfcAudio.unlock) FfcAudio.unlock();
-        if (FfcAudio.startDrawCeremony) {
-          FfcAudio.startDrawCeremony({ midMs: FFC_VIDEO_MID_MS });
+      if (!booted) {
+        /* iframe 未就绪：软落定 + 同步，避免半初始化 play 导致「没动画」 */
+        card.classList.remove('is-playing');
+        card.removeAttribute('data-playing');
+        settleFfcVideoCard(card, nums);
+        onNumbersReady();
+        if (typeof notifyDrawCeremonyReady === 'function') {
+          notifyDrawCeremonyReady(issue);
+        }
+        card._ffcDoneOnce = true;
+        card._holdBlackExempt = true;
+        if (typeof opts.onDone === 'function') opts.onDone(false);
+        return;
+      }
+      window.addEventListener('message', onMsg);
+      /* 出号尽量对齐服务端 openAt（派彩/中奖核对），落定瞬间整包同步 */
+      let midMs = opts.midMs != null ? Number(opts.midMs) : FFC_VIDEO_MID_MS;
+      let afterMs = opts.afterMs != null ? Number(opts.afterMs) : FFC_VIDEO_AFTER_MS;
+      if (opts.midMs == null && serverCurrent && String(serverCurrent.issueNo || '') === String(issue || '')) {
+        const openAt = new Date(serverCurrent.openAt).getTime();
+        if (Number.isFinite(openAt)) {
+          const remain = openAt - Date.now();
+          /* 号码落在 openAt 前后 200ms；最少滚 2.8s，最多不超过准备窗 */
+          const targetMid = Math.max(2800, Math.min(PREP_SEC * 1000 - 800, remain - 200));
+          if (Number.isFinite(targetMid) && targetMid >= 2800) midMs = targetMid;
         }
       }
+      const totalMs = Math.max(0, midMs) + Math.max(0, afterMs);
+      /* 兜底从「真正开播」起算，避免 iframe ready 慢时提前 forceSettle */
+      try {
+        if (roomChat && typeof roomChat.scheduleRevealReady === 'function') {
+          let armMs = totalMs + 1200;
+          if (serverCurrent && String(serverCurrent.issueNo || '') === String(issue || '')) {
+            const openAt = new Date(serverCurrent.openAt).getTime();
+            if (Number.isFinite(openAt)) {
+              armMs = Math.max(armMs, openAt - Date.now() + 1200);
+            }
+          }
+          roomChat.scheduleRevealReady(issue, armMs);
+        }
+      } catch (eArm) { /* ignore */ }
+      try {
+        if (window.FfcAudio) {
+          if (FfcAudio.unlock) FfcAudio.unlock();
+          if (FfcAudio.startDrawCeremony) {
+            FfcAudio.startDrawCeremony({ midMs: midMs });
+          }
+        }
+      } catch (eAudio) { /* 音效失败不得阻断开奖动画 */ }
       const w = frame.contentWindow;
       if (w && w.SscVideo && typeof w.SscVideo.play === 'function') {
-        /* iframe 静音，音效由父页 FfcAudio 播，避免双轨与自动播放拦截 */
-        w.SscVideo.play(order, {
-          issue: issue,
-          midMs: FFC_VIDEO_MID_MS,
-          muted: true,
-          onDone: doneWrap,
-        });
-        return;
+        try {
+          /* iframe 静音，音效由父页 FfcAudio 播，避免双轨与自动播放拦截 */
+          w.SscVideo.play(order, {
+            issue: issue,
+            midMs: midMs,
+            afterMs: afterMs,
+            muted: true,
+            onNumbers: onNumbersReady,
+            onDone: doneWrap,
+          });
+          /* 无论成功/失败，play 内部会调 onDone；勿再走 postMessage 双开 */
+          return;
+        } catch (ePlay) { /* 改走 postMessage */ }
       }
       postToFfcVideoFrame(frame, {
         action: 'play',
         order: order,
         issue: issue,
-        midMs: FFC_VIDEO_MID_MS,
+        midMs: midMs,
+        afterMs: afterMs,
         muted: true,
       });
-      setTimeout(function () { doneWrap(true); }, resultRevealDurationMs());
+      setTimeout(onNumbersReady, Math.max(0, midMs));
+      setTimeout(function () { doneWrap(true); }, totalMs || resultRevealDurationMs());
     });
   }
 
+  /**
+   * 软落定：只调 iframe API + 露脚，禁止改 src。
+   * 改 src 加 settle=1 会整页重载，表现为「出号后再闪一下」。
+   */
   function settleFfcVideoCard(card, nums) {
     if (card && (card.classList.contains('is-playing') || card.getAttribute('data-playing') === '1')) {
-      return; /* 滚号中禁止改 src / settle */
+      return; /* 滚号中禁止打断 */
     }
+    const alreadySettled = !!(card && card.classList.contains('is-settled') && card.classList.contains('is-reveal'));
+    if (card) {
+      card.removeAttribute('data-hold-black');
+      card.classList.remove('is-hold-black', 'is-drawing');
+      if (window.LotteryHoldTip) LotteryHoldTip.clear(card);
+    }
+    revealFfcVideoFoot(card, nums);
+    if (card) card.classList.add('is-frame-ready');
+    /* 已落定过：只保证脚注，勿再调 settle（会再播一遍翻面） */
+    if (alreadySettled) return;
     const frame = card && card.querySelector('.ffc-video-card__frame');
     let order = '';
     if (Array.isArray(nums) && nums.length === 5) order = ffcVideoOrderStr(nums);
     else order = String((card && card.getAttribute('data-nums')) || (frame && frame.getAttribute('data-nums')) || '').trim();
     const issue = String((card && card.getAttribute('data-issue')) || '').trim();
     if (!frame || !order) return;
-    try {
-      const cur = String(frame.getAttribute('src') || '');
-      if (cur && cur.indexOf('settle=1') < 0) {
-        let next = cur;
-        if (next.indexOf('order=') < 0) next += '&order=' + encodeURIComponent(order);
-        if (issue && next.indexOf('issue=') < 0) next += '&issue=' + encodeURIComponent(issue);
-        next += '&settle=1';
-        frame.setAttribute('src', next);
-        return;
-      }
-    } catch (e) { /* fall through */ }
     whenFfcVideoReady(frame, function () {
       const w = frame.contentWindow;
       if (w && w.SscVideo && typeof w.SscVideo.settle === 'function') {
@@ -1359,6 +1513,73 @@ $(function () {
       postToFfcVideoFrame(frame, { action: 'settle', order: order, issue: issue, muted: true });
     });
   }
+  function isServerDrawingIssue(issue) {
+    issue = String(issue || '').trim();
+    if (!issue || !serverCurrent) return false;
+    if (String(serverCurrent.issueNo || '') !== issue) return false;
+    const st = String(serverCurrent.status || '');
+    const lockAt = new Date(serverCurrent.lockAt).getTime();
+    const now = Date.now();
+    return st === 'LOCKED' || (st === 'PENDING' && Number.isFinite(lockAt) && now >= lockAt);
+  }
+
+  function holdBlackFfcVideoCard(card) {
+    if (!card) return false;
+    if (card.classList.contains('is-playing') || card.getAttribute('data-playing') === '1') return false;
+    /* 本页已播完/揭晓：禁止快照再压黑（否则会 setRevealPending 清掉 winFlushed，卡住开盘线） */
+    if (card._holdBlackExempt || card.classList.contains('is-settled') || card.classList.contains('is-reveal')) return false;
+    if (card.getAttribute('data-hold-black') === '1' && card.classList.contains('is-hold-black')) {
+      if (window.LotteryHoldTip) LotteryHoldTip.ensure(card, '.ffc-video-card__stage');
+      return true;
+    }
+
+    card.setAttribute('data-hold-black', '1');
+    card.classList.remove('is-reveal', 'is-settled', 'is-result-shown', 'is-frame-ready');
+    card.classList.add('is-drawing', 'is-hold-black');
+    const foot = card.querySelector('.ffc-video-card__foot');
+    if (foot) {
+      foot.classList.add('is-hidden');
+      foot.classList.remove('is-show');
+    }
+    ['ffc-video-card__sum', 'ffc-video-card__side', 'ffc-video-card__dt', 'ffc-video-card__nn'].forEach(function (cls) {
+      const el = card.querySelector('.' + cls);
+      if (el) el.textContent = '—';
+    });
+    /* 压黑只藏画面，不改 iframe.src，避免重载露出放大挂牌 Logo */
+    if (window.LotteryHoldTip) LotteryHoldTip.ensure(card, '.ffc-video-card__stage');
+    return true;
+  }
+
+  /** 刷新/重进：开奖中压黑幕，避免泄底 */
+  function holdBlackLockedFfcVideoCards() {
+    if (!serverCurrent) return;
+    const issue = String(serverCurrent.issueNo || '').trim();
+    if (!issue || !isServerDrawingIssue(issue)) return;
+    let newlyHeld = false;
+    $('#chatFeed .ffc-video-card, #chatDock .ffc-video-card').each(function () {
+      const card = this;
+      if (String(card.getAttribute('data-issue') || '').trim() !== issue) return;
+      const frame = card.querySelector('.ffc-video-card__frame');
+      const src = frame ? String(frame.getAttribute('src') || '') : '';
+      if (card.getAttribute('data-hold-black') === '1' && card.classList.contains('is-hold-black') && src.indexOf('settle=1') < 0) return;
+      if (holdBlackFfcVideoCard(card)) newlyHeld = true;
+    });
+    if (!newlyHeld || !roomChat) return;
+    /* 仪式已过揭晓/已在等开盘：勿重置 revealDone/winFlushed */
+    if (roomChat.isRevealReady && roomChat.isRevealReady(issue)) return;
+    if (typeof roomChat.getPhase === 'function' && roomChat.getPhase() === 'settled') return;
+    if (typeof roomChat.beginCeremonyHold === 'function') roomChat.beginCeremonyHold(issue);
+    if (typeof roomChat.setRevealPending === 'function') roomChat.setRevealPending(issue);
+    const openAt = new Date(serverCurrent.openAt).getTime();
+    const readyMs = resultRevealDurationMs() + 1400;
+    const remain = Number.isFinite(openAt)
+      ? Math.max(1200, openAt - Date.now() + 600)
+      : readyMs;
+    if (typeof roomChat.scheduleRevealReady === 'function') {
+      roomChat.scheduleRevealReady(issue, Math.min(remain, readyMs + 400));
+    }
+  }
+
   const HISTORY_SHOW = 10;
   const POS_LABELS = ['万', '千', '百', '十', '个'];
   const MIN_LONG_STREAK = 2;
@@ -2012,6 +2233,8 @@ $(function () {
     if (!App.fetchMyLotteryBets) return;
     App.fetchMyLotteryBets(SERVER_GAME, issue).then(function (res) {
       const list = (res && res.list) || [];
+      /* 派彩已入账：立刻拉余额，避免顶栏积分仍停在扣注后 */
+      refreshAfterServerSettle();
       if (list.length) refineUserStatsFromServer(issue, list);
       const mine = buildMineLineHtmlFromServer(issue, list);
       if (!mine) return;
@@ -2039,7 +2262,67 @@ $(function () {
     });
   }
 
-  const roomChat = LotteryRoomChat.create({
+  function hasResultAnimated(issue) {
+    issue = String(issue || '').trim();
+    if (!issue) return false;
+    if (typeof isServerDrawingIssue === 'function' && isServerDrawingIssue(issue)) return false;
+    return playedAnimIssues.has(issue);
+  }
+  function markResultAnimated(issue) {
+    issue = String(issue || '').trim();
+    if (!issue) return;
+    playedAnimIssues.add(issue);
+    try {
+      localStorage.setItem(PLAYED_ANIM_STORAGE_KEY, JSON.stringify(Array.from(playedAnimIssues).slice(-120)));
+    } catch (e) { /* ignore */ }
+  }
+  function forceSettleResultCard(issue) {
+    issue = String(issue || '').trim();
+    $('#chatFeed .ffc-video-card, #chatDock .ffc-video-card').each(function () {
+      const card = this;
+      if (issue && String(card.getAttribute('data-issue') || '').trim() !== issue) return;
+      /* 滚号/尾段仍在播：勿掐动画，只保证脚注；仪式在 onDone 再推进 */
+      if (card.classList.contains('is-playing') || card.getAttribute('data-playing') === '1') {
+        let numsPlay = null;
+        const rawPlay = String(card.getAttribute('data-nums') || '').trim();
+        if (rawPlay) {
+          const arrP = rawPlay.split(',').map(Number);
+          if (arrP.length === 5) numsPlay = arrP;
+        }
+        revealFfcVideoFoot(card, numsPlay);
+        card._holdBlackExempt = true;
+        return;
+      }
+      card.classList.remove('is-playing');
+      card.removeAttribute('data-playing');
+      let nums = null;
+      const raw = String(card.getAttribute('data-nums') || '').trim();
+      if (raw) {
+        const arr = raw.split(',').map(Number);
+        if (arr.length === 5) nums = arr;
+      }
+      settleFfcVideoCard(card, nums);
+      card._holdBlackExempt = true;
+      if (typeof persistBotCardHtml === 'function') persistBotCardHtml(card);
+    });
+    if (window.FfcResultCard && FfcResultCard.settle) {
+      $('#chatFeed .ffc-bot-card--result, #chatDock .ffc-bot-card--result').not('.ffc-video-card').each(function () {
+        const card = this;
+        const cardIssue = String($(card).find('.ffc-bot-card__issue').first().text() || card.getAttribute('data-issue') || '').trim();
+        if (issue && cardIssue && cardIssue !== issue) return;
+        let nums = null;
+        const raw = String(card.getAttribute('data-nums') || '').trim();
+        if (raw) {
+          const arr = raw.split(',').map(Number);
+          if (arr.length === 5) nums = arr;
+        }
+        if (nums) FfcResultCard.settle(card, nums);
+      });
+    }
+  }
+
+  let roomChat = null;
+  roomChat = LotteryRoomChat.create({
     gameCode: SERVER_GAME,
     appendMsg: appendMsg,
     clearFeed: function () {
@@ -2049,6 +2332,9 @@ $(function () {
     getUserName: function () { return user.name; },
     robotFallbackName: (typeof ROBOT !== 'undefined' && ROBOT.name) ? ROBOT.name : '机器人',
     fmtTime: typeof fmtTime === 'function' ? fmtTime : undefined,
+    hasResultAnimated: hasResultAnimated,
+    markResultAnimated: markResultAnimated,
+    onRevealDeadline: forceSettleResultCard,
     buildBetHtml: function (p) {
       return (typeof escapeHtml === 'function') ? escapeHtml(String(p.text || '')) : String(p.text || '');
     },
@@ -2058,11 +2344,18 @@ $(function () {
     buildCloseHtml: function (issue) {
       return (typeof closeNoticeHtml === 'function') ? closeNoticeHtml(issue) : ('封盘 ' + issue);
     },
-    buildResultHtml: function (p, msg) {
+    buildResultHtml: function (p, msg, ctx) {
       const nums = Array.isArray(p.nums) ? p.nums.map(Number) : [];
       const issue = String(p.issueNo || msg.issueNo || '');
-      if (typeof resultCardHtml === 'function') return resultCardHtml(nums, issue);
-      return '开奖 ' + issue;
+      if (typeof resultCardHtml !== 'function') return '开奖 ' + issue;
+      /* 历史先进黑卡，避免先进房泄底再压黑 */
+      const settle = !!(
+        ctx &&
+        ctx.live &&
+        !ctx.animate &&
+        !(typeof isServerDrawingIssue === 'function' && isServerDrawingIssue(issue))
+      );
+      return resultCardHtml(nums, issue, { settle: settle });
     },
     buildBetVerifyHtml: function (p) { return buildBetVerifyFromPayload(p); },
     buildWinVerifyHtml: function (p) { return buildWinVerifyFromPayload(p); },
@@ -2079,8 +2372,17 @@ $(function () {
     onResultMeta: function (p, msg) {
       const nums = Array.isArray(p.nums) ? p.nums.map(Number) : [];
       const issue = String(p.issueNo || msg.issueNo || '');
-      revealedIssues.add(issue);
-      if (nums.length === 5) lastDraw = nums.slice();
+      if (issue) {
+        revealedIssues.add(issue);
+        saveRevealedIssues();
+      }
+      if (nums.length === 5) {
+        lastDraw = nums.slice();
+        if (issue) upsertHistoryHeadFromDraw(issue, nums);
+      }
+    },
+    onNumbersRevealed: function (issue) {
+      if (typeof paintDrawBarAfterReveal === 'function') paintDrawBarAfterReveal(issue);
     },
     onWinVerifyUnlocked: function () {
       /* 解冻只在开盘线刷出（onCeremonyComplete），仪式中禁止下注 */
@@ -2103,6 +2405,8 @@ $(function () {
       if (phase === 'betting') {
         roomBetFrozen = false;
         sealedIssueNo = '';
+        drawBarRevealIssue = '';
+        drawCeremonyReadyIssue = '';
         if (window.FfcAudio && FfcAudio.onBetting) FfcAudio.onBetting();
         if (typeof requestLotteryResync === 'function') requestLotteryResync();
         else if (typeof syncServerSnapshot === 'function') syncServerSnapshot();
@@ -2126,22 +2430,50 @@ $(function () {
       const nums = Array.isArray(ctx.payload.nums) ? ctx.payload.nums.map(Number) : [];
       const issue = ctx.issue;
       const card = $('#chatDock .ffc-video-card, #chatFeed .ffc-video-card, #chatDock .ffc-bot-card--result, #chatFeed .ffc-bot-card--result').last()[0];
-      const readyMs = resultRevealDurationMs() + 1000 + 400;
+      const readyMs = resultRevealDurationMs() + 800;
       if (card && nums.length === 5 && card.classList.contains('ffc-video-card')) {
         if (ctx.animate && ctx.live) {
           ctx.setRevealPending(issue);
-          playFfcVideoCard(card, nums, {
+          const playOpts = {
             issue: issue,
             onDone: function () {
+              card._holdBlackExempt = true;
               setTimeout(function () {
                 if (typeof persistBotCardHtml === 'function') persistBotCardHtml(card);
               }, 400);
             },
-          });
-          ctx.scheduleRevealReady(issue, readyMs);
+          };
+          /* scheduleRevealReady 改在 play 真正开播后武装（见 playFfcVideoCard） */
+          playFfcVideoCard(card, nums, playOpts);
+        } else if (ctx.live && !ctx.animate) {
+          /* serverCurrent 未到时也用仪式 phase 兜底，避免误 settle 泄底 */
+          const phaseIss = (roomChat && roomChat.getPhaseIssue)
+            ? String(roomChat.getPhaseIssue() || '')
+            : '';
+          const holding = isServerDrawingIssue(issue) || (
+            typeof isCeremonyHolding === 'function' &&
+            isCeremonyHolding() &&
+            phaseIss &&
+            phaseIss === String(issue || '')
+          );
+          if (holding) {
+            holdBlackFfcVideoCard(card);
+            ctx.setRevealPending(issue);
+            const openAt = serverCurrent && new Date(serverCurrent.openAt).getTime();
+            const remain = Number.isFinite(openAt)
+              ? Math.max(1200, openAt - Date.now() + 600)
+              : readyMs;
+            ctx.scheduleRevealReady(issue, Math.min(remain, readyMs + 400));
+          } else {
+            settleFfcVideoCard(card, nums);
+            ctx.setRevealReadyFlag(issue, true);
+          }
         } else {
-          settleFfcVideoCard(card, nums);
+          /* 历史回放：保持黑卡，等 snapshot holdBlack */
           ctx.setRevealReadyFlag(issue, true);
+          if (typeof holdBlackLockedFfcVideoCards === 'function') {
+            setTimeout(function () { try { holdBlackLockedFfcVideoCards(); } catch (eR) { /* ignore */ } }, 0);
+          }
         }
       } else if (card && nums.length === 5 && window.FfcResultCard) {
         /* 兼容旧版球卡历史消息 */
@@ -2197,18 +2529,25 @@ $(function () {
       card.getAttribute('data-issue') ||
       ($(card).find('.ffc-bot-card__issue').first().text() || '')
     ).trim();
-    /* 历史重载时用 settle=1，避免再次自动滚号 */
+    /*
+     * 只改写入 chatLog 的 HTML 字符串，加上 settle=1。
+     * 禁止改直播 iframe.src：否则出号后再整页重载，会黑一下/闪一下。
+     */
+    let html = card.outerHTML;
     if (card.classList.contains('ffc-video-card')) {
-      const frame = card.querySelector('.ffc-video-card__frame');
-      if (frame) {
-        let src = String(frame.getAttribute('src') || '');
-        if (src && src.indexOf('settle=1') < 0) {
-          src += '&settle=1';
-          frame.setAttribute('src', src);
+      html = html.replace(
+        /(<iframe[^>]*class="[^"]*ffc-video-card__frame[^"]*"[^>]*src=")([^"]+)(")/,
+        function (_m, a, src, c) {
+          let next = String(src || '');
+          if (next.indexOf('settle=1') < 0) next += (next.indexOf('?') >= 0 ? '&' : '?') + 'settle=1';
+          next = next.replace(/([?&])play=1(&|$)/, '$1').replace(/[?&]$/, '');
+          return a + next + c;
         }
+      );
+      if (html.indexOf('is-frame-ready') < 0) {
+        html = html.replace('ffc-video-card ', 'ffc-video-card is-frame-ready ');
       }
     }
-    const html = card.outerHTML;
     for (let i = chatLog.length - 1; i >= 0; i--) {
       const m = chatLog[i];
       if (!m || !m.robot) continue;
@@ -2232,6 +2571,7 @@ $(function () {
       const card = this;
       if (card.classList.contains('is-playing') || card.getAttribute('data-playing') === '1') return;
       const issue = String(card.getAttribute('data-issue') || '').trim();
+      if (issue && isServerDrawingIssue(issue)) return;
       /* 当期开奖仪式中的卡：交给 playFfcVideoCard，禁止被 snapshot 强制 settle */
       if (issue && ((holdIssue && issue === holdIssue) || (phaseIssue && issue === phaseIssue))) {
         if (isCeremonyHolding && isCeremonyHolding()) return;
@@ -2700,7 +3040,7 @@ $(function () {
     {
       id: 'group3',
       title: '三星组三',
-      hint: () => `选2个及以上为复式 · 注数C(n,2) · 赔率 ${fmtOdds(ODDS.group3)}`,
+      hint: () => `选2个及以上为复式 · 注数2×C(n,2) · 赔率 ${fmtOdds(ODDS.group3)}`,
       subs: Object.keys(SEG),
       mode: 'group3',
       minPick: 2,
@@ -2997,7 +3337,7 @@ $(function () {
   }
 
   function groupDuplexBetCount(cat, n) {
-    if (cat.mode === 'group3') return n >= 2 ? (n * (n - 1)) / 2 : 0;
+    if (cat.mode === 'group3') return n >= 2 ? n * (n - 1) : 0;
     if (cat.mode === 'group6') return n >= 3 ? (n * (n - 1) * (n - 2)) / 6 : 0;
     return 0;
   }
@@ -3364,6 +3704,10 @@ $(function () {
       const list = JSON.parse(localStorage.getItem(REVEALED_STORAGE_KEY) || '[]');
       if (Array.isArray(list)) revealedIssues = new Set(list.slice(-120).map(String));
     } catch (e) { revealedIssues = new Set(); }
+    try {
+      const played = JSON.parse(localStorage.getItem(PLAYED_ANIM_STORAGE_KEY) || '[]');
+      if (Array.isArray(played)) playedAnimIssues = new Set(played.slice(-120).map(String));
+    } catch (e2) { playedAnimIssues = new Set(); }
   }
   function saveRevealedIssues() {
     try { localStorage.setItem(REVEALED_STORAGE_KEY, JSON.stringify(Array.from(revealedIssues).slice(-120))); } catch (e) { /* ignore */ }
@@ -3382,16 +3726,105 @@ $(function () {
       return phase === 'drawing' || phase === 'revealing' || phase === 'settled';
     } catch (e) { return false; }
   }
-  /** 开奖仪式中：顶栏用上一期；揭晓完再跟历史头 */
+  function upsertHistoryHeadFromDraw(issue, nums) {
+    const iss = String(issue || '').trim();
+    if (!iss || !Array.isArray(nums) || nums.length !== 5) return null;
+    const meta = gyMeta(nums);
+    const row = {
+      issue: iss,
+      nums: nums.slice(),
+      gy: meta.text,
+      dt: dragonTigerOf(nums),
+      lh: lhRow(nums),
+    };
+    const idx = historyRows.findIndex(function (r) { return String(r.issue) === iss; });
+    if (idx >= 0) historyRows[idx] = Object.assign({}, historyRows[idx], row);
+    else historyRows.unshift(row);
+    if (historyRows.length > 80) historyRows.length = 80;
+    return row;
+  }
+  /** 滚号/揭晓中：顶栏压上一期；号码揭完后立刻跟历史头（含 snapshot 轮询勿再压回去） */
   function pickDrawBarRow(rows) {
     if (!rows || !rows.length) return null;
     try {
+      const phase = roomChat && roomChat.getPhase ? String(roomChat.getPhase() || '') : '';
       const hold = roomChat && roomChat.getPhaseIssue ? String(roomChat.getPhaseIssue() || '') : '';
-      if (isCeremonyHolding() && hold && String(rows[0].issue) === hold) {
+      const revealed = isDrawBarUnlocked(hold) ||
+        !!(roomChat && roomChat.isRevealReady && roomChat.isRevealReady(hold));
+      if (!revealed && (phase === 'drawing' || phase === 'revealing') && hold && String(rows[0].issue) === hold) {
         return rows[1] || null;
       }
     } catch (e) { /* ignore */ }
     return rows[0];
+  }
+  /**
+   * 号码落定：只刷顶部历史栏。
+   * 开盘线 / 顶栏倒计时要等尾动画播完 → notifyDrawCeremonyReady。
+   */
+  let drawBarRevealIssue = '';
+  let drawCeremonyReadyIssue = '';
+  function notifyDrawBarNumbersReady(issue, nums, expectLen) {
+    try {
+      const iss = String(issue || '').trim();
+      const need = expectLen > 0 ? expectLen : 0;
+      if (Array.isArray(nums) && (!need || nums.length === need)) {
+        lastDraw = nums.slice();
+        if (iss && typeof upsertHistoryHeadFromDraw === 'function') {
+          upsertHistoryHeadFromDraw(iss, nums);
+        }
+      }
+      if (iss) drawBarRevealIssue = iss;
+      if (typeof paintDrawBarAfterReveal === 'function') paintDrawBarAfterReveal(iss);
+    } catch (e) { /* ignore */ }
+  }
+  /** 尾动画结束：中奖核对 → 开盘线 → 解冻 → 顶栏倒计时 */
+  function notifyDrawCeremonyReady(issue) {
+    try {
+      const iss = String(issue || '').trim();
+      if (iss && drawCeremonyReadyIssue === iss) return;
+      if (iss) drawCeremonyReadyIssue = iss;
+      if (roomChat && typeof roomChat.advanceReveal === 'function') {
+        roomChat.advanceReveal(iss);
+      }
+      if (typeof refreshAfterServerSettle === 'function') refreshAfterServerSettle();
+      if (iss && typeof applyRoomWinVerifyMineLine === 'function') applyRoomWinVerifyMineLine(iss);
+      if (typeof requestLotteryResync === 'function') requestLotteryResync();
+      else if (typeof syncServerSnapshot === 'function') syncServerSnapshot();
+      if (typeof tick === 'function') {
+        try { tick(); } catch (eTick) { /* ignore */ }
+      }
+      [200, 600, 1200].forEach(function (ms) {
+        setTimeout(function () {
+          try {
+            if (typeof refreshAfterServerSettle === 'function') refreshAfterServerSettle();
+            if (iss && typeof applyRoomWinVerifyMineLine === 'function') applyRoomWinVerifyMineLine(iss);
+            if (typeof requestLotteryResync === 'function') requestLotteryResync();
+            if (typeof tick === 'function') tick();
+          } catch (e2) { /* ignore */ }
+        }, ms);
+      });
+    } catch (e) { /* ignore */ }
+  }
+  function isDrawBarUnlocked(issue) {
+    const iss = String(issue || '').trim();
+    return !!(iss && drawBarRevealIssue && drawBarRevealIssue === iss);
+  }
+  /** 结果卡号码已出齐：顶栏马上对齐，不跟中奖核对/开盘线抢时间 */
+  function paintDrawBarAfterReveal(issueHint) {
+    try {
+      const iss = String(issueHint || '').trim();
+      if (iss && lastDraw && lastDraw.length === 5 && typeof upsertHistoryHeadFromDraw === 'function') {
+        upsertHistoryHeadFromDraw(iss, lastDraw);
+      }
+      let row = null;
+      if (iss && Array.isArray(historyRows)) {
+        row = historyRows.find(function (r) { return String(r.issue) === iss; }) || null;
+      }
+      if (!row && historyRows && historyRows[0]) row = historyRows[0];
+      if (row && typeof renderDrawBar === 'function') renderDrawBar(row);
+      if (typeof flashDrawBarReveal === 'function') flashDrawBarReveal();
+      if (typeof renderDrawTable === 'function') renderDrawTable();
+    } catch (e) { /* ignore */ }
   }
 
   function syncServerSnapshot() {
@@ -3402,10 +3835,25 @@ $(function () {
       const rows = parseServerHistory(snapshot && snapshot.history);
       const headChanged = rows[0] && (!historyRows[0] || rows[0].issue !== historyRows[0].issue);
       historyRows = rows;
-      if (rows.length) {
-        lastDraw = rows[0].nums.slice();
+      try {
+        const holdIss = roomChat && roomChat.getPhaseIssue ? String(roomChat.getPhaseIssue() || '') : '';
+        if (
+          holdIss &&
+          (isDrawBarUnlocked(holdIss) || (roomChat && roomChat.isRevealReady && roomChat.isRevealReady(holdIss))) &&
+          lastDraw && lastDraw.length === 5
+        ) {
+          upsertHistoryHeadFromDraw(holdIss, lastDraw);
+        }
+      } catch (eKeepHead) { /* ignore */ }
+      if (historyRows.length) {
+        const holdNow = roomChat && roomChat.getPhaseIssue ? String(roomChat.getPhaseIssue() || '') : '';
+        if (!(isDrawBarUnlocked(holdNow) || (roomChat && roomChat.isRevealReady && roomChat.isRevealReady(holdNow)))) {
+          lastDraw = historyRows[0].nums.slice();
+        } else if (!lastDraw || !lastDraw.length) {
+          lastDraw = historyRows[0].nums.slice();
+        }
         /* 仪式未结束前顶栏仍显示上一期，避免比结果卡更早露号 */
-        const barRow = pickDrawBarRow(rows);
+        const barRow = pickDrawBarRow(historyRows);
         if (barRow) renderDrawBar(barRow);
       } else if (typeof renderDrawBar === 'function') {
         try { renderDrawBar(null); } catch (e) { /* ignore */ }
@@ -3428,6 +3876,7 @@ $(function () {
       /* 仪式中期号由 tick/phase 接管，勿被快照 current 盖掉 */
       if (!isCeremonyHolding() && serverCurrent && serverCurrent.issueNo) setCurIssueDisplay(serverCurrent.issueNo);
       settleRestoredResultCards();
+      try { holdBlackLockedFfcVideoCards(); } catch (eHold) { /* ignore */ }
       if (rows[0]) {
         const holdIss = roomChat && roomChat.getPhaseIssue ? String(roomChat.getPhaseIssue() || '') : '';
         if (!(isCeremonyHolding() && holdIss && String(rows[0].issue) === holdIss)) {
@@ -3456,22 +3905,11 @@ $(function () {
   function tick() {
     const phase = roomChat && roomChat.getPhase ? roomChat.getPhase() : '';
     const hold = roomChat && roomChat.getPhaseIssue ? roomChat.getPhaseIssue() : '';
-    const ceremony = phase === 'drawing' || phase === 'revealing' || phase === 'settled';
-    /* 仪式未收干净时，若服务端已进入更新一期可下注，顶栏立即跟 serverCurrent，避免卡在上期 00:00/等待开盘 */
-    let releaseCeremonyHold = false;
-    if (ceremony && hold && serverSynced && serverCurrent) {
-      const nextIssue = String(serverCurrent.issueNo || '');
-      const nextLock = new Date(serverCurrent.lockAt).getTime();
-      const nextOpen = new Date(serverCurrent.openAt).getTime();
-      const nowHold = Date.now();
-      const nextBetting = String(serverCurrent.status || '') === 'PENDING'
-        && Number.isFinite(nextLock) && nowHold < nextLock;
-      if (nextIssue && nextIssue !== hold && (nextBetting || (Number.isFinite(nextOpen) && nowHold >= nextOpen))) {
-        releaseCeremonyHold = true;
-        if (typeof requestLotteryResync === 'function') requestLotteryResync();
-      }
-    }
-    if (ceremony && !releaseCeremonyHold) {
+    /*
+     * 仪式中（含出号后尾动画）：顶栏保持「开奖中」。
+     * 倒计时与开盘线一起，等 finishToBetting 回到 betting 再放。
+     */
+    if (phase === 'drawing' || phase === 'revealing' || phase === 'settled') {
       if (hold) {
         if (typeof setCurIssueDisplay === 'function') setCurIssueDisplay(hold);
         else if (typeof setIssueEl === 'function') setIssueEl($('#curIssue'), hold);

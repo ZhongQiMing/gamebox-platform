@@ -45,7 +45,73 @@
 }
 .am-row:last-child { border-bottom: none; }
 .am-row--switch { cursor: default; }
-.am-row:not(.am-row--switch):active { background: rgba(212, 175, 55, 0.1); }
+.am-row--slider { cursor: default; padding-top: 4px; padding-bottom: 14px; gap: 12px; }
+.am-row:not(.am-row--switch):not(.am-row--slider):active { background: rgba(212, 175, 55, 0.1); }
+
+.am-audio-block { border-bottom: 1px solid rgba(212, 175, 55, 0.12); }
+.am-audio-block .am-row { border-bottom: none; }
+.am-audio-block:last-child { border-bottom: none; }
+
+.am-slider-label {
+  flex-shrink: 0;
+  font-size: 12px;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+  min-width: 28px;
+}
+.am-slider {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  outline: none;
+}
+.am-slider::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, rgba(138, 111, 31, 0.55), rgba(212, 175, 55, 0.45));
+  border: 1px solid rgba(212, 175, 55, 0.28);
+}
+.am-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: -7px;
+  border-radius: 50%;
+  border: 1px solid var(--gold-deep);
+  background: linear-gradient(180deg, #fff5c8 0%, #f4d36b 55%, var(--gold) 100%);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  cursor: pointer;
+}
+.am-slider::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, rgba(138, 111, 31, 0.55), rgba(212, 175, 55, 0.45));
+  border: 1px solid rgba(212, 175, 55, 0.28);
+}
+.am-slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid var(--gold-deep);
+  background: linear-gradient(180deg, #fff5c8 0%, #f4d36b 55%, var(--gold) 100%);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  cursor: pointer;
+}
+.am-slider-val {
+  flex-shrink: 0;
+  min-width: 28px;
+  text-align: right;
+  font-size: 12px;
+  color: var(--gold-bright);
+  font-variant-numeric: tabular-nums;
+}
+.am-row--slider.is-off { opacity: 0.42; }
+.am-row--slider.is-off .am-slider { pointer-events: none; }
 
 .am-label {
   font-family: 'Noto Serif SC', serif;

@@ -10,9 +10,20 @@
 		<link rel="preload" as="image" href="img/bj.jpg" />
 		<script src="js/jquery-1.7.2.min.js"></script>
 		<script src="js/main.js"></script>
-		<script src="js/video-host.js?v=10"></script>
+		<script src="js/video-host.js?v=11473"></script>
 	</head>
 	<body>
+<script>
+/* embed-hide-loading: 进页即藏 LOADING，避免刷新续播先闪字 */
+(function () {
+  if (!/[?&]embed=1(?:&|$)/.test(location.search || '') && !/[?&]settle=1(?:&|$)/.test(location.search || '')) return;
+  document.documentElement.classList.add('is-embed');
+  var s = document.createElement('style');
+  s.textContent = '.loading,.loading .loadtxt,#preloader{display:none!important;visibility:hidden!important}';
+  (document.head || document.documentElement).appendChild(s);
+})();
+</script>
+
 		<div id="videobox">
 			<div class="content">
 				<!--<div class="head">
@@ -63,9 +74,6 @@
 									<span>开奖：</span>
 									<span id="drawTime" class="kaitime"></span>
 								</span>
-							</div>
-							<div class="dr" id="soundBtn">
-								<span id="spanbtn" class="sounds"></span>
 							</div>
 						</div>
 						<div class="timeBox">

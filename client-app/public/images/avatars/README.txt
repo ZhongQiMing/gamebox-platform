@@ -3,11 +3,12 @@
 ================================================================
 
 【用途】
-新玩家注册时，系统从本目录按「轮次」分配头像：
+新账号创建时，系统从本目录按「轮次」分配头像（玩家 / 代理 / 子账号 / 客服 / 房主共用同一池）：
   - 第 1 轮：162 张里头随机抽，每张最多用 1 次
   - 本轮全部用完后进入第 2 轮，再重新从整池随机抽
   - 以此类推（头像可跨轮重复，同轮内不重复）
-实现：server users.service pickAvatarUnique + AvatarAssignState。
+实现：server users/avatar-assign pickAvatarUniqueInTx + AvatarAssignState。
+缺头像账号在 GET /users/me 时会按同规则补一张。
 
 【当前文件】
 001.jpg ~ 162.jpg（共 162 张）

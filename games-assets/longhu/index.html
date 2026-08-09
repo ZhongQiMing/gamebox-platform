@@ -5,8 +5,8 @@
   <link rel="stylesheet" href="/fonts/gamebox-fonts.css">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>龙虎斗</title>
-<link rel="stylesheet" href="./css/lhd-table.css?v=21">
-  <link rel="stylesheet" href="/games-assets/_table-common/table-ui.css?v=6">
+<link rel="stylesheet" href="./css/lhd-table.css?v=26">
+  <link rel="stylesheet" href="/games-assets/_table-common/table-ui.css?v=7">
   <script>
     (function () {
       if (window.parent !== window) document.documentElement.classList.add('lhd-in-iframe');
@@ -200,29 +200,41 @@
           <span class="lhd-chip-more__dot"></span>
         </button>
       </div>
-    </div>
-  <!-- 右侧快捷竖排：相对牌桌区域垂直居中 -->
+    </div><!-- /.lhd-room -->
+  <!-- 快捷栏：stage 右侧（不进牌桌 scale），三角收起/展开 -->
   <aside class="lhd-rail" id="lhdRail" aria-label="快捷操作">
-    <button type="button" class="lhd-rail-btn" id="railCs" title="客服">
-      <img class="lhd-rail-ic" src="/images/table-rail/rail-cs.png?v=3" alt="" draggable="false">
-      <span class="lhd-rail-lb">客服</span>
+    <button
+      type="button"
+      class="lhd-rail-ladder"
+      id="btnRailToggle"
+      title="展开菜单"
+      aria-expanded="false"
+      aria-controls="lhdRailStack"
+    >
+      <span class="lhd-rail-ladder__arrow" aria-hidden="true">▼</span>
     </button>
-    <button type="button" class="lhd-rail-btn" id="railHistory" title="历史记录">
-      <img class="lhd-rail-ic" src="/images/table-rail/rail-history.png?v=3" alt="" draggable="false">
-      <span class="lhd-rail-lb">历史</span>
-    </button>
-    <button type="button" class="lhd-rail-btn" id="railRecords" title="下注记录">
-      <img class="lhd-rail-ic" src="/images/table-rail/rail-records.png?v=3" alt="" draggable="false">
-      <span class="lhd-rail-lb">记录</span>
-    </button>
-    <button type="button" class="lhd-rail-btn" id="railRules" title="玩法规则">
-      <img class="lhd-rail-ic" src="/images/table-rail/rail-rules.png?v=3" alt="" draggable="false">
-      <span class="lhd-rail-lb">玩法</span>
-    </button>
-    <button type="button" class="lhd-rail-btn" id="railSettings" title="设置">
-      <img class="lhd-rail-ic" src="/images/table-rail/rail-settings.png?v=3" alt="" draggable="false">
-      <span class="lhd-rail-lb">设置</span>
-    </button>
+    <div class="lhd-rail-stack" id="lhdRailStack">
+      <button type="button" class="lhd-rail-btn" id="railCs" title="客服">
+        <img class="lhd-rail-ic" src="/images/table-rail/rail-cs.png?v=3" alt="" draggable="false">
+        <span class="lhd-rail-lb">客服</span>
+      </button>
+      <button type="button" class="lhd-rail-btn" id="railHistory" title="历史记录">
+        <img class="lhd-rail-ic" src="/images/table-rail/rail-history.png?v=3" alt="" draggable="false">
+        <span class="lhd-rail-lb">历史</span>
+      </button>
+      <button type="button" class="lhd-rail-btn" id="railRecords" title="下注记录">
+        <img class="lhd-rail-ic" src="/images/table-rail/rail-records.png?v=3" alt="" draggable="false">
+        <span class="lhd-rail-lb">记录</span>
+      </button>
+      <button type="button" class="lhd-rail-btn" id="railRules" title="玩法规则">
+        <img class="lhd-rail-ic" src="/images/table-rail/rail-rules.png?v=3" alt="" draggable="false">
+        <span class="lhd-rail-lb">玩法</span>
+      </button>
+      <button type="button" class="lhd-rail-btn" id="railSettings" title="设置">
+        <img class="lhd-rail-ic" src="/images/table-rail/rail-settings.png?v=3" alt="" draggable="false">
+        <span class="lhd-rail-lb">设置</span>
+      </button>
+    </div>
   </aside>
   </div><!-- /.lhd-stage -->
   <div class="lhd-payout-fly" id="payoutFlyLayer" aria-hidden="true"></div>
@@ -240,8 +252,10 @@
   </section>
 </div>
 
-<script src="/legacy/js/games-common.js?v=28"></script>
-<script src="/games-assets/_table-common/table-shell.js?v=10"></script>
-<script src="./js/lhd-table.js?v=22"></script>
+<script src="/legacy/js/games-common.js?v=32"></script>
+<script src="/games-assets/_table-common/table-shell.js?v=11"></script>
+<script src="/games-assets/_lottery-common/app-audio-level.js?v=1"></script>
+<script src="/games-assets/_table-common/table-audio.js?v=3"></script>
+<script src="./js/lhd-table.js?v=27"></script>
 </body>
 </html>

@@ -49,9 +49,12 @@ export interface TableSnapshot {
 }
 
 export interface TableBetPayload {
+  /** 牌桌游戏码（如 dragon-tiger），非运营房间 id */
   roomId: string;
   side: string;
   amount: number;
-  /** 客户端幂等键：短时内重复提交返回同一结果，防连点双扣 */
-  clientKey?: string;
+  /** 客户端幂等键（必填）：同键重放同一结果，防弱网双扣 */
+  clientKey: string;
+  /** 6 位运营房间号（多房隔离必填） */
+  roomNo?: string;
 }

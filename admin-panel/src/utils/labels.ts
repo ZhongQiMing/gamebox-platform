@@ -1,3 +1,11 @@
+/** 概览页的指标小卡片 */
+export interface KpiChip {
+  label: string
+  value: string
+  color?: string
+  hot?: boolean
+}
+
 /** 房间状态 */
 export const ROOM_STATUS_LABEL: Record<string, string> = {
   OPEN: '营业中',
@@ -18,7 +26,7 @@ export function roomStatusTagType(status?: string | null): 'success' | 'warning'
   return 'info'
 }
 
-/** 游戏 code → 中文名 */
+/** 游戏 code → 中文名（后台开通/列表用；不含别名） */
 export const GAME_LABEL: Record<string, string> = {
   ffc: '分分彩',
   ssc: '时时彩',
@@ -29,16 +37,26 @@ export const GAME_LABEL: Record<string, string> = {
   lhc: '六合彩',
   baccarat: '百家乐',
   'dragon-tiger': '龙虎斗',
-  longhu: '龙虎',
   douniu: '斗牛',
   zhajinhua: '炸金花',
   'fruit-machine': '水果机',
   bcbm: '奔驰宝马',
 }
 
+/** 历史别名 → 正式 code（同一款游戏，勿当成两款） */
+const GAME_CODE_ALIAS: Record<string, string> = {
+  longhu: 'dragon-tiger',
+}
+
+export function canonicalGameCode(code?: string | null) {
+  if (!code) return ''
+  return GAME_CODE_ALIAS[code] || code
+}
+
 export function gameLabel(code?: string | null) {
   if (!code) return '—'
-  return GAME_LABEL[code] || code
+  const c = canonicalGameCode(code)
+  return GAME_LABEL[c] || GAME_LABEL[code] || code
 }
 
 export const GAME_OPTIONS = Object.entries(GAME_LABEL).map(([value, label]) => ({ value, label }))

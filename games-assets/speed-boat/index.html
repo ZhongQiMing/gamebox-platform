@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>幸运飞艇</title>
   <link rel="stylesheet" href="/legacy/css/common.css">
-<link rel="stylesheet" href="./css/jsb.css?v=40">
+<link rel="stylesheet" href="./css/jsb.css?v=42">
   <script>
     /* 大厅 iframe 嵌入标记 */
     (function () {
@@ -105,24 +105,36 @@
   </div>
       </div>
 
-  <!-- 右侧浮钮：客服 / 规则 / 记录 / 玩法 -->
+    <!-- 右侧浮钮：梯子收起 / 展开 客服·规则·记录·玩法 -->
   <aside class="jsb-rail" aria-label="快捷操作">
-    <button type="button" class="jsb-rail-btn" id="btnCs" title="客服">
-      <img class="jsb-rail-ic" src="/images/chat-rail/cs.png?v=1" alt="" draggable="false">
-      <span class="jsb-rail-lb">客服</span>
+    <button
+      type="button"
+      class="jsb-rail-ladder"
+      id="btnRailToggle"
+      title="展开菜单"
+      aria-expanded="false"
+      aria-controls="jsbRailStack"
+    >
+      <span class="jsb-rail-ladder__arrow" aria-hidden="true">▼</span>
     </button>
-    <button type="button" class="jsb-rail-btn" id="btnRules" title="规则">
-      <img class="jsb-rail-ic" src="/images/chat-rail/rules.png?v=1" alt="" draggable="false">
-      <span class="jsb-rail-lb">规则</span>
-    </button>
-    <button type="button" class="jsb-rail-btn" id="btnRecords" title="记录">
-      <img class="jsb-rail-ic" src="/images/chat-rail/records.png?v=1" alt="" draggable="false">
-      <span class="jsb-rail-lb">记录</span>
-    </button>
-    <button type="button" class="jsb-rail-btn jsb-rail-btn--play" id="btnExpand" title="玩法">
-      <img class="jsb-rail-ic jsb-rail-ic--play" src="/images/chat-rail/play.png?v=1" alt="" draggable="false">
-      <span class="jsb-rail-lb">玩法</span>
-    </button>
+    <div class="jsb-rail-stack" id="jsbRailStack">
+      <button type="button" class="jsb-rail-btn" id="btnCs" title="客服">
+        <img class="jsb-rail-ic" src="/images/chat-rail/cs.png?v=1" alt="" draggable="false">
+        <span class="jsb-rail-lb">客服</span>
+      </button>
+      <button type="button" class="jsb-rail-btn" id="btnRules" title="规则">
+        <img class="jsb-rail-ic" src="/images/chat-rail/rules.png?v=1" alt="" draggable="false">
+        <span class="jsb-rail-lb">规则</span>
+      </button>
+      <button type="button" class="jsb-rail-btn" id="btnRecords" title="记录">
+        <img class="jsb-rail-ic" src="/images/chat-rail/records.png?v=1" alt="" draggable="false">
+        <span class="jsb-rail-lb">记录</span>
+      </button>
+      <button type="button" class="jsb-rail-btn jsb-rail-btn--play" id="btnExpand" title="玩法">
+        <img class="jsb-rail-ic jsb-rail-ic--play" src="/images/chat-rail/play.png?v=1" alt="" draggable="false">
+        <span class="jsb-rail-lb">玩法</span>
+      </button>
+    </div>
   </aside>
 
 
@@ -251,11 +263,29 @@
   </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
-<script src="/legacy/js/games-common.js?v=27"></script>
-<script src="/games-assets/_lottery-common/room-chat.js?v=22"></script>
+<script src="/legacy/js/jquery-3.7.1.min.js"></script>
+<script src="/legacy/js/games-common.js?v=32"></script>
+<script src="/games-assets/_lottery-common/room-chat.js?v=29"></script>
+<link rel="stylesheet" href="/games-assets/_lottery-common/hold-drawing-tip.css?v=4">
+<script src="/games-assets/_lottery-common/hold-drawing-tip.js?v=4"></script>
+<link rel="stylesheet" href="/games-assets/_lottery-common/card-sfx-toggle.css?v=8">
+<script src="/games-assets/_lottery-common/app-audio-level.js?v=1"></script>
+<script src="/games-assets/_lottery-common/card-sfx-toggle.js?v=4"></script>
 <script src="./js/result-card.js?v=11"></script>
-<script src="./js/jsb-audio.js?v=3"></script>
-<script src="./js/jsb.js?v=119"></script>
+<script src="./js/jsb-audio.js?v=7"></script>
+<script src="./js/jsb.js?v=138"></script>
+<script>
+(function () {
+  function boot() {
+    if (!window.LotteryCardSfx) return;
+    LotteryCardSfx.install({
+      audio: window.JsbAudio,
+      cardSelector: '.jsb-race-card',
+    });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
+})();
+</script>
 </body>
 </html>

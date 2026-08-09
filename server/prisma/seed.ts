@@ -2,8 +2,9 @@
  * 初始化种子数据。运行：pnpm --filter @gamebox/server prisma:seed
  * 内容：
  *   - 平台积分账户(PLATFORM)
- *   - 平台管理员账号(ADMIN)
+ *   - 平台管理员账号(ADMIN)：全站有且仅有一名
  *     开发默认密码 Admin@123456；生产必须设置 SEED_ADMIN_PASSWORD（且不得用默认弱口令）
+ *     上线后请自行改密；忘记密码只能改数据库，系统无「重置管理员密码」接口
  *   - 代理等级 V1-V5
  *   - 游戏目录 + 各自 active 的 GameConfig（爆率/赔率）
  *
@@ -11,6 +12,7 @@
  */
 import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import { writePlatformOpeningLedger } from './platform-opening';
 import { lhcPayTableSeed } from '../src/modules/lottery/games/lhc-odds';
 import { sscFfcPayTable } from '../src/modules/lottery/games/ffc.game';
 import { kuai3PayTable } from '../src/modules/lottery/games/kuai3.game';
@@ -59,7 +61,7 @@ const GAMES = [
   {
     code: 'fruit-machine', name: '水果机', category: 'ARCADE' as const,
     status: 'ONLINE' as const, sortOrder: 2, minBet: DEFAULT_MIN_BET, maxBet: DEFAULT_MAX_BET,
-    rtp: 0.96,
+    rtp: 0.88,
     // 盘面/赔率/大奖权重唯一来源在 @gamebox/shared fruit-machine
     // 引擎按 { ...默认值, ...本表 } 合并，写死一份会覆盖掉标定好的权重
     payTable: { awardWeights: { ...FRUIT_DEFAULT_AWARD_WEIGHTS } },
@@ -103,7 +105,7 @@ const GAMES = [
   {
     code: 'bcbm', name: '奔驰宝马', category: 'ARCADE' as const,
     status: 'ONLINE' as const, sortOrder: 8, minBet: DEFAULT_MIN_BET, maxBet: DEFAULT_MAX_BET,
-    rtp: 0.95,
+    rtp: 0.88,
     // 盘面/赔率/大奖权重唯一来源在 @gamebox/shared bcbm
     // 早先这里只列了 9 项，fast/uturn/lightning/drift 被默认值静默补入，
     // 且 normal 被压到 78/130，大奖占比过高把 RTP 顶到 200%+
@@ -145,22 +147,33 @@ const GAMES = [
 
 async function main() {
   // ── 平台账户 ──
+  // 唯一键是 (ownerType, ownerId, roomId)；非玩家账户 roomId 固定空串。
+  // 只传 ownerId 不构成唯一定位，Prisma 会直接抛校验错误。
   await prisma.pointsAccount.upsert({
-    where: { ownerId: 'PLATFORM' },
+    where: {
+      ownerType_ownerId_roomId: { ownerType: 'PLATFORM', ownerId: 'PLATFORM', roomId: '' },
+    },
     update: {},
-    create: { ownerType: 'PLATFORM', ownerId: 'PLATFORM', balance: 100_000_000 },
+    create: { ownerType: 'PLATFORM', ownerId: 'PLATFORM', roomId: '', balance: 100_000_000 },
   });
+  await writePlatformOpeningLedger(prisma);
   console.log('[seed] 平台账户 ✔');
 
-  // ── 管理员账号 ──
+  // ── 管理员账号（全站有且仅有一名）──
   const ADMIN_USERNAME = 'admin';
   const WEAK_ADMIN_PASSWORD = 'Admin@123456';
   const isProd = (process.env.NODE_ENV ?? 'development') === 'production';
   const skipAdmin = process.env.SKIP_ADMIN_SEED === '1';
   const ADMIN_PASSWORD = (process.env.SEED_ADMIN_PASSWORD || WEAK_ADMIN_PASSWORD).trim();
+  const adminCount = await prisma.user.count({ where: { role: 'ADMIN' } });
+  if (adminCount > 1) {
+    console.warn(`[seed] 警告：当前有 ${adminCount} 名 ADMIN，规范为有且仅有 1 名，请人工处理多余账号`);
+  }
 
   if (skipAdmin) {
     console.log('[seed] SKIP_ADMIN_SEED=1，跳过管理员账号');
+  } else if (adminCount >= 1) {
+    console.log('[seed] 已有管理员，跳过（全站仅允许一名） ✔');
   } else {
     if (isProd && (!process.env.SEED_ADMIN_PASSWORD || ADMIN_PASSWORD === WEAK_ADMIN_PASSWORD)) {
       throw new Error(
@@ -175,7 +188,7 @@ async function main() {
         data: {
           uid,
           username: ADMIN_USERNAME,
-          nickname: '超级管理员',
+          nickname: '管理员',
           passwordHash: hash,
           role: 'ADMIN',
           status: 'ACTIVE',
@@ -184,13 +197,13 @@ async function main() {
         },
       });
       await prisma.pointsAccount.create({
-        data: { ownerType: 'PLAYER', ownerId: admin.id, balance: 0 },
+        data: { ownerType: 'PLAYER', ownerId: admin.id, balance: 0, roomId: '' },
       });
       console.log(`[seed] 管理员账号: ${ADMIN_USERNAME} / (密码见 SEED_ADMIN_PASSWORD 或开发默认)  ✔`);
+    } else if (existing.role !== 'ADMIN') {
+      await prisma.user.update({ where: { id: existing.id }, data: { role: 'ADMIN' } });
+      console.log('[seed] 已将预留账号 admin 设为唯一管理员 ✔');
     } else {
-      if (existing.role !== 'ADMIN') {
-        await prisma.user.update({ where: { id: existing.id }, data: { role: 'ADMIN' } });
-      }
       console.log('[seed] 管理员账号已存在，跳过创建 ✔');
     }
   }
@@ -289,27 +302,31 @@ async function main() {
     console.log(`[seed] 活动: ${act.title} ✔`);
   }
 
-  // ── 代理房间（房间号 = 推广码，玩家登录后输入进入）──
-  const ROOMS = [
-    { roomNo: '628391', name: '黄金一号厅' },
-    { roomNo: '739402', name: '紫钻贵宾室' },
-    { roomNo: '184056', name: '夜场专属' },
-    { roomNo: '291847', name: '财神殿' },
-    { roomNo: '506318', name: '欢乐颂' },
-  ];
-  for (const r of ROOMS) {
-    await prisma.room.upsert({
-      where: { roomNo: r.roomNo },
-      update: { name: r.name, status: 'OPEN', icon: '/images/rooms/default-room.png' },
-      create: {
-        roomNo: r.roomNo,
-        name: r.name,
-        status: 'OPEN',
-        icon: '/images/rooms/default-room.png',
-        enabledGames: '[]',
-      },
-    });
-    console.log(`[seed] 房间: ${r.name} (${r.roomNo}) ✔`);
+  // ── 演示房间（默认不建；需要时设 SEED_DEMO_ROOMS=1）──
+  if (process.env.SEED_DEMO_ROOMS === '1') {
+    const ROOMS = [
+      { roomNo: '628391', name: '黄金一号厅' },
+      { roomNo: '739402', name: '紫钻贵宾室' },
+      { roomNo: '184056', name: '夜场专属' },
+      { roomNo: '291847', name: '财神殿' },
+      { roomNo: '506318', name: '欢乐颂' },
+    ];
+    for (const r of ROOMS) {
+      await prisma.room.upsert({
+        where: { roomNo: r.roomNo },
+        update: { name: r.name, status: 'OPEN', icon: '/images/rooms/default-room.png' },
+        create: {
+          roomNo: r.roomNo,
+          name: r.name,
+          status: 'OPEN',
+          icon: '/images/rooms/default-room.png',
+          enabledGames: '[]',
+        },
+      });
+      console.log(`[seed] 房间: ${r.name} (${r.roomNo}) ✔`);
+    }
+  } else {
+    console.log('[seed] 跳过演示房间（需要时设 SEED_DEMO_ROOMS=1）');
   }
 
   console.log('\n[seed] 全部完成 🎉');

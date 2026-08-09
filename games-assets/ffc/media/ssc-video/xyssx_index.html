@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html>
 	<head>
 		<meta charset="UTF-8">
@@ -9,6 +9,17 @@
 		<link rel="stylesheet" href="css/animateTool.css" />
 	</head>
 	<body>
+<script>
+/* embed-hide-loading: 进页即藏 LOADING，避免刷新续播先闪字 */
+(function () {
+  if (!/[?&]embed=1(?:&|$)/.test(location.search || '') && !/[?&]settle=1(?:&|$)/.test(location.search || '')) return;
+  document.documentElement.classList.add('is-embed');
+  var s = document.createElement('style');
+  s.textContent = '.loading,.loading .loadtxt,#preloader{display:none!important;visibility:hidden!important}';
+  (document.head || document.documentElement).appendChild(s);
+})();
+</script>
+
 		<div class="cqsscAnimate">
 			<div class="stage-inner">
 			<div class="bodybg"><img src="img/cqssc/bodybg.jpg" /></div>
@@ -137,7 +148,7 @@
 					</div>
 				</div>
 				<div class="menubox">
-					<div id="soundbtn" class="soundbtn" title="声音"></div>
+					<!-- 音效改由父页开奖卡右上角按钮控制 -->
 				</div>
 				<div class="disnone">
 					<audio  autoplay="autoplay" id="bgsound" src=""></audio>
@@ -148,5 +159,5 @@
 	</body>
 	<script type="text/javascript" src="js/jquery-1.9.1.js"></script>
 	<script type="text/javascript" src="js/victor1.0.js"></script>
-	<script type="text/javascript" src="js/video-host.js?v=10"></script>
+	<script type="text/javascript" src="js/video-host.js?v=138"></script>
 </html>

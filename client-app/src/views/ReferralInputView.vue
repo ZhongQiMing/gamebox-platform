@@ -181,6 +181,10 @@ async function goLobby(room: RoomCard) {
 async function enterApproved(room: RoomCard) {
   try {
     const entered = await roomStore.enter(room.roomNo)
+    if (entered.memberStatus === 'PENDING') {
+      toast('进房申请审核中，请等待代理通过')
+      return
+    }
     await goLobby(entered)
   } catch (e: unknown) {
     toast(e instanceof Error ? e.message : '进入失败')
@@ -201,6 +205,11 @@ async function submitEnter() {
   submitting.value = true
   try {
     const room = await roomStore.enter(code)
+    if (room.memberStatus === 'PENDING') {
+      toast('已提交，等待代理审核')
+      resetCode()
+      return
+    }
     await goLobby(room)
   } catch (e: unknown) {
     toast(e instanceof Error ? e.message : '进入失败')

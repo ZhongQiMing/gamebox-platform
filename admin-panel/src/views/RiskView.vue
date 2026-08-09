@@ -1,170 +1,162 @@
 <template>
-  <div class="ops-page risk-page">
-    <PageHeader title="风控告警" subtitle="自动监测大额中奖、同 IP 多号、刷分与桌台对刷；处理留痕可复盘">
-      <template #actions>
-        <el-button :loading="loading" @click="refreshAll">刷新</el-button>
-        <el-button type="success" :disabled="!selected.length" @click="batchHandle">
-          批量处理{{ selected.length ? ` (${selected.length})` : '' }}
-        </el-button>
-      </template>
-    </PageHeader>
+  <div class="desk-work risk-page">
+    <div class="desk-panel">
+      <PageHeader title="风控告警">
+        <template #actions>
+          <el-button :loading="loading" @click="refreshAll">刷新</el-button>
+          <el-button type="primary" :disabled="!selected.length" @click="batchHandle">
+            批量处理{{ selected.length ? ` (${selected.length})` : '' }}
+          </el-button>
+        </template>
+      </PageHeader>
 
-    <div class="ops-kpi-row">
-      <div
-        v-for="k in kpis"
-        :key="k.label"
-        class="ops-kpi is-clickable"
-        :class="k.tone"
-        @click="k.onClick?.()"
-      >
-        <div class="ops-kpi__label">{{ k.label }}</div>
-        <div class="ops-kpi__value">{{ k.value }}</div>
-        <div v-if="k.hint" class="ops-kpi__hint">{{ k.hint }}</div>
-      </div>
-    </div>
-
-    <el-card shadow="never" class="monitor-card">
-      <div class="monitor-head">
-        <span>监测能力</span>
-        <el-button text type="primary" size="small" @click="showMonitors = !showMonitors">
-          {{ showMonitors ? '收起' : '展开' }}
-        </el-button>
-      </div>
-      <div v-show="showMonitors" class="monitor-grid">
-        <div v-for="m in monitors" :key="m.type" class="monitor-item">
-          <div class="monitor-title">{{ m.label }}</div>
-          <div class="monitor-desc">{{ m.desc }}</div>
-          <el-tag size="small" effect="plain">未处理 {{ summary?.byType?.[m.type] ?? 0 }}</el-tag>
+      <div class="rooms-summary">
+        <div
+          v-for="k in kpis"
+          :key="k.label"
+          class="sum-chip"
+          :class="[{ clickable: !!k.onClick }, k.tone]"
+          @click="k.onClick?.()"
+        >
+          <span class="sum-label">{{ k.label }}</span>
+          <span class="sum-val" :class="k.tone">{{ k.value }}</span>
         </div>
       </div>
-    </el-card>
 
-    <div class="ops-filter">
-      <el-radio-group v-model="filter.handled" size="small" @change="onFilterChange">
-        <el-radio-button :label="false">未处理</el-radio-button>
-        <el-radio-button :label="true">已处理</el-radio-button>
-        <el-radio-button label="">全部</el-radio-button>
-      </el-radio-group>
+      <div class="panel-toolbar">
+        <el-radio-group v-model="filter.handled" size="small" @change="onFilterChange">
+          <el-radio-button :label="false">未处理</el-radio-button>
+          <el-radio-button :label="true">已处理</el-radio-button>
+          <el-radio-button label="">全部</el-radio-button>
+        </el-radio-group>
 
-      <el-select
-        v-model="filter.type"
-        clearable
-        placeholder="告警类型"
-        style="width: 140px"
-        @change="onFilterChange"
-      >
-        <el-option v-for="t in typeOptions" :key="t.value" :label="t.label" :value="t.value" />
-      </el-select>
+        <el-select
+          v-model="filter.type"
+          clearable
+          size="small"
+          placeholder="告警类型"
+          class="filter-type"
+          @change="onFilterChange"
+        >
+          <el-option v-for="t in typeOptions" :key="t.value" :label="t.label" :value="t.value" />
+        </el-select>
 
-      <el-select
-        v-model="filter.level"
-        clearable
-        placeholder="级别"
-        style="width: 110px"
-        @change="onFilterChange"
-      >
-        <el-option label="严重" value="CRITICAL" />
-        <el-option label="警告" value="WARN" />
-        <el-option label="提示" value="INFO" />
-      </el-select>
+        <el-select
+          v-model="filter.level"
+          clearable
+          size="small"
+          placeholder="级别"
+          class="filter-level"
+          @change="onFilterChange"
+        >
+          <el-option label="严重" value="CRITICAL" />
+          <el-option label="警告" value="WARN" />
+          <el-option label="提示" value="INFO" />
+        </el-select>
 
-      <el-input
-        v-model="filter.keyword"
-        clearable
-        placeholder="UID / 昵称 / 账号"
-        style="width: 180px"
-        @keyup.enter="onFilterChange"
-      />
+        <el-input
+          v-model="filter.keyword"
+          clearable
+          size="small"
+          placeholder="UID / 昵称 / 账号"
+          class="filter-search"
+          @keyup.enter="onFilterChange"
+        />
 
-      <el-date-picker
-        v-model="dateRange"
-        type="datetimerange"
-        range-separator="至"
-        start-placeholder="开始"
-        end-placeholder="结束"
-        value-format="YYYY-MM-DDTHH:mm:ss.SSSZ"
-        style="width: 340px"
-        @change="onFilterChange"
-      />
+        <el-date-picker
+          v-model="dateRange"
+          type="datetimerange"
+          size="small"
+          range-separator="至"
+          start-placeholder="开始"
+          end-placeholder="结束"
+          value-format="YYYY-MM-DDTHH:mm:ss.SSSZ"
+          class="filter-date"
+          @change="onFilterChange"
+        />
 
-      <el-button type="primary" @click="onFilterChange">查询</el-button>
-    </div>
+        <el-button type="primary" size="small" @click="onFilterChange">查询</el-button>
+      </div>
 
-    <div class="ops-table-wrap">
-      <el-table
-        :data="list"
-        v-loading="loading"
-        stripe
-        empty-text="暂无告警 — 系统会在触发规则时自动写入"
-        @selection-change="(rows: RiskEvent[]) => (selected = rows)"
-        @row-click="openDetail"
-      >
-        <el-table-column type="selection" width="42" :selectable="(r: RiskEvent) => !r.handled" />
-        <el-table-column label="级别" width="88">
-          <template #default="{ row }">
-            <el-tag :type="levelType(row.level)" size="small" effect="dark">{{ levelLabel(row.level) }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="类型" width="120">
-          <template #default="{ row }">
-            <el-tooltip :content="row.typeHint || row.type" placement="top">
-              <span class="type-label">{{ row.typeLabel || row.type }}</span>
-            </el-tooltip>
-          </template>
-        </el-table-column>
-        <el-table-column label="关联玩家" min-width="140">
-          <template #default="{ row }">
-            <template v-if="row.target">
-              <div class="player-main">{{ row.target.nickname }}</div>
-              <div class="player-sub">{{ row.target.uid }} · IP {{ row.target.lastLoginIp || '—' }}</div>
+      <div class="panel-body">
+        <el-table
+          :data="list"
+          v-loading="loading"
+          class="risk-table"
+          stripe
+          border
+          size="small"
+          height="100%"
+          empty-text="暂无告警"
+          @selection-change="(rows: RiskEvent[]) => (selected = rows)"
+          @row-click="openDetail"
+        >
+          <el-table-column type="selection" width="42" :selectable="(r: RiskEvent) => !r.handled" />
+          <el-table-column label="级别" width="88">
+            <template #default="{ row }: { row: any }">
+              <el-tag :type="levelType(row.level)" size="small" effect="plain">{{ levelLabel(row.level) }}</el-tag>
             </template>
-            <el-text v-else type="info">{{ shortId(row.targetId) }}</el-text>
-          </template>
-        </el-table-column>
-        <el-table-column label="摘要" min-width="260">
-          <template #default="{ row }">
-            <el-text truncated>{{ row.summary || '—' }}</el-text>
-          </template>
-        </el-table-column>
-        <el-table-column label="时间" width="160">
-          <template #default="{ row }">{{ fmtTime(row.createdAt) }}</template>
-        </el-table-column>
-        <el-table-column label="状态" width="100">
-          <template #default="{ row }">
-            <el-tag v-if="!row.handled" type="danger" size="small" effect="plain">待处理</el-tag>
-            <el-tag v-else type="success" size="small" effect="plain">已处理</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="150" fixed="right">
-          <template #default="{ row }">
-            <el-button size="small" text type="primary" @click.stop="openDetail(row)">详情</el-button>
-            <el-button
-              v-if="!row.handled"
-              size="small"
-              type="success"
-              @click.stop="handleOne(row)"
-            >
-              处理
-            </el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-      <el-pagination
-        class="ops-pager"
-        :total="total"
-        :page-size="filter.pageSize"
-        :current-page="filter.page"
-        layout="total,prev,pager,next"
-        @current-change="(p: number) => { filter.page = p; load() }"
-      />
+          </el-table-column>
+          <el-table-column label="类型" width="120">
+            <template #default="{ row }: { row: any }">
+              <el-tooltip :content="row.typeHint || row.type" placement="top">
+                <span class="type-label">{{ row.typeLabel || row.type }}</span>
+              </el-tooltip>
+            </template>
+          </el-table-column>
+          <el-table-column label="关联玩家" min-width="140">
+            <template #default="{ row }: { row: any }">
+              <template v-if="row.target">
+                <div class="cell-name">{{ row.target.nickname }}</div>
+                <div class="cell-meta">{{ row.target.uid }} · IP {{ row.target.lastLoginIp || '—' }}</div>
+              </template>
+              <span v-else class="muted">{{ shortId(row.targetId) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="摘要" min-width="240">
+            <template #default="{ row }: { row: any }">
+              <el-text truncated>{{ row.summary || '—' }}</el-text>
+            </template>
+          </el-table-column>
+          <el-table-column label="时间" width="160">
+            <template #default="{ row }: { row: any }">{{ fmtTime(row.createdAt) }}</template>
+          </el-table-column>
+          <el-table-column label="状态" width="96">
+            <template #default="{ row }: { row: any }">
+              <el-tag v-if="!row.handled" type="danger" size="small" effect="plain">待处理</el-tag>
+              <el-tag v-else type="success" size="small" effect="plain">已处理</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="120" fixed="right" align="right">
+            <template #default="{ row }: { row: any }">
+              <el-button link type="primary" @click.stop="openDetail(row)">详情</el-button>
+              <el-button
+                v-if="!row.handled"
+                link
+                type="success"
+                @click.stop="handleOne(row)"
+              >处理</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
+
+      <div class="panel-foot">
+        <el-pagination
+          :total="total"
+          :page-size="filter.pageSize"
+          :current-page="filter.page"
+          layout="total, prev, pager, next"
+          @current-change="(p: number) => { filter.page = p; load() }"
+        />
+      </div>
     </div>
 
-    <!-- 详情抽屉 -->
-    <el-drawer v-model="drawer" title="告警详情" size="480px" destroy-on-close>
+    <el-drawer v-model="drawer" class="desk-drawer" title="告警详情" size="480px" destroy-on-close>
       <template v-if="current">
         <el-descriptions :column="1" border size="small" class="mb16">
           <el-descriptions-item label="级别">
-            <el-tag :type="levelType(current.level)" size="small">{{ levelLabel(current.level) }}</el-tag>
+            <el-tag :type="levelType(current.level)" size="small" effect="plain">{{ levelLabel(current.level) }}</el-tag>
           </el-descriptions-item>
           <el-descriptions-item label="类型">
             {{ current.typeLabel }}
@@ -183,19 +175,19 @@
           </el-descriptions-item>
         </el-descriptions>
 
-        <el-card v-if="current.target" shadow="never" class="mb16">
-          <template #header>关联玩家</template>
+        <div v-if="current.target" class="detail-block mb16">
+          <div class="detail-title">关联玩家</div>
           <div class="player-block">
             <div><b>{{ current.target.nickname }}</b>（{{ current.target.uid }}）</div>
             <div class="hint">账号 {{ current.target.username }} · 状态 {{ current.target.status }}</div>
             <div class="hint">最近登录 IP {{ current.target.lastLoginIp || '—' }}</div>
           </div>
-        </el-card>
+        </div>
 
-        <el-card shadow="never" class="mb16">
-          <template #header>原始明细</template>
+        <div class="detail-block mb16">
+          <div class="detail-title">原始明细</div>
           <pre class="json">{{ pretty(current.detail) }}</pre>
-        </el-card>
+        </div>
 
         <div v-if="!current.handled" class="drawer-actions">
           <el-input
@@ -204,9 +196,9 @@
             :rows="2"
             :placeholder="current.level === 'CRITICAL'
               ? '严重告警必填：核对结论 / 处理动作'
-              : '处理备注（可选，如：已核对流水/已联系代理）'"
+              : '处理备注（可选）'"
           />
-          <el-button type="success" :loading="opLoading" style="margin-top:12px" @click="confirmHandle">
+          <el-button type="primary" :loading="opLoading" class="mt12" @click="confirmHandle">
             标记已处理
           </el-button>
         </div>
@@ -233,8 +225,6 @@ const opLoading = ref(false)
 const selected = ref<RiskEvent[]>([])
 const summary = ref<RiskSummary | null>(null)
 const typeOptions = ref<RiskMeta['types']>([])
-const monitors = ref<RiskMeta['monitors']>([])
-const showMonitors = ref(true)
 const drawer = ref(false)
 const current = ref<RiskEvent | null>(null)
 const handleNote = ref('')
@@ -260,8 +250,7 @@ const kpis = computed(() => [
   {
     label: '未处理',
     value: summary.value?.unhandled ?? 0,
-    tone: (summary.value?.unhandled ?? 0) > 0 ? 'is-danger' : '',
-    hint: '需人工确认',
+    tone: (summary.value?.unhandled ?? 0) > 0 ? 'hot' : '',
     onClick: () => {
       filter.handled = false
       onFilterChange()
@@ -270,8 +259,7 @@ const kpis = computed(() => [
   {
     label: '严重',
     value: summary.value?.critical ?? 0,
-    tone: (summary.value?.critical ?? 0) > 0 ? 'is-danger' : '',
-    hint: '优先处理',
+    tone: (summary.value?.critical ?? 0) > 0 ? 'hot' : '',
     onClick: () => {
       filter.handled = false
       filter.level = 'CRITICAL'
@@ -281,8 +269,7 @@ const kpis = computed(() => [
   {
     label: '警告',
     value: summary.value?.warn ?? 0,
-    tone: 'is-warn',
-    hint: '未处理警告',
+    tone: 'warn',
     onClick: () => {
       filter.handled = false
       filter.level = 'WARN'
@@ -293,7 +280,6 @@ const kpis = computed(() => [
     label: '今日新增',
     value: summary.value?.todayNew ?? 0,
     tone: '',
-    hint: '上海自然日',
   },
 ])
 
@@ -303,7 +289,6 @@ async function loadMeta() {
   try {
     const m = await riskApi.meta()
     typeOptions.value = m.types
-    monitors.value = m.monitors
   } catch {
     /* ignore */
   }
@@ -468,45 +453,119 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.risk-page { max-width: none; }
-.monitor-card { margin-bottom: 14px; }
-.monitor-head {
+.risk-page :deep(.ops-header) {
+  margin: 0;
+  padding: 14px 18px 12px;
+  flex-shrink: 0;
+}
+.rooms-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0;
+  flex-shrink: 0;
+  border-bottom: 1px solid #e2e8f0;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+}
+.sum-chip {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
+  min-height: 48px;
+  padding: 0 16px;
+  border-right: 1px solid #f1f5f9;
+}
+.sum-chip:last-child { border-right: none; }
+.sum-chip.clickable { cursor: pointer; }
+.sum-chip.clickable:hover { background: #eff6ff; }
+.sum-chip.hot { background: #fff7f7; }
+.sum-label { font-size: 12px; color: #64748b; white-space: nowrap; }
+.sum-val {
+  font-size: 18px;
+  font-weight: 700;
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+}
+.sum-val.hot { color: #ef4444; }
+.sum-val.warn { color: #f59e0b; }
+.panel-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  padding: 10px 14px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  border-bottom: 1px solid #e2e8f0;
+  flex-shrink: 0;
+}
+.filter-type { width: 140px; }
+.filter-level { width: 110px; }
+.filter-search { width: 180px; }
+.filter-date { width: 340px; }
+.panel-body {
+  flex: 1;
+  min-height: 0;
+  padding: 0;
+  background: #fff;
+}
+.panel-body :deep(.el-table) {
+  --el-table-header-bg-color: #f1f5f9;
+  --el-table-row-hover-bg-color: #eff6ff;
+}
+.panel-body :deep(.el-table th.el-table__cell) {
+  color: #475569;
   font-weight: 600;
+  background: #f1f5f9 !important;
+}
+.risk-table { width: 100%; }
+.risk-table :deep(.el-table__row) { cursor: pointer; }
+.panel-foot {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px 14px;
+  border-top: 1px solid #e2e8f0;
+  background: #fff;
+}
+.cell-name {
+  font-size: 13px;
+  font-weight: 650;
+  color: #0f172a;
+  line-height: 1.35;
+}
+.cell-meta {
+  margin-top: 3px;
+  font-size: 12px;
+  color: #64748b;
+  line-height: 1.3;
+}
+.type-label { font-weight: 600; color: #0f172a; cursor: help; }
+.muted { color: #94a3b8; }
+.hint { font-size: 12px; color: #64748b; margin-top: 4px; }
+.mb16 { margin-bottom: 16px; }
+.mt12 { margin-top: 12px; }
+.detail-block {
+  padding: 12px 14px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+}
+.detail-title {
   margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 650;
+  color: #0f172a;
 }
-.monitor-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
-}
-@media (max-width: 1100px) {
-  .monitor-grid { grid-template-columns: repeat(2, 1fr); }
-}
-.monitor-item {
-  padding: 10px 12px;
-  background: #fafbfc;
-  border-radius: 8px;
-  border: 1px solid var(--ops-border-soft);
-}
-.monitor-title { font-size: 13px; font-weight: 600; color: var(--ops-text); }
-.monitor-desc { margin: 4px 0 8px; font-size: 12px; color: var(--ops-muted); line-height: 1.4; }
-.type-label { font-weight: 500; cursor: help; }
-.player-main { font-weight: 500; }
-.player-sub { font-size: 11px; color: var(--ops-muted); margin-top: 2px; }
-.hint { font-size: 12px; color: var(--ops-muted); margin-top: 4px; }
+.player-block { font-size: 13px; line-height: 1.6; color: #0f172a; }
 .json {
   margin: 0;
   font-size: 12px;
   line-height: 1.45;
   white-space: pre-wrap;
   word-break: break-all;
-  color: #606266;
+  color: #475569;
   max-height: 280px;
   overflow: auto;
 }
 .drawer-actions { margin-top: 8px; }
-.player-block { font-size: 13px; line-height: 1.6; }
 </style>

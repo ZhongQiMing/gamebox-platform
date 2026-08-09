@@ -1,8 +1,16 @@
-/** 极速赛车 · 进房 BGM + 顶栏读秒 + 竞速阶段音效 */
+/**
+ * 极速赛车 · 三路音频（互不混控）
+ *
+ * 1) music  房间 BGM：lobby-bgm
+ * 2) sfx    房间音效：顶栏读秒 countdown-4..1 / countdown-final
+ * 3) drawSfx 开奖动画：race-countdown / race-mid / race-finish（父页播，iframe 静音）
+ *    - 仅开奖卡喇叭 → setDrawSfxOn
+ */
 (function (global) {
   var BASE = '/audio/speed-racing/';
-  var VER = '4';
+  var VER = '9';
   var LS_KEY = 'jsr_audio_v1';
+  var BGM_EXT = 'm4a';
 
   function isAppBgmOn() {
     try { return localStorage.getItem('app_bgm_off') !== '1'; } catch (e) { return true; }
@@ -10,13 +18,53 @@
   function isAppSfxOn() {
     try { return localStorage.getItem('sound_off') !== '1'; } catch (e) { return true; }
   }
-  /* 无本游戏记录时跟随账号管理；有记录则用本游戏覆盖 */
-  var pref = { music: isAppBgmOn(), sfx: isAppSfxOn() };
+
+  /* 账号音量：BGM / SFX（含开奖动画 drawSfx）统一基准 */
+  var BASE_BGM = 0.4;
+  var BASE_SFX = 0.75;
+  function appBgmLevel() {
+    try { if (global.AppAudioLevel) return AppAudioLevel.getBgm(); } catch (e) {}
+    return 0.8;
+  }
+  function appSfxLevel() {
+    try { if (global.AppAudioLevel) return AppAudioLevel.getSfx(); } catch (e) {}
+    return 0.8;
+  }
+  function musicVol() { return BASE_BGM * appBgmLevel(); }
+  function sfxVol() { return Math.min(1, BASE_SFX * appSfxLevel()); }
+  function applyLevels() {
+    baseVol = musicVol();
+    if (typeof bgm !== 'undefined' && bgm) {
+      try {
+        var duck = false;
+        try { if (typeof drawActive !== 'undefined' && drawActive) duck = true; } catch (e1) {}
+        try { if (typeof raceActive !== 'undefined' && raceActive) duck = true; } catch (e2) {}
+        bgm.volume = duck ? baseVol * 0.15 : baseVol;
+      } catch (e3) {}
+    }
+    if (typeof liveSfx !== 'undefined' && liveSfx && liveSfx.forEach) {
+      liveSfx.forEach(function (n) { try { n.volume = sfxVol(); } catch (e5) {} });
+    }
+    if (typeof liveDrawSfx !== 'undefined' && liveDrawSfx && liveDrawSfx.forEach) {
+      liveDrawSfx.forEach(function (n) { try { n.volume = sfxVol(); } catch (e6) {} });
+    }
+    if (typeof raceMid !== 'undefined' && raceMid) {
+      try { raceMid.volume = sfxVol(); } catch (e7) {}
+    }
+  }
+
+  var pref = {
+    music: isAppBgmOn(),
+    sfx: isAppSfxOn(),
+    drawSfx: isAppSfxOn(),
+  };
   try {
     var raw = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
     if (raw && typeof raw === 'object') {
       if (typeof raw.music === 'boolean') pref.music = raw.music;
       if (typeof raw.sfx === 'boolean') pref.sfx = raw.sfx;
+      if (typeof raw.drawSfx === 'boolean') pref.drawSfx = raw.drawSfx;
+      else if (typeof raw.sfx === 'boolean') pref.drawSfx = raw.sfx;
     }
   } catch (e) { /* ignore */ }
 
@@ -27,37 +75,45 @@
     } catch (e) { return; }
     pref.music = isAppBgmOn();
     pref.sfx = isAppSfxOn();
+    pref.drawSfx = isAppSfxOn();
     if (pref.music) {
       try { if (typeof ensureBgm === 'function') ensureBgm(true); } catch (e2) { /* ignore */ }
-      try { if (typeof ensureLobbyBgm === 'function') ensureLobbyBgm(true); } catch (e3) { /* ignore */ }
     } else {
       try { if (bgm) bgm.pause(); } catch (e4) { /* ignore */ }
-      try { if (lobbyBgm) lobbyBgm.pause(); } catch (e5) { /* ignore */ }
     }
     if (!pref.sfx) {
       try { if (typeof clearCountdownArm === 'function') clearCountdownArm(); } catch (e6) { /* ignore */ }
-      try { if (typeof stopRing === 'function') stopRing(); } catch (e7) { /* ignore */ }
-      try { if (typeof stopDrawSfx === 'function') stopDrawSfx(); } catch (e8) { /* ignore */ }
-      try { if (typeof stopRaceSfx === 'function') stopRaceSfx(); } catch (e9) { /* ignore */ }
+      try { if (typeof stopLiveSfx === 'function') stopLiveSfx(); } catch (e7) { /* ignore */ }
     }
+    if (!pref.drawSfx) {
+      try { if (typeof stopRaceSfx === 'function') stopRaceSfx(); } catch (e9) { /* ignore */ }
+      raceActive = false;
+      if (bgm && pref.music) {
+        try { bgm.volume = baseVol; } catch (e10) { /* ignore */ }
+      }
+    }
+    applyLevels();
   }
   window.addEventListener('storage', function (ev) {
     if (!ev) return;
-    if (ev.key === 'app_bgm_off' || ev.key === 'sound_off' || ev.key === LS_KEY) syncFromAppIfNeeded();
+    if (ev.key === 'app_bgm_off' || ev.key === 'sound_off' || ev.key === 'app_bgm_vol' || ev.key === 'app_sfx_vol' || ev.key === LS_KEY) { syncFromAppIfNeeded(); applyLevels(); }
   });
   document.addEventListener('visibilitychange', function () {
-    if (!document.hidden) syncFromAppIfNeeded();
+    if (!document.hidden) { syncFromAppIfNeeded(); applyLevels(); }
   });
+  window.addEventListener('app-audio-pref-changed', function () { syncFromAppIfNeeded(); applyLevels(); });
 
   var unlocked = false;
   var bgm = null;
   var raceMid = null;
   var lastSfxAt = {};
+  var liveSfx = [];
+  var liveDrawSfx = [];
   var cdTimers = [];
   var raceTimers = [];
   var cdArmedLockAt = 0;
   var cdPlayed = {};
-  var baseVol = 0.38;
+  var baseVol = musicVol();
   var raceActive = false;
 
   function url(name, ext) {
@@ -79,9 +135,11 @@
     ensureBgm(true);
   }
 
+  /* ───────── 1) 房间 BGM ───────── */
   function ensureBgm(playNow) {
+    baseVol = musicVol();
     if (!bgm) {
-      bgm = new Audio(url('lobby-bgm', 'm4a'));
+      bgm = new Audio(url('lobby-bgm', BGM_EXT));
       bgm.loop = true;
       bgm.preload = 'auto';
       bgm.volume = baseVol;
@@ -104,26 +162,35 @@
     }
   }
 
+  /* ───────── 2) 房间音效（顶栏读秒） ───────── */
+  function stopLiveSfx() {
+    liveSfx.forEach(function (node) {
+      try { node.pause(); node.src = ''; } catch (e) { /* ignore */ }
+    });
+    liveSfx = [];
+  }
+
   function setSfxOn(on) {
     pref.sfx = !!on;
     savePref();
     if (!pref.sfx) {
       clearCountdownArm();
-      stopRaceSfx();
+      stopLiveSfx();
     }
   }
 
   function sfx(name, opt) {
-    if (!pref.sfx || !unlocked) return;
+    if (!pref.sfx || !unlocked) return null;
     opt = opt || {};
     var now = Date.now();
     var gap = typeof opt.dedupeMs === 'number' ? opt.dedupeMs : 40;
-    if (lastSfxAt[name] && now - lastSfxAt[name] < gap) return;
+    if (lastSfxAt[name] && now - lastSfxAt[name] < gap) return null;
     lastSfxAt[name] = now;
     try {
       var node = new Audio(url(name, opt.ext || 'wav'));
-      node.volume = typeof opt.vol === 'number' ? opt.vol : 0.7;
+      node.volume = sfxVol();
       if (opt.loop) node.loop = true;
+      liveSfx.push(node);
       var p = node.play();
       if (p && p.catch) p.catch(function () {});
       return node;
@@ -146,10 +213,8 @@
     sfx(name, { vol: vol, dedupeMs: 0 });
   }
 
-  /**
-   * 椤舵爮璺濆皝鐩橈細4/3/2/1 鍚勪竴澹帮紱00:00 鍙屽榾锛坈ountdown-final锛?
-   */
   function armCountdown(lockAtMs) {
+    if (raceActive) return;
     var lockAt = Number(lockAtMs) || 0;
     if (!lockAt || !isFinite(lockAt)) return;
     if (cdArmedLockAt === lockAt) return;
@@ -175,21 +240,34 @@
       })(s);
     }
     schedule(lockAt, function () {
-      playCd('t0', 'countdown-final', 0.72);
+      playCd('t0', 'countdown-final', sfxVol());
     });
   }
 
   function onDrawing() {
     if (cdArmedLockAt && !cdPlayed.t0) {
-      playCd('t0', 'countdown-final', 0.72);
+      playCd('t0', 'countdown-final', sfxVol());
     }
     clearCountdownArm();
   }
 
   function onBetting() {
-    raceActive = false;
+    if (raceActive) {
+      if (bgm && pref.music) {
+        try { bgm.volume = baseVol * 0.2; } catch (e) { /* ignore */ }
+      }
+      return;
+    }
     stopRaceSfx();
     ensureBgm(true);
+  }
+
+  /* ───────── 3) 开奖动画音效（竞速仪式） ───────── */
+  function stopLiveDrawSfx() {
+    liveDrawSfx.forEach(function (node) {
+      try { node.pause(); node.src = ''; } catch (e) { /* ignore */ }
+    });
+    liveDrawSfx = [];
   }
 
   function clearRaceTimers() {
@@ -203,23 +281,46 @@
       try { raceMid.pause(); raceMid.currentTime = 0; } catch (e) { /* ignore */ }
       raceMid = null;
     }
+    stopLiveDrawSfx();
   }
 
-  /**
-   * 竞速仪式音效（与 race-host / jsr.js 时间轴对齐）：
-   * - 红绿灯剩 2s：race-countdown（cuttime）
-   * - 绿灯 +1s：race-mid 循环（staring）
-   * - finishgame 起停 mid；领奖台内播 race-finish（over）
-   * 默认对齐当前房间：倒计时 3s + 中段 8s + 领奖台 6s
-   */
+  function playDrawSfx(name, opt) {
+    if (!pref.drawSfx || !unlocked) return null;
+    opt = opt || {};
+    try {
+      var node = new Audio(url(name, opt.ext || 'mp3'));
+      node.volume = sfxVol();
+      if (opt.loop) node.loop = true;
+      liveDrawSfx.push(node);
+      var p = node.play();
+      if (p && p.catch) p.catch(function () {});
+      return node;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function setDrawSfxOn(on) {
+    pref.drawSfx = !!on;
+    savePref();
+    if (!pref.drawSfx) {
+      stopRaceSfx();
+      raceActive = false;
+      if (bgm && pref.music) {
+        try { bgm.volume = baseVol; } catch (e) { /* ignore */ }
+        ensureBgm(true);
+      }
+    }
+  }
+
   function startRaceCeremony(opts) {
     opts = opts || {};
     var cd = opts.countdownSec != null ? Number(opts.countdownSec) : 3;
     var mid = opts.midRaceMs != null ? Number(opts.midRaceMs) : 8000;
-    var after = opts.afterFinishMs != null ? Number(opts.afterFinishMs) : 6000;
+    var visual = opts.finishVisualMs != null ? Number(opts.finishVisualMs) : 3300;
     if (!(cd >= 0)) cd = 3;
     if (!(mid >= 0)) mid = 8000;
-    if (!(after >= 0)) after = 6000;
+    if (!(visual >= 0)) visual = 3300;
 
     stopRaceSfx();
     raceActive = true;
@@ -231,40 +332,34 @@
       raceTimers.push(setTimeout(fn, ms));
     }
 
-    /* startcountdown(n)：约 1s 后 timer==2 播 cuttime */
     later(Math.max(0, (cd - 2) * 1000), function () {
-      sfx('race-countdown', { ext: 'mp3', vol: 0.75, dedupeMs: 0 });
+      playDrawSfx('race-countdown', { ext: 'mp3', vol: sfxVol() });
     });
 
-    /* 绿灯 +1s → staring 循环（对齐 main.js startanimation） */
     later(cd * 1000 + 1000, function () {
-      if (!pref.sfx || !unlocked) return;
+      if (!pref.drawSfx || !unlocked) return;
       try {
         raceMid = new Audio(url('race-mid', 'mp3'));
         raceMid.loop = true;
-        raceMid.volume = 0.62;
+        raceMid.volume = sfxVol();
+        liveDrawSfx.push(raceMid);
         var p = raceMid.play();
         if (p && p.catch) p.catch(function () {});
       } catch (e) { /* ignore */ }
     });
 
-    /* finishgame：停 mid；领奖台窗口内播 over（默认 +3s，after 过短则提前） */
-    var finishAt = cd * 1000 + mid;
-    later(finishAt, function () {
+    var numbersAt = cd * 1000 + mid + visual;
+    later(numbersAt, function () {
       if (raceMid) {
         try { raceMid.pause(); raceMid.currentTime = 0; } catch (e) { /* ignore */ }
         raceMid = null;
       }
-    });
-    var overDelay = Math.min(3000, Math.max(0, after - 200));
-    later(finishAt + overDelay, function () {
-      sfx('race-finish', { ext: 'mp3', vol: 0.78, dedupeMs: 0 });
+      playDrawSfx('race-finish', { ext: 'mp3', vol: sfxVol() });
     });
   }
 
   function endRaceCeremony() {
     raceActive = false;
-    /* 只清循环 mid / 待播定时器；已播出的 race-finish 单次音效继续播完 */
     clearRaceTimers();
     if (raceMid) {
       try { raceMid.pause(); raceMid.currentTime = 0; } catch (e) { /* ignore */ }
@@ -292,13 +387,19 @@
     unlock: unlock,
     ensureBgm: ensureBgm,
     setMusicOn: setMusicOn,
+    isMusicOn: function () { return !!pref.music; },
     setSfxOn: setSfxOn,
+    isSfxOn: function () { return !!pref.sfx; },
+    setDrawSfxOn: setDrawSfxOn,
+    isDrawSfxOn: function () { return !!pref.drawSfx; },
     armCountdown: armCountdown,
     clearCountdownArm: clearCountdownArm,
     onDrawing: onDrawing,
     onBetting: onBetting,
     startRaceCeremony: startRaceCeremony,
     endRaceCeremony: endRaceCeremony,
+    stopRaceSfx: stopRaceSfx,
+    stopDrawSfx: stopRaceSfx,
     pref: pref,
   };
 })(typeof window !== 'undefined' ? window : this);

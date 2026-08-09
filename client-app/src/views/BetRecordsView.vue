@@ -157,7 +157,7 @@ useBodyClass('deco-bg')
 const route = useRoute()
 const router = useRouter()
 
-/** 聊天彩票：注单以大脑为准；牌桌仍读本地日志 */
+/** 聊天彩票：注单以服务端为准 */
 const SERVER_LOTTERY_CODES = new Set([
   'ssc', 'ffc', 'speed-racing', 'speed-boat', 'bjsc', 'kuai3', 'lhc',
 ])
@@ -170,10 +170,14 @@ const LOTTERY_BET_GAMES: Record<string, { title: string; storagePrefix: string; 
   bjsc: { title: '北京赛车注单', storagePrefix: 'bjsc_bet_log_', eventName: 'bjsc-bet-log-updated' },
   kuai3: { title: '1分快三注单', storagePrefix: 'k3_bet_log_', eventName: 'k3-bet-log-updated' },
   lhc: { title: '幸运六合彩注单', storagePrefix: 'lhc_bet_log_', eventName: 'lhc-bet-log-updated' },
-  zhajinhua: { title: '炸金花注单', storagePrefix: 'zjh_bet_log_', eventName: 'zjh-bet-log-updated' },
-  douniu: { title: '斗牛注单', storagePrefix: 'dn_bet_log_', eventName: 'dn-bet-log-updated' },
-  baccarat: { title: '百家乐注单', storagePrefix: 'bjl_bet_log_', eventName: 'bjl-bet-log-updated' },
-  longhu: { title: '龙虎斗注单', storagePrefix: 'lhd_bet_log_', eventName: 'lhd-bet-log-updated' },
+}
+
+/** 牌桌类：走 /bet/history（与街机同一套服务端注单） */
+const TABLE_BET_GAMES: Record<string, { title: string; serverCode: string }> = {
+  zhajinhua: { title: '炸金花注单', serverCode: 'zhajinhua' },
+  douniu: { title: '斗牛注单', serverCode: 'douniu' },
+  baccarat: { title: '百家乐注单', serverCode: 'baccarat' },
+  longhu: { title: '龙虎斗注单', serverCode: 'dragon-tiger' },
 }
 
 /** 街机类：走 /bet/history，UI 与聊天室注单页同一套 */
@@ -195,6 +199,11 @@ const activeLotteryGame = computed(() => {
 const activeArcadeGame = computed(() => {
   const g = activeGameCode.value
   return g ? ARCADE_BET_GAMES[g] : undefined
+})
+
+const activeTableGame = computed(() => {
+  const g = activeGameCode.value
+  return g ? TABLE_BET_GAMES[g] : undefined
 })
 
 interface BetRecord {
@@ -539,6 +548,98 @@ function groupsFromArcadeRecords(gameCode: string, list: BetRecord[]): SscBetGro
     )
 }
 
+const TABLE_PLAY_LABELS: Record<string, string> = {
+  banker: '庄',
+  player: '闲',
+  tie: '和',
+  bankerPair: '庄对',
+  playerPair: '闲对',
+  shunjin: '顺金',
+  baozi: '豹子',
+  san2: '散牌',
+  san3: '对子',
+  san6: '顺子',
+  san7: '金花',
+  small: '小牛牛',
+  niuniu: '牛牛',
+  niu79: '牛7-牛9',
+  niu06: '无牛-牛6',
+  flower: '五花牛',
+  dragon: '龙',
+  tiger: '虎',
+  DRAGON: '龙',
+  TIGER: '虎',
+  TIE: '和',
+}
+
+function formatTablePlay(position: string): string {
+  const key = String(position || '')
+  return TABLE_PLAY_LABELS[key] || key || '投注'
+}
+
+function formatTableDrawSummary(outcome: unknown): string | undefined {
+  const o = (outcome ?? {}) as {
+    result?: string
+    winner?: string
+    bankerType?: { label?: string }
+    playerType?: { label?: string }
+  }
+  const resultRaw = String(o.result || o.winner || '').toLowerCase()
+  const resultCn: Record<string, string> = {
+    banker: '庄赢',
+    player: '闲赢',
+    tie: '和',
+    dragon: '龙赢',
+    tiger: '虎赢',
+  }
+  const result = resultCn[resultRaw] || (resultRaw ? resultRaw : '')
+  const bt = o.bankerType?.label
+  const pt = o.playerType?.label
+  if (bt && pt && result) return `庄 ${bt} · 闲 ${pt} · ${result}`
+  if (bt && pt) return `庄 ${bt} · 闲 ${pt}`
+  return result || undefined
+}
+
+function groupsFromTableRecords(serverCode: string, list: BetRecord[]): SscBetGroup[] {
+  return list
+    .filter((r) => r.game?.code === serverCode && r.status !== 'CANCELLED')
+    .map((r) => {
+      const pending = r.status === 'PENDING'
+      const profit = pending ? 0 : r.payout - r.amount
+      const bets: SscBetItem[] = (r.details?.length
+        ? r.details
+        : [{ position: '投注', amount: r.amount, payout: r.payout, multiplier: 0, won: r.payout > 0 }]
+      ).map((d) => {
+        const dPending = pending
+        const dProfit = dPending ? 0 : d.payout - d.amount
+        return {
+          play: formatTablePlay(d.position),
+          amount: d.amount,
+          status: dPending ? 'PENDING' : d.won ? 'WON' : 'LOST',
+          profit: dProfit,
+          winAmount: d.payout,
+          hit: !dPending && d.won ? '中奖' : '',
+        }
+      })
+      return {
+        game: serverCode,
+        issue: String(r.roundNo || r.betNo || r.id.slice(0, 10)),
+        createdAt: r.createdAt,
+        settledAt: r.settledAt || undefined,
+        settled: !pending,
+        drawSummary: formatTableDrawSummary(r.outcome),
+        bets,
+        totalAmount: r.amount,
+        totalProfit: profit,
+      }
+    })
+    .sort(
+      (a, b) =>
+        new Date(b.settledAt || b.createdAt).getTime() -
+        new Date(a.settledAt || a.createdAt).getTime(),
+    )
+}
+
 async function loadBetHistoryForRange() {
   const [from, to] = rangeBounds(range.value)
   try {
@@ -550,18 +651,20 @@ async function loadBetHistoryForRange() {
   }
 }
 
-async function ensureBetHistoryLoaded() {
-  if (records.value.length) return
-  await loadBetHistoryForRange()
-}
-
 async function loadLotteryBetLog() {
   const code = activeGameCode.value
   if (ARCADE_BET_GAMES[code]) {
     const seq = ++loadSeq
-    await ensureBetHistoryLoaded()
+    await loadBetHistoryForRange()
     if (seq !== loadSeq) return
     sscLog.value = groupsFromArcadeRecords(code, records.value)
+    return
+  }
+  if (TABLE_BET_GAMES[code]) {
+    const seq = ++loadSeq
+    await loadBetHistoryForRange()
+    if (seq !== loadSeq) return
+    sscLog.value = groupsFromTableRecords(TABLE_BET_GAMES[code].serverCode, records.value)
     return
   }
   const cfg = activeLotteryGame.value
@@ -586,7 +689,7 @@ async function loadLotteryBetLog() {
 
 function onLotteryLogStorage(e: StorageEvent) {
   const code = activeGameCode.value
-  if (SERVER_LOTTERY_CODES.has(code)) return
+  if (SERVER_LOTTERY_CODES.has(code) || TABLE_BET_GAMES[code] || ARCADE_BET_GAMES[code]) return
   const key = lotteryBetLogStorageKey()
   if (key && e.key && e.key !== key) return
   void loadLotteryBetLog()
@@ -597,9 +700,10 @@ function onLotteryLogVisible() {
 }
 
 function startLotteryPollIfNeeded() {
-  if (lotteryPollTimer || !activeLotteryGame.value) return
+  const needsPoll = !!(activeLotteryGame.value || activeTableGame.value || activeArcadeGame.value)
+  if (lotteryPollTimer || !needsPoll) return
   lotteryPollTimer = setInterval(() => {
-    if (!activeLotteryGame.value) return
+    if (!(activeLotteryGame.value || activeTableGame.value || activeArcadeGame.value)) return
     if (sscLog.value.some(g => !g.settled)) void loadLotteryBetLog()
   }, 2000)
 }
@@ -611,7 +715,11 @@ function stopLotteryPoll() {
 }
 
 const pageTitle = computed(
-  () => activeLotteryGame.value?.title ?? activeArcadeGame.value?.title ?? '竞猜报表',
+  () =>
+    activeLotteryGame.value?.title
+    ?? activeTableGame.value?.title
+    ?? activeArcadeGame.value?.title
+    ?? '竞猜报表',
 )
 
 const listHeading = computed(() => (activeGameCode.value ? '竞 猜 记 录' : '竞 猜 报 表'))
@@ -712,7 +820,7 @@ async function onRangeChange(key: TimeRangeKey) {
   range.value = key
   expandedIssue.value = null
   await Promise.all([loadBetHistoryForRange(), loadReportSummary()])
-  if (activeArcadeGame.value || activeLotteryGame.value) {
+  if (activeArcadeGame.value || activeTableGame.value || activeLotteryGame.value) {
     await loadLotteryBetLog()
   }
 }
@@ -754,7 +862,6 @@ onMounted(async () => {
   window.addEventListener('bjsc-bet-log-updated', () => { void loadLotteryBetLog() })
   window.addEventListener('k3-bet-log-updated', () => { void loadLotteryBetLog() })
   window.addEventListener('lhc-bet-log-updated', () => { void loadLotteryBetLog() })
-  window.addEventListener('zjh-bet-log-updated', () => { void loadLotteryBetLog() })
   document.addEventListener('visibilitychange', onLotteryLogVisible)
   loading.value = false
 })

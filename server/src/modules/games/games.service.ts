@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { sscFfcPayTable } from '../lottery/games/ffc.game';
 import { LOTTERY_INTERVALS } from '../lottery/lottery-intervals';
+import { RETIRED_GAME_CODES, isRetiredGameCode } from './retired-games';
 
 /** 从 payTable 剥离 weight / awardWeights / rtp 等敏感字段，只保留展示信息 */
 function stripWeights(payTable: unknown): unknown {
@@ -29,10 +30,14 @@ export class GamesService {
   /**
    * 大厅目录：上架 + 维护（下架不返回）。
    * 维护态前端可见但不可进；只返回展示字段，不暴露爆率权重。
+   * 退役码硬过滤：旧库残留行被误改回 ONLINE 也不该出现在大厅。
    */
   async listOnline() {
     const games = await this.prisma.game.findMany({
-      where: { status: { in: ['ONLINE', 'MAINTENANCE'] } },
+      where: {
+        status: { in: ['ONLINE', 'MAINTENANCE'] },
+        code: { notIn: [...RETIRED_GAME_CODES] },
+      },
       orderBy: { sortOrder: 'asc' },
       include: {
         configs: {
@@ -71,7 +76,7 @@ export class GamesService {
         },
       },
     });
-    if (!game || game.status !== 'ONLINE') {
+    if (!game || game.status !== 'ONLINE' || isRetiredGameCode(code)) {
       throw new NotFoundException(`游戏 ${code} 不存在或已下架`);
     }
     return {

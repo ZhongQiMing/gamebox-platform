@@ -1,16 +1,19 @@
 import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { SkipThrottle } from '@nestjs/throttler';
-import { IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsInt, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { Type } from 'class-transformer';
 import { Public } from '../../common/decorators/public.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { assertCanPlaceBet } from '../../common/utils/assert-player-bet';
 import { TableService } from './table.service';
 
 class TableBetDto {
   @IsString() side!: string;
   @IsInt() @Min(1) @Max(10_000_000) @Type(() => Number) amount!: number;
-  /** 可选：客户端幂等键，防连点双扣 */
-  @IsOptional() @IsString() clientKey?: string;
+  /** 必填幂等键：同键重放，不重复扣分 */
+  @IsString() @MinLength(8) @MaxLength(64) clientKey!: string;
+  /** 6 位运营房间号（多房隔离必填） */
+  @IsString() @MinLength(6) @MaxLength(6) roomNo!: string;
 }
 
 @Controller('table')
@@ -62,15 +65,17 @@ export class TableController {
    */
   @Post(':gameCode/bet')
   placeBet(
-    @CurrentUser() u: { id: string },
+    @CurrentUser() u: { id: string; role?: string },
     @Param('gameCode') gameCode: string,
     @Body() dto: TableBetDto,
   ) {
+    assertCanPlaceBet(u.role);
     return this.tableService.placeBet(u.id, {
       roomId: gameCode,
       side: dto.side,
       amount: dto.amount,
       clientKey: dto.clientKey,
+      roomNo: dto.roomNo,
     });
   }
 }

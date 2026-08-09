@@ -10,6 +10,8 @@
   },
   "scripts": {
     "audit:rtp": "ts-node --project scripts/tsconfig.json scripts/rtp-audit.ts",
+    "check:encoding": "node scripts/check-encoding.mjs",
+    "build:images": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-images.ps1",
     "dev:server": "pnpm --filter @gamebox/server start:dev",
     "build:server": "pnpm --filter @gamebox/server build",
     "dev:app": "pnpm --filter @gamebox/client-app dev",
@@ -28,5 +30,14 @@
     "prettier": "^3.3.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.5.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "body-parser": "^1.20.6",
+      "ws": "^8.21.0",
+      "socket.io-parser": "^4.2.7",
+      "multer": "^2.2.0",
+      "qs": "^6.15.2"
+    }
   }
 }

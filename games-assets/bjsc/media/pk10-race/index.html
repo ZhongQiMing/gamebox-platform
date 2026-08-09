@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html class="no-js" lang="">
     <head>
         <meta charset="utf-8">
@@ -10,8 +10,19 @@
 
         <link rel="stylesheet" href="fonts/fonts.css">
         <link rel="stylesheet" href="css/main.css">
-        <link rel="stylesheet" href="css/style.css">
+        <link rel="stylesheet" href="css/style.css?v=3">
         <link rel="stylesheet" href="css/stylespreloader.css" type="text/css" media="screen, print"/>
+        <script>
+          /* embed 续播：进页即藏 preloader，避免刷新先闪 loading logo */
+          (function () {
+            if (/[?&]embed=1(?:&|$)/.test(location.search || '')) {
+              document.documentElement.classList.add('is-embed');
+              var s = document.createElement('style');
+              s.textContent = 'html.is-embed #preloader{display:none!important;visibility:hidden!important}';
+              document.head.appendChild(s);
+            }
+          })();
+        </script>
 
         <script src="js/vendor/modernizr-2.8.3.min.js"></script>
     </head>
@@ -257,8 +268,8 @@
         <script src="js/vendor/jquery-1.11.2.min.js"></script>
         <script src="js/greensock/TweenMax.min.js"></script>
         <script src="js/plugins.js"></script>
-        <script src="js/main.js"></script>
-        <script src="js/race-host.js?v=5"></script>
+        <script src="js/main.js?v=3"></script>
+        <script src="js/race-host.js?v=9"></script>
         <!-- local preview / room embed boot -->
         <script>
           $(function () {
@@ -286,7 +297,10 @@
                 }
               }
             } catch (e2) {}
-            try { parent.postMessage({ source: 'bjsc-pk10-race', action: 'ready' }, location.origin); } catch (e) {}
+            try {
+              if (window.BjscPk10Race) BjscPk10Race.__ready = true;
+              parent.postMessage({ source: 'bjsc-pk10-race', action: 'ready' }, location.origin);
+            } catch (e) {}
           });
         </script>
     </body>

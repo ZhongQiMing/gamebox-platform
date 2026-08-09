@@ -2,7 +2,6 @@
   <div v-if="broken" class="ops-error">
     <div class="ops-error-card">
       <h1 class="ops-error-title">页面出了点问题</h1>
-      <p class="ops-error-desc">可以刷新重试，或返回首页。业务数据不会因此被改写。</p>
       <p v-if="detail" class="ops-error-detail">{{ detail }}</p>
       <div class="ops-error-actions">
         <el-button type="primary" @click="reload">刷新页面</el-button>
@@ -36,7 +35,7 @@ function goHome() {
   broken.value = false
   detail.value = ''
   void router.replace({ path: '/' }).catch(() => {
-    window.location.href = '/'
+    window.location.href = import.meta.env.BASE_URL
   })
 }
 

@@ -1,0 +1,66 @@
+---
+description: 运营控制台（admin-panel）统一视觉与页面骨架，改 UI 必须对齐房间中心/工作台，禁止另起一套风格
+globs: admin-panel/**/*.{vue,css}
+alwaysApply: false
+---
+
+# 运营控制台 UI 规范（定稿）
+
+以 **房间中心 `RoomsView`**、**工作台 `DashboardView`** 为唯一样板。改任意业务页时对齐它们，禁止另起卡片风、紫渐变、奶油底、大说明文案。
+
+## 壳层（已由 layout 定好，页面勿改）
+
+- 顶栏 / 主项导航 / 底栏：暗色科技桌面（`--desk-*`）
+- 内容区：浅色工作面，页面只负责 `desk-work` 内一块面板
+
+## 列表页骨架（账号中心、报表、游戏等照抄）
+
+```
+div.desk-work.xxx-page
+  div.desk-panel
+    PageHeader（title + #actions：刷新 / 主操作）
+    div.rooms-summary          ← 可选 KPI，顶栏贴齐，无外边距圆角卡
+      div.sum-chip × N
+    div.panel-toolbar          ← 筛选一行：radio/select/input size=small
+    div.panel-body             ← flex:1；表 height="100%"
+      el-table.stripe.border.size=small
+    el-pagination.pager        ← 贴底，共 N 条
+```
+
+## 样式要点（与房间中心一致）
+
+- KPI：`grid` + `border-bottom`，chip 左右分栏，**不要**独立圆角卡片+外边距
+- 工具条：白→`#f8fafc` 渐变底 + 底部分割线
+- 表头底色 `#f1f5f9`，行悬停 `#eff6ff`
+- 主色只用 `--el-color-primary` / `--desk-accent`（冰蓝），金额用 `--ops-gold`
+- **不要** PageHeader subtitle、灰色长说明、field-tip、说明卡、「?」气泡
+
+## 弹窗（统一用 `DeskDialog`）
+
+组件：`admin-panel/src/components/DeskDialog.vue`  
+样式：`global.css` 里 `.desk-window-dialog`（暗色标题栏 ♛ + 白内容区 + 灰底脚栏）
+
+```
+<DeskDialog v-model title="标题" width="440px">          <!-- 普通表单/凭据 -->
+  …内容…
+  <template #footer>
+    <el-button>取消</el-button>
+    <span class="win-footer-grow" />
+    <el-button type="primary">确认</el-button>
+  </template>
+</DeskDialog>
+
+<DeskDialog variant="bare" title="创建房间" subtitle="设置向导" width="920px">
+  <div class="win-body">…左侧导航 + win-content…</div>
+</DeskDialog>
+```
+
+- 禁止裸用默认 `el-dialog` 白顶栏（除非 Element 自带 MessageBox）
+- 密码一次性展示：`el-alert warning` + `.cred-box` / `.cred-row`
+
+## 禁止
+
+- 同一后台混用 `ops-page` 旧 padding 卡片风与 `desk-panel` 而不统一
+- 为单页自创配色 / 大圆角营销卡 / 多色 pill 堆砌
+- 改完某页却与房间中心视觉不一致
+- 业务弹窗另起一套圆角/阴影/标题样式

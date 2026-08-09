@@ -12,6 +12,9 @@ export const authApi = {
   login: (data: { username: string; password: string }) =>
     http.post<AuthResult, AuthResult>('/auth/login', data),
 
+  /** 清服务端会话 Cookie（gb_session / gb_csrf）；本地 token 仍由各 store 自己删 */
+  logout: () => http.post<{ ok: boolean }, { ok: boolean }>('/auth/logout'),
+
   /** 用已有 token 恢复 profile（刷新会话时调用） */
   me: () => http.get<UserProfile, UserProfile>('/users/me'),
 }

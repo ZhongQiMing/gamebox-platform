@@ -10,8 +10,18 @@
 
 		<link rel="stylesheet" href="fonts/fonts.css">
 		<link rel="stylesheet" href="css/main.css">
-		<link rel="stylesheet" href="css/style.css">
+		<link rel="stylesheet" href="css/style.css?v=3">
 		<link rel="stylesheet" href="css/stylespreloader.css" type="text/css" media="screen, print" />
+		<script>
+		  (function () {
+		    if (/[?&]embed=1(?:&|$)/.test(location.search || '')) {
+		      document.documentElement.classList.add('is-embed');
+		      var st = document.createElement('style');
+		      st.textContent = 'html.is-embed #preloader{display:none!important;visibility:hidden!important}';
+		      document.head.appendChild(st);
+		    }
+		  })();
+		</script>
 
 		<script src="js/vendor/modernizr-2.8.3.min.js"></script>
 	</head>
@@ -22,7 +32,7 @@
 		</div>
 		<div class="container">
 			<div class="header">
-				<div class="logo"><img src="images/logo.png" width="220" height="57" alt="" /></div>
+				<div class="logo"><img src="images/logo.png?v=11" width="220" height="57" alt="幸运飞艇" /></div>
 				<div class="position">
 					<div class="positm" id="pos1"></div>
 					<div class="positm" id="pos2"></div>
@@ -264,7 +274,7 @@
 		<script src="js/greensock/TweenMax.min.js"></script>
 		<script src="js/plugins.js"></script>
 		<script src="js/main.js"></script>
-        <script src="js/race-host.js?v=1"></script>
+        <script src="js/race-host.js?v=3"></script>
         <!-- local preview / room embed boot -->
         <script>
           $(function () {
@@ -291,7 +301,10 @@
                 }
               }
             } catch (e2) {}
-            try { parent.postMessage({ source: 'jsb-pk10-race', action: 'ready' }, location.origin); } catch (e) {}
+            try {
+              if (window.JsbPk10Race) JsbPk10Race.__ready = true;
+              parent.postMessage({ source: 'jsb-pk10-race', action: 'ready' }, location.origin);
+            } catch (e) {}
           });
         </script>
 

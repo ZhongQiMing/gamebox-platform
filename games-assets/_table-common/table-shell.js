@@ -155,6 +155,39 @@
     return clock;
   };
 
+  /** 房间托人数（0~50）；缺省按 14 */
+  TableShell.normalizeRobotCount = function (n) {
+    var v = Math.floor(Number(n));
+    if (!Number.isFinite(v)) return 14;
+    return Math.min(50, Math.max(0, v));
+  };
+
+  /**
+   * 气氛飞筹节奏：托人越多越密。
+   * 仍是本地假筹，只影响观感；0 人几乎不飞。
+   */
+  TableShell.otherBetPace = function (robotCount) {
+    var n = TableShell.normalizeRobotCount(robotCount);
+    if (n <= 0) {
+      return { minWait: 12000, spanWait: 8000, burstMin: 0, burstMax: 0, maxPerSide: 2 };
+    }
+    var t = Math.min(1, n / 40);
+    return {
+      minWait: Math.round(2000 - t * 1500),
+      spanWait: Math.round(2800 - t * 2000),
+      burstMin: 1,
+      burstMax: Math.min(4, 1 + Math.floor(t * 3)),
+      maxPerSide: Math.min(16, 8 + Math.floor(t * 8)),
+    };
+  };
+
+  /** 右上角气氛人数底数（随托人数走） */
+  TableShell.atmospherePlayersBase = function (robotCount) {
+    var n = TableShell.normalizeRobotCount(robotCount);
+    if (n <= 0) return 10;
+    return Math.max(18, Math.min(96, n + 6));
+  };
+
   /**
    * 下注剩余秒：有近期 snapshot 用服务器；否则 fallbackFn()。
    * 开奖动画期间常停轮询，BETTING 倒计时会在本地耗尽；若仍死守 0，

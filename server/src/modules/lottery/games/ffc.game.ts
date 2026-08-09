@@ -93,7 +93,17 @@ function parseSegDigit(value?: string | number): { seg: string; digit: number } 
   return { seg: m[1], digit: +m[2] };
 }
 
-function parseGroup3(value?: string | number): { seg: string; a: number; b: number } | null {
+/** 组三每个重复形态是一注：112 与 122 是两张不同注单。 */
+function parseGroup3(value?: string | number): { seg: string; digits: number[] } | null {
+  const m = String(value ?? '').match(/^(前三|中三|后三):([0-9]),([0-9]),([0-9])$/);
+  if (!m) return null;
+  const digits = [+m[2], +m[3], +m[4]];
+  if (new Set(digits).size !== 2) return null;
+  return { seg: m[1], digits };
+}
+
+/** 发布前已下注的旧格式仅用于结算兼容；validateBet 不接受，不能再新下。 */
+function parseLegacyGroup3(value?: string | number): { seg: string; a: number; b: number } | null {
   const m = String(value ?? '').match(/^(前三|中三|后三):([0-9]),([0-9])$/);
   if (!m || m[2] === m[3]) return null;
   return { seg: m[1], a: +m[2], b: +m[3] };
@@ -220,11 +230,17 @@ export const ffcGame: LotteryGameDef = {
 
       case 'group3': {
         const p = parseGroup3(value);
-        if (!p) return null;
-        const seg = segOf(numbers, p.seg).slice().sort((a, b) => a - b);
-        const aab = [p.a, p.a, p.b].sort((a, b) => a - b);
-        const abb = [p.a, p.b, p.b].sort((a, b) => a - b);
+        const legacy = p ? null : parseLegacyGroup3(value);
+        if (!p && !legacy) return null;
+        const segName = p?.seg ?? legacy!.seg;
+        const seg = segOf(numbers, segName).slice().sort((a, b) => a - b);
         const same = (x: number[], y: number[]) => x[0] === y[0] && x[1] === y[1] && x[2] === y[2];
+        if (p) {
+          const wanted = p.digits.slice().sort((a, b) => a - b);
+          return same(seg, wanted) ? 'group3' : null;
+        }
+        const aab = [legacy!.a, legacy!.a, legacy!.b].sort((a, b) => a - b);
+        const abb = [legacy!.a, legacy!.b, legacy!.b].sort((a, b) => a - b);
         return same(seg, aab) || same(seg, abb) ? 'group3' : null;
       }
 
@@ -291,7 +307,7 @@ export const sscGame: LotteryGameDef = { ...ffcGame, code: 'ssc' };
  * multiplier = 含本金返还倍数（payout = 下注 × multiplier）。
  *
  * 盘口对齐官方 1分时时彩 NumberGame（两面/定位高标；组三 260 / 组六 125）。
- * 注意：组三 260 在「选 2 码、命中约 0.6%」规则下理论 RTP>100%，属门面价。
+ * 组三选 2 码会拆成 AAB / ABB 两张独立注单；每注命中率 0.3%，RTP 78%。
  * 牛两面：开无牛判输（不退本）。
  * 改动后跑 `pnpm audit:rtp ffc`。
  */

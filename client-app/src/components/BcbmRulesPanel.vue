@@ -50,7 +50,9 @@
                   draggable="false"
                 />
               </div>
-              <p class="line" v-html="T.p1_2" />
+              <p class="line">
+                每种车标有<span class="c-red">红</span>、<span class="c-green">绿</span>、<span class="c-yellow">黄</span>3种颜色，一共12种车标进行押注，玩家可以任意选择一个或者多个车标进行押注
+              </p>
               <p class="line">{{ T.p1_3 }}</p>
               <p class="line">{{ T.p1_payout }}</p>
               <div class="odds-sample">
@@ -169,8 +171,6 @@ const R = {
 /** 文案对齐正版游戏规则截图（4 页） */
 const T = {
   p1_1: '整个游戏共有12个下注区域，包括以下四种车标：',
-  p1_2:
-    '每种车标有<span class="c-red">红</span>、<span class="c-green">绿</span>、<span class="c-yellow">黄</span>3种颜色，一共12种车标进行押注，玩家可以任意选择一个或者多个车标进行押注',
   p1_3: '游戏开始，转圈开始转动，几圈以后转圈停下，显示于中央的车标为该次游戏开奖结果',
   p1_payout: '派彩金额为押注金额乘以赔率',
   p1_4: '可用于自动投注',
@@ -585,13 +585,13 @@ const bonuses = [
   background: #3aa0ff;
   box-shadow: 0 0 8px rgba(58, 160, 255, 0.8);
 }
-:deep(.c-red) {
+.c-red {
   color: #ff3030;
 }
-:deep(.c-green) {
+.c-green {
   color: #85ff00;
 }
-:deep(.c-yellow) {
+.c-yellow {
   color: #feef00;
 }
 </style>

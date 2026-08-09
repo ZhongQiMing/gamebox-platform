@@ -1,9 +1,78 @@
 /* 手机运营工作台（代理 / 房主） */
 
+.staff-console-page {
+  width: 100%;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
 .staff-console-page .page-body {
+  /* 铺满屏宽，不再 max-width 居中成「中间一条」 */
+  width: 100%;
+  max-width: none;
+  margin: 0;
   padding: 12px 16px 28px;
-  max-width: 420px;
-  margin: 0 auto;
+  box-sizing: border-box;
+}
+
+/* 顶栏：显示标题；返回更醒目；刷新做成右侧金 pill，与返回对称 */
+.deco-bg .staff-console-page .app-bar {
+  padding-right: 72px;
+}
+.deco-bg .staff-console-page .app-bar .title {
+  visibility: visible !important;
+  font-size: 15px !important;
+  font-weight: 600 !important;
+  letter-spacing: 2px !important;
+  color: #fff4c2 !important;
+  justify-content: center;
+  text-align: center;
+}
+.deco-bg .staff-console-page .app-bar .title:has(.brand-dot) {
+  justify-content: flex-start;
+  text-align: left;
+}
+.deco-bg .staff-console-page .app-bar .back {
+  width: 44px;
+  height: 44px;
+  top: 10px;
+  left: 10px;
+  filter: drop-shadow(0 0 8px rgba(244, 211, 107, 0.55)) brightness(1.2);
+}
+.deco-bg .staff-console-page .app-bar .back:active {
+  filter: drop-shadow(0 0 10px rgba(244, 211, 107, 0.7)) brightness(1.35);
+}
+.staff-console-page .app-bar .right.sc-bar-act,
+.staff-console-page .sc-bar-act {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 5;
+  width: auto !important;
+  min-width: 52px;
+  height: 36px;
+  margin: 0;
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  border-radius: 999px;
+  border: 1px solid rgba(244, 211, 107, 0.65);
+  background: rgba(18, 12, 6, 0.88);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 0 10px rgba(244, 211, 107, 0.22);
+  color: #fff4c2 !important;
+  font-size: 13px !important;
+  font-weight: 600;
+  letter-spacing: 2px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+.staff-console-page .sc-bar-act:active {
+  filter: brightness(1.15);
+  border-color: rgba(255, 244, 194, 0.85);
 }
 
 .sc-welcome {
@@ -56,13 +125,19 @@
   grid-template-columns: 1fr 1fr;
   gap: 10px;
   margin-bottom: 16px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(212, 175, 55, 0.28);
+  background:
+    radial-gradient(120% 80% at 100% 0%, rgba(245, 158, 11, 0.12), transparent 55%),
+    rgba(20, 14, 8, 0.88);
 }
 
 .sc-card {
-  padding: 12px 14px;
-  border-radius: var(--radius-md);
-  border: 1px solid rgba(212, 175, 55, 0.28);
-  background: linear-gradient(160deg, rgba(40, 28, 16, 0.85) 0%, rgba(20, 14, 8, 0.92) 100%);
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(212, 175, 55, 0.16);
+  background: rgba(0, 0, 0, 0.26);
 }
 
 .sc-card .k {
@@ -74,8 +149,8 @@
 
 .sc-card .v {
   font-size: 18px;
-  font-weight: 700;
-  color: var(--gold-bright);
+  font-weight: 800;
+  color: #fff4c2;
   font-variant-numeric: tabular-nums;
 }
 
@@ -216,6 +291,15 @@
   cursor: pointer;
 }
 
+.rm-sum {
+  display: flex;
+  justify-content: space-between;
+  margin: 0 2px 10px;
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+}
+
 /* 玩家列表 */
 .sp-search {
   display: flex;
@@ -243,12 +327,9 @@
   cursor: pointer;
 }
 
-.sp-row {
-  padding: 12px 14px;
-  margin-bottom: 10px;
-  border-radius: var(--radius-md);
-  border: 1px solid rgba(212, 175, 55, 0.28);
-  background: rgba(20, 14, 8, 0.85);
+.sp-row > * {
+  position: relative;
+  z-index: 1;
 }
 
 .sp-row .top {
@@ -260,31 +341,37 @@
 
 .sp-row .name {
   font-size: 15px;
-  color: var(--gold-bright);
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: #f5d36b;
 }
 
 .sp-row .bal {
   font-variant-numeric: tabular-nums;
+  font-weight: 800;
   color: #fff4c2;
 }
 
 .sp-row .meta {
   font-size: 12px;
   color: var(--text-muted);
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 
 .sp-row .ops {
   display: flex;
   gap: 8px;
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(212, 175, 55, 0.14);
 }
 
 .sp-row .ops button {
   flex: 1;
-  padding: 8px;
+  padding: 10px;
   font-size: 13px;
   letter-spacing: 2px;
-  border-radius: 8px;
+  border-radius: 10px;
   cursor: pointer;
   border: 1px solid rgba(244, 211, 107, 0.4);
   background: rgba(244, 211, 107, 0.1);
@@ -297,6 +384,12 @@
   background: rgba(180, 80, 40, 0.15);
 }
 
+.sp-row .ops button.warn {
+  border-color: rgba(252, 165, 165, 0.4);
+  color: #fecaca;
+  background: rgba(185, 28, 28, 0.12);
+}
+
 .sp-empty {
   padding: 28px 12px;
   text-align: center;
@@ -307,7 +400,8 @@
 .sp-sheet {
   position: fixed;
   inset: 0;
-  z-index: 40;
+  /* 必须高于 .lobby-tabbar(100)，否则确认/取消会被底栏挡住点不到 */
+  z-index: 300;
   background: rgba(0, 0, 0, 0.55);
   display: flex;
   align-items: flex-end;
@@ -317,7 +411,7 @@
 .sp-sheet-panel {
   width: 100%;
   max-width: 420px;
-  padding: 18px 16px 28px;
+  padding: 18px 16px calc(28px + env(safe-area-inset-bottom, 0px));
   border-radius: 16px 16px 0 0;
   background: #1a120a;
   border: 1px solid rgba(244, 211, 107, 0.35);
@@ -336,6 +430,31 @@
   font-size: 12px;
   color: var(--text-muted);
   text-align: center;
+}
+
+.sp-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+.sp-chips button {
+  min-width: 56px;
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(212, 175, 55, 0.28);
+  background: rgba(0, 0, 0, 0.22);
+  color: rgba(255, 244, 194, 0.75);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.sp-chips button.on {
+  border-color: rgba(244, 211, 107, 0.65);
+  color: #1a120a;
+  background: linear-gradient(180deg, #f5d36b 0%, #c9a227 100%);
+  font-weight: 700;
 }
 
 .sp-sheet-panel input[type='number'],
@@ -386,26 +505,79 @@
 .audit-row {
   display: grid;
   grid-template-columns: 1fr auto;
-  gap: 4px 10px;
-  padding: 10px 0;
-  border-bottom: 1px solid rgba(212, 175, 55, 0.12);
-  font-size: 12px;
+  align-items: center;
+  gap: 8px 12px;
+  font-size: 13px;
+}
+
+.audit-row > * {
+  position: relative;
+  z-index: 1;
 }
 
 .audit-row .t {
+  margin-top: 4px;
+  font-size: 11px;
   color: var(--text-muted);
 }
 
 .audit-row .a {
-  color: var(--text);
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: 0.5px;
+  color: #fff4c2;
+}
+
+.audit-row .amt {
+  font-size: 15px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: #fff4c2;
 }
 
 .audit-row .amt.up {
-  color: #7dcea0;
+  color: #86efac;
 }
 
 .audit-row .amt.down {
-  color: #e8a080;
+  color: #fca5a5;
+}
+
+/* 表单/设置金边面板 */
+.sc-panel {
+  position: relative;
+  margin-bottom: 14px;
+  padding: 16px 14px;
+  border-radius: 14px;
+  border: 2px solid transparent;
+  background:
+    radial-gradient(120% 90% at 100% 0%, rgba(245, 158, 11, 0.12), transparent 55%),
+    linear-gradient(165deg, rgba(48, 34, 18, 0.98) 0%, rgba(16, 11, 7, 0.99) 100%) padding-box,
+    linear-gradient(
+      135deg,
+      #f5e2a0 0%,
+      #c9a227 22%,
+      #8a6818 48%,
+      #e8c96a 70%,
+      #f0d878 100%
+    ) border-box;
+  box-shadow:
+    0 0 0 1px rgba(244, 211, 107, 0.16),
+    0 8px 20px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 244, 194, 0.12);
+  overflow: hidden;
+}
+.sc-panel::before {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  border-radius: 11px;
+  border: 1px solid rgba(244, 211, 107, 0.22);
+  pointer-events: none;
+}
+.sc-panel > * {
+  position: relative;
+  z-index: 1;
 }
 
 .sc-card .v.up { color: #7dcea0; }
@@ -434,6 +606,25 @@
   font-weight: 700;
   background: linear-gradient(180deg, #f5d36b 0%, #c9a227 100%);
   border-color: transparent;
+}
+
+/* 时间筛选：今日/昨日/本周/上周/本月 — 等宽一行，避免挤成两排 */
+.sp-tabs--range {
+  display: grid;
+  grid-template-columns: repeat(var(--sp-range-cols, 5), minmax(0, 1fr));
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+.sp-tabs--range[data-count="3"] { --sp-range-cols: 3; }
+.sp-tabs--range[data-count="4"] { --sp-range-cols: 4; }
+.sp-tabs--range[data-count="5"] { --sp-range-cols: 5; }
+.sp-tabs--range button {
+  min-width: 0;
+  padding: 8px 2px;
+  font-size: 12px;
+  letter-spacing: 0;
+  white-space: nowrap;
+  text-align: center;
 }
 
 .sc-badge {
@@ -614,15 +805,53 @@
   border-style: dashed;
 }
 
-/* 代理卡片 */
-.agent-card {
+/* —— 共用金边卡片（我的各子页列表统一） —— */
+.sc-ornate,
+.agent-card,
+.sp-row,
+.audit-row,
+.fly-card {
+  position: relative;
   margin-bottom: 12px;
-  padding: 14px;
-  border-radius: 12px;
-  border: 1px solid rgba(212, 175, 55, 0.3);
-  background: rgba(22, 16, 10, 0.92);
+  padding: 14px 14px 12px;
+  border-radius: 14px;
+  border: 2px solid transparent;
+  background:
+    radial-gradient(120% 90% at 100% 0%, rgba(245, 158, 11, 0.14), transparent 55%),
+    linear-gradient(165deg, rgba(48, 34, 18, 0.98) 0%, rgba(16, 11, 7, 0.99) 100%) padding-box,
+    linear-gradient(
+      135deg,
+      #f5e2a0 0%,
+      #c9a227 18%,
+      #8a6818 38%,
+      #e8c96a 55%,
+      #a8801e 72%,
+      #6b4f1a 88%,
+      #f0d878 100%
+    ) border-box;
+  box-shadow:
+    0 0 0 1px rgba(244, 211, 107, 0.18),
+    0 0 14px rgba(212, 160, 64, 0.14),
+    0 6px 18px rgba(0, 0, 0, 0.38),
+    inset 0 1px 0 rgba(255, 244, 194, 0.12);
+  overflow: hidden;
 }
+.sc-ornate::before,
+.agent-card::before,
+.sp-row::before,
+.audit-row::before,
+.fly-card::before {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  border-radius: 11px;
+  border: 1px solid rgba(244, 211, 107, 0.22);
+  pointer-events: none;
+}
+
 .agent-card-hd {
+  position: relative;
+  z-index: 1;
   display: flex;
   justify-content: space-between;
   gap: 10px;
@@ -630,8 +859,9 @@
 }
 .agent-name {
   font-size: 16px;
-  font-weight: 700;
-  color: var(--gold-bright);
+  font-weight: 800;
+  letter-spacing: 1px;
+  color: #f5d36b;
 }
 .agent-sub {
   margin-top: 4px;
@@ -642,9 +872,13 @@
   text-align: right;
 }
 .agent-card .ops {
+  position: relative;
+  z-index: 1;
   display: flex;
   gap: 8px;
   margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(212, 175, 55, 0.14);
 }
 .agent-card .ops button {
   flex: 1;
@@ -654,13 +888,26 @@
   color: var(--gold-bright);
   background: rgba(244, 211, 107, 0.1);
   border: 1px solid rgba(244, 211, 107, 0.4);
-  border-radius: 8px;
+  border-radius: 10px;
   cursor: pointer;
 }
 .agent-card .ops button.down {
   color: #e8a080;
   border-color: rgba(220, 120, 80, 0.5);
   background: rgba(180, 80, 40, 0.12);
+}
+.agent-card .ops button.ghost {
+  color: rgba(255, 244, 194, 0.75);
+  border-style: dashed;
+  background: transparent;
+}
+.agent-card .credit-hint {
+  flex: 1;
+  align-self: center;
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+  text-align: center;
 }
 
 .page-hint {
@@ -674,8 +921,7 @@
   border-radius: 10px;
 }
 
-.room-card,
-.agent-card {
+.room-card {
   display: block;
   width: 100%;
   margin-bottom: 12px;
@@ -689,6 +935,14 @@
   -webkit-tap-highlight-color: transparent;
 }
 .room-card:active { border-color: var(--gold-bright); }
+.agent-card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  color: inherit;
+  cursor: default;
+  -webkit-tap-highlight-color: transparent;
+}
 
 .room-card-hd,
 .agent-card-hd {
@@ -725,16 +979,27 @@
 .st.frozen, .st.closed, .st.maintenance { color: #e8a080; border-color: rgba(232, 160, 128, 0.45); }
 
 .room-metrics {
+  position: relative;
+  z-index: 1;
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
   margin-bottom: 10px;
 }
 .room-metrics .m {
-  padding: 8px 10px;
-  border-radius: 8px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 40px;
+  padding: 10px 12px;
+  border-radius: 10px;
   background: rgba(0, 0, 0, 0.28);
   border: 1px solid rgba(212, 175, 55, 0.14);
+}
+.room-metrics .m .mk {
+  margin-bottom: 0;
+  flex-shrink: 0;
 }
 .mk {
   display: block;
@@ -845,4 +1110,9 @@
   background: transparent;
   border: 1px solid rgba(244, 211, 107, 0.4);
   font-weight: 500;
+}
+
+/* 代理端底栏已复用玩家 .lobby-tabbar；仅保留内容区内边距 */
+body.has-staff-tabbar .staff-console-page .page-body {
+  padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
 }

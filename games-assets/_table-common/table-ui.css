@@ -14,11 +14,22 @@
   opacity: 0.88;
 }
 
-/* ??/???????????????? */
+/* 开奖焦点：只压暗按钮底图/文案，筹码与已下注额保持清晰可见 */
 .tb-room.is-focus .tb-bet {
-  opacity: 0.36;
-  filter: saturate(0.5) brightness(0.92);
+  opacity: 1;
+  filter: none;
   pointer-events: none;
+}
+.tb-room.is-focus .tb-bet [class*='__frame'],
+.tb-room.is-focus .tb-bet [class*='__name'],
+.tb-room.is-focus .tb-bet [class*='__odds'] {
+  opacity: 0.4;
+  filter: saturate(0.5) brightness(0.92);
+}
+.tb-room.is-focus .tb-bet [class*='__chips'],
+.tb-room.is-focus .tb-bet [class*='__stake'] {
+  opacity: 1;
+  filter: none;
 }
 .tb-room.is-focus .tb-roadmap {
   opacity: 0.26;

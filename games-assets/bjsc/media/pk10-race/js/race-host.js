@@ -23,14 +23,24 @@
   var MID_RACE_MS = 15000;
   /** 官网 creatDataHead：finishgame 后 10000ms 才 insertVideo */
   var AFTER_FINISH_MS = 10000;
+  /**
+   * finishgame 内车子冲线 + 闪光约 3.2s（TweenMax 3s + flashlight.delay(3200)）。
+   * onFinish 必须等这段结束，否则顶栏历史会早于画面冲线。
+   */
+  var FINISH_VISUAL_MS = 3300;
 
   var playTimer = null;
+  var finishNotifyTimer = null;
   var doneTimer = null;
 
   function clearTimers() {
     if (playTimer) {
       clearTimeout(playTimer);
       playTimer = null;
+    }
+    if (finishNotifyTimer) {
+      clearTimeout(finishNotifyTimer);
+      finishNotifyTimer = null;
     }
     if (doneTimer) {
       clearTimeout(doneTimer);
@@ -109,6 +119,9 @@
     clearTimers();
     muteAudio();
     if (opts.issue != null) setIssue(opts.issue);
+    try {
+      if (typeof waitfinish !== 'undefined') waitfinish = false;
+    } catch (e0) { /* ignore */ }
 
     var cd = opts.countdownSec != null ? Number(opts.countdownSec) : COUNTDOWN_SEC;
     if (!(cd >= 0)) cd = COUNTDOWN_SEC;
@@ -125,7 +138,11 @@
     });
 
     if (typeof startcountdown === 'function') {
-      startcountdown(cd);
+      var started = startcountdown(cd);
+      if (started === false) {
+        try { waitfinish = false; } catch (e1) { /* ignore */ }
+        startcountdown(cd);
+      }
     }
 
     playTimer = setTimeout(function () {
@@ -133,6 +150,15 @@
       if (typeof finishgame === 'function') {
         finishgame(result);
       }
+      /* 等画面冲线/闪光后再通知父页，勿在 finishgame 调用瞬间刷历史 */
+      var visualMs = opts.finishVisualMs != null ? Number(opts.finishVisualMs) : FINISH_VISUAL_MS;
+      if (!(visualMs >= 0)) visualMs = FINISH_VISUAL_MS;
+      finishNotifyTimer = setTimeout(function () {
+        finishNotifyTimer = null;
+        if (typeof opts.onFinish === 'function') {
+          try { opts.onFinish(true); } catch (eF) { /* ignore */ }
+        }
+      }, visualMs);
     }, cd * 1000 + mid);
 
     if (typeof opts.onDone === 'function') {
@@ -185,12 +211,15 @@
     COUNTDOWN_SEC: COUNTDOWN_SEC,
     MID_RACE_MS: MID_RACE_MS,
     AFTER_FINISH_MS: AFTER_FINISH_MS,
+    FINISH_VISUAL_MS: FINISH_VISUAL_MS,
     totalDurationMs: totalDurationMs,
     setIssue: setIssue,
     play: play,
     settle: settle,
     stop: stop,
     normalizeOrder: normalizeOrder,
+    /** 父页须等 embed boot 置 true 后再 play */
+    __ready: false,
   };
 
   /* URL ?issue= 进页即写入期数（settle 由 bootFromQuery / 父页调用） */
@@ -214,6 +243,16 @@
         countdownSec: data.countdownSec,
         midRaceMs: data.midRaceMs,
         afterFinishMs: data.afterFinishMs,
+        finishVisualMs: data.finishVisualMs,
+        onFinish: function () {
+          try {
+            ev.source &&
+              ev.source.postMessage(
+                { source: 'bjsc-pk10-race', action: 'finish', ok: true, issue: data.issue || '' }, location.origin);
+          } catch (e0) {
+            /* ignore */
+          }
+        },
         onDone: function (ok) {
           try {
             ev.source &&

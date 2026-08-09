@@ -1,13 +1,14 @@
-/** 从 Express / Nest 请求头解析客户端 IP（兼容反代） */
+/**
+ * 解析客户端 IP。
+ * 须在 main.ts 配置 trust proxy（宝塔 Nginx 一跳），以 Express 的 req.ip 为准；
+ * 不再直接信客户端伪造的 X-Forwarded-For。
+ */
 export function extractClientIp(req: {
   ip?: string;
   headers?: Record<string, string | string[] | undefined>;
   socket?: { remoteAddress?: string };
 }): string | null {
-  const xf = req.headers?.['x-forwarded-for'];
-  const raw = Array.isArray(xf) ? xf[0] : xf;
-  const fromFwd = raw?.split(',')[0]?.trim();
-  const ip = fromFwd || req.ip || req.socket?.remoteAddress || null;
+  const ip = req.ip || req.socket?.remoteAddress || null;
   if (!ip) return null;
   // ::ffff:127.0.0.1 → 127.0.0.1
   return ip.startsWith('::ffff:') ? ip.slice(7) : ip;

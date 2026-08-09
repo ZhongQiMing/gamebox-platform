@@ -4,39 +4,98 @@ import type { LedgerBizType, Prisma } from '@prisma/client';
 import { resolveTimeWindow } from '../../common/shanghai-range';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { PointsService } from './points.service';
 
 @Controller('wallet')
 export class PointsController {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private points: PointsService,
+  ) {}
 
-  /** GET /api/wallet/balance — 当前用户余额（两位小数 number） */
-  @Get('balance')
-  async balance(@CurrentUser() user: { id: string }) {
-    const account = await this.prisma.pointsAccount.findUnique({
-      where: { ownerId: user.id },
-      select: { balance: true },
+  /** 解析 PLAYER 运营房间：roomId 或 roomNo（须为 APPROVED 成员） */
+  private async resolvePlayerRoomId(
+    playerId: string,
+    roomIdRaw?: string,
+    roomNoRaw?: string,
+  ): Promise<string> {
+    const roomId = String(roomIdRaw || '').trim();
+    if (roomId) {
+      const member = await this.prisma.roomMember.findFirst({
+        where: { playerId, roomId, status: 'APPROVED' },
+        select: { roomId: true },
+      });
+      if (!member) throw new BadRequestException('未加入该房间或未通过审核');
+      return member.roomId;
+    }
+    const roomNo = String(roomNoRaw || '').trim();
+    if (!roomNo) {
+      throw new BadRequestException('请指定房间 roomId 或 roomNo');
+    }
+    const room = await this.prisma.room.findFirst({
+      where: { roomNo },
+      select: { id: true },
     });
-    return { balance: asMoney(account?.balance ?? 0) };
+    if (!room) throw new BadRequestException('房间不存在');
+    const member = await this.prisma.roomMember.findFirst({
+      where: { playerId, roomId: room.id, status: 'APPROVED' },
+      select: { roomId: true },
+    });
+    if (!member) throw new BadRequestException('未加入该房间或未通过审核');
+    return member.roomId;
+  }
+
+  /** GET /api/wallet/balance?roomNo=|/roomId= — 当前用户在指定房间的余额 */
+  @Get('balance')
+  async balance(
+    @CurrentUser() user: { id: string; role?: string },
+    @Query('roomId') roomId?: string,
+    @Query('roomNo') roomNo?: string,
+  ) {
+    if (user.role && user.role !== 'PLAYER') {
+      const account = await this.prisma.pointsAccount.findFirst({
+        where: {
+          ownerId: user.id,
+          roomId: '',
+        },
+        select: { balance: true },
+      });
+      return { balance: asMoney(account?.balance ?? 0) };
+    }
+    const rid = await this.resolvePlayerRoomId(user.id, roomId, roomNo);
+    const balance = await this.points.getPlayerBalance(user.id, rid);
+    return { balance, roomId: rid };
   }
 
   /**
-   * GET /api/wallet/ledger
+   * GET /api/wallet/ledger?roomNo=|/roomId=
    * range=today|… 或 from/to 毫秒；bizTypes 逗号分隔。
    */
   @Get('ledger')
   async ledger(
-    @CurrentUser() user: { id: string },
+    @CurrentUser() user: { id: string; role?: string },
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
     @Query('pageSize', new DefaultValuePipe(50), ParseIntPipe) pageSize: number,
     @Query('range') rangeKey?: string,
     @Query('from') fromStr?: string,
     @Query('to') toStr?: string,
     @Query('bizTypes') bizTypesStr?: string,
+    @Query('roomId') roomId?: string,
+    @Query('roomNo') roomNo?: string,
   ) {
-    const account = await this.prisma.pointsAccount.findUnique({
-      where: { ownerId: user.id },
-      select: { id: true },
-    });
+    let account: { id: string } | null;
+    if (user.role && user.role !== 'PLAYER') {
+      account = await this.prisma.pointsAccount.findFirst({
+        where: { ownerId: user.id, roomId: '' },
+        select: { id: true },
+      });
+    } else {
+      const rid = await this.resolvePlayerRoomId(user.id, roomId, roomNo);
+      account = await this.prisma.pointsAccount.findUnique({
+        where: this.points.accountWhere('PLAYER', user.id, rid),
+        select: { id: true },
+      });
+    }
     if (!account) {
       return {
         total: 0,
@@ -86,6 +145,8 @@ export class PointsController {
           amount: true,
           balanceAfter: true,
           remark: true,
+          refType: true,
+          refId: true,
           createdAt: true,
         },
       }),
@@ -117,11 +178,24 @@ export class PointsController {
         incomeCount: incomeAgg._count._all,
         expenseCount: expenseAgg._count._all,
       },
-      list: list.map((row) => ({
-        ...row,
-        amount: asMoney(row.amount),
-        balanceAfter: asMoney(row.balanceAfter),
-      })),
+      list: list.map((row) => {
+        const remark = row.remark || '';
+        const orderFromRemark = remark.match(/订单号\s*([A-Za-z0-9_-]{8,64})/)?.[1] ?? null;
+        const orderNo =
+          (row.refType?.startsWith('console_') || row.refType === 'recharge') && row.refId
+            ? row.refId
+            : orderFromRemark;
+        let method: string | null = null;
+        if (row.bizType === 'RECHARGE' || row.bizType === 'TRANSFER_IN') method = '上分';
+        else if (row.bizType === 'WITHDRAW' || row.bizType === 'TRANSFER_OUT') method = '下分';
+        return {
+          ...row,
+          amount: asMoney(row.amount),
+          balanceAfter: asMoney(row.balanceAfter),
+          orderNo,
+          method,
+        };
+      }),
     };
   }
 }

@@ -1,5 +1,5 @@
 /** 点击音效（Web Audio API，与原型 common.js 逻辑一致） */
-import { isClickSoundOn } from './appSoundPrefs'
+import { getAppSfxVolume, isClickSoundOn } from './appSoundPrefs'
 
 let audioCtx: AudioContext | null = null
 let lastTone = 0
@@ -13,12 +13,15 @@ function fireClickTone(ctx: AudioContext) {
     o.connect(g)
     g.connect(ctx.destination)
     const t = ctx.currentTime
+    const peak = 0.05 * getAppSfxVolume()
     g.gain.setValueAtTime(0, t)
-    g.gain.linearRampToValueAtTime(0.05, t + 0.005)
+    g.gain.linearRampToValueAtTime(peak, t + 0.005)
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.06)
     o.start(t)
     o.stop(t + 0.08)
-  } catch (_) {}
+  } catch {
+    /* 音效失败不影响交互 */
+  }
 }
 
 export function useClickSound() {
@@ -30,7 +33,7 @@ export function useClickSound() {
     const Ctx = window.AudioContext ?? (window as any).webkitAudioContext
     if (!Ctx) return
     if (!audioCtx) {
-      try { audioCtx = new Ctx() } catch (_) { return }
+      try { audioCtx = new Ctx() } catch { return }
     }
     if (audioCtx.state === 'suspended') {
       audioCtx.resume().then(() => fireClickTone(audioCtx!)).catch(() => {})

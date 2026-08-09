@@ -13,6 +13,7 @@ export type ChatLotteryGame = (typeof CHAT_LOTTERY_GAMES)[number];
 
 export type RoomChatKind =
   | 'bet'
+  | 'chat'
   | 'close'
   | 'open'
   | 'result'

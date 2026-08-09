@@ -1,7 +1,9 @@
 /* 百家乐桌台：倒计时 / 下注 / 筹码 / 路单 / 发牌翻牌 / 补牌 */
 (function () {
+  if (window.__bjlTickTimer) { clearInterval(window.__bjlTickTimer); window.__bjlTickTimer = null; }
+  if (window.__bjlSnapTimer) { clearInterval(window.__bjlSnapTimer); window.__bjlSnapTimer = null; }
+  if (window.__bjlPlayersTimer) { clearInterval(window.__bjlPlayersTimer); window.__bjlPlayersTimer = null; }
   if (window.__bjlBooted) return;
-  window.__bjlBooted = true;
 
   var SERVER_GAME = 'baccarat';
 
@@ -42,6 +44,21 @@
     ? TableShell.createServerClock()
     : { phase: '', secondsLeft: 0, syncedAt: 0, roundNo: '', timing: null };
 
+  var atmosphereRobotCount = 14;
+
+  function applyAtmosphereFromSnap(snap) {
+    if (!snap || snap.robotCount == null) return;
+    var next = window.TableShell && TableShell.normalizeRobotCount
+      ? TableShell.normalizeRobotCount(snap.robotCount)
+      : Math.min(50, Math.max(0, Math.floor(Number(snap.robotCount) || 0)));
+    if (next === atmosphereRobotCount) return;
+    atmosphereRobotCount = next;
+    if (typeof playersN === 'number' && window.TableShell && TableShell.atmospherePlayersBase) {
+      playersN = TableShell.atmospherePlayersBase(atmosphereRobotCount) + Math.floor(Math.random() * 5);
+      if (playersEl) playersEl.textContent = String(playersN);
+    }
+  }
+
   function applyServerSnap(snap) {
     if (!snap) return;
     if (window.TableShell && TableShell.applyServerSnap) {
@@ -52,6 +69,7 @@
       serverClock.syncedAt = Date.now();
       serverClock.roundNo = snap.roundNo ? String(snap.roundNo) : '';
     }
+    applyAtmosphereFromSnap(snap);
     if (snap.timing && snap.timing.bettingMs) {
       BETTING_SEC = Math.max(1, Math.round(snap.timing.bettingMs / 1000));
       DRAW_EST_SEC = Math.max(1, Math.round((snap.timing.drawMs || DRAW_EST_SEC * 1000) / 1000));
@@ -84,6 +102,7 @@
   var payoutDeadline = 0;
   var lastBeatSec = -1;
   var roundBusy = false;
+  var roundSeq = 0;
   /** 进房时正逢大厅封盘：等待下一周期，UI 显示「准备中」而非「派奖中」 */
   var alignWaiting = false;
   var selectedChip = 1;
@@ -262,6 +281,9 @@
     img.style.setProperty('--chip-w', landSize + 'px');
     img.style.setProperty('--chip-z', String(10 + slot.layer));
     box.appendChild(img);
+    if (!restoringChips && typeof schedulePersistTableChips === 'function') {
+      schedulePersistTableChips();
+    }
   }
 
   function flyChipToBet(btn, value, slot, landSize, flyMs, owner) {
@@ -370,14 +392,22 @@
     });
   }
 
+  function otherBetPace() {
+    if (window.TableShell && TableShell.otherBetPace) {
+      return TableShell.otherBetPace(atmosphereRobotCount);
+    }
+    return { minWait: 1400, spanWait: 2400, burstMin: 1, burstMax: 2, maxPerSide: 10 };
+  }
+
   function spawnOtherBet() {
     if (phase !== 'bet' || roundBusy) return;
+    var pace = otherBetPace();
     var key = OTHER_BET_KEYS[Math.floor(Math.random() * OTHER_BET_KEYS.length)];
     if (Math.random() < 0.58) key = Math.random() < 0.5 ? 'banker' : 'player';
     var btn = betBtn(key);
     if (!btn) return;
     var box = qs('.bjl-bet-btn__chips', btn);
-    if (box && box.querySelectorAll('img').length >= 10) return;
+    if (box && box.querySelectorAll('img').length >= pace.maxPerSide) return;
     var value = OTHER_CHIP_VALUES[Math.floor(Math.random() * OTHER_CHIP_VALUES.length)];
     var slot = pickSlot(key);
     var landSize = barChipSize() * CHIP_LAND_SCALE;
@@ -389,10 +419,16 @@
     stopOtherBetting();
     function schedule() {
       if (phase !== 'bet') return;
-      var wait = 1400 + Math.random() * 2400;
+      var pace = otherBetPace();
+      if (pace.burstMax <= 0) {
+        otherBetTimer = setTimeout(schedule, pace.minWait + Math.random() * pace.spanWait);
+        return;
+      }
+      var wait = pace.minWait + Math.random() * pace.spanWait;
       otherBetTimer = setTimeout(function () {
         if (phase !== 'bet') return;
-        var n = 1 + Math.floor(Math.random() * 2);
+        var span = Math.max(0, pace.burstMax - pace.burstMin);
+        var n = pace.burstMin + Math.floor(Math.random() * (span + 1));
         for (var i = 0; i < n; i++) {
           setTimeout(spawnOtherBet, i * 120);
         }
@@ -402,120 +438,24 @@
     schedule();
   }
 
-  /* ---------- 音频 ---------- */
-  var AUDIO_BASE = './assets/audio/';
-  var AUDIO_V = '1';
-  var audioUnlocked = false;
-  var bgmAudio = null;
-  var voiceAudio = null;
-  var sfxLastAt = {};
-  var AUDIO_PREF_KEY = 'bjl_audio';
-  var audioPref = window.TableShell
-    ? TableShell.loadAudioPref(AUDIO_PREF_KEY)
-    : { music: true, sfx: true };
-  function saveAudioPref() {
-    if (window.TableShell) {
-      TableShell.saveAudioPref(AUDIO_PREF_KEY, audioPref);
-    } else {
-      try { localStorage.setItem(AUDIO_PREF_KEY, JSON.stringify(audioPref)); } catch (e) { /* ignore */ }
-    }
-  }
-  function applyAudioPrefSilent(pref) {
-    if (!pref) return;
-    audioPref.music = !!pref.music;
-    audioPref.sfx = !!pref.sfx;
-    if (audioPref.music) {
-      if (typeof ensureBgm === 'function') ensureBgm(true);
-    } else if (typeof bgmAudio !== 'undefined' && bgmAudio) {
-      try { bgmAudio.pause(); } catch (e) { /* ignore */ }
-    }
-    if (!audioPref.sfx && typeof voiceAudio !== 'undefined' && voiceAudio) {
-      try { voiceAudio.pause(); } catch (e) { /* ignore */ }
-      voiceAudio = null;
-    }
-  }
-  if (window.TableShell && TableShell.watchAppAudioPref) {
-    TableShell.watchAppAudioPref(AUDIO_PREF_KEY, applyAudioPrefSilent);
-  }
-  function audioUrl(name) { return AUDIO_BASE + name + '.mp3?v=' + AUDIO_V; }
-  function unlockAudio() {
-    if (audioUnlocked) return;
-    audioUnlocked = true;
-    try {
-      var silent = new Audio(audioUrl('bet'));
-      silent.volume = 0;
-      silent.play().then(function () { silent.pause(); }).catch(function () {});
-    } catch (e) { /* ignore */ }
-    ensureBgm(true);
-  }
-  function ensureBgm(playNow) {
-    if (!bgmAudio) {
-      bgmAudio = new Audio(audioUrl('bgm'));
-      bgmAudio.loop = true;
-      bgmAudio.volume = 0.32;
-      bgmAudio.preload = 'auto';
-    }
-    if (!audioPref.music) return;
-    if (playNow && bgmAudio.paused) {
-      var p = bgmAudio.play();
-      if (p && p.catch) p.catch(function () {});
-    }
-  }
-  function setMusicOn(on) {
-    audioPref.music = !!on;
-    saveAudioPref();
-    if (audioPref.music) ensureBgm(true);
-    else if (bgmAudio) { try { bgmAudio.pause(); } catch (e) {} }
-  }
-  function setSfxOn(on) {
-    audioPref.sfx = !!on;
-    saveAudioPref();
-    if (!audioPref.sfx && voiceAudio) {
-      try { voiceAudio.pause(); } catch (e) {}
-      voiceAudio = null;
-    }
-  }
-  function sfx(name, opt) {
-    if (!name || !audioPref.sfx) return;
-    opt = opt || {};
-    var now = Date.now();
-    var gap = typeof opt.dedupeMs === 'number' ? opt.dedupeMs : 80;
-    if (sfxLastAt[name] && now - sfxLastAt[name] < gap) return;
-    sfxLastAt[name] = now;
-    try {
-      var node = new Audio(audioUrl(name));
-      node.volume = typeof opt.vol === 'number' ? opt.vol : 0.85;
-      var p = node.play();
-      if (p && p.catch) p.catch(function () {});
-    } catch (e) { /* ignore */ }
-  }
-  function playVoice(name, vol) {
-    return new Promise(function (resolve) {
-      var done = false;
-      function finish() {
-        if (done) return;
-        done = true;
-        resolve();
-      }
-      if (!audioPref.sfx) { finish(); return; }
-      try {
-        if (voiceAudio) {
-          voiceAudio.onended = null;
-          voiceAudio.onerror = null;
-          try { voiceAudio.pause(); } catch (e1) {}
-          voiceAudio = null;
-        }
-        var node = new Audio(audioUrl(name));
-        voiceAudio = node;
-        node.volume = typeof vol === 'number' ? vol : 1;
-        node.onended = finish;
-        node.onerror = finish;
-        var p = node.play();
-        if (p && p.catch) p.catch(finish);
-        setTimeout(finish, 2200);
-      } catch (e) { finish(); }
-    });
-  }
+  /* ---------- 两路音频：music=背景音乐 / sfx=游戏音效+语音 ---------- */
+  var TA = (window.TableAudio && TableAudio.create)
+    ? TableAudio.create({
+        prefKey: 'bjl_audio',
+        base: './assets/audio/',
+        ver: '1',
+        voiceTimeoutMs: 2200,
+        exportAs: 'BjlAudio',
+      })
+    : null;
+  if (!TA) throw new Error('TableAudio missing: load table-audio.js before bjl-table.js');
+  var audioPref = TA.pref;
+  var unlockAudio = TA.unlock;
+  var ensureBgm = TA.ensureBgm;
+  var setMusicOn = TA.setMusicOn;
+  var setSfxOn = TA.setSfxOn;
+  var sfx = TA.sfx;
+  var playVoice = TA.playVoice;
 
   function qs(sel, root) { return (root || document).querySelector(sel); }
   function qsa(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
@@ -1204,9 +1144,12 @@
     });
   }
 
-  function clearBetsVisual() {
+  function clearBetsVisual(opts) {
     Object.keys(betTotals).forEach(function (k) { betTotals[k] = 0; });
     slotStacks = {};
+    roundPlacements = [];
+    chipsHydratedRound = '';
+    if (!opts || !opts.keepPersist) clearPersistedTableChips();
     qsa('.bjl-bet-btn').forEach(function (btn) {
       var chips = qs('.bjl-bet-btn__chips', btn);
       var stake = qs('.bjl-bet-btn__stake', btn);
@@ -1583,9 +1526,676 @@
     paint(false);
   }
 
+  /* ---------- 筹码持久化 + 开奖墙上时钟 seek ---------- */
+  var drawClock = null;
+  var BET_CHIP_KEYS = ['banker', 'player', 'tie', 'bankerPair', 'playerPair'];
+  var CHIP_CACHE_KEY = 'bjl_table_chips_v1';
+  var chipsHydratedRound = '';
+  var chipsHydratePromise = Promise.resolve();
+  var persistChipsTimer = null;
+  var restoringChips = false;
+  var VOICE_EST_MS = 2200;
+
+  function dealAnimTotalMs(n) {
+    n = typeof n === 'number' ? n : DEAL_ORDER.length;
+    return n * FLY_MS + Math.max(0, n - 1) * GAP_MS;
+  }
+  function flipAnimTotalMs(n) {
+    n = typeof n === 'number' ? n : DEAL_ORDER.length;
+    return n * FLIP_MS + Math.max(0, n - 1) * FLIP_GAP_MS;
+  }
+  function thirdCardPhaseMs(drew) {
+    if (!drew) return 0;
+    return VOICE_EST_MS + (FLY_MS + GAP_MS) + (FLIP_MS + FLIP_GAP_MS);
+  }
+  function announcePhaseMs() {
+    /* 闲点 + 庄点 + 结果 */
+    return VOICE_EST_MS * 3;
+  }
+  function drawElapsedMsFromSnap(snap) {
+    if (!snap) return 0;
+    var drawMs = (snap.timing && snap.timing.drawMs) || DRAW_EST_SEC * 1000;
+    var settleMs = (snap.timing && snap.timing.settleMs) || PAYOUT_SECS * 1000;
+    var leftMs = Math.max(0, (Number(snap.secondsLeft) || 0) * 1000);
+    if (snap.phase === 'DRAWING') return Math.max(0, drawMs - leftMs);
+    if (snap.phase === 'SETTLED') return drawMs + Math.max(0, settleMs - leftMs);
+    return 0;
+  }
+
+  function peekPersistedChipRound() {
+    try {
+      var data = JSON.parse(sessionStorage.getItem(CHIP_CACHE_KEY) || 'null');
+      return data && data.roundNo ? String(data.roundNo) : '';
+    } catch (ePeek) {
+      return '';
+    }
+  }
+  function tableHasChipVisuals() {
+    for (var i = 0; i < BET_CHIP_KEYS.length; i++) {
+      if (chipsOn(BET_CHIP_KEYS[i]).length) return true;
+    }
+    return false;
+  }
+  function currentChipRoundNo() {
+    if (drawClock && drawClock.roundNo) return String(drawClock.roundNo);
+    if (currentBetIssue) return String(currentBetIssue);
+    if (serverClock && serverClock.roundNo) return String(serverClock.roundNo);
+    return '';
+  }
+  function persistTableChips(forceRound) {
+    var rn = forceRound ? String(forceRound) : currentChipRoundNo();
+    if (!rn) return;
+    var chips = [];
+    for (var i = 0; i < BET_CHIP_KEYS.length; i++) {
+      var key = BET_CHIP_KEYS[i];
+      var imgs = chipsOn(key);
+      for (var j = 0; j < imgs.length; j++) {
+        var img = imgs[j];
+        chips.push({
+          key: key,
+          value: parseInt(img.getAttribute('data-value'), 10) || 1,
+          owner: img.getAttribute('data-owner') || 'other',
+          x: parseFloat(img.style.getPropertyValue('--chip-x')) || 50,
+          y: parseFloat(img.style.getPropertyValue('--chip-y')) || 50,
+          w: parseFloat(img.style.getPropertyValue('--chip-w')) || 24,
+          z: parseInt(img.style.getPropertyValue('--chip-z'), 10) || 10
+        });
+      }
+    }
+    try {
+      sessionStorage.setItem(
+        CHIP_CACHE_KEY,
+        JSON.stringify({ roundNo: rn, chips: chips, at: Date.now() })
+      );
+    } catch (ePer) { /* ignore */ }
+  }
+  function schedulePersistTableChips() {
+    if (persistChipsTimer) clearTimeout(persistChipsTimer);
+    persistChipsTimer = setTimeout(function () {
+      persistChipsTimer = null;
+      persistTableChips();
+    }, 80);
+  }
+  function clearPersistedTableChips() {
+    try { sessionStorage.removeItem(CHIP_CACHE_KEY); } catch (eClr) { /* ignore */ }
+  }
+  function restorePersistedTableChips(roundNo) {
+    var rn = roundNo ? String(roundNo) : '';
+    if (!rn) return false;
+    var data = null;
+    try {
+      data = JSON.parse(sessionStorage.getItem(CHIP_CACHE_KEY) || 'null');
+    } catch (eParse) {
+      return false;
+    }
+    if (!data || String(data.roundNo) !== rn || !data.chips || !data.chips.length) return false;
+    var landSize = hydrateLandSize();
+    restoringChips = true;
+    try {
+      for (var c = 0; c < BET_CHIP_KEYS.length; c++) clearBetVisual(BET_CHIP_KEYS[c]);
+      for (var i = 0; i < data.chips.length; i++) {
+        var item = data.chips[i];
+        var btn = betBtn(item.key);
+        if (!btn) continue;
+        var slot = {
+          x: Number(item.x) || 50,
+          y: Number(item.y) || 50,
+          layer: Math.max(0, (Number(item.z) || 10) - 10)
+        };
+        var w = Number(item.w) || landSize;
+        placeChipOnBtn(btn, item.value, slot, Math.max(22, w), item.owner || 'other');
+      }
+      chipsHydratedRound = rn;
+    } finally {
+      restoringChips = false;
+    }
+    return true;
+  }
+  function summaryAmount(summary, key) {
+    if (!summary) return 0;
+    var want = String(key || '').toLowerCase();
+    var total = 0;
+    var keys = Object.keys(summary);
+    for (var i = 0; i < keys.length; i++) {
+      if (String(keys[i]).toLowerCase() === want) {
+        total += Math.floor(Number(summary[keys[i]]) || 0);
+      }
+    }
+    return Math.max(0, total);
+  }
+  function splitAmountToChips(amount) {
+    var leftAmt = Math.max(0, Math.floor(Number(amount) || 0));
+    if (leftAmt <= 0) return [];
+    var dens = [2000, 1000, 500, 100, 50, 10, 5, 1];
+    var out = [];
+    for (var i = 0; i < dens.length; i++) {
+      while (leftAmt >= dens[i] && out.length < 20) {
+        out.push(dens[i]);
+        leftAmt -= dens[i];
+      }
+    }
+    if (!out.length) out.push(1);
+    return out;
+  }
+  function hydrateLandSize() {
+    var scale = typeof CHIP_LAND_SCALE === 'number' ? CHIP_LAND_SCALE : 2 / 3;
+    var raw = 48;
+    try {
+      if (typeof barChipSize === 'function') raw = barChipSize() || 48;
+    } catch (eSz) { /* ignore */ }
+    return Math.max(22, raw * scale);
+  }
+  function paintChipsForSide(key, mineAmt, otherAmt) {
+    var btn = betBtn(key);
+    if (!btn) return;
+    clearBetVisual(key);
+    var landSize = hydrateLandSize();
+    function placeList(list, owner) {
+      if (!list.length) return;
+      var maxN = 8;
+      var step = list.length > maxN ? Math.ceil(list.length / maxN) : 1;
+      var placed = 0;
+      for (var i = 0; i < list.length && placed < maxN; i += step) {
+        placeChipOnBtn(btn, list[i], pickSlot(key), landSize, owner);
+        placed += 1;
+      }
+    }
+    placeList(splitAmountToChips(otherAmt), 'other');
+    placeList(splitAmountToChips(mineAmt), 'me');
+    betTotals[key] = Math.max(0, Math.floor(Number(mineAmt) || 0));
+    updateStakeLabel(key);
+  }
+  function fetchMineBySide(rn) {
+    if (!window.App || !App.fetchMyTableBets || !rn) return Promise.resolve({});
+    return App.fetchMyTableBets(SERVER_GAME, rn)
+      .then(function (mine) {
+        var map = {};
+        var bets = (mine && mine.bets) || [];
+        for (var b = 0; b < bets.length; b++) {
+          var side = String(bets[b].betType || '').toLowerCase();
+          if (!side) continue;
+          map[side] = (map[side] || 0) + Math.floor(Number(bets[b].amount) || 0);
+        }
+        return map;
+      })
+      .catch(function () { return {}; });
+  }
+  function applyMineTotals(mineBySide) {
+    mineBySide = mineBySide || {};
+    roundPlacements = [];
+    for (var i = 0; i < BET_CHIP_KEYS.length; i++) {
+      var key = BET_CHIP_KEYS[i];
+      var mine = Math.max(0, Math.floor(Number(mineBySide[key]) || 0));
+      betTotals[key] = mine;
+      if (mine > 0) roundPlacements.push({ key: key, value: mine });
+      updateStakeLabel(key);
+    }
+  }
+  function hydrateTableChips(snap) {
+    var rn = snap && snap.roundNo ? String(snap.roundNo) : '';
+    if (rn && chipsHydratedRound === rn && tableHasChipVisuals()) {
+      return Promise.resolve();
+    }
+    var summary = (snap && snap.betSummary) || {};
+    if (rn && restorePersistedTableChips(rn)) {
+      chipsHydratePromise = fetchMineBySide(rn).then(function (mineBySide) {
+        applyMineTotals(mineBySide);
+        schedulePersistTableChips();
+      });
+      return chipsHydratePromise;
+    }
+    function applyMineMap(mineBySide) {
+      mineBySide = mineBySide || {};
+      roundPlacements = [];
+      var any = false;
+      for (var i = 0; i < BET_CHIP_KEYS.length; i++) {
+        var key = BET_CHIP_KEYS[i];
+        var total = summaryAmount(summary, key);
+        var mine = Math.max(0, Math.floor(Number(mineBySide[key]) || 0));
+        if (mine > total) total = mine;
+        var other = Math.max(0, total - mine);
+        if (mine > 0) roundPlacements.push({ key: key, value: mine });
+        if (total <= 0) {
+          clearBetVisual(key);
+          betTotals[key] = 0;
+          updateStakeLabel(key);
+          continue;
+        }
+        any = true;
+        paintChipsForSide(key, mine, other);
+      }
+      if (any || roundPlacements.length) chipsHydratedRound = rn || chipsHydratedRound;
+      if (tableHasChipVisuals()) schedulePersistTableChips();
+    }
+    chipsHydratePromise = fetchMineBySide(rn).then(applyMineMap);
+    return chipsHydratePromise;
+  }
+  function ensureChipsHydrated(roundNo, snap) {
+    var rn = roundNo ? String(roundNo) : '';
+    if (rn && chipsHydratedRound === rn && tableHasChipVisuals()) {
+      return Promise.resolve();
+    }
+    if (snap) return hydrateTableChips(snap);
+    if (window.App && App.fetchTableSnapshot) {
+      return App.fetchTableSnapshot(SERVER_GAME).then(function (s) {
+        if (s) applyServerSnap(s);
+        return hydrateTableChips(s || { roundNo: rn, betSummary: {} });
+      });
+    }
+    return hydrateTableChips({ roundNo: rn, betSummary: {} });
+  }
+
+  function joinOrSeekDraw(snap) {
+    if (!snap || !snap.outcome) return false;
+    if (snap.phase !== 'DRAWING' && snap.phase !== 'SETTLED') return false;
+    var rn = snap.roundNo ? String(snap.roundNo) : '';
+    var elapsed = drawElapsedMsFromSnap(snap);
+    clearAlignWait();
+    alignWaiting = false;
+    stopOtherBetting();
+
+    var same =
+      drawClock &&
+      phase === 'draw' &&
+      drawClock.outcome &&
+      (!rn || !drawClock.roundNo || drawClock.roundNo === rn);
+
+    if (!same) {
+      roundSeq += 1;
+      roundBusy = true;
+      phase = 'draw';
+      resetCards();
+      drawClock = {
+        seq: roundSeq,
+        anchorAt: Date.now() - elapsed,
+        lastAdvAt: 0,
+        roundNo: rn,
+        outcome: null,
+        dealBaseAt: 0,
+        voiceMs: announcePhaseMs(),
+        dealStarted: {},
+        flipStarted: {},
+        flags: {
+          thirdP: false, thirdB: false,
+          compared: false, road: false, voice: false, payout: false, finished: false
+        }
+      };
+    } else {
+      drawClock.anchorAt = Date.now() - elapsed;
+      if (drawClock.dealBaseAt) drawClock.dealBaseAt = drawClock.anchorAt + BANNER_MS;
+    }
+
+    bindDrawOutcome(snap);
+    if (!drawClock.dealBaseAt) drawClock.dealBaseAt = drawClock.anchorAt + BANNER_MS;
+    drawClock.dealStarted = {};
+    drawClock.flipStarted = {};
+    var seqAtJoin = drawClock.seq;
+    hydrateTableChips(snap).then(function () {
+      if (!drawClock || drawClock.seq !== seqAtJoin) return;
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () {
+          if (!drawClock || drawClock.seq !== seqAtJoin) return;
+          if (!tableHasChipVisuals()) {
+            chipsHydratedRound = '';
+            hydrateTableChips(snap).then(function () {
+              if (!drawClock || drawClock.seq !== seqAtJoin) return;
+              drawClock.forceSeek = true;
+              advanceDrawClock();
+            });
+            return;
+          }
+          drawClock.forceSeek = true;
+          advanceDrawClock();
+        });
+      });
+    });
+    return true;
+  }
+
+  function abortDrawAndRealign() {
+    roundSeq += 1;
+    drawClock = null;
+    roundBusy = false;
+    try { if (flyLayer) flyLayer.innerHTML = ''; } catch (e0) { /* ignore */ }
+    resetCards();
+    startBet();
+  }
+
+  function bindDrawOutcome(snap) {
+    if (!drawClock || !snap || !snap.outcome) return false;
+    if (drawClock.outcome) return true;
+    var rn = snap.roundNo ? String(snap.roundNo) : drawClock.roundNo;
+    if (rn) {
+      drawClock.roundNo = rn;
+      currentBetIssue = rn;
+      setRoundNoLabel(rn);
+    }
+    var forced = snap.outcome;
+    var banker = forced.banker || [];
+    var player = forced.player || [];
+    if (banker.length < 2 || player.length < 2) return false;
+    drawClock.outcome = forced;
+    setCardFront('b1', banker[0]);
+    setCardFront('b2', banker[1]);
+    if (banker[2]) setCardFront('b3', banker[2]);
+    setCardFront('p1', player[0]);
+    setCardFront('p2', player[1]);
+    if (player[2]) setCardFront('p3', player[2]);
+    if (!drawClock.dealBaseAt) drawClock.dealBaseAt = drawClock.anchorAt + BANNER_MS;
+    return true;
+  }
+
+  function syncDealFlipByClock(t, jumping, order) {
+    if (!drawClock || !drawClock.outcome) return;
+    var step = FLY_MS + GAP_MS;
+    var i, id, slot, start;
+    var layoutOk = true;
+    try {
+      var shoeR = shoe.getBoundingClientRect();
+      if (shoeR.width < 2 || shoeR.height < 2) layoutOk = false;
+    } catch (eLay) { layoutOk = false; }
+    var instant = jumping || !layoutOk || document.hidden;
+    for (i = 0; i < order.length; i++) {
+      id = order[i];
+      slot = qs('.bjl-card[data-slot="' + id + '"]');
+      if (!slot) continue;
+      start = i * step;
+      if (t < start) {
+        slot.classList.remove('is-dealt', 'is-flipped');
+        continue;
+      }
+      if (instant || t >= start + FLY_MS || drawClock.dealStarted[id] === 'done') {
+        slot.classList.add('is-dealt');
+        if (t < dealAnimTotalMs(order.length) + DEAL_HOLD_MS) slot.classList.remove('is-flipped');
+        drawClock.dealStarted[id] = 'done';
+      } else if (!drawClock.dealStarted[id]) {
+        drawClock.dealStarted[id] = 'flying';
+        (function (sid) {
+          var el2 = qs('.bjl-card[data-slot="' + sid + '"]');
+          if (!el2 || !flyLayer || !shoe) {
+            if (el2) el2.classList.add('is-dealt');
+            if (drawClock) drawClock.dealStarted[sid] = 'done';
+            return;
+          }
+          sfx('deal', { vol: 0.7 });
+          var from = localRect(shoe);
+          var to = localRect(el2);
+          var w = to.width;
+          var h = to.height;
+          var startX = from.left + from.width * 0.55 - w / 2;
+          var startY = from.top + from.height * 0.72 - h / 2;
+          var fly = document.createElement('div');
+          fly.className = 'bjl-fly-card';
+          fly.style.width = w + 'px';
+          fly.style.height = h + 'px';
+          fly.style.left = startX + 'px';
+          fly.style.top = startY + 'px';
+          fly.style.setProperty('--fly-x', (to.left - startX) + 'px');
+          fly.style.setProperty('--fly-y', (to.top - startY) + 'px');
+          fly.innerHTML = '<img src="' + CARD_BACK + '" alt="" draggable="false">';
+          flyLayer.appendChild(fly);
+          requestAnimationFrame(function () {
+            requestAnimationFrame(function () { fly.classList.add('is-flying'); });
+          });
+          setTimeout(function () {
+            if (fly.parentNode) fly.parentNode.removeChild(fly);
+            el2.classList.add('is-dealt');
+            if (drawClock) drawClock.dealStarted[sid] = 'done';
+          }, FLY_MS);
+        })(id);
+      }
+    }
+    if (t >= dealAnimTotalMs(order.length)) {
+      try { if (flyLayer) flyLayer.innerHTML = ''; } catch (e1) { /* ignore */ }
+    }
+    var holdEnd = dealAnimTotalMs(order.length) + DEAL_HOLD_MS;
+    if (t < holdEnd) return;
+    var fstep = FLIP_MS + FLIP_GAP_MS;
+    for (i = 0; i < order.length; i++) {
+      id = order[i];
+      slot = qs('.bjl-card[data-slot="' + id + '"]');
+      if (!slot) continue;
+      start = holdEnd + i * fstep;
+      slot.classList.add('is-dealt');
+      if (t < start) {
+        slot.classList.remove('is-flipped');
+        continue;
+      }
+      if (instant || t >= start + FLIP_MS || drawClock.flipStarted[id] === 'done') {
+        slot.classList.add('is-flipped');
+        drawClock.flipStarted[id] = 'done';
+      } else if (!drawClock.flipStarted[id]) {
+        drawClock.flipStarted[id] = 'flying';
+        (function (sid) {
+          flipSlot(sid).then(function () {
+            if (drawClock) drawClock.flipStarted[sid] = 'done';
+          });
+        })(id);
+      }
+    }
+  }
+
+  function syncThirdCard(slotId, card, tBase, t, jumping, flagKey, voiceName) {
+    if (!drawClock || !card) return tBase;
+    var voiceEnd = tBase + VOICE_EST_MS;
+    var dealEnd = voiceEnd + FLY_MS + GAP_MS;
+    var flipEnd = dealEnd + FLIP_MS + FLIP_GAP_MS;
+    if (t < tBase) return flipEnd;
+    if (!drawClock.flags[flagKey]) {
+      drawClock.flags[flagKey] = true;
+      if (!jumping && !document.hidden && voiceName) {
+        playVoice(voiceName);
+        sfx('draw', { vol: 0.55 });
+      }
+    }
+    var slot = qs('.bjl-card[data-slot="' + slotId + '"]');
+    if (!slot) return flipEnd;
+    setCardFront(slotId, card);
+    var instant = jumping || document.hidden;
+    if (t >= voiceEnd) {
+      if (instant || t >= dealEnd || drawClock.dealStarted[slotId] === 'done') {
+        slot.classList.add('is-dealt');
+        drawClock.dealStarted[slotId] = 'done';
+      } else if (!drawClock.dealStarted[slotId]) {
+        drawClock.dealStarted[slotId] = 'flying';
+        dealSlot(slotId, card).then(function () {
+          if (drawClock) drawClock.dealStarted[slotId] = 'done';
+        });
+      }
+    }
+    if (t >= dealEnd) {
+      slot.classList.add('is-dealt');
+      if (instant || t >= flipEnd || drawClock.flipStarted[slotId] === 'done') {
+        slot.classList.add('is-flipped');
+        drawClock.flipStarted[slotId] = 'done';
+      } else if (!drawClock.flipStarted[slotId]) {
+        drawClock.flipStarted[slotId] = 'flying';
+        flipSlot(slotId).then(function () {
+          if (drawClock) drawClock.flipStarted[slotId] = 'done';
+        });
+      }
+    }
+    return flipEnd;
+  }
+
+  function beginDrawPayout(dc, jumping) {
+    if (!dc || dc.flags.payout) return;
+    dc.flags.payout = true;
+    var outcome = dc.outcome;
+    var settlement = calcSettlement(outcome);
+    var roundIssue = dc.roundNo || '';
+
+    function finishToNext() {
+      settleBetLog(roundIssue, outcome);
+      if (roundIssue) lastSettledRoundNo = String(roundIssue);
+      currentBetIssue = '';
+      pushRoad(outcome.result, roundIssue);
+      if (window.App && App.refreshBalance) App.refreshBalance();
+      else if (typeof refreshBalance === 'function') refreshBalance();
+      lastRoundPlacements = roundPlacements.slice();
+      roundPlacements = [];
+      usedUndo = false;
+      usedRebet = false;
+      Object.keys(betTotals).forEach(function (k) { betTotals[k] = 0; });
+      slotStacks = {};
+      qsa('.bjl-bet-btn__stake').forEach(function (stake) {
+        stake.hidden = true;
+        stake.textContent = '0';
+      });
+      clearPersistedTableChips();
+      chipsHydratedRound = '';
+      var remain = Math.max(0.2, (dc.payoutDeadline || Date.now()) - Date.now());
+      setTimeout(function () {
+        if (!drawClock || drawClock.seq !== dc.seq) return;
+        resetCards();
+        drawClock = null;
+        roundBusy = false;
+        startBet();
+      }, remain);
+    }
+
+    function applyMine() {
+      setPhase('payout');
+      var remainPayout = Math.max(0.4, PAYOUT_SECS - 0.05);
+      if (jumping) remainPayout = Math.min(Math.max(remainPayout, 2.2), Math.max(PAYOUT_SECS, 3));
+      dc.payoutDeadline = Date.now() + remainPayout * 1000;
+      payoutDeadline = dc.payoutDeadline;
+      paint(false);
+      syncActions();
+      if (document.hidden) {
+        BET_CHIP_KEYS.forEach(clearBetVisual);
+        applySettlement(settlement);
+        finishToNext();
+        return Promise.resolve();
+      }
+      return ensureChipsHydrated(roundIssue).then(function () {
+        return new Promise(function (resolve) {
+          requestAnimationFrame(function () {
+            resolve(
+              collectPayout(outcome, settlement).then(function () {
+                finishToNext();
+              })
+            );
+          });
+        });
+      });
+    }
+
+    var run = function () {
+      if (window.App && App.fetchMyTableBets && roundIssue) {
+        return App.fetchMyTableBets(SERVER_GAME, roundIssue).then(function (mine) {
+          if (mine && typeof mine.totalPayout === 'number') {
+            settlement.returnTotal = Math.floor(mine.totalPayout);
+            if (typeof mine.totalStake === 'number') settlement.stakeTotal = mine.totalStake;
+            settlement.profit = settlement.returnTotal - settlement.stakeTotal;
+          }
+          return applyMine();
+        }).catch(function () { return applyMine(); });
+      }
+      return applyMine();
+    };
+    run().catch(function (err) {
+      console.error(err);
+      finishToNext();
+    });
+  }
+
+  function advanceDrawClock() {
+    if (!drawClock || drawClock.seq !== roundSeq) return;
+    if (drawClock.flags.finished) return;
+    var now = Date.now();
+    var elapsed = now - drawClock.anchorAt;
+    var jumping = !!drawClock.forceSeek ||
+      (!!drawClock.lastAdvAt && (now - drawClock.lastAdvAt) > 420);
+    drawClock.forceSeek = false;
+    drawClock.lastAdvAt = now;
+
+    if (elapsed > (DRAW_EST_SEC + PAYOUT_SECS + 12) * 1000) {
+      abortDrawAndRealign();
+      return;
+    }
+
+    if (
+      drawClock.outcome &&
+      serverClock.phase === 'BETTING' &&
+      Number(serverClock.secondsLeft) > 0 &&
+      elapsed > BANNER_MS + dealAnimTotalMs() + 500
+    ) {
+      if (!drawClock.flags.payout) beginDrawPayout(drawClock, true);
+    }
+
+    if (!drawClock.outcome) {
+      paint(false);
+      return;
+    }
+
+    var t = now - drawClock.dealBaseAt;
+    if (t < 0) {
+      paint(false);
+      return;
+    }
+
+    var outcome = drawClock.outcome;
+    var baseOrder = DEAL_ORDER.slice();
+    syncDealFlipByClock(t, jumping, baseOrder);
+
+    var dealEnd = dealAnimTotalMs(baseOrder.length);
+    var holdEnd = dealEnd + DEAL_HOLD_MS;
+    var flipEnd = holdEnd + flipAnimTotalMs(baseOrder.length);
+    var cursor = flipEnd;
+
+    if (outcome.playerDrew && outcome.player && outcome.player[2]) {
+      cursor = syncThirdCard('p3', outcome.player[2], cursor, t, jumping, 'thirdP', 'voice/player-draw');
+    } else {
+      drawClock.flags.thirdP = true;
+    }
+    if (outcome.bankerDrew && outcome.banker && outcome.banker[2]) {
+      cursor = syncThirdCard('b3', outcome.banker[2], cursor, t, jumping, 'thirdB', 'voice/banker-draw');
+    } else {
+      drawClock.flags.thirdB = true;
+    }
+
+    var revealEnd = cursor;
+    if (t >= revealEnd && !drawClock.flags.compared) {
+      showCompare(outcome);
+      drawClock.flags.compared = true;
+    }
+
+    var voiceEnd = revealEnd + announcePhaseMs();
+    if (t >= revealEnd && drawClock.flags.compared && !drawClock.flags.voice) {
+      drawClock.flags.voice = true;
+      if (!jumping && !document.hidden) {
+        playVoice('voice/point-' + outcome.playerPoint)
+          .then(function () { return playVoice('voice/point-' + outcome.bankerPoint); })
+          .then(function () {
+            if (outcome.result === 'banker') return playVoice('voice/banker-win');
+            if (outcome.result === 'player') return playVoice('voice/player-win');
+            return playVoice('voice/tie');
+          });
+      }
+    }
+
+    if (t >= revealEnd && !drawClock.flags.road) {
+      highlightWinningBets(outcome);
+      drawClock.flags.road = true;
+    }
+
+    if (t >= voiceEnd && !drawClock.flags.payout) {
+      beginDrawPayout(drawClock, jumping);
+    }
+
+    paint(false);
+    syncActions();
+  }
+
   function tick() {
+    var now = Date.now();
+    if (phase === 'draw') {
+      advanceDrawClock();
+      return;
+    }
     if (alignWaiting) {
-      if (Date.now() >= payoutDeadline || getBetRemainSec() > 0) {
+      if (now >= payoutDeadline || getBetRemainSec() > 0) {
         startBet();
         return;
       }
@@ -1593,7 +2203,6 @@
       return;
     }
     if (phase === 'bet') {
-      /* 每拍跟墙钟对齐，与大厅剩余秒一致 */
       left = Math.max(0, Math.ceil(getBetRemainSec()));
       var doBeat = left !== lastBeatSec;
       lastBeatSec = left;
@@ -1608,97 +2217,78 @@
     paint(false);
   }
 
-  async function startDraw() {
-    if (roundBusy) return;
+  function startDraw() {
+    if (roundBusy || phase !== 'bet') return;
     roundBusy = true;
+    var seq = ++roundSeq;
+    var roundIssue = currentBetIssue || '';
     stopOtherBetting();
+    persistTableChips(roundIssue || currentChipRoundNo());
     setPhase('draw');
-    await showPhaseBanner('stop');
-    sfx('stop-bet', { vol: 0.7 });
-    playVoice('voice/stop-bet');
+    resetCards();
 
-    var outcome;
-    var expectedRound = currentBetIssue || '';
-    try {
-      if (!window.App || !App.waitTableOutcome) throw new Error('请从大厅进入游戏');
-      if (!expectedRound && App.fetchTableSnapshot) {
-        var pre = await App.fetchTableSnapshot(SERVER_GAME);
-        if (pre && pre.roundNo) expectedRound = String(pre.roundNo);
+    drawClock = {
+      seq: seq,
+      anchorAt: Date.now(),
+      lastAdvAt: 0,
+      roundNo: roundIssue,
+      outcome: null,
+      dealBaseAt: 0,
+      voiceMs: announcePhaseMs(),
+      dealStarted: {},
+      flipStarted: {},
+      flags: {
+        thirdP: false, thirdB: false,
+        compared: false, road: false, voice: false, payout: false, finished: false
       }
-      var snap = await App.waitTableOutcome(SERVER_GAME, {
+    };
+
+    showPhaseBanner('stop');
+    sfx('stop-bet', { vol: 0.7 });
+    if (!document.hidden) playVoice('voice/stop-bet');
+
+    if (!window.App || !App.waitTableOutcome) {
+      if (window.App && App.toast) App.toast('请从大厅进入游戏');
+      abortDrawAndRealign();
+      return;
+    }
+
+    var expectedRound = roundIssue;
+    var prep = expectedRound
+      ? Promise.resolve(expectedRound)
+      : (App.fetchTableSnapshot
+        ? App.fetchTableSnapshot(SERVER_GAME).then(function (pre) {
+            return pre && pre.roundNo ? String(pre.roundNo) : '';
+          }).catch(function () { return ''; })
+        : Promise.resolve(''));
+
+    prep.then(function (rn) {
+      if (!drawClock || drawClock.seq !== seq) return null;
+      expectedRound = rn || expectedRound;
+      if (expectedRound) drawClock.roundNo = expectedRound;
+      return App.waitTableOutcome(SERVER_GAME, {
         timeoutMs: 25000,
         roundNo: expectedRound || undefined,
       });
+    }).then(function (snap) {
+      if (!drawClock || drawClock.seq !== seq) return;
       if (!snap || !snap.outcome) throw new Error('开奖结果缺失');
-      outcome = snap.outcome;
-      if (snap.roundNo) {
-        currentBetIssue = String(snap.roundNo);
-        setRoundNoLabel(currentBetIssue);
-      }
-    } catch (e) {
-      if (window.App && App.toast) App.toast((e && e.message) || '开奖失败，请稍候');
+      bindDrawOutcome(snap);
+      advanceDrawClock();
+    }).catch(function (err) {
+      console.error(err);
+      if (!drawClock || drawClock.seq !== seq) return;
+      if (window.App && App.toast) App.toast((err && err.message) || '开奖失败，请稍候');
       clearBetsVisual();
-      roundPlacements = [];
       currentBetIssue = '';
       if (window.App && App.refreshBalance) App.refreshBalance();
-      roundBusy = false;
-      startBet();
-      return;
-    }
-    await dealAndReveal(outcome);
-
-    showCompare(outcome);
-    await playVoice('voice/point-' + outcome.playerPoint);
-    await playVoice('voice/point-' + outcome.bankerPoint);
-    if (outcome.result === 'banker') await playVoice('voice/banker-win');
-    else if (outcome.result === 'player') await playVoice('voice/player-win');
-    else await playVoice('voice/tie');
-
-    highlightWinningBets(outcome);
-    var settlement = calcSettlement(outcome);
-    var roundIssue = currentBetIssue;
-    if (window.App && App.fetchMyTableBets && roundIssue) {
-      try {
-        var mine = await App.fetchMyTableBets(SERVER_GAME, roundIssue);
-        if (mine && typeof mine.totalPayout === 'number') {
-          settlement.returnTotal = Math.floor(mine.totalPayout);
-          if (typeof mine.totalStake === 'number') settlement.stakeTotal = mine.totalStake;
-          settlement.profit = settlement.returnTotal - settlement.stakeTotal;
-        }
-      } catch (e2) { /* 本地估算兜底 */ }
-    }
-    setPhase('payout');
-    payoutDeadline = Date.now() + Math.max(PAYOUT_SECS, 3) * 1000;
-    await collectPayout(outcome, settlement);
-    settleBetLog(roundIssue, outcome);
-    if (roundIssue) lastSettledRoundNo = String(roundIssue);
-    currentBetIssue = '';
-    pushRoad(outcome.result, roundIssue);
-    if (window.App && App.refreshBalance) App.refreshBalance();
-    else if (typeof refreshBalance === 'function') refreshBalance();
-
-    lastRoundPlacements = roundPlacements.slice();
-    roundPlacements = [];
-    usedUndo = false;
-    usedRebet = false;
-    /* 筹码视觉已在 collectPayout 清掉，这里只清注额 */
-    Object.keys(betTotals).forEach(function (k) { betTotals[k] = 0; });
-    slotStacks = {};
-    qsa('.bjl-bet-btn__stake').forEach(function (stake) {
-      stake.hidden = true;
-      stake.textContent = '0';
+      abortDrawAndRealign();
     });
-    var remain = Math.max(0, payoutDeadline - Date.now());
-    if (remain > 0) await sleep(remain);
-    resetCards();
-    roundBusy = false;
-    startBet();
   }
 
   function startBet() {
     clearAlignWait();
     var remain = getBetRemainSec();
-    /* 大厅已封盘：等到下一周期再开下注，避免进房又从满倒计时重开 */
     if (remain <= 0) {
       alignWaiting = true;
       setPhase('payout');
@@ -1715,11 +2305,19 @@
     }
     alignWaiting = false;
     setPhase('bet');
-    currentBetIssue = '';
+    var rn = (serverClock && serverClock.roundNo) ? String(serverClock.roundNo) : '';
+    currentBetIssue = rn || '';
     betDeadline = Date.now() + remain * 1000;
     left = Math.max(1, Math.ceil(remain));
     lastBeatSec = -1;
+    /* 同局刷新保留假筹；换局清缓存 */
+    var keepPersist = !!(rn && peekPersistedChipRound() === rn);
+    if (!keepPersist) {
+      clearPersistedTableChips();
+      chipsHydratedRound = '';
+    }
     paint(false);
+    if (rn) ensureChipsHydrated(rn);
     var isFresh = remain >= TOTAL - 1.5;
     if (isFresh) {
       showPhaseBanner('start');
@@ -1792,26 +2390,127 @@
   resetCards();
   refreshBalance();
   setInterval(refreshBalance, 2000);
-  startBet();
+  function bootFromServer() {
+    if (!window.App || !App.fetchTableSnapshot) {
+      startBet();
+      return;
+    }
+    App.fetchTableSnapshot(SERVER_GAME).then(function (snap) {
+      if (!snap) {
+        startBet();
+        return;
+      }
+      applyServerSnap(snap);
+      if (joinOrSeekDraw(snap)) return;
+      startBet();
+    }).catch(function () {
+      startBet();
+    });
+  }
+  bootFromServer();
   window.__bjlTickTimer = setInterval(function () {
     tick();
   }, 200);
   if (window.TableShell && TableShell.startSnapshotPoll) {
     window.__bjlSnapTimer = TableShell.startSnapshotPoll(SERVER_GAME, function (snap) {
       applyServerSnap(snap);
-      if (alignWaiting && snap.phase === 'BETTING' && Number(snap.secondsLeft) > 0) {
-        startBet();
+      if (alignWaiting) {
+        if (joinOrSeekDraw(snap)) return;
+        if (snap.phase === 'BETTING' && Number(snap.secondsLeft) > 0) {
+          startBet();
+          return;
+        }
+      }
+      if (phase === 'draw' && drawClock) {
+        if (snap.phase === 'BETTING' && Number(snap.secondsLeft) > 0) {
+          if (drawClock.outcome && !drawClock.flags.payout) beginDrawPayout(drawClock, true);
+          else {
+            drawClock = null;
+            roundBusy = false;
+            startBet();
+          }
+          return;
+        }
+        if (snap && snap.outcome) bindDrawOutcome(snap);
+        advanceDrawClock();
         return;
       }
+      if (phase === 'bet' && !roundBusy && joinOrSeekDraw(snap)) return;
       if (phase === 'bet' && !roundBusy) {
         left = Math.max(0, Math.ceil(getBetRemainSec()));
         paint(false);
       }
     }, {
-      intervalMs: 1500,
-      shouldPoll: function () { return (phase === 'bet' && !roundBusy) || alignWaiting; },
+      intervalMs: 1000,
+      shouldPoll: function () {
+        return (phase === 'bet' && !roundBusy) || alignWaiting || phase === 'draw';
+      },
     });
   }
+
+  function onShellResume() {
+    try { if (flyLayer) flyLayer.innerHTML = ''; } catch (eR) { /* ignore */ }
+    if (!window.App || !App.fetchTableSnapshot) {
+      if (phase === 'draw' && drawClock) {
+        drawClock.dealStarted = {};
+        drawClock.flipStarted = {};
+        drawClock.forceSeek = true;
+        advanceDrawClock();
+      }
+      return;
+    }
+    App.fetchTableSnapshot(SERVER_GAME).then(function (snap) {
+      if (!snap) return;
+      applyServerSnap(snap);
+      if (snap.phase === 'BETTING' && Number(snap.secondsLeft) > 0) {
+        if (phase === 'draw' || alignWaiting || (phase === 'payout' && drawClock)) {
+          if (drawClock && drawClock.outcome && !drawClock.flags.payout) {
+            beginDrawPayout(drawClock, true);
+          }
+          drawClock = null;
+          roundBusy = false;
+          startBet();
+          return;
+        }
+      }
+      if (joinOrSeekDraw(snap)) return;
+      if (phase === 'draw' && drawClock) {
+        if (snap.outcome) bindDrawOutcome(snap);
+        drawClock.dealStarted = {};
+        drawClock.flipStarted = {};
+        drawClock.forceSeek = true;
+        advanceDrawClock();
+      } else if (alignWaiting && snap.phase === 'BETTING' && Number(snap.secondsLeft) > 0) {
+        startBet();
+      }
+    }).catch(function () { /* ignore */ });
+  }
+
+  window.addEventListener('message', function (ev) {
+    if (!ev || !ev.origin || ev.origin !== location.origin) return;
+    var data = ev && ev.data;
+    if (!data || typeof data !== 'object') return;
+    if (data.type === 'assets-game-pause') {
+      try { if (flyLayer) flyLayer.innerHTML = ''; } catch (eP) { /* ignore */ }
+      persistTableChips();
+      return;
+    }
+    if (data.type === 'assets-game-resume') {
+      onShellResume();
+    }
+  });
+
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) {
+      try { if (flyLayer) flyLayer.innerHTML = ''; } catch (eH) { /* ignore */ }
+      persistTableChips();
+      return;
+    }
+    onShellResume();
+  });
+
+  window.addEventListener('pagehide', function () { persistTableChips(); });
+  window.addEventListener('beforeunload', function () { persistTableChips(); });
 
 
   var playersEl = document.getElementById('playersCount');
@@ -1820,9 +2519,15 @@
     playersBox.setAttribute('aria-label', '气氛人数（非实时在线）');
     playersBox.setAttribute('title', '桌面气氛人数，非实时在线');
   }
-  var playersN = 36;
+  var playersN = (window.TableShell && TableShell.atmospherePlayersBase)
+    ? TableShell.atmospherePlayersBase(atmosphereRobotCount)
+    : 36;
+  if (playersEl) playersEl.textContent = String(playersN);
   window.__bjlPlayersTimer = setInterval(function () {
-    playersN = Math.max(22, Math.min(64, playersN + ((Math.random() * 3) | 0) - 1));
+    var base = (window.TableShell && TableShell.atmospherePlayersBase)
+      ? TableShell.atmospherePlayersBase(atmosphereRobotCount)
+      : 22;
+    playersN = Math.max(base - 4, Math.min(base + 12, playersN + ((Math.random() * 3) | 0) - 1));
     if (playersEl) playersEl.textContent = String(playersN);
   }, 8000);
 
@@ -1954,7 +2659,42 @@
         });
       }
     });
+
+    /* 右侧五钮：默认收起，点三角展开/收起 */
+    (function initRailLadder() {
+      var KEY = 'bjl_rail_collapsed';
+      var rail = document.getElementById('bjlRail');
+      var btn = document.getElementById('btnRailToggle');
+      if (!rail || !btn) return;
+      /* 清掉旧版假人定位残留的 inline 样式 */
+      rail.style.left = '';
+      rail.style.top = '';
+      rail.style.transform = '';
+      var collapsed = true;
+      try {
+        var saved = localStorage.getItem(KEY);
+        if (saved === '0') collapsed = false;
+        if (saved === '1') collapsed = true;
+      } catch (e) { /* ignore */ }
+      function apply() {
+        rail.classList.toggle('is-rail-collapsed', collapsed);
+        btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+        btn.title = collapsed ? '展开菜单' : '收起菜单';
+        var arrow = btn.querySelector('.bjl-rail-ladder__arrow');
+        if (arrow) arrow.textContent = collapsed ? '▼' : '▲';
+        try { localStorage.setItem(KEY, collapsed ? '1' : '0'); } catch (e2) { /* ignore */ }
+      }
+      apply();
+      btn.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        collapsed = !collapsed;
+        apply();
+      });
+    })();
   })();
 
   window.addEventListener('gamebox-balance', function () { refreshBalance(); });
+  window.__bjlBooted = true;
+
 })();

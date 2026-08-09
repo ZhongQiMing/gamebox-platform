@@ -53,16 +53,11 @@ const ROBOT_NAMES = [
 /** 与开通游戏列表对齐，用于房间内名字分区（顺序固定） */
 const GAME_PARTITION_ORDER = [
   'ffc', 'ssc', 'kuai3', 'bjsc', 'speed-racing', 'speed-boat',
-  'lhc', 'baccarat', 'longhu', 'douniu', 'zhajinhua',
+  'lhc', 'baccarat', 'dragon-tiger', 'douniu', 'zhajinhua',
   'bcbm', 'fruit-machine',
 ];
 const NAMES_PER_GAME = 40;
 
-/** 金额池加宽，少用整齐整数，更像真人随手输 */
-const AMTS = [
-  10, 15, 20, 25, 30, 38, 50, 58, 66, 80, 88, 100,
-  120, 128, 150, 168, 188, 200, 258, 300, 388, 500, 666,
-] as const;
 const SIDE = ['大', '小', '单', '双'] as const;
 
 function hashSeed(s: string): number {
@@ -84,16 +79,6 @@ function pick<T>(rnd: () => number, arr: readonly T[]): T {
 
 function pickInt(rnd: () => number, min: number, max: number): number {
   return min + Math.floor(rnd() * (max - min + 1));
-}
-
-function pickUnique<T>(rnd: () => number, pool: readonly T[], n: number): T[] {
-  const arr = pool.slice();
-  const out: T[] = [];
-  while (out.length < n && arr.length) {
-    const i = Math.floor(rnd() * arr.length);
-    out.push(arr.splice(i, 1)[0]!);
-  }
-  return out;
 }
 
 /** 同条消息内对立面（机器人禁；真人不禁） */
@@ -168,142 +153,11 @@ export function robotRoster(roomId: string, gameCode: string, count = 14) {
 function raceTrack(pos0: number): string {
   return pos0 === 9 ? '0' : String(pos0 + 1);
 }
-function raceCar(n: number): string {
-  return n === 10 ? '0' : String(n);
-}
-
-/** 返回整段 chat 口令（可含复式），外层再挂金额。权重偏向真人常玩的基础盘。 */
-function playRacing(rnd: () => number): string {
-  const roll = rnd();
-  const track = raceTrack(pickInt(rnd, 0, 9));
-  /* ~72% 基础：冠亚两面 / 单名次两面 / 龙虎 */
-  if (roll < 0.28) return '冠亚' + pick(rnd, SIDE);
-  if (roll < 0.52) return track + pick(rnd, SIDE);
-  if (roll < 0.64) return pick(rnd, ['龙', '虎'] as const);
-  if (roll < 0.72) return String(pickInt(rnd, 1, 5)) + pick(rnd, ['龙', '虎'] as const);
-  /* ~18% 轻复式两面 / 简单定位 */
-  if (roll < 0.82) {
-    const n = pickInt(rnd, 2, 3);
-    const tracks = pickUnique(rnd, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], n).map(raceTrack).join('');
-    return tracks + pick(rnd, SIDE);
-  }
-  if (roll < 0.9) return `${track}/${raceCar(pickInt(rnd, 1, 10))}`;
-  /* ~10% 冠亚和（单点，少复选） */
-  return '冠亚和' + String(pickInt(rnd, 3, 19));
-}
-
 /* ===================== 时时彩 ===================== */
 const DIGIT5_POS = ['万', '千', '百', '十', '个'] as const;
-/** 斗牛基础项（人多）；细牛几极少出 */
-const DIGIT5_NIU_BASIC = ['无牛', '牛牛', '牛大', '牛小', '牛单', '牛双'] as const;
-const DIGIT5_SHAPES = [
-  '前三豹子', '中三顺子', '后三对子', '前三半顺', '后三杂六', '中三对子', '前三顺子',
-] as const;
-
-function playDigit5(rnd: () => number): string {
-  const roll = rnd();
-  /* ~78% 基础：总和两面 / 定位两面 / 龙虎和 / 简单定位胆 */
-  if (roll < 0.34) return pick(rnd, SIDE);
-  if (roll < 0.58) {
-    /* 单位两面：万大、个单（少复式） */
-    const pos = pick(rnd, DIGIT5_POS);
-    return pos + pick(rnd, SIDE);
-  }
-  if (roll < 0.7) return pick(rnd, ['龙', '虎', '和'] as const);
-  if (roll < 0.78) {
-    /* 定位胆：万5 */
-    const pos = pick(rnd, DIGIT5_POS);
-    return pos + String(pickInt(rnd, 0, 9));
-  }
-  /* ~14% 次常玩：斗牛基础 / 双位两面 */
-  if (roll < 0.86) return pick(rnd, DIGIT5_NIU_BASIC);
-  if (roll < 0.92) {
-    const pos = pickUnique(rnd, DIGIT5_POS, 2).join('');
-    return pos + pick(rnd, SIDE);
-  }
-  /* ~8% 偏门：形态 / 组三 / 不定位 */
-  if (roll < 0.96) return pick(rnd, DIGIT5_SHAPES);
-  if (roll < 0.98) {
-    const seg = pick(rnd, ['前三', '中三', '后三'] as const);
-    let d1 = pickInt(rnd, 0, 9);
-    let d2 = pickInt(rnd, 0, 9);
-    while (d2 === d1) d2 = pickInt(rnd, 0, 9);
-    return `${seg}组三${d1}${d2}`;
-  }
-  const seg = pick(rnd, ['前三', '中三', '后三'] as const);
-  const digits = pickUnique(rnd, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], pickInt(rnd, 1, 2)).join('');
-  return seg + digits;
-}
-
-/* ===================== 快三 ===================== */
-function playKuai3(rnd: () => number): string {
-  const roll = rnd();
-  /* ~75% 基础：大小单双 / 和值单点 */
-  if (roll < 0.4) return pick(rnd, SIDE);
-  if (roll < 0.75) return '和' + String(pickInt(rnd, 4, 17));
-  /* ~15% 次常玩：三军 / 和值两点 */
-  if (roll < 0.85) {
-    const digits = pickUnique(rnd, [1, 2, 3, 4, 5, 6], pickInt(rnd, 1, 2)).join('');
-    return '三军' + digits;
-  }
-  if (roll < 0.9) {
-    const sums = pickUnique(rnd, Array.from({ length: 14 }, (_, i) => i + 4), 2);
-    return '和' + sums.join('/');
-  }
-  /* ~10% 偏门 */
-  if (roll < 0.95) {
-    const digits = pickUnique(rnd, [1, 2, 3, 4, 5, 6], 1).join('');
-    return '二同' + digits;
-  }
-  return pick(rnd, ['三同号', '三连号', '三不同号'] as const);
-}
 
 /* ===================== 六合：无一肖特码项；总肖=一肖 ===================== */
 const ZODIAC = ['鼠', '牛', '虎', '兔', '龙', '蛇', '马', '羊', '猴', '鸡', '狗', '猪'] as const;
-const LHC_COMBO = ['大单', '大双', '小单', '小双'] as const;
-const LHC_WAVE = ['红波', '蓝波', '绿波'] as const;
-const LHC_SUM = ['总和大', '总和小', '总和单', '总和双'] as const;
-const CN_LIAN: Record<number, string> = { 2: '二', 3: '三', 4: '四', 5: '五' };
-
-function playLhc(rnd: () => number): string {
-  const roll = rnd();
-  /* ~80% 基础：特码两面 / 特码组合 / 特码号 / 正码 / 波色 / 总和 */
-  if (roll < 0.28) return '特码' + pick(rnd, SIDE);
-  if (roll < 0.4) return '特码' + pick(rnd, LHC_COMBO);
-  if (roll < 0.55) {
-    const no = String(pickInt(rnd, 1, 49)).padStart(2, '0');
-    return rnd() < 0.7 ? `特码${no}` : `正码${no}`;
-  }
-  if (roll < 0.65) return pick(rnd, LHC_WAVE);
-  if (roll < 0.72) return pick(rnd, LHC_SUM);
-  if (roll < 0.8) return '一肖' + pick(rnd, ZODIAC);
-  /* ~12% 次常玩：尾数 / 少量一肖 */
-  if (roll < 0.88) return String(pickInt(rnd, 0, 9)) + '尾';
-  if (roll < 0.92) {
-    const zs = pickUnique(rnd, ZODIAC, 2);
-    return zs.map((z) => '一肖' + z).join(' ');
-  }
-  /* ~8% 偏门连码 */
-  if (roll < 0.96) {
-    const n = pick(rnd, [2, 2, 3] as const);
-    const hit = rnd() < 0.75 ? '中' : '不中';
-    const zs = pickUnique(rnd, ZODIAC, n);
-    return `复式${CN_LIAN[n]}肖${hit}${zs.join(',')}`;
-  }
-  const play = pick(rnd, ['二全中', '二中特', '特串'] as const);
-  const pool = Array.from({ length: 49 }, (_, i) => String(i + 1).padStart(2, '0'));
-  const nums = pickUnique(rnd, pool, 2 + pickInt(rnd, 0, 1));
-  return `拖头${play}${nums.join(',')}`;
-}
-
-function genOnePlay(gameCode: ChatLotteryGame, rnd: () => number): string {
-  if (gameCode === 'kuai3') return playKuai3(rnd);
-  if (gameCode === 'lhc') return playLhc(rnd);
-  if (gameCode === 'bjsc' || gameCode === 'speed-racing' || gameCode === 'speed-boat') {
-    return playRacing(rnd);
-  }
-  return playDigit5(rnd);
-}
 
 /**
  * 将生成器产出拆成 plays[]。
@@ -321,12 +175,57 @@ function toPlayLines(raw: string, amount: number): RoomChatPlayLine[] {
   return [{ play: t, amount }];
 }
 
+/** 金额：30～2000 内随机档位（气氛用） */
+const ROBOT_AMTS = [
+  30, 50, 80, 100, 120, 150, 180, 200, 250, 300, 380, 500,
+  600, 800, 1000, 1200, 1500, 1800, 2000,
+] as const;
+
+/** 上分口令金额（偏中大额，更像补分） */
+const FUND_UP_AMTS = [500, 800, 1000, 1500, 2000, 3000, 5000] as const;
+/** 下分口令金额（偏中小额） */
+const FUND_DOWN_AMTS = [300, 500, 800, 1000, 1500, 2000] as const;
+
+export type RobotBetOpts = {
+  avoidNames?: string[];
+  robotCount?: number;
+};
+
+/** 基础玩法（可搭配多注，同条不对冲） */
+function genBasicPlay(gameCode: ChatLotteryGame, rnd: () => number): string {
+  if (gameCode === 'lhc') {
+    const roll = rnd();
+    if (roll < 0.45) return '特码' + pick(rnd, SIDE);
+    if (roll < 0.7) return pick(rnd, ['总和大', '总和小', '总和单', '总和双'] as const);
+    if (roll < 0.88) return pick(rnd, ['红波', '蓝波', '绿波'] as const);
+    return '一肖' + pick(rnd, ZODIAC);
+  }
+  if (gameCode === 'bjsc' || gameCode === 'speed-racing' || gameCode === 'speed-boat') {
+    const roll = rnd();
+    if (roll < 0.4) return '冠亚' + pick(rnd, SIDE);
+    if (roll < 0.75) return raceTrack(pickInt(rnd, 0, 9)) + pick(rnd, SIDE);
+    return pick(rnd, ['龙', '虎'] as const);
+  }
+  if (gameCode === 'kuai3') {
+    if (rnd() < 0.8) return pick(rnd, SIDE);
+    return '和' + String(pickInt(rnd, 4, 17));
+  }
+  /* 时时彩：两面 / 定位两面 / 龙虎和 */
+  const roll = rnd();
+  if (roll < 0.5) return pick(rnd, SIDE);
+  if (roll < 0.8) return pick(rnd, DIGIT5_POS) + pick(rnd, SIDE);
+  return pick(rnd, ['龙', '虎', '和'] as const);
+}
+
+/**
+ * 机器人氛围注：基础玩法，可 1～3 注搭配；金额 30～2000。
+ */
 export function genRobotBet(
   roomId: string,
   gameCode: ChatLotteryGame,
   issueNo: string,
   tickKey: string,
-  opts?: { avoidNames?: string[]; robotCount?: number },
+  opts?: RobotBetOpts,
 ): { name: string; avatar: string; text: string; plays: RoomChatPlayLine[]; totalAmount: number } {
   const roster = robotRoster(roomId, gameCode, opts?.robotCount ?? 14);
   const rnd = mulberry32(hashSeed(`${roomId}:${gameCode}:${issueNo}:${tickKey}`));
@@ -334,8 +233,9 @@ export function genRobotBet(
   const candidates = roster.filter((r) => !avoid.has(r.name));
   const pool = candidates.length ? candidates : roster;
   const who = pool[Math.floor(rnd() * pool.length)]!;
-  /* 多数一注基础玩法；少复式多注 */
-  const n = rnd() < 0.72 ? 1 : rnd() < 0.92 ? 2 : 3;
+
+  /* 约 55% 单注，35% 两注，10% 三注 */
+  const n = rnd() < 0.55 ? 1 : rnd() < 0.9 ? 2 : 3;
   const plays: RoomChatPlayLine[] = [];
   const used = new Set<string>();
 
@@ -343,8 +243,8 @@ export function genRobotBet(
     let guard = 0;
     let chunk: RoomChatPlayLine[] = [];
     while (guard++ < 14) {
-      const raw = genOnePlay(gameCode, rnd);
-      const amt = pick(rnd, AMTS);
+      const raw = genBasicPlay(gameCode, rnd);
+      const amt = pick(rnd, ROBOT_AMTS);
       chunk = toPlayLines(raw, amt);
       if (!chunk.length) continue;
       const clash = chunk.some((c) => plays.some((p) => hedgesWith(p.play, c.play) || used.has(c.play)));
@@ -357,13 +257,47 @@ export function genRobotBet(
     }
   }
   if (!plays.length) {
-    plays.push({ play: pick(rnd, SIDE), amount: pick(rnd, AMTS) });
+    plays.push({ play: pick(rnd, SIDE), amount: pick(rnd, ROBOT_AMTS) });
   }
 
-  /* 文本：赛车/快三复式保持「玩法/金额」一条；已拆多注则空格连接 */
   const text = plays.map((p) => `${p.play}/${p.amount}`).join(' ');
   const totalAmount = plays.reduce((s, p) => s + p.amount, 0);
   return { name: who.name, avatar: who.avatar, text, plays, totalAmount };
+}
+
+/**
+ * 上下分闲聊：上分为主（约 75%），金额固定档；只刷口令不动账。
+ */
+export function genRobotFundTalk(
+  roomId: string,
+  gameCode: string,
+  tickKey: string,
+  opts?: { avoidNames?: string[]; robotCount?: number },
+): { name: string; avatar: string; text: string; fundType: 'up' | 'down' } | null {
+  const roster = robotRoster(roomId, gameCode, opts?.robotCount ?? 14);
+  if (!roster.length) return null;
+  const rnd = mulberry32(hashSeed(`${roomId}:${gameCode}:fund:${tickKey}`));
+  const avoid = new Set((opts?.avoidNames || []).map((n) => String(n || '').trim()).filter(Boolean));
+  const candidates = roster.filter((r) => !avoid.has(r.name));
+  const pool = candidates.length ? candidates : roster;
+  const who = pool[Math.floor(rnd() * pool.length)]!;
+
+  const fundType: 'up' | 'down' = rnd() < 0.75 ? 'up' : 'down';
+  const amt = pick(rnd, fundType === 'up' ? FUND_UP_AMTS : FUND_DOWN_AMTS);
+  const roll = rnd();
+  let text: string;
+  if (fundType === 'up') {
+    if (roll < 0.55) text = `上分${amt}`;
+    else if (roll < 0.8) text = `上分/${amt}`;
+    else text = `上分 ${amt}`;
+  } else if (roll < 0.6) {
+    text = `下分${amt}`;
+  } else if (roll < 0.85) {
+    text = `下分/${amt}`;
+  } else {
+    text = `下分 ${amt}`;
+  }
+  return { name: who.name, avatar: who.avatar, text, fundType };
 }
 
 /* 中奖核对请用 room-chat-robot-settle.pickRobotWinnersByDraw（真实开奖+赔率，钱不入账） */

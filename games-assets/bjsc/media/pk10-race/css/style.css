@@ -35,7 +35,7 @@ body {
 .position {
 	position: absolute;
 	top: 28px;
-	left: 350px;
+	left: 325px;
 }
 .positm {
 	float: left;
@@ -359,10 +359,10 @@ body {
 
 .currentdraw {
 	position: absolute;
-	left: 1055px;
+	left: 1010px;
 	top: 33px;
 	font-size: 35px;
-	width: 255px;
+	width: 310px;
 	height: 51px;
 	white-space: nowrap
 }

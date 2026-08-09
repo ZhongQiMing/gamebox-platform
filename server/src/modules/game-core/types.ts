@@ -22,6 +22,8 @@ export interface PlaceBetInput {
   clientSeed?: string;
   /** 幂等键：同一意图重试复用，避免重复扣款开奖 */
   clientRequestId?: string;
+  /** 6 位运营房间号（多房隔离） */
+  roomNo?: string;
 }
 
 /** 单个玩家的结算结果 */

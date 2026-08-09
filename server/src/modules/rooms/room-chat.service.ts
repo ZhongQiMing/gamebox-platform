@@ -2,7 +2,17 @@ import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/commo
 import { Prisma } from '@prisma/client';
 import { asMoney } from '@gamebox/shared';
 import { PrismaService } from '../../prisma/prisma.service';
-import { genRobotBet, robotRoster } from './room-chat-atmosphere';
+import {
+  genRobotBet,
+  genRobotFundTalk,
+  robotRoster,
+} from './room-chat-atmosphere';
+import {
+  normalizeRobotPlan,
+  resolveActiveRobotCount,
+  rosterSizeFor,
+  type NormalizedRobotPlan,
+} from './robot-plan.util';
 import { pickRobotWinnersByDraw } from './room-chat-robot-settle';
 import {
   CHAT_LOTTERY_GAMES,
@@ -93,21 +103,17 @@ export class RoomChatService {
     return room;
   }
 
-  /** 玩家最近进入的 APPROVED 房间（下注未带 roomNo 时回退） */
+  /** 下注/聊天写消息必须带 roomNo，禁止按 updatedAt 猜房（多房隔离） */
   async resolvePlayerRoom(playerId: string, roomNo?: string | null) {
-    if (roomNo && /^\d{6}$/.test(roomNo)) {
-      try {
-        return await this.assertMember(playerId, roomNo);
-      } catch {
-        /* fall through */
-      }
+    const no = String(roomNo || '').trim();
+    if (!/^\d{6}$/.test(no)) {
+      return null;
     }
-    const mem = await this.prisma.roomMember.findFirst({
-      where: { playerId, status: 'APPROVED', room: { status: 'OPEN' } },
-      include: { room: true },
-      orderBy: { updatedAt: 'desc' },
-    });
-    return mem?.room ?? null;
+    try {
+      return await this.assertMember(playerId, no);
+    } catch {
+      return null;
+    }
   }
 
   private roomEnablesGame(enabledGamesJson: string, gameCode: string): boolean {
@@ -223,24 +229,24 @@ export class RoomChatService {
       return rows.map((r) => this.toDto(r));
     }
 
-    /* 进房首屏：系统卡（封盘/开奖/核对）+ 近期下注合并，避免机器人注刷屏挤掉流水 */
+    /* 进房首屏：系统卡（封盘/开奖/核对）+ 近期下注/上下分闲聊合并 */
     const systemKinds = ['close', 'open', 'result', 'bet_verify', 'win_verify'] as const;
     const systemTake = Math.min(30, limit);
     const betTake = Math.max(20, limit - 10);
-    const [systems, bets] = await Promise.all([
+    const [systems, chats] = await Promise.all([
       this.prisma.roomChatMessage.findMany({
         where: { roomId, gameCode, kind: { in: [...systemKinds] } },
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         take: systemTake,
       }),
       this.prisma.roomChatMessage.findMany({
-        where: { roomId, gameCode, kind: 'bet' },
+        where: { roomId, gameCode, kind: { in: ['bet', 'chat'] } },
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         take: betTake,
       }),
     ]);
     const byId = new Map<string, (typeof systems)[number]>();
-    for (const r of [...systems, ...bets]) byId.set(r.id, r);
+    for (const r of [...systems, ...chats]) byId.set(r.id, r);
     const merged = Array.from(byId.values()).sort((a, b) => {
       const t = a.createdAt.getTime() - b.createdAt.getTime();
       if (t !== 0) return t;
@@ -451,13 +457,29 @@ export class RoomChatService {
     }
   }
 
-  async fanOutIssueDrawn(gameCode: string, issueNo: string, nums: number[]) {
+  /** 封盘后推结果卡（供开奖动画）；此时尚未派彩，不含中奖核对 */
+  async fanOutIssueResult(gameCode: string, issueNo: string, nums: number[]) {
     if (!isChatLotteryGame(gameCode)) return;
     const rooms = await this.listOpenRoomsForGame(gameCode);
     if (!rooms.length) return;
     const resultPayload: RoomChatResultPayload = { issueNo, nums };
+    for (const room of rooms) {
+      await this.appendSystemOnce({
+        roomId: room.id,
+        gameCode,
+        kind: 'result',
+        issueNo,
+        payload: resultPayload as unknown as Record<string, unknown>,
+      });
+    }
+  }
 
-    /* 期号 / 全期中奖注单只查一次，按房成员过滤；赔率与真人结算同一份 */
+  /** openAt 派彩完成后推中奖核对（依赖注单已 WON/LOST） */
+  async fanOutIssueWinVerify(gameCode: string, issueNo: string, nums: number[]) {
+    if (!isChatLotteryGame(gameCode)) return;
+    const rooms = await this.listOpenRoomsForGame(gameCode);
+    if (!rooms.length) return;
+
     const game = await this.prisma.game.findUnique({ where: { code: gameCode } });
     const payRow = game
       ? await this.prisma.gameConfig.findFirst({
@@ -497,20 +519,11 @@ export class RoomChatService {
     }
 
     for (const room of rooms) {
-      await this.appendSystemOnce({
-        roomId: room.id,
-        gameCode,
-        kind: 'result',
-        issueNo,
-        payload: resultPayload as unknown as Record<string, unknown>,
-      });
-
       const robotUsers = await this.collectRobotIssueBets(room.id, gameCode, issueNo);
       const robotBets = robotUsers.map((u) => ({
         name: u.name,
         plays: u.tags.map((t) => ({ play: t.play, amount: t.amount })),
       }));
-      /* 机器人按真实开奖+赔率结算（钱不入账）；禁止随机点名中奖 */
       const robotWins = pickRobotWinnersByDraw(gameCode, nums, robotBets, payTable);
 
       const memberSet = new Set(membersByRoom.get(room.id) || []);
@@ -567,9 +580,13 @@ export class RoomChatService {
         issueNo,
         payload: { issueNo, users, empty: users.length === 0 },
       });
-
-      /* 开盘线改由 fanOutDueOpens：等上一期 openAt 到点再发，机器人也只在开盘后下注 */
     }
+  }
+
+  /** 兼容：结果卡 + 中奖核对 */
+  async fanOutIssueDrawn(gameCode: string, issueNo: string, nums: number[]) {
+    await this.fanOutIssueResult(gameCode, issueNo, nums);
+    await this.fanOutIssueWinVerify(gameCode, issueNo, nums);
   }
 
   /**
@@ -626,8 +643,9 @@ export class RoomChatService {
   }
 
   /**
-   * 机器人氛围下注：每个 OPEN 房 × 每个聊天彩票，在可下注窗口写 1 条。
-   * 必须：当期已有开盘线；开盘线发出后再过约 2.5s，避免抢在开盘线前冒注。
+   * 机器人氛围下注：
+   * - 按时段取有效人数（高峰/白天/夜间）
+   * - 每期目标刷满该人数（按窗口均分间隔，落后时追赶）
    */
   async tickRobotAtmosphere() {
     const now = new Date();
@@ -662,7 +680,6 @@ export class RoomChatService {
 
       const rooms = await this.listOpenRoomsForGame(gameCode);
       for (const room of rooms) {
-        /* 没有开盘线 = 尚未宣布开盘，禁止氛围注 */
         const openLine = await this.prisma.roomChatMessage.findFirst({
           where: {
             roomId: room.id,
@@ -674,16 +691,177 @@ export class RoomChatService {
           orderBy: { createdAt: 'desc' },
         });
         if (!openLine) continue;
-        /* 开盘线写出后再等约 2.5s，给前端刷开盘线留时间，更像真人跟盘 */
-        if (now.getTime() - openLine.createdAt.getTime() < 2500) continue;
 
-        /* 每房每 4～7s 随机间隔最多 1 条，节奏更不像打卡 */
-        const gapMs = 4000 + Math.floor(Math.random() * 3000);
-        const recent = await this.prisma.roomChatMessage.findFirst({
+        const plan = await this.robotPlanFor(room.id, gameCode);
+        const activeCount = resolveActiveRobotCount(plan, now);
+        if (activeCount <= 0) continue;
+        const rosterN = rosterSizeFor(plan);
+
+        const startAfterMs = plan.timing.startAfterOpenSec * 1000;
+        const stopBeforeMs = Math.max(1000, plan.timing.stopBeforeLockSec * 1000);
+        if (now.getTime() - openLine.createdAt.getTime() < startAfterMs) continue;
+        if (issue.lockAt.getTime() - now.getTime() <= stopBeforeMs) continue;
+
+        const betCount = await this.prisma.roomChatMessage.count({
           where: {
             roomId: room.id,
             gameCode,
             kind: 'bet',
+            isRobot: true,
+            issueNo: issue.issueNo,
+          },
+        });
+        if (betCount >= activeCount) continue;
+
+        const windowStart = openLine.createdAt.getTime() + startAfterMs;
+        const windowEnd = issue.lockAt.getTime() - stopBeforeMs;
+        const windowMs = Math.max(2000, windowEnd - windowStart);
+        /* 把 activeCount 条注摊进窗口；人数多时间隔更短 */
+        const intervalMs = Math.max(
+          500,
+          Math.min(plan.timing.intervalSec * 1000, Math.floor(windowMs / activeCount)),
+        );
+        const elapsed = Math.max(0, now.getTime() - windowStart);
+        const expected = Math.min(activeCount, Math.floor(elapsed / intervalMs) + 1);
+        const behind = Math.max(1, expected - betCount);
+        const toPlace = Math.min(4, behind, activeCount - betCount);
+
+        const recentNames = await this.prisma.roomChatMessage.findMany({
+          where: {
+            roomId: room.id,
+            gameCode,
+            kind: 'bet',
+            isRobot: true,
+            createdAt: { gte: new Date(now.getTime() - 120_000) },
+          },
+          orderBy: { createdAt: 'desc' },
+          take: Math.min(12, Math.max(6, activeCount)),
+          select: { senderName: true },
+        });
+        const avoidNames = recentNames.map((r) => r.senderName);
+
+        for (let i = 0; i < toPlace; i++) {
+          const gen = genRobotBet(
+            room.id,
+            gameCode as ChatLotteryGame,
+            issue.issueNo,
+            `${Date.now()}-${room.id}-${i}-${Math.random().toString(36).slice(2, 8)}`,
+            { avoidNames, robotCount: rosterN },
+          );
+          avoidNames.unshift(gen.name);
+          if (avoidNames.length > 16) avoidNames.length = 16;
+          const payload: RoomChatBetPayload = {
+            text: gen.text,
+            issueNo: issue.issueNo,
+            plays: gen.plays,
+            totalAmount: gen.totalAmount,
+          };
+          await this.append({
+            roomId: room.id,
+            gameCode,
+            kind: 'bet',
+            issueNo: issue.issueNo,
+            senderName: gen.name,
+            senderAvatar: gen.avatar,
+            isRobot: true,
+            payload: payload as unknown as Record<string, unknown>,
+          });
+        }
+      }
+    }
+  }
+
+  /** 确保房间有稳定机器名册；人数读 RoomGameConfig */
+  async ensureRoster(roomId: string, gameCode: string) {
+    const plan = await this.robotPlanFor(roomId, gameCode);
+    return robotRoster(roomId, gameCode, rosterSizeFor(plan) || 14);
+  }
+
+  async robotPlanFor(roomId: string, gameCode: string): Promise<NormalizedRobotPlan> {
+    const cfg = await this.prisma.roomGameConfig.findUnique({
+      where: { roomId_gameCode: { roomId, gameCode } },
+      select: { robotCount: true, robotPlan: true },
+    });
+    return normalizeRobotPlan(cfg?.robotPlan, cfg?.robotCount ?? 14);
+  }
+
+  /** 当前时段有效托人数（上海时区） */
+  async robotCountFor(roomId: string, gameCode: string) {
+    const plan = await this.robotPlanFor(roomId, gameCode);
+    return resolveActiveRobotCount(plan);
+  }
+
+  /** 牌桌气氛：玩家房间对该游戏的有效托人数（供桌面假筹频率） */
+  async atmosphereForPlayer(playerId: string, roomNo: string, gameCode: string) {
+    const room = await this.assertMember(playerId, roomNo);
+    const code = gameCode === 'longhu' ? 'dragon-tiger' : gameCode;
+    const robotCount = await this.robotCountFor(room.id, code);
+    return { robotCount };
+  }
+
+  /**
+   * 上下分闲聊：上分为主，约 40～70s 一条，只刷口令。
+   * 必须已出开盘线、且仍在下注窗口内，绝不能插到开盘线前面。
+   */
+  async tickRobotFundTalk() {
+    const now = new Date();
+    for (const gameCode of CHAT_LOTTERY_GAMES) {
+      const game = await this.prisma.game.findUnique({ where: { code: gameCode } });
+      if (!game || game.status !== 'ONLINE') continue;
+
+      /* 封盘中 / 开奖中：安静，与氛围下注同一套窗口 */
+      const sealingOrDrawing = await this.prisma.lotteryIssue.findFirst({
+        where: {
+          gameId: game.id,
+          status: { in: ['PENDING', 'LOCKED'] },
+          OR: [
+            { lockAt: { lte: now }, openAt: { gt: now } },
+            { openAt: { lte: now } },
+          ],
+        },
+        select: { id: true },
+      });
+      if (sealingOrDrawing) continue;
+
+      const issue = await this.prisma.lotteryIssue.findFirst({
+        where: {
+          gameId: game.id,
+          status: 'PENDING',
+          lockAt: { gt: now },
+          openAt: { gt: now },
+        },
+        orderBy: { openAt: 'asc' },
+      });
+      if (!issue) continue;
+
+      const rooms = await this.listOpenRoomsForGame(gameCode);
+      for (const room of rooms) {
+        const openLine = await this.prisma.roomChatMessage.findFirst({
+          where: {
+            roomId: room.id,
+            gameCode,
+            kind: 'open',
+            issueNo: issue.issueNo,
+          },
+          select: { id: true, createdAt: true },
+          orderBy: { createdAt: 'desc' },
+        });
+        /* 开盘线未出：绝不刷上下分 */
+        if (!openLine) continue;
+        /* 开盘线刚出后稍等，别贴着开盘线抢第一句 */
+        if (now.getTime() - openLine.createdAt.getTime() < 8000) continue;
+        /* 距封盘太近也不刷 */
+        if (issue.lockAt.getTime() - now.getTime() <= 15000) continue;
+
+        const robotCount = await this.robotCountFor(room.id, gameCode);
+        if (robotCount <= 0) continue;
+
+        const gapMs = 40000 + Math.floor(Math.random() * 30000);
+        const recent = await this.prisma.roomChatMessage.findFirst({
+          where: {
+            roomId: room.id,
+            gameCode,
+            kind: 'chat',
             isRobot: true,
             createdAt: { gte: new Date(now.getTime() - gapMs) },
           },
@@ -695,58 +873,37 @@ export class RoomChatService {
           where: {
             roomId: room.id,
             gameCode,
-            kind: 'bet',
             isRobot: true,
-            createdAt: { gte: new Date(now.getTime() - 120_000) },
+            createdAt: { gte: new Date(now.getTime() - 180_000) },
           },
           orderBy: { createdAt: 'desc' },
-          take: 6,
+          take: 8,
           select: { senderName: true },
         });
         const avoidNames = recentNames.map((r) => r.senderName);
-
-        const robotCount = await this.robotCountFor(room.id, gameCode);
-        const gen = genRobotBet(
+        const gen = genRobotFundTalk(
           room.id,
-          gameCode as ChatLotteryGame,
-          issue.issueNo,
+          gameCode,
           `${Date.now()}-${room.id}-${Math.random().toString(36).slice(2, 8)}`,
           { avoidNames, robotCount },
         );
-        const payload: RoomChatBetPayload = {
-          text: gen.text,
-          issueNo: issue.issueNo,
-          plays: gen.plays,
-          totalAmount: gen.totalAmount,
-        };
+        if (!gen) continue;
+
         await this.append({
           roomId: room.id,
           gameCode,
-          kind: 'bet',
+          kind: 'chat',
           issueNo: issue.issueNo,
           senderName: gen.name,
           senderAvatar: gen.avatar,
           isRobot: true,
-          payload: payload as unknown as Record<string, unknown>,
+          payload: {
+            text: gen.text,
+            fundType: gen.fundType,
+            issueNo: issue.issueNo,
+          },
         });
       }
     }
-  }
-
-  /** 确保房间有稳定机器名册；人数读 RoomGameConfig */
-  async ensureRoster(roomId: string, gameCode: string) {
-    const cfg = await this.prisma.roomGameConfig.findUnique({
-      where: { roomId_gameCode: { roomId, gameCode } },
-      select: { robotCount: true },
-    });
-    return robotRoster(roomId, gameCode, cfg?.robotCount ?? 14);
-  }
-
-  async robotCountFor(roomId: string, gameCode: string) {
-    const cfg = await this.prisma.roomGameConfig.findUnique({
-      where: { roomId_gameCode: { roomId, gameCode } },
-      select: { robotCount: true },
-    });
-    return cfg?.robotCount ?? 14;
   }
 }

@@ -2,17 +2,22 @@
  * 平台游戏运维定时（Asia/Shanghai）：
  *   00:00  日切：期号按自然日重新计数；清理跨日空待开期
  *   04:00  进入每日维护窗：仅把「上架」游戏切到维护（不碰手动下架/维护）
- *   06:01  结束维护窗：只恢复本窗内自动维护的游戏
+ *          → 立刻停新注/新期；牌桌本局结算完后进 PAUSED，不强行掐局
+ *   06:01  结束维护窗：只恢复本窗内自动维护的游戏；牌台 PAUSED 自动开新局
  *
  * 与回水 06:00 错开 1 分钟。彩票预创由 LotteryScheduler 每 15s 自行补齐。
  */
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { GameConfigCache } from '../game-core/game-config.cache';
 import { LOTTERY_INTERVALS } from '../lottery/lottery-intervals';
 import { AdminLogService } from './admin-log.service';
+import {
+  PlatformEmergencyService,
+  REDIS_EMERGENCY_MAINT,
+} from '../points/platform-emergency.service';
 
 const REDIS_MAINT_CODES = 'gamebox:ops:daily-maint-codes';
 const SH_TZ = 'Asia/Shanghai';
@@ -48,6 +53,7 @@ export class GameOpsScheduler implements OnModuleInit {
     private redis: RedisService,
     private configCache: GameConfigCache,
     private adminLog: AdminLogService,
+    private platformEmergency: PlatformEmergencyService,
   ) {}
 
   onModuleInit() {
@@ -82,7 +88,9 @@ export class GameOpsScheduler implements OnModuleInit {
       notes: [
         '期号（彩票/桌台）按上海日历日自动重计，无需手工重置。',
         '每日 04:00–06:00 维护窗只动「当时上架」的游戏；你手动维护/下架的不受影响。',
+        '进维护后立刻停新注/新期；牌桌本局会结算完再暂停开局，不会中途掐结算踢人。',
         '报表「今日」流水、输赢按上海自然日切分，与 00:00 日切对齐。',
+        '平台账户触及下限时会紧急全站维护，须处理后再点「全部上架」；06:01 不会自动恢复。',
       ],
     };
   }
@@ -109,8 +117,15 @@ export class GameOpsScheduler implements OnModuleInit {
     return h * 60 + m;
   }
 
+  /** 临时跳过每日维护窗（.env DISABLE_DAILY_MAINT=1） */
+  private dailyMaintDisabled(): boolean {
+    const v = (process.env.DISABLE_DAILY_MAINT || '').trim().toLowerCase();
+    return v === '1' || v === 'true' || v === 'yes';
+  }
+
   /** 是否在 [04:00, 06:00) */
   private inMaintWindow(d = new Date()): boolean {
+    if (this.dailyMaintDisabled()) return false;
     const mins = this.shanghaiMinutes(d);
     return mins >= 4 * 60 && mins < 6 * 60;
   }
@@ -145,11 +160,58 @@ export class GameOpsScheduler implements OnModuleInit {
       }
       return;
     }
+    /* 窗外：有 Redis 标记、或 Redis 丢失但库里仍卡在维护 → 都尝试恢复 */
     const raw = await this.redis.get(REDIS_MAINT_CODES);
-    if (raw) {
-      this.logger.warn('boot reconcile: outside maint window with Redis marker → exit');
+    const stuck = await this.prisma.game.count({ where: { status: 'MAINTENANCE' } });
+    if (raw || stuck > 0) {
+      this.logger.warn(
+        `boot reconcile: outside maint window (redis=${!!raw}, stuckMaint=${stuck}) → exit`,
+      );
       await this.exitDailyMaintenance();
     }
+  }
+
+  /** 解析本次自动维护的游戏码：Redis → 当日 START 日志 → 当前仍维护的游戏 */
+  private async resolveAutoMaintCodes(): Promise<string[]> {
+    const raw = await this.redis.get(REDIS_MAINT_CODES);
+    if (raw) {
+      try {
+        const codes = JSON.parse(raw) as string[];
+        if (Array.isArray(codes) && codes.length) return codes.filter((c) => !!c);
+      } catch {
+        /* fall through */
+      }
+    }
+
+    const dayStart = this.shanghaiDayStart();
+    const startLog = await this.prisma.adminLog.findFirst({
+      where: { action: 'GAME_DAILY_MAINT_START', createdAt: { gte: dayStart } },
+      orderBy: { createdAt: 'desc' },
+      select: { createdAt: true, detail: true, target: true },
+    });
+    if (startLog) {
+      const endAfter = await this.prisma.adminLog.findFirst({
+        where: {
+          action: 'GAME_DAILY_MAINT_END',
+          createdAt: { gte: startLog.createdAt },
+        },
+        select: { id: true },
+      });
+      if (!endAfter) {
+        const detail = (startLog.detail ?? {}) as { codes?: string[] };
+        if (Array.isArray(detail.codes) && detail.codes.length) return detail.codes;
+        if (startLog.target) {
+          return startLog.target.split(',').map((s) => s.trim()).filter(Boolean);
+        }
+      }
+    }
+
+    /* Redis/日志都丢了：窗外仍维护的视为卡死的自动维护，全部拉回上架 */
+    const stuck = await this.prisma.game.findMany({
+      where: { status: 'MAINTENANCE' },
+      select: { code: true },
+    });
+    return stuck.map((g) => g.code);
   }
 
   /**
@@ -202,6 +264,10 @@ export class GameOpsScheduler implements OnModuleInit {
   /** 04:00 进入维护窗 */
   @Cron(GAME_OPS_SCHEDULE.maintStart.cron, { timeZone: SH_TZ })
   async enterDailyMaintenance() {
+    if (this.dailyMaintDisabled()) {
+      this.logger.warn('daily maint start skipped: DISABLE_DAILY_MAINT=1');
+      return;
+    }
     if (this.maintBusy) return;
     this.maintBusy = true;
     try {
@@ -220,7 +286,8 @@ export class GameOpsScheduler implements OnModuleInit {
         where: { id: { in: online.map((g) => g.id) } },
         data: { status: 'MAINTENANCE' },
       });
-      await this.redis.set(REDIS_MAINT_CODES, JSON.stringify(codes), 4 * 3600);
+      /* TTL 覆盖到次日维护窗，避免 4h 过期后 06:01/重启无法恢复 */
+      await this.redis.set(REDIS_MAINT_CODES, JSON.stringify(codes), 26 * 3600);
       this.configCache.invalidateAll();
 
       this.logger.log(`daily maint start: ${codes.join(',')}`);
@@ -235,14 +302,24 @@ export class GameOpsScheduler implements OnModuleInit {
     }
   }
 
-  /** 06:01 结束维护窗（错开回水 06:00） */
+  /** 06:01 结束维护窗（错开回水 06:00）；窗外启动也会走这里恢复卡死维护 */
   @Cron(GAME_OPS_SCHEDULE.maintEnd.cron, { timeZone: SH_TZ })
   async exitDailyMaintenance() {
     if (this.maintBusy) return;
     this.maintBusy = true;
     try {
-      const raw = await this.redis.get(REDIS_MAINT_CODES);
-      const codes: string[] = raw ? (JSON.parse(raw) as string[]) : [];
+      if (await this.platformEmergency.isEmergencyActive()) {
+        this.logger.warn(
+          `daily maint end skipped: emergency active (${REDIS_EMERGENCY_MAINT})`,
+        );
+        return;
+      }
+      if (this.inMaintWindow()) {
+        this.logger.log('daily maint end skipped: still inside window');
+        return;
+      }
+
+      const codes = await this.resolveAutoMaintCodes();
       if (!codes.length) {
         this.logger.log('daily maint end: no scheduled codes');
         return;
@@ -255,7 +332,7 @@ export class GameOpsScheduler implements OnModuleInit {
       await this.redis.del(REDIS_MAINT_CODES);
       this.configCache.invalidateAll();
 
-      this.logger.log(`daily maint end: restored=${restored.count}`);
+      this.logger.log(`daily maint end: restored=${restored.count} codes=${codes.join(',')}`);
       await this.safeLog('GAME_DAILY_MAINT_END', codes.join(','), {
         codes,
         restored: restored.count,
@@ -265,5 +342,42 @@ export class GameOpsScheduler implements OnModuleInit {
     } finally {
       this.maintBusy = false;
     }
+  }
+
+  /**
+   * 管理端手动：把仍处维护的游戏全部拉回上架（需有生效配置），并清掉自动维护标记。
+   * 用于 Redis/定时任务异常导致全站卡在「维护中」。
+   */
+  async forceRestoreAllOnline(): Promise<{ restored: number; codes: string[] }> {
+    const emergency = await this.platformEmergency.isEmergencyActive();
+    if (!emergency && this.inMaintWindow()) {
+      throw new BadRequestException('当前处于每日维护窗（04:00–06:00），请过窗后再全部上架');
+    }
+    const stuck = await this.prisma.game.findMany({
+      where: {
+        status: 'MAINTENANCE',
+        configs: { some: { active: true } },
+      },
+      select: { code: true },
+    });
+    const codes = stuck.map((g) => g.code);
+    if (!codes.length) {
+      await this.redis.del(REDIS_MAINT_CODES);
+      await this.platformEmergency.clearEmergencyFlag();
+      return { restored: 0, codes: [] };
+    }
+    const restored = await this.prisma.game.updateMany({
+      where: { code: { in: codes }, status: 'MAINTENANCE' },
+      data: { status: 'ONLINE' },
+    });
+    await this.redis.del(REDIS_MAINT_CODES);
+    await this.platformEmergency.clearEmergencyFlag();
+    this.configCache.invalidateAll();
+    await this.safeLog('GAME_FORCE_RESTORE_ONLINE', codes.join(','), {
+      codes,
+      restored: restored.count,
+      clearedEmergency: emergency,
+    });
+    return { restored: restored.count, codes };
   }
 }

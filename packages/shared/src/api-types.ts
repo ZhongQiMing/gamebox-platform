@@ -57,6 +57,12 @@ export interface LedgerItemDTO {
   balanceAfter: number;
   remark: string | null;
   createdAt: string;
+  /** 上下分等业务订单号（有则展示） */
+  orderNo?: string | null;
+  /** 上分 / 下分 等展示用方式 */
+  method?: string | null;
+  refType?: string | null;
+  refId?: string | null;
 }
 
 /** 分页信封 */

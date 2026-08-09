@@ -36,4 +36,10 @@ export interface LotteryGameDef {
   draw(serverSeed: string, clientSeed: string, nonce: number): DrawResult;
   /** 判断该注是否中奖，返回命中的 payTable key；若未中返回 null */
   judge(bet: LotteryBetPayload, draw: DrawResult, payTable: LotteryPayTable): string | null;
+  /**
+   * 这一注最高可能的含本倍率，用于下注时按赔率限红。
+   * 不实现则退回 payTable[betType]；betType 与赔率键不是一一对应的玩法
+   * （如六合彩连码：一个 lianma 能命中四全中 9000 或三全中 670）必须实现。
+   */
+  maxOdds?(bet: LotteryBetPayload, payTable: LotteryPayTable): number;
 }

@@ -6,6 +6,8 @@ node_modules/
 dist/
 build/
 *.tsbuildinfo
+# scripts/build-images.ps1 导出的镜像包，单个上 G
+dist-images/
 
 # 环境变量（绝不提交）
 .env
@@ -13,7 +15,7 @@ build/
 !.env.example
 scripts/health-alert.env
 scripts/.health-alert-state.json
-scripts/backup-postgres.env
+scripts/backup*.env
 backups/
 
 # 数据库（本地开发）
@@ -70,6 +72,9 @@ __pycache__/
 # scripts 工具目录：临时调试文件与爬取缓存（禁止入库）
 scripts/node_modules/
 scripts/_*
+# 子包下的同类临时脚本（如 server/scripts/_tmp-*）
+**/scripts/_*
+_tmp-*
 scripts/麻将胡了*/
 scripts/runtime-atlas-cache/
 scripts/runtime-sprites/

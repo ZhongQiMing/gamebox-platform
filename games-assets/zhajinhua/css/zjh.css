@@ -1,5 +1,5 @@
 /* ========================================================
-   ??? � ?? v45?????? + ??????� ???? 1024�1536
+   炸金花 · 桌面 v45 布局对齐 + 素材尺寸校准 · 画布 1024×1536
    ======================================================== */
 
 :root {
@@ -174,7 +174,7 @@ html.zjh-in-iframe body.zjh-body {
   overflow: hidden;
 }
 
-/* ---------- ??????147�132?+ ?????103�63? ---------- */
+/* ---------- 下注区筹码（147×132）+ 功能按钮（103×63） ---------- */
 .zjh-shoe {
   position: absolute;
   left: 2.4%;
@@ -1607,19 +1607,76 @@ html.zjh-in-iframe body.zjh-body {
   }
 }
 
-/* ================= 右侧快捷竖排按钮 ================= */
-/* 挂在 stage 内：相对牌桌区域上下边垂直居中 */
+/* ================= 右侧快捷竖排（stage 层，不受牌桌 scale） ================= */
 .zjh-rail {
   position: absolute;
   right: calc(4px + env(safe-area-inset-right, 0px));
-  top: 50%;
+  /* 以三角顶边为锚：展开只往下长，收起三角不位移 */
+  top: calc(50% - 220px);
   bottom: auto;
-  transform: translateY(calc(-50% - 70px));
+  left: auto;
+  transform: none;
   z-index: 60;
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 6px;
   pointer-events: none;
+}
+.zjh-rail-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  max-height: 420px;
+  opacity: 1;
+  overflow: hidden;
+  transition: max-height 0.22s ease, opacity 0.18s ease, margin 0.18s ease;
+}
+.zjh-rail.is-rail-collapsed .zjh-rail-stack {
+  max-height: 0;
+  opacity: 0;
+  margin: 0;
+  pointer-events: none;
+}
+.zjh-rail-ladder {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  /* 比五个图标略小一圈 */
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1.5px solid rgba(244, 211, 107, 0.85);
+  border-radius: 50%;
+  background: linear-gradient(180deg, rgba(42, 34, 18, 0.92), rgba(18, 14, 10, 0.88));
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 2px 6px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 230, 150, 0.2);
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, filter 0.12s ease;
+}
+.zjh-rail-ladder:hover {
+  border-color: rgba(255, 224, 130, 0.95);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 0 10px rgba(244, 211, 107, 0.35),
+    0 2px 6px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 230, 150, 0.28);
+}
+.zjh-rail-ladder__arrow {
+  display: block;
+  font-size: 12px;
+  line-height: 1;
+  color: #f4d36b;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.65);
+  transform: translateY(0.5px);
+}
+.zjh-rail-ladder:active {
+  filter: brightness(1.12);
 }
 
 .zjh-rail-btn {
@@ -1667,7 +1724,9 @@ html.zjh-in-iframe body.zjh-body {
 }
 
 @media (max-height: 700px) {
-  .zjh-rail { gap: 5px; }
+  .zjh-rail { gap: 5px; top: calc(50% - 190px); }
+  .zjh-rail-ladder { width: 26px; height: 26px; }
+  .zjh-rail-ladder__arrow { font-size: 11px; }
   .zjh-rail-btn { width: 40px; height: auto; }
   .zjh-rail-ic { width: 34px; height: 34px; }
   .zjh-rail-lb { font-size: 8px; }

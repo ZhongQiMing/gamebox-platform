@@ -9,6 +9,8 @@ import {
 import { Request, Response } from 'express'
 import { getRequestId } from '../middleware/request-id.middleware'
 
+const GENERIC_5XX_MSG = '服务器内部错误'
+
 /** 统一失败响应信封：{ code, data:null, message } */
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
@@ -20,7 +22,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
     const req = ctx.getRequest<Request>()
 
     let status = HttpStatus.INTERNAL_SERVER_ERROR
-    let message: string | string[] = '服务器内部错误'
+    let message: string | string[] = GENERIC_5XX_MSG
 
     if (exception instanceof HttpException) {
       status = exception.getStatus()
@@ -50,10 +52,12 @@ export class HttpExceptionFilter implements ExceptionFilter {
       this.logger.warn(`[${requestId}] ${path} → ${status} ${msgText}`)
     }
 
+    /* 5xx 细节只进日志，不回给客户端，避免堆栈/SQL/内部路径外泄 */
+    const isProd = (process.env.NODE_ENV ?? 'development') === 'production'
     res.status(status).json({
       code: status * 100,
       data: null,
-      message: msgText,
+      message: isProd && status >= 500 ? GENERIC_5XX_MSG : msgText,
       requestId,
     })
   }

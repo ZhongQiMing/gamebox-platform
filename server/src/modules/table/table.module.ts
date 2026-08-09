@@ -20,7 +20,15 @@ import { ConsoleModule } from '../console/console.module';
       }),
     }),
   ],
-  providers: [TableGateway, TableService],
+  /*
+   * Socket.IO 网关默认不注册：产品主路径是 HTTP /api/table/*，
+   * 全仓库没有一处客户端连它，但它一注册就对外开着一个额外端口面。
+   * 需要内部推送/调试时才设 TABLE_WS_ENABLED=1，并且必须同时配 CORS_ORIGIN。
+   */
+  providers: [
+    ...(String(process.env.TABLE_WS_ENABLED || '') === '1' ? [TableGateway] : []),
+    TableService,
+  ],
   controllers: [TableController],
   exports: [TableService],
 })

@@ -1,12 +1,33 @@
 import {
-  BadRequestException, ForbiddenException, Injectable, NotFoundException,
+  BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException,
 } from '@nestjs/common';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import * as bcrypt from 'bcrypt';
-import { asMoney } from '@gamebox/shared';
+import { asMoney, roundMoney, validateOpsPassword } from '@gamebox/shared';
+import { PASSWORD_SALT_ROUNDS } from '../../common/security.constants';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AdminLogService } from '../admin/admin-log.service';
+import { HangService } from '../agents/hang.service';
 import { ConsoleScopeService, type ConsoleActor } from './console-scope.service';
+import {
+  normalizeSettleCycle,
+  settleCycleToWeekday,
+} from './room-settle.service';
+import {
+  computeCreditBook,
+  cashDiskFlyAvailable,
+  sumAgentCsBalances,
+  sumAgentCsBalancesMap,
+  sumRoomPlayerBalances,
+} from './credit-settle.helper';
+import { writeAgentQuotaInTx } from './player-fund.helper';
+import { rethrowUserUniqueConflict, throwUsernameTaken } from '../../common/utils/user-unique';
+import { normalizeRobotPlan } from '../rooms/robot-plan.util';
+import { pickAvatarUniqueInTx } from '../users/avatar-assign';
+import {
+  displayRoomIcon,
+  saveRoomIconFromDataUrl,
+} from './room-icon.util';
 
 function genRoomNo() {
   // 6 位数字进房码
@@ -41,10 +62,13 @@ function computeNextBillAt(from: Date, billingDay: number): Date {
 
 @Injectable()
 export class ConsoleRoomsService {
+  private readonly logger = new Logger(ConsoleRoomsService.name);
+
   constructor(
     private prisma: PrismaService,
     private adminLog: AdminLogService,
     private scope: ConsoleScopeService,
+    private hang: HangService,
   ) {}
 
   async list(actor: ConsoleActor, opts?: { includeClosed?: boolean }) {
@@ -82,50 +106,102 @@ export class ConsoleRoomsService {
       .filter((id): id is string => !!id);
     const balances = agentUserIds.length
       ? await this.prisma.pointsAccount.findMany({
-          where: { ownerId: { in: agentUserIds } },
+          where: { ownerId: { in: agentUserIds }, ownerType: 'AGENT', roomId: '' },
           select: { ownerId: true, balance: true },
         })
       : [];
     const balMap = new Map(balances.map((b) => [b.ownerId, asMoney(b.balance)]));
 
-    return rooms.map((r) => ({
-      id: r.id,
-      roomNo: r.roomNo,
-      name: r.name,
-      title: r.title,
-      status: r.status,
-      enabledGames: safeJsonArr(r.enabledGames),
-      memberCount: r._count.members,
-      monthlyFee: asMoney(r.monthlyFee),
-      billingDay: r.billingDay,
-      nextBillAt: r.nextBillAt,
-      lastBilledAt: r.lastBilledAt,
-      agent: r.ownerAgent
-        ? {
-            agentId: r.ownerAgent.id,
-            userId: r.ownerAgent.userId,
-            uid: r.ownerAgent.user.uid,
-            nickname: r.ownerAgent.user.nickname,
-            username: r.ownerAgent.user.username,
-            balance: balMap.get(r.ownerAgent.userId) ?? 0,
-            pointsQuota: asMoney(r.ownerAgent.pointsQuota),
-            pointsUsed: asMoney(r.ownerAgent.pointsUsed),
-            flyCover: asMoney(r.ownerAgent.flyCover),
-          }
-        : null,
-      owners: r.ownerGrants.map((g) => ({
-        userId: g.ownerId,
-        uid: g.owner.uid,
-        nickname: g.owner.nickname,
-      })),
-      createdAt: r.createdAt,
-    }));
+    const roomIds = rooms.map((r) => r.id);
+    const flyMembers = roomIds.length
+      ? await this.prisma.roomMember.findMany({
+          where: { roomId: { in: roomIds }, status: 'APPROVED' },
+          select: { roomId: true, flyEnabled: true },
+        })
+      : [];
+    const flyMap = new Map<string, { onCount: number; offCount: number; memberCount: number }>();
+    for (const m of flyMembers) {
+      const cur = flyMap.get(m.roomId) || { onCount: 0, offCount: 0, memberCount: 0 };
+      cur.memberCount += 1;
+      if (m.flyEnabled !== false) cur.onCount += 1;
+      else cur.offCount += 1;
+      flyMap.set(m.roomId, cur);
+    }
+
+    const csMap = await sumAgentCsBalancesMap(
+      this.prisma,
+      agentUserIds,
+    );
+
+    return rooms.map((r) => {
+      const fly = flyMap.get(r.id) || { onCount: 0, offCount: 0, memberCount: 0 };
+      const bookMode = r.bookMode === 'CREDIT' ? 'CREDIT' : 'CASH';
+      const bal = r.ownerAgent ? balMap.get(r.ownerAgent.userId) ?? 0 : 0;
+      const quota = r.ownerAgent ? asMoney(r.ownerAgent.pointsQuota) : 0;
+      const csBal = r.ownerAgent ? csMap.get(r.ownerAgent.userId) ?? 0 : 0;
+      /* 现金：上盘可飞 = 代理余额 + 客服未发出 */
+      const flyCover =
+        bookMode === 'CREDIT' ? 0 : roundMoney(Math.max(0, bal) + Math.max(0, csBal));
+      return {
+        id: r.id,
+        roomNo: r.roomNo,
+        name: r.name,
+        title: r.title,
+        icon: displayRoomIcon(r.icon),
+        status: r.status,
+        enabledGames: safeJsonArr(r.enabledGames),
+        memberCount: r._count.members,
+        monthlyFee: asMoney(r.monthlyFee),
+        billingDay: r.billingDay,
+        nextBillAt: r.nextBillAt,
+        lastBilledAt: r.lastBilledAt,
+        overIssueEnabled: false,
+        overIssueLimit: 0,
+        overIssueUsed: 0,
+        bookMode,
+        agentShareRate: Number(r.agentShareRate ?? 0),
+        creditLimit: asMoney(r.creditLimit),
+        settleCycle: normalizeSettleCycle(r.settleCycle),
+        settleWeekday: r.settleWeekday ?? 1,
+        fly: {
+          onCount: fly.onCount,
+          offCount: fly.offCount,
+          memberCount: fly.memberCount,
+          effective:
+            bookMode === 'CREDIT'
+              ? fly.onCount > 0
+              : flyCover > 0 && fly.onCount > 0,
+          flyCover,
+        },
+        agent: r.ownerAgent
+          ? {
+              agentId: r.ownerAgent.id,
+              userId: r.ownerAgent.userId,
+              uid: r.ownerAgent.user.uid,
+              nickname: r.ownerAgent.user.nickname,
+              username: r.ownerAgent.user.username,
+              balance: bal,
+              pointsQuota: quota,
+              diskPoolRemaining: roundMoney(Math.max(0, quota) + Math.max(0, csBal)),
+              csBalances: csBal,
+              pointsUsed: asMoney(r.ownerAgent.pointsUsed),
+              flyCover,
+            }
+          : null,
+        owners: r.ownerGrants.map((g) => ({
+          userId: g.ownerId,
+          uid: g.owner.uid,
+          nickname: g.owner.nickname,
+        })),
+        createdAt: r.createdAt,
+      };
+    });
   }
 
   /**
    * 创建房间 + 专属代理账号（一房一代理）。
    * - 超管：多选可见房主；未勾选的房主看不见本房
-   * - 房主创建：默认授权全部房主可见；超管始终可见全量
+   * - 房主创建：仅自己可见；超管始终可见全量；其他房主须管理员勾选「可见房主」
    */
   async create(
     actor: ConsoleActor,
@@ -142,10 +218,21 @@ export class ConsoleRoomsService {
       monthlyFee?: number;
       billingDay?: number;
       nextBillAt?: string;
+      /** CASH=A 现金盘 | CREDIT=B 信用盘 */
+      bookMode?: string;
+      /** 代理占成：传 0~1 或 0~100（>1 时按百分数）；0=代理不分成 */
+      agentShareRate?: number;
+      /** B 信用额度 */
+      creditLimit?: number;
+      /** A 超分：现金盘不设上限（忽略此字段）；B 忽略 */
+      overIssueLimit?: number;
+      settleCycle?: string;
+      /** 建房时可选：房间图标 data URL（JPG/PNG/WEBP） */
+      iconImage?: string;
     },
   ) {
     if (!this.scope.canCreateRoom(actor)) {
-      throw new ForbiddenException('仅超管/房主可创建房间');
+      throw new ForbiddenException('仅管理员/房主可创建房间');
     }
     if (!body.name?.trim()) throw new BadRequestException('房间名必填');
 
@@ -157,17 +244,42 @@ export class ConsoleRoomsService {
       : [];
     if (!games.length) throw new BadRequestException('请至少开通一个游戏');
     const robotCount = Math.min(50, Math.max(0, Number(body.robotCount ?? 10) || 0));
+    const bookMode = body.bookMode === 'CREDIT' ? 'CREDIT' : 'CASH';
     const monthlyFee = Math.max(0, Math.floor(Number(body.monthlyFee ?? 0) || 0));
     const billingDay = Math.min(28, Math.max(1, Number(body.billingDay ?? 1) || 1));
+    let agentShareRate = Number(body.agentShareRate);
+    if (!Number.isFinite(agentShareRate)) agentShareRate = 0;
+    if (agentShareRate > 1) agentShareRate = agentShareRate / 100;
+    if (agentShareRate < 0 || agentShareRate > 0.5) {
+      throw new BadRequestException('代理占成须在 0%～50%');
+    }
 
-    let username = (body.agentUsername || genAgentUsername(body.name)).toLowerCase().trim();
+    let creditLimit = 0;
+    let overIssueEnabled = false;
+    let overIssueLimit = 0;
+    if (bookMode === 'CREDIT') {
+      creditLimit = Math.max(0, Math.floor(Number(body.creditLimit ?? 0) || 0));
+      if (creditLimit <= 0) throw new BadRequestException('信用盘须设置信用额度（大于 0）');
+      overIssueEnabled = false;
+      overIssueLimit = 0;
+      // 信用盘月费进结账摊销，不走余额自动扣（下方 nextBillAt 置空）
+    } else {
+      /* A 现金：允许超分且不设上限（limit=0 表示不限） */
+      overIssueEnabled = true;
+      overIssueLimit = 0;
+    }
+    const settleCycle = normalizeSettleCycle(body.settleCycle);
+    const settleWeekday = settleCycleToWeekday(settleCycle);
+
+    const username = (body.agentUsername || genAgentUsername(body.name)).toLowerCase().trim();
     if (!/^[a-z0-9]{8,20}$/.test(username)) {
       throw new BadRequestException('代理用户名须 8-20 位小写字母数字');
     }
     const plainPassword = body.agentPassword?.trim() || genPassword();
-    if (plainPassword.length < 6) throw new BadRequestException('代理密码至少 6 位');
+    const agentPwdErr = validateOpsPassword(plainPassword, '代理密码');
+    if (agentPwdErr) throw new BadRequestException(agentPwdErr);
     const exists = await this.prisma.user.findUnique({ where: { username } });
-    if (exists) throw new BadRequestException('代理用户名已存在，请更换');
+    if (exists) throwUsernameTaken();
 
     const actorUser = await this.prisma.user.findUnique({ where: { id: actor.id } });
     if (!actorUser) throw new BadRequestException();
@@ -184,13 +296,8 @@ export class ConsoleRoomsService {
         grantOwnerIds = branches.map((b) => b.id);
       }
     } else if (actor.role === 'BRANCH') {
-      // 房主创建：全部房主可见（超管天然全量可见）
-      const allBranches = await this.prisma.user.findMany({
-        where: { role: 'BRANCH', status: 'ACTIVE' },
-        select: { id: true },
-      });
-      grantOwnerIds = allBranches.map((b) => b.id);
-      if (!grantOwnerIds.includes(actor.id)) grantOwnerIds.push(actor.id);
+      // 房主创建：仅自己可见；其他房主要进房须由管理员在「可见房主」里勾选
+      grantOwnerIds = [actor.id];
     }
 
     // 代理挂靠：超管创建时挂到第一个房主下（若有）；房主创建挂到自己
@@ -212,6 +319,7 @@ export class ConsoleRoomsService {
 
     const now = new Date();
     let nextBillAt: Date | null = null;
+    // 现金盘：排自动扣费日；信用盘：同样排「下次月费日」供结账判断（≤7天进本期），但不自动扣余额
     if (monthlyFee > 0) {
       nextBillAt = body.nextBillAt
         ? new Date(body.nextBillAt)
@@ -237,59 +345,87 @@ export class ConsoleRoomsService {
       }
     }
 
-    const passwordHash = await bcrypt.hash(plainPassword, 10);
-    const nickname = body.agentNickname?.trim() || `${body.name.trim()}代理`;
+    const passwordHash = await bcrypt.hash(plainPassword, PASSWORD_SALT_ROUNDS);
     const uid = await this.allocUid();
+    const nickname = body.agentNickname?.trim() || `代理${uid.slice(-4)}`;
 
-    const result = await this.prisma.$transaction(async (tx) => {
-      const agentUser = await tx.user.create({
-        data: {
-          username,
-          passwordHash,
-          uid,
-          nickname,
-          role: 'AGENT',
-          parentId,
-          agentPath,
-          depth,
-        },
-      });
-      const agent = await tx.agent.create({ data: { userId: agentUser.id } });
-      await tx.pointsAccount.create({
-        data: { ownerType: 'AGENT', ownerId: agentUser.id, balance: 0 },
-      });
-
-      const room = await tx.room.create({
-        data: {
-          roomNo,
-          name: body.name.trim(),
-          ownerAgentId: agent.id,
-          status,
-          enabledGames: JSON.stringify(games),
-          monthlyFee,
-          billingDay,
-          nextBillAt,
-        },
-      });
-
-      await tx.roomGameConfig.createMany({
-        data: games.map((gameCode) => ({
-          roomId: room.id,
-          gameCode,
-          enabled: true,
-          robotCount,
-        })),
-      });
-
-      if (grantOwnerIds.length) {
-        await tx.roomOwnerGrant.createMany({
-          data: grantOwnerIds.map((ownerId) => ({ roomId: room.id, ownerId })),
-          skipDuplicates: true,
+    let result: { room: { id: string; roomNo: string; name: string; status: string }; agentUser: { id: string; username: string; uid: string; nickname: string } };
+    try {
+      result = await this.prisma.$transaction(async (tx) => {
+        const avatar = await pickAvatarUniqueInTx(tx);
+        const agentUser = await tx.user.create({
+          data: {
+            username,
+            passwordHash,
+            uid,
+            nickname,
+            avatar,
+            role: 'AGENT',
+            parentId,
+            agentPath,
+            depth,
+          },
         });
-      }
+        const agent = await tx.agent.create({ data: { userId: agentUser.id } });
+        // B：信用额度写入上盘额度库存；A：从 0 起，后续买入额度
+        if (bookMode === 'CREDIT' && creditLimit > 0) {
+          await writeAgentQuotaInTx(tx, {
+            agentUserId: agentUser.id,
+            bookMode: 'CREDIT',
+            delta: creditLimit,
+            bizType: 'OPEN',
+            remark: `建号期初信用额度 ${creditLimit}`,
+            refType: 'agent_open',
+            refId: agentUser.id,
+            idempotencyKey: `agent_open:${agentUser.id}`,
+          });
+        }
+        await tx.pointsAccount.create({
+          data: { ownerType: 'AGENT', ownerId: agentUser.id, roomId: '', balance: 0 },
+        });
 
-      return { room, agentUser };
-    });
+        const room = await tx.room.create({
+          data: {
+            roomNo,
+            name: body.name.trim(),
+            ownerAgentId: agent.id,
+            status,
+            enabledGames: JSON.stringify(games),
+            monthlyFee,
+            billingDay,
+            nextBillAt,
+            overIssueEnabled,
+            overIssueLimit,
+            overIssueUsed: 0,
+            bookMode,
+            agentShareRate,
+            creditLimit,
+            settleCycle,
+            settleWeekday,
+          },
+        });
+
+        await tx.roomGameConfig.createMany({
+          data: games.map((gameCode) => ({
+            roomId: room.id,
+            gameCode,
+            enabled: true,
+            robotCount,
+          })),
+        });
+
+        if (grantOwnerIds.length) {
+          await tx.roomOwnerGrant.createMany({
+            data: grantOwnerIds.map((ownerId) => ({ roomId: room.id, ownerId })),
+            skipDuplicates: true,
+          });
+        }
+
+        return { room, agentUser };
+      });
+    } catch (e: unknown) {
+      rethrowUserUniqueConflict(e);
+    }
 
     await this.adminLog.log(actor.id, 'ROOM_CREATE', result.room.id, {
       roomNo,
@@ -302,16 +438,41 @@ export class ConsoleRoomsService {
       billingDay,
       nextBillAt,
       grantOwnerIds,
+      bookMode,
+      agentShareRate,
+      creditLimit,
+      overIssueEnabled,
+      overIssueLimit,
+      settleCycle,
+      settleWeekday,
     });
+
+    let iconPath: string | null = null;
+    if (body.iconImage) {
+      iconPath = await saveRoomIconFromDataUrl(result.room.id, body.iconImage);
+      await this.prisma.room.update({
+        where: { id: result.room.id },
+        data: { icon: iconPath },
+      });
+    }
 
     return {
       id: result.room.id,
       roomNo: result.room.roomNo,
       name: result.room.name,
+      icon: displayRoomIcon(iconPath),
       status: result.room.status,
       monthlyFee,
       billingDay,
       nextBillAt,
+      bookMode,
+      agentShareRate,
+      creditLimit,
+      settleCycle,
+      settleWeekday,
+      overIssueEnabled,
+      overIssueLimit,
+      overIssueUsed: 0,
       agent: {
         id: result.agentUser.id,
         uid: result.agentUser.uid,
@@ -335,7 +496,7 @@ export class ConsoleRoomsService {
    * 一房一代理、创建时绑定，禁止换绑。
    * 保留接口仅返回明确错误，避免旧客户端误用。
    */
-  async bindAgent(_actor: ConsoleActor, _roomId: string, _agentUserId: string) {
+  bindAgent(_actor: ConsoleActor, _roomId: string, _agentUserId: string): never {
     throw new ForbiddenException('房间代理不可更换，仅可在创建房间时生成专属账号');
   }
 
@@ -346,7 +507,7 @@ export class ConsoleRoomsService {
     body?: { password?: string },
   ) {
     if (actor.role !== 'ADMIN' && actor.role !== 'BRANCH') {
-      throw new ForbiddenException('仅超管/房主可重置代理密码');
+      throw new ForbiddenException('仅管理员/房主可重置代理密码');
     }
     await this.scope.assertRoomAccess(actor, roomId);
     const room = await this.prisma.room.findUnique({
@@ -360,14 +521,18 @@ export class ConsoleRoomsService {
     if (!room) throw new NotFoundException('房间不存在');
     const agentUser = room.ownerAgent?.user;
     if (!agentUser) throw new BadRequestException('该房间尚未绑定代理账号');
+    if (agentUser.role === 'ADMIN') {
+      throw new ForbiddenException('不能重置管理员密码（忘记只能改数据库）');
+    }
     if (agentUser.role !== 'AGENT' && agentUser.role !== 'PROXY') {
       throw new BadRequestException('绑定账号不是代理');
     }
 
     const plainPassword = body?.password?.trim() || genPassword();
-    if (plainPassword.length < 6) throw new BadRequestException('密码至少 6 位');
+    const resetPwdErr = validateOpsPassword(plainPassword);
+    if (resetPwdErr) throw new BadRequestException(resetPwdErr);
 
-    const passwordHash = await bcrypt.hash(plainPassword, 10);
+    const passwordHash = await bcrypt.hash(plainPassword, PASSWORD_SALT_ROUNDS);
     await this.prisma.user.update({
       where: { id: agentUser.id },
       data: {
@@ -388,7 +553,7 @@ export class ConsoleRoomsService {
   }
 
   async grantOwner(actor: ConsoleActor, roomId: string, ownerUserId: string) {
-    if (actor.role !== 'ADMIN') throw new ForbiddenException('仅超管可授权房主可见');
+    if (actor.role !== 'ADMIN') throw new ForbiddenException('仅管理员可授权房主可见');
     const owner = await this.prisma.user.findUnique({ where: { id: ownerUserId } });
     if (!owner || owner.role !== 'BRANCH') throw new BadRequestException('目标必须是房主(BRANCH)');
     const room = await this.prisma.room.findUnique({ where: { id: roomId } });
@@ -407,6 +572,18 @@ export class ConsoleRoomsService {
     await this.prisma.roomOwnerGrant.deleteMany({ where: { roomId, ownerId: ownerUserId } });
     await this.adminLog.log(actor.id, 'ROOM_REVOKE_OWNER', roomId, { ownerUserId });
     return { ok: true };
+  }
+
+  /** 上传/更换房间图标（管理/房主/本房代理）；禁止外链 */
+  async updateIcon(actor: ConsoleActor, roomId: string, dataUrl: string) {
+    if (!['ADMIN', 'BRANCH', 'AGENT'].includes(actor.role)) {
+      throw new ForbiddenException('无权修改房间图标');
+    }
+    await this.scope.assertRoomAccess(actor, roomId);
+    const icon = await saveRoomIconFromDataUrl(roomId, dataUrl);
+    await this.prisma.room.update({ where: { id: roomId }, data: { icon } });
+    await this.adminLog.log(actor.id, 'ROOM_ICON', roomId, { icon });
+    return { icon: displayRoomIcon(icon) };
   }
 
   async setStatus(actor: ConsoleActor, roomId: string, status: string) {
@@ -429,7 +606,7 @@ export class ConsoleRoomsService {
     body: { monthlyFee?: number; billingDay?: number; nextBillAt?: string | null },
   ) {
     if (actor.role !== 'ADMIN' && actor.role !== 'BRANCH') {
-      throw new ForbiddenException('仅超管/房主可调整月费');
+      throw new ForbiddenException('仅管理员/房主可调整月费');
     }
     await this.scope.assertRoomAccess(actor, roomId);
     const room = await this.prisma.room.findUnique({ where: { id: roomId } });
@@ -460,8 +637,8 @@ export class ConsoleRoomsService {
     const nextFee = data.monthlyFee ?? asMoney(room.monthlyFee);
     const nextDay = data.billingDay ?? room.billingDay;
 
-    // 从不收费改为收费，且未指定下次扣费日 → 默认下月同日 0 点
     if (nextFee > 0) {
+      // 现金/信用都排下次月费日；信用盘只用于结账归属，billing 扫描仍跳过 CREDIT
       const willHaveNext =
         data.nextBillAt !== undefined ? data.nextBillAt : room.nextBillAt;
       if (!willHaveNext) {
@@ -496,13 +673,12 @@ export class ConsoleRoomsService {
   }
 
   /**
-   * 删除房间：
-   * - 无成员、无局记录 → 物理删除
-   * - 已有业务数据 → 改为 CLOSED（软删除，列表默认隐藏）
+   * 删除房间 = 关闭（CLOSED），数据保留。
+   * 列表默认隐藏，勾选「显示已关闭」可查看；不做物理删除。
    */
   async remove(actor: ConsoleActor, roomId: string) {
     if (actor.role !== 'ADMIN') {
-      throw new ForbiddenException('仅超管可删除房间');
+      throw new ForbiddenException('仅管理员可删除房间');
     }
     await this.scope.assertRoomAccess(actor, roomId);
     const room = await this.prisma.room.findUnique({
@@ -511,63 +687,101 @@ export class ConsoleRoomsService {
         _count: { select: { members: true, gameRounds: true } },
       },
     });
-    if (!room) throw new NotFoundException('房间不存在');
-
-    const hasBiz = room._count.members > 0 || room._count.gameRounds > 0;
-    if (hasBiz) {
-      await this.prisma.room.update({ where: { id: roomId }, data: { status: 'CLOSED' } });
-      await this.adminLog.log(actor.id, 'ROOM_SOFT_DELETE', roomId, {
-        members: room._count.members,
-        gameRounds: room._count.gameRounds,
-      });
+    if (!room) {
+      return { ok: true, mode: 'gone' as const, message: '房间已不存在' };
+    }
+    if (room.status === 'CLOSED') {
       return {
         ok: true,
         mode: 'closed' as const,
-        message: '房间已有成员或对局记录，已关闭并从列表隐藏（数据保留）',
+        message: '房间已是关闭状态。勾选「显示已关闭」可查看',
       };
     }
-
-    await this.prisma.$transaction(async (tx) => {
-      await tx.roomGameConfig.deleteMany({ where: { roomId } });
-      await tx.roomOwnerGrant.deleteMany({ where: { roomId } });
-      await tx.roomChatMessage.deleteMany({ where: { roomId } });
-      await tx.controlPolicy.deleteMany({ where: { roomId } });
-      await tx.pointsAccount.deleteMany({ where: { ownerType: 'ROOM', ownerId: roomId } });
-      await tx.room.delete({ where: { id: roomId } });
+    await this.prisma.room.update({ where: { id: roomId }, data: { status: 'CLOSED' } });
+    await this.adminLog.log(actor.id, 'ROOM_SOFT_DELETE', roomId, {
+      name: room.name,
+      roomNo: room.roomNo,
+      members: room._count.members,
+      gameRounds: room._count.gameRounds,
     });
-    await this.adminLog.log(actor.id, 'ROOM_DELETE', roomId, { name: room.name, roomNo: room.roomNo });
-    return { ok: true, mode: 'deleted' as const, message: '房间已删除' };
+    return {
+      ok: true,
+      mode: 'closed' as const,
+      message: '房间已关闭。勾选「显示已关闭」可查看',
+    };
   }
 
-  async rotateCode(actor: ConsoleActor, roomId: string) {
-    if (actor.role === 'AGENT') throw new ForbiddenException();
-    await this.scope.assertRoomAccess(actor, roomId);
-    let roomNo = genRoomNo();
-    for (let i = 0; i < 8; i++) {
-      if (!(await this.prisma.room.findUnique({ where: { roomNo } }))) break;
-      roomNo = genRoomNo();
-    }
-    const room = await this.prisma.room.update({ where: { id: roomId }, data: { roomNo } });
-    await this.adminLog.log(actor.id, 'ROOM_ROTATE_CODE', roomId, { roomNo });
-    return room;
-  }
+  // 进房码仅创建时可设，创建后不可换——换码逻辑停用
+  // async rotateCode(actor: ConsoleActor, roomId: string) {
+  //   if (actor.role === 'AGENT') throw new ForbiddenException();
+  //   await this.scope.assertRoomAccess(actor, roomId);
+  //   let roomNo = genRoomNo();
+  //   for (let i = 0; i < 8; i++) {
+  //     if (!(await this.prisma.room.findUnique({ where: { roomNo } }))) break;
+  //     roomNo = genRoomNo();
+  //   }
+  //   const room = await this.prisma.room.update({ where: { id: roomId }, data: { roomNo } });
+  //   await this.adminLog.log(actor.id, 'ROOM_ROTATE_CODE', roomId, { roomNo });
+  //   return room;
+  // }
 
   async getGameConfigs(actor: ConsoleActor, roomId: string) {
     await this.scope.assertRoomAccess(actor, roomId);
     return this.prisma.roomGameConfig.findMany({ where: { roomId }, orderBy: { gameCode: 'asc' } });
   }
 
+  /**
+   * 代理/子账号以本房成员身份进桌（信用盘手机「游戏大厅」）。
+   * 直接 APPROVED，不走玩家进房审核。
+   */
+  async playEnter(actor: ConsoleActor, roomId: string) {
+    if (!['AGENT', 'PROXY', 'ADMIN', 'BRANCH'].includes(actor.role)) {
+      throw new ForbiddenException('无权进入游戏大厅');
+    }
+    await this.scope.assertRoomAccess(actor, roomId);
+    const room = await this.prisma.room.findUnique({
+      where: { id: roomId },
+      select: { id: true, roomNo: true, name: true, icon: true, status: true },
+    });
+    if (!room) throw new NotFoundException('房间不存在');
+    if (room.status !== 'OPEN') throw new BadRequestException('该房间已关闭');
+
+    await this.prisma.roomMember.upsert({
+      where: { playerId_roomId: { playerId: actor.id, roomId: room.id } },
+      create: { playerId: actor.id, roomId: room.id, status: 'APPROVED' },
+      update: { status: 'APPROVED' },
+    });
+
+    return {
+      roomNo: room.roomNo,
+      name: room.name,
+      icon: displayRoomIcon(room.icon),
+      memberStatus: 'APPROVED' as const,
+      roomId: room.id,
+    };
+  }
+
   async upsertGameConfig(
     actor: ConsoleActor,
     roomId: string,
     gameCode: string,
-    data: { enabled?: boolean; robotCount?: number; rebateRate?: number | null },
+    data: {
+      enabled?: boolean
+      robotCount?: number
+      rebateRate?: number | null
+      robotPlan?: unknown
+    },
   ) {
     await this.scope.assertRoomAccess(actor, roomId);
     if (data.robotCount != null) {
       const n = Math.floor(Number(data.robotCount));
       if (n < 0 || n > 50) throw new BadRequestException('机器人数量 0~50');
       data.robotCount = n;
+    }
+    let robotPlanNorm: ReturnType<typeof normalizeRobotPlan> | undefined;
+    if (data.robotPlan !== undefined) {
+      robotPlanNorm = normalizeRobotPlan(data.robotPlan, data.robotCount);
+      data.robotCount = robotPlanNorm.robotCount;
     }
     if (data.rebateRate !== undefined && data.rebateRate != null) {
       const policy = await this.prisma.rebatePolicy.findUnique({ where: { id: 1 } });
@@ -589,6 +803,7 @@ export class ConsoleRoomsService {
           ...(data.enabled != null ? { enabled: data.enabled } : {}),
           ...(data.robotCount != null ? { robotCount: data.robotCount } : {}),
           ...(data.rebateRate !== undefined ? { rebateRate: data.rebateRate } : {}),
+          ...(robotPlanNorm ? { robotPlan: robotPlanNorm } : {}),
         },
         create: {
           roomId,
@@ -596,6 +811,7 @@ export class ConsoleRoomsService {
           enabled: data.enabled ?? true,
           robotCount: data.robotCount ?? 10,
           rebateRate: data.rebateRate ?? null,
+          robotPlan: robotPlanNorm ?? undefined,
         },
       });
       // 与大厅开通列表对齐
@@ -657,35 +873,103 @@ export class ConsoleRoomsService {
 
     let agentBalance: number | null = null;
     if (room.ownerAgent?.userId) {
-      const acc = await this.prisma.pointsAccount.findUnique({
-        where: { ownerId: room.ownerAgent.userId },
+      const acc = await this.prisma.pointsAccount.findFirst({
+        where: { ownerType: 'AGENT', ownerId: room.ownerAgent.userId, roomId: '' },
       });
       agentBalance = asMoney(acc?.balance ?? 0);
     }
 
+    // 本房玩家当前积分合计 + 飞盘开/关人数
+    const members = await this.prisma.roomMember.findMany({
+      where: { roomId, status: 'APPROVED' },
+      select: { playerId: true, flyEnabled: true },
+    });
+    const memberPlayerIds = members.map((m) => m.playerId);
+    let playerPointsTotal = 0;
+    if (memberPlayerIds.length) {
+      const playerAccs = await this.prisma.pointsAccount.findMany({
+        where: {
+          ownerId: { in: memberPlayerIds },
+          ownerType: 'PLAYER',
+          roomId,
+        },
+        select: { balance: true },
+      });
+      for (const a of playerAccs) playerPointsTotal += asMoney(a.balance);
+    }
+    const flyOnCount = members.filter((m) => m.flyEnabled !== false).length;
+    const flyOffCount = members.length - flyOnCount;
+
     const enabledGames = safeJsonArr(room.enabledGames);
+    const bookMode = room.bookMode === 'CREDIT' ? 'CREDIT' : 'CASH';
+    const creditLimit = asMoney(room.creditLimit);
+    const pointsQuota = room.ownerAgent ? asMoney(room.ownerAgent.pointsQuota) : 0;
+    const csBalances = room.ownerAgent?.userId
+      ? await sumAgentCsBalances(this.prisma, room.ownerAgent.userId)
+      : 0;
+    const flyCover =
+      bookMode === 'CREDIT'
+        ? 0
+        : await cashDiskFlyAvailable(this.prisma, room.ownerAgent?.userId);
+    const creditBook =
+      bookMode === 'CREDIT' && creditLimit > 0
+        ? computeCreditBook({
+            creditLimit,
+            pointsQuota,
+            playerBalances: asMoney(playerPointsTotal),
+            csBalances,
+            agentShareRate: Number(room.agentShareRate ?? 0),
+          })
+        : null;
     return {
       id: room.id,
       roomNo: room.roomNo,
       name: room.name,
       title: room.title,
+      icon: displayRoomIcon(room.icon),
       status: room.status,
       enabledGames,
       monthlyFee: asMoney(room.monthlyFee),
       billingDay: room.billingDay,
       nextBillAt: room.nextBillAt,
       lastBilledAt: room.lastBilledAt,
+      overIssueEnabled: false,
+      overIssueLimit: 0,
+      overIssueUsed: 0,
+      bookMode,
+      agentShareRate: Number(room.agentShareRate ?? 0),
+      creditLimit,
+      settleCycle: normalizeSettleCycle(room.settleCycle),
+      settleWeekday: room.settleWeekday ?? 1,
       createdAt: room.createdAt,
       updatedAt: room.updatedAt,
       memberCount: room._count.members,
       roundCount: room._count.gameRounds,
       gameConfigs: room.gameConfigs,
+      playerPointsTotal: asMoney(playerPointsTotal),
+      creditBook,
+      fly: {
+        onCount: flyOnCount,
+        offCount: flyOffCount,
+        memberCount: members.length,
+        /** 现金盘：上盘额度>0 且有人开飞盘；信用盘：有人开飞盘即走平台 */
+        effective:
+          bookMode === 'CREDIT'
+            ? flyOnCount > 0
+            : flyCover > 0 && flyOnCount > 0,
+        flyCover,
+      },
       ownerAgent: room.ownerAgent
         ? {
             agentId: room.ownerAgent.id,
             userId: room.ownerAgent.userId,
-            flyCover: asMoney(room.ownerAgent.flyCover),
+            flyCover,
             pointsQuota: asMoney(room.ownerAgent.pointsQuota),
+            /** 上盘池：代理桌额度/剩余信用 + 客服未发出 */
+            diskPoolRemaining: roundMoney(
+              Math.max(0, asMoney(room.ownerAgent.pointsQuota)) + Math.max(0, csBalances),
+            ),
+            csBalances,
             pointsUsed: asMoney(room.ownerAgent.pointsUsed),
             rebateRate: room.ownerAgent.rebateRate,
             balance: agentBalance,
@@ -695,6 +979,295 @@ export class ConsoleRoomsService {
       ownerGrants: room.ownerGrants,
       _count: room._count,
     };
+  }
+
+  /**
+   * 信用盘调整代理额度：合同额度与剩余信用同步加减（永久）。
+   * direction=up 增加；down 减少（不得少于已发出的玩家+客服，且剩余信用够扣）。
+   */
+  async bumpCreditLimitByAmount(
+    actor: ConsoleActor,
+    roomId: string,
+    amountRaw: number,
+    remark?: string,
+    directionRaw?: string,
+  ) {
+    if (actor.role !== 'ADMIN' && actor.role !== 'BRANCH') {
+      throw new ForbiddenException('仅管理员/房主可调整合同额度');
+    }
+    await this.scope.assertRoomAccess(actor, roomId);
+    const amount = roundMoney(Number(amountRaw) || 0);
+    if (amount <= 0) throw new BadRequestException('调整金额须大于 0');
+    if (amount > 50_000_000) throw new BadRequestException('单次调整过大');
+    const direction = directionRaw === 'down' ? 'down' : 'up';
+    const delta = direction === 'down' ? -amount : amount;
+
+    const room = await this.prisma.room.findUnique({
+      where: { id: roomId },
+      select: {
+        id: true,
+        bookMode: true,
+        creditLimit: true,
+        ownerAgent: { select: { id: true, userId: true, pointsQuota: true } },
+      },
+    });
+    if (!room) throw new NotFoundException('房间不存在');
+    if (room.bookMode !== 'CREDIT') {
+      throw new BadRequestException('仅信用盘可调整合同额度');
+    }
+    if (!room.ownerAgent) throw new BadRequestException('房间未绑定代理');
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`
+        SELECT id FROM "Agent" WHERE "id" = ${room.ownerAgent!.id} FOR UPDATE
+      `;
+      await tx.$queryRaw`SELECT id FROM "Room" WHERE "id" = ${roomId} FOR UPDATE`;
+
+      const locked = await tx.room.findUnique({
+        where: { id: roomId },
+        select: {
+          creditLimit: true,
+          ownerAgent: { select: { id: true, userId: true, pointsQuota: true } },
+        },
+      });
+      if (!locked?.ownerAgent) throw new BadRequestException('房间未绑定代理');
+
+      const [playerBalances, csBalances] = await Promise.all([
+        sumRoomPlayerBalances(tx, roomId),
+        sumAgentCsBalances(tx, locked.ownerAgent.userId),
+      ]);
+      const issued = roundMoney(playerBalances + csBalances);
+      const before = asMoney(locked.creditLimit);
+      const quotaBefore = asMoney(locked.ownerAgent.pointsQuota);
+      const after = roundMoney(before + delta);
+      const quotaAfter = roundMoney(quotaBefore + delta);
+
+      if (direction === 'down') {
+        if (quotaBefore + 1e-9 < amount) {
+          throw new BadRequestException(
+            `剩余信用不足，最多可减 ${Math.max(0, quotaBefore)}（已发出的不能从这里扣）`,
+          );
+        }
+        if (after + 1e-9 < issued) {
+          throw new BadRequestException(
+            `合同额度不能低于已发出部分（玩家 ${playerBalances} + 客服 ${csBalances} = ${issued}）`,
+          );
+        }
+        if (after <= 0) {
+          throw new BadRequestException('合同额度须大于 0');
+        }
+      }
+
+      await tx.room.update({
+        where: { id: roomId },
+        data: { creditLimit: after },
+      });
+      /* 该接口没有前端订单号，每次调用都是一次独立事件，随机键只为占住流水唯一约束 */
+      await writeAgentQuotaInTx(tx, {
+        agentUserId: locked.ownerAgent.userId,
+        bookMode: 'CREDIT',
+        quotaTo: quotaAfter,
+        bizType: 'ADJUST',
+        remark: `合同额度 ${before}→${after}${remark?.trim() ? `｜${remark.trim()}` : ''}`,
+        refType: 'room_credit_limit',
+        refId: roomId,
+        idempotencyKey: `credit_limit_bump:${roomId}:${randomUUID()}`,
+      });
+      return {
+        before,
+        after,
+        quotaBefore,
+        quotaAfter,
+        issued,
+        playerBalances,
+        csBalances,
+      };
+    });
+
+    const { before, after, quotaBefore, quotaAfter, playerBalances, csBalances } = result;
+
+    const book = computeCreditBook({
+      creditLimit: after,
+      pointsQuota: quotaAfter,
+      playerBalances,
+      csBalances,
+      agentShareRate: 0,
+    });
+
+    const sign = direction === 'down' ? '-' : '+';
+    await this.adminLog.log(actor.id, 'ROOM_CREDIT_LIMIT_BUMP', roomId, {
+      before,
+      amount: delta,
+      direction,
+      after,
+      quotaBefore,
+      quotaAfter,
+      remark: remark?.trim() || null,
+      excessAfter: book.excess,
+    });
+
+    return {
+      ok: true,
+      creditLimitBefore: before,
+      bumped: delta,
+      direction,
+      creditLimit: after,
+      pointsQuotaBefore: quotaBefore,
+      pointsQuota: quotaAfter,
+      excessAfter: book.excess,
+      message: `合同与剩余信用各 ${sign}${amount}：合同 ${before}→${after}，剩余 ${quotaBefore}→${quotaAfter}`,
+    };
+  }
+
+  /** 整房飞盘/关盘：仅本房主代理可改（信用盘也可开关） */
+  async setRoomFly(actor: ConsoleActor, roomId: string, flyEnabled: boolean) {
+    if (actor.role !== 'AGENT') {
+      throw new ForbiddenException('仅房间主代理可调整整房飞盘');
+    }
+    await this.scope.assertRoomAccess(actor, roomId);
+    const room = await this.prisma.room.findUnique({
+      where: { id: roomId },
+      select: { id: true, bookMode: true, ownerAgent: { select: { userId: true } } },
+    });
+    if (!room) throw new NotFoundException('房间不存在');
+    if (room.ownerAgent?.userId !== actor.id) {
+      throw new ForbiddenException('只能调整自己房间的飞盘');
+    }
+
+    const updated = await this.prisma.roomMember.updateMany({
+      where: { roomId, status: 'APPROVED' },
+      data: { flyEnabled },
+    });
+    await this.adminLog.log(actor.id, 'ROOM_FLY', roomId, {
+      flyEnabled,
+      updated: updated.count,
+    });
+    return {
+      ok: true,
+      flyEnabled,
+      updated: updated.count,
+      message: flyEnabled
+        ? `已整房开启飞盘（${updated.count} 名玩家）`
+        : `已整房关闭飞盘（${updated.count} 名玩家）`,
+    };
+  }
+
+  /** 待审进房申请（代理团队房间） */
+  async listPendingMembers(actor: ConsoleActor) {
+    if (!['AGENT', 'PROXY', 'ADMIN', 'BRANCH'].includes(actor.role)) {
+      throw new ForbiddenException('无权查看进房审核');
+    }
+    const roomIds = await this.scope.grantedRoomIds(actor);
+    if (roomIds !== null && !roomIds.length) {
+      return { total: 0, list: [] as const };
+    }
+    const where = {
+      status: 'PENDING',
+      ...(roomIds === null ? {} : { roomId: { in: roomIds } }),
+    };
+    const list = await this.prisma.roomMember.findMany({
+      where,
+      orderBy: { updatedAt: 'asc' },
+      include: {
+        player: { select: { id: true, uid: true, nickname: true, username: true } },
+        room: { select: { id: true, roomNo: true, name: true } },
+      },
+    });
+    return {
+      total: list.length,
+      list: list.map((m) => ({
+        id: m.id,
+        playerId: m.playerId,
+        roomId: m.roomId,
+        status: m.status,
+        createdAt: m.createdAt.toISOString(),
+        updatedAt: m.updatedAt.toISOString(),
+        player: m.player,
+        room: m.room,
+      })),
+    };
+  }
+
+  async approveMember(actor: ConsoleActor, memberId: string) {
+    if (!['AGENT', 'ADMIN', 'BRANCH'].includes(actor.role)) {
+      throw new ForbiddenException('无权审核进房（子账号只读）');
+    }
+    const member = await this.prisma.roomMember.findUnique({
+      where: { id: memberId },
+      include: {
+        room: {
+          select: {
+            id: true,
+            roomNo: true,
+            name: true,
+            ownerAgent: {
+              select: { userId: true, user: { select: { id: true, uid: true, role: true } } },
+            },
+          },
+        },
+        player: { select: { id: true, uid: true, nickname: true } },
+      },
+    });
+    if (!member) throw new NotFoundException('申请不存在');
+    await this.scope.assertRoomAccess(actor, member.roomId);
+    if (member.status === 'APPROVED') return { ok: true as const, status: 'APPROVED' };
+    if (member.status !== 'PENDING') {
+      throw new BadRequestException('该申请不可通过');
+    }
+
+    await this.prisma.roomMember.update({
+      where: { id: memberId },
+      data: { status: 'APPROVED' },
+    });
+
+    const agentUser = member.room.ownerAgent?.user;
+    if (agentUser?.role === 'AGENT') {
+      try {
+        await this.hang.ensureDefaultHangToRoomAgent(
+          member.roomId,
+          member.playerId,
+          agentUser.id,
+        );
+      } catch (e: unknown) {
+        this.logger.warn(
+          `approve hang room=${member.roomId} player=${member.playerId}: ${(e as Error).message}`,
+        );
+      }
+    }
+
+    await this.adminLog.log(actor.id, 'ROOM_JOIN_APPROVE', member.playerId, {
+      memberId,
+      roomId: member.roomId,
+      roomNo: member.room.roomNo,
+    });
+    return { ok: true as const, status: 'APPROVED' };
+  }
+
+  async rejectMember(actor: ConsoleActor, memberId: string) {
+    if (!['AGENT', 'ADMIN', 'BRANCH'].includes(actor.role)) {
+      throw new ForbiddenException('无权审核进房（子账号只读）');
+    }
+    const member = await this.prisma.roomMember.findUnique({
+      where: { id: memberId },
+      include: { room: { select: { roomNo: true } } },
+    });
+    if (!member) throw new NotFoundException('申请不存在');
+    await this.scope.assertRoomAccess(actor, member.roomId);
+    if (member.status === 'REJECTED') return { ok: true as const, status: 'REJECTED' };
+    if (member.status !== 'PENDING') {
+      throw new BadRequestException('该申请不可拒绝');
+    }
+
+    await this.prisma.roomMember.update({
+      where: { id: memberId },
+      data: { status: 'REJECTED' },
+    });
+    await this.adminLog.log(actor.id, 'ROOM_JOIN_REJECT', member.playerId, {
+      memberId,
+      roomId: member.roomId,
+      roomNo: member.room.roomNo,
+    });
+    return { ok: true as const, status: 'REJECTED' };
   }
 }
 

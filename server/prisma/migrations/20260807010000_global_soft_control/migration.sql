@@ -1,0 +1,23 @@
+-- 全站全局软控配置（单行）
+CREATE TABLE IF NOT EXISTS "GlobalSoftControl" (
+    "id" INTEGER NOT NULL DEFAULT 1,
+    "enabled" BOOLEAN NOT NULL DEFAULT false,
+    "windowHours" INTEGER NOT NULL DEFAULT 48,
+    "targetHoldPct" DOUBLE PRECISION NOT NULL DEFAULT 10,
+    "tier1MinPct" DOUBLE PRECISION NOT NULL DEFAULT -1,
+    "tier1MaxPct" DOUBLE PRECISION NOT NULL DEFAULT 10,
+    "tier2EnterLossPct" DOUBLE PRECISION NOT NULL DEFAULT -3,
+    "tier2EnterWinPct" DOUBLE PRECISION NOT NULL DEFAULT 12,
+    "tier3EnterLossPct" DOUBLE PRECISION NOT NULL DEFAULT -8,
+    "candidateTries" INTEGER NOT NULL DEFAULT 10,
+    "candidateTriesBoost" INTEGER NOT NULL DEFAULT 20,
+    "playerBrakeEnabled" BOOLEAN NOT NULL DEFAULT true,
+    "playerBrakeMultiple" DOUBLE PRECISION NOT NULL DEFAULT 4,
+    "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "GlobalSoftControl_pkey" PRIMARY KEY ("id")
+);
+
+INSERT INTO "GlobalSoftControl" ("id", "updatedAt")
+VALUES (1, CURRENT_TIMESTAMP)
+ON CONFLICT ("id") DO NOTHING;

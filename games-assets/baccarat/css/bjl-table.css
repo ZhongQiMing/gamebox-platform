@@ -1202,7 +1202,7 @@ html.bjl-in-iframe body.bjl-body {
   left: 94.6%;
   top: 11.4%;
   width: 11.4%;
-  z-index: 28;
+  z-index: 60;
   transform: translate(-50%, -50%);
   pointer-events: none;
   user-select: none;
@@ -1373,17 +1373,76 @@ html.bjl-in-iframe body.bjl-body {
 /* ===== right rail + sheet ===== */
 /* 挂在 stage 内：相对牌桌区域上下边垂直居中 */
 
+/* 快捷竖排：挂在假人图标正下方 */
 .bjl-rail {
   position: absolute;
   right: calc(4px + env(safe-area-inset-right, 0px));
-  top: 50%;
+  /* 以三角顶边为锚：展开只往下长，收起三角不位移 */
+  top: calc(50% - 220px);
   bottom: auto;
-  transform: translateY(calc(-50% - 70px));
+  left: auto;
+  transform: none;
   z-index: 60;
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 6px;
   pointer-events: none;
+}
+.bjl-rail-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  max-height: 420px;
+  opacity: 1;
+  overflow: hidden;
+  transition: max-height 0.22s ease, opacity 0.18s ease, margin 0.18s ease;
+}
+.bjl-rail.is-rail-collapsed .bjl-rail-stack {
+  max-height: 0;
+  opacity: 0;
+  margin: 0;
+  pointer-events: none;
+}
+.bjl-rail-ladder {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  /* 比五个图标略小一圈 */
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1.5px solid rgba(244, 211, 107, 0.85);
+  border-radius: 50%;
+  background: linear-gradient(180deg, rgba(42, 34, 18, 0.92), rgba(18, 14, 10, 0.88));
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 2px 6px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 230, 150, 0.2);
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, filter 0.12s ease;
+}
+.bjl-rail-ladder:hover {
+  border-color: rgba(255, 224, 130, 0.95);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 0 10px rgba(244, 211, 107, 0.35),
+    0 2px 6px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 230, 150, 0.28);
+}
+.bjl-rail-ladder__arrow {
+  display: block;
+  font-size: 12px;
+  line-height: 1;
+  color: #f4d36b;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.65);
+  transform: translateY(0.5px);
+}
+.bjl-rail-ladder:active {
+  filter: brightness(1.12);
 }
 
 .bjl-rail-btn {
@@ -1431,7 +1490,9 @@ html.bjl-in-iframe body.bjl-body {
 }
 
 @media (max-height: 700px) {
-  .bjl-rail { gap: 5px; }
+  .bjl-rail { gap: 5px; top: calc(50% - 190px); }
+  .bjl-rail-ladder { width: 26px; height: 26px; }
+  .bjl-rail-ladder__arrow { font-size: 11px; }
   .bjl-rail-btn { width: 40px; height: auto; }
   .bjl-rail-ic { width: 34px; height: 34px; }
   .bjl-rail-lb { font-size: 8px; }

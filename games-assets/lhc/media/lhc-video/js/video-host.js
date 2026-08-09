@@ -56,7 +56,7 @@
     return document.getElementById(id);
   }
 
-  /** 强制重播 GIF：换带时间戳的 src */
+  /** 强制重播 GIF：换带时间戳的 src（勿先清空，镂空区会闪黑块） */
   function setMachineSrc(src, asGif) {
     var img = el('machineGif');
     if (!img) return;
@@ -64,9 +64,8 @@
     if (asGif) {
       next = src + (src.indexOf('?') >= 0 ? '&' : '?') + 't=' + Date.now();
     }
-    /* 先清空再赋，避免部分 WebView 不重播 */
-    try { img.removeAttribute('src'); } catch (e) { /* ignore */ }
-    img.setAttribute('src', next);
+    if (img.getAttribute('src') === next) return;
+    img.src = next;
   }
 
   function setStageMode(mode) {
@@ -211,15 +210,21 @@
 
     var total = totalMs(spinMs, gapMs, holdMs);
 
-    playTimers.push(setTimeout(function () {
-      setStageMode('each');
-    }, Math.min(800, spinMs)));
-
+    /* 每球：序词时刻重启推球 GIF，revealMs 后出号（与 LhcAudio 同轴） */
     for (var i = 0; i < 7; i++) {
       (function (idx, num) {
-        var showAt = spinMs + idx * gapMs + revealMs;
+        var pushAt = spinMs + idx * gapMs;
+        var showAt = pushAt + revealMs;
+        playTimers.push(setTimeout(function () {
+          machineMode = '';
+          setStageMode('each');
+        }, pushAt));
         playTimers.push(setTimeout(function () {
           setBallAt(idx, num);
+          /* 第 7 球落地：通知父页刷历史（勿等 hold 收尾） */
+          if (idx === 6 && typeof opts.onNumbers === 'function') {
+            try { opts.onNumbers(true); } catch (eNum) { /* ignore */ }
+          }
         }, showAt));
       })(i, nums[i]);
     }
@@ -276,6 +281,12 @@
         ballGapMs: data.ballGapMs,
         ballRevealMs: data.ballRevealMs,
         holdMs: data.holdMs,
+        onNumbers: function () {
+          try {
+            ev.source && ev.source.postMessage(
+              { source: 'lhc-video', action: 'numbers', ok: true }, location.origin);
+          } catch (eN) { /* ignore */ }
+        },
         onDone: function (ok) {
           try {
             ev.source && ev.source.postMessage(

@@ -10,8 +10,19 @@
 
         <link rel="stylesheet" href="fonts/fonts.css">
         <link rel="stylesheet" href="css/main.css">
-        <link rel="stylesheet" href="css/style.css">
+        <link rel="stylesheet" href="css/style.css?v=3">
         <link rel="stylesheet" href="css/stylespreloader.css" type="text/css" media="screen, print"/>
+        <script>
+          /* embed 续播：进页即藏 preloader，避免刷新先闪 loading logo */
+          (function () {
+            if (/[?&]embed=1(?:&|$)/.test(location.search || '')) {
+              document.documentElement.classList.add('is-embed');
+              var s = document.createElement('style');
+              s.textContent = 'html.is-embed #preloader{display:none!important;visibility:hidden!important}';
+              document.head.appendChild(s);
+            }
+          })();
+        </script>
 
         <script src="js/vendor/modernizr-2.8.3.min.js"></script>
     </head>
@@ -258,8 +269,8 @@
         <script src="js/vendor/jquery-1.11.2.min.js"></script>
         <script src="js/greensock/TweenMax.min.js"></script>
         <script src="js/plugins.js"></script>
-        <script src="js/main.js"></script>
-        <script src="js/race-host.js?v=2"></script>
+        <script src="js/main.js?v=3"></script>
+        <script src="js/race-host.js?v=6"></script>
         <!-- local preview / room embed boot -->
         <script>
           $(function () {
@@ -287,7 +298,10 @@
                 }
               }
             } catch (e2) {}
-            try { parent.postMessage({ source: 'jsr-pk10-race', action: 'ready' }, location.origin); } catch (e) {}
+            try {
+              if (window.JsrPk10Race) JsrPk10Race.__ready = true;
+              parent.postMessage({ source: 'jsr-pk10-race', action: 'ready' }, location.origin);
+            } catch (e) {}
           });
         </script>
 

@@ -1,0 +1,117 @@
+/* 注销账号页 / 隐私政策页共用的长文排版 */
+.close-page .page-body,
+.legal-page .page-body { padding: 8px 16px 0; }
+
+.close-card,
+.legal-card {
+  margin-bottom: 14px;
+  padding: 16px 18px;
+  background: linear-gradient(180deg, var(--bg-card) 0%, var(--bg-card-2) 100%);
+  border: 1px solid rgba(212, 175, 55, 0.22);
+  border-radius: var(--radius-md);
+  box-shadow:
+    0 1px 0 rgba(244, 211, 107, 0.10) inset,
+    0 -1px 0 rgba(0, 0, 0, 0.3) inset,
+    0 4px 14px rgba(0, 0, 0, 0.45);
+}
+
+.close-warn { border-color: rgba(225, 107, 107, 0.45); }
+.close-warn-title,
+.close-block-title {
+  margin-bottom: 10px;
+  font-family: 'Noto Serif SC', serif;
+  font-size: 15px;
+  letter-spacing: 2px;
+  color: #e88;
+}
+
+.close-block { border-color: rgba(225, 107, 107, 0.45); }
+
+.close-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.9;
+  color: var(--text-dim, #cfc7b0);
+}
+.close-list b { color: var(--gold); }
+
+.close-tip {
+  font-size: 13px;
+  color: var(--text-dim, #cfc7b0);
+  text-align: center;
+}
+
+.close-label {
+  display: block;
+  margin-bottom: 8px;
+  font-family: 'Noto Serif SC', serif;
+  font-size: 14px;
+  letter-spacing: 2px;
+  color: var(--text);
+}
+
+.close-input {
+  width: 100%;
+  height: 42px;
+  padding: 0 12px;
+  border: 1px solid rgba(212, 175, 55, 0.28);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--text);
+  font-size: 15px;
+  outline: none;
+}
+.close-input:focus { border-color: var(--gold); }
+
+.close-btn {
+  width: 100%;
+  height: 46px;
+  margin-bottom: 14px;
+  border: 1px solid rgba(212, 175, 55, 0.3);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  font-family: 'Noto Serif SC', serif;
+  font-size: 16px;
+  letter-spacing: 4px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.close-btn:disabled { opacity: 0.5; }
+.close-btn--danger {
+  border-color: rgba(225, 107, 107, 0.6);
+  background: linear-gradient(180deg, rgba(120, 40, 40, 0.55), rgba(70, 20, 20, 0.75));
+  color: #ffd9d9;
+}
+.close-btn--danger:active:not(:disabled) { filter: brightness(1.15); }
+.close-btn--ghost { margin-top: 12px; margin-bottom: 0; }
+
+/* 隐私政策正文 */
+.legal-updated {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: var(--text-dim, #cfc7b0);
+  text-align: center;
+}
+.legal-h2 {
+  margin: 18px 0 8px;
+  font-family: 'Noto Serif SC', serif;
+  font-size: 15px;
+  letter-spacing: 2px;
+  color: var(--gold);
+}
+.legal-h2:first-child { margin-top: 0; }
+.legal-p {
+  margin: 0 0 8px;
+  font-size: 13px;
+  line-height: 1.9;
+  color: var(--text-dim, #cfc7b0);
+}
+.legal-p b { color: var(--text); }
+.legal-todo {
+  padding: 2px 6px;
+  border: 1px dashed rgba(225, 107, 107, 0.7);
+  border-radius: 4px;
+  color: #e88;
+}

@@ -4,6 +4,8 @@ export interface RoomCard {
   roomNo: string
   name: string
   icon: string | null
+  /** APPROVED 可进厅；PENDING 待代理审核 */
+  memberStatus?: 'PENDING' | 'APPROVED' | 'REJECTED'
 }
 
 export interface RoomChatMessage {
@@ -32,4 +34,9 @@ export const roomsApi = {
       `/rooms/${encodeURIComponent(roomNo)}/games/${encodeURIComponent(gameCode)}/chat${qs ? `?${qs}` : ''}`,
     )
   },
+  /** 牌桌气氛：当前房间该游戏的有效托人数 */
+  atmosphere: (roomNo: string, gameCode: string) =>
+    http.get<{ robotCount: number }, { robotCount: number }>(
+      `/rooms/${encodeURIComponent(roomNo)}/games/${encodeURIComponent(gameCode)}/atmosphere`,
+    ),
 }

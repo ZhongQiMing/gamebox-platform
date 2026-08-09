@@ -41,6 +41,8 @@ html, body {
   pointer-events: none;
   user-select: none;
   object-fit: fill;
+  /* 换 GIF 瞬间兜底，避免镂空区露出深色底 */
+  background-color: #1a2a44;
 }
 .crust {
   position: absolute;

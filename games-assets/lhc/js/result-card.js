@@ -13,12 +13,18 @@
   const RED = [1, 2, 7, 8, 12, 13, 18, 19, 23, 24, 29, 30, 34, 35, 40, 45, 46];
   const BLUE = [3, 4, 9, 10, 14, 15, 20, 25, 26, 31, 36, 37, 41, 42, 47, 48];
 
-  const LHC_VIDEO_SRC = './media/lhc-video/embed.html?v=11&embed=1';
+  const LHC_VIDEO_SRC = './media/lhc-video/embed.html?v=14699&embed=1';
   /** 与官网报号节奏对齐（父页 LhcAudio 同轴） */
   const SPIN_MS = 2500;
   const BALL_GAP_MS = 3800;
   const BALL_REVEAL_MS = 1900;
   const HOLD_MS = 1200;
+  /** 与 lhc.js PREP_SEC=35 对齐：出号后仍留 hold，gap 只许拉长 */
+  const PREP_MS = 35000;
+  const GAP_MAX_MS = Math.max(
+    BALL_GAP_MS,
+    Math.floor((PREP_MS - HOLD_MS - SPIN_MS - BALL_REVEAL_MS - 500) / 6)
+  );
 
   function yearZodiacAt(date) {
     const d = date || new Date();
@@ -66,17 +72,42 @@
     return (nums || []).map(function (n) { return pad2(n); }).join(',');
   }
 
-  function revealDurationMs() {
-    return SPIN_MS + BALL_GAP_MS * 7 + HOLD_MS;
+  function revealDurationMs(gapMs) {
+    const g = gapMs != null && gapMs >= 0 ? Number(gapMs) : BALL_GAP_MS;
+    return SPIN_MS + g * 7 + HOLD_MS;
   }
 
-  function ceremonyOpts() {
+  function ceremonyOpts(gapMs) {
     return {
       spinMs: SPIN_MS,
-      ballGapMs: BALL_GAP_MS,
+      ballGapMs: gapMs != null && gapMs >= 0 ? Number(gapMs) : BALL_GAP_MS,
       ballRevealMs: BALL_REVEAL_MS,
       holdMs: HOLD_MS,
     };
+  }
+
+  /** 第 7 球落地时刻（出号点） */
+  function numbersAtMs(gapMs) {
+    const g = gapMs != null && gapMs >= 0 ? Number(gapMs) : BALL_GAP_MS;
+    return SPIN_MS + 6 * g + BALL_REVEAL_MS;
+  }
+
+  /**
+   * mid/gap 只许拉长：第 7 球出号对齐 openAt，hold 收尾仍原速。
+   */
+  function resolveGapMs(opts) {
+    opts = opts || {};
+    let gapMs = opts.ballGapMs != null ? Number(opts.ballGapMs) : BALL_GAP_MS;
+    if (!(gapMs >= 0)) gapMs = BALL_GAP_MS;
+    if (opts.ballGapMs != null) return Math.min(GAP_MAX_MS, Math.max(BALL_GAP_MS, gapMs));
+    const openAt = opts.openAt != null ? Number(opts.openAt) : NaN;
+    if (!Number.isFinite(openAt)) return gapMs;
+    const remain = openAt - Date.now();
+    const targetGap = (remain - SPIN_MS - BALL_REVEAL_MS - 200) / 6;
+    if (Number.isFinite(targetGap) && targetGap >= BALL_GAP_MS) {
+      gapMs = Math.min(GAP_MAX_MS, targetGap);
+    }
+    return gapMs;
   }
 
   function buildResultCardHtml(nums, issue, opts) {
@@ -122,8 +153,12 @@
       foot.classList.remove('is-hidden');
       foot.classList.add('is-show');
     }
-    card.classList.remove('is-drawing');
+    card.classList.remove('is-drawing', 'is-hold-black');
     card.classList.add('is-reveal', 'is-result-shown');
+    card.removeAttribute('data-hold-black');
+    card._holdBlackExempt = true;
+    /* 揭底栏即出结果：必须清掉「正在开奖」遮罩（forceSettle→settle 路径此前会漏清） */
+    if (window.LotteryHoldTip) LotteryHoldTip.clear(card);
   }
 
   function whenReady(frame, cb) {
@@ -186,24 +221,55 @@
     }
     const frame = card.querySelector('.lhc-video-card__frame');
     const order = orderStr(nums);
-    const total = opts.durationMs > 0 ? Number(opts.durationMs) : revealDurationMs();
-    const timing = ceremonyOpts();
+    const gapMs = resolveGapMs(opts);
+    const timing = ceremonyOpts(gapMs);
+    const total = revealDurationMs(gapMs);
+    const numbersAt = numbersAtMs(gapMs);
+    if (window.LotteryHoldTip) LotteryHoldTip.clear(card);
     card.classList.add('is-playing', 'is-drawing');
     card.setAttribute('data-playing', '1');
+    card._lhcNumsNotified = false;
+    card._lhcDoneOnce = false;
 
-    const footAt = Math.max(0, total - HOLD_MS);
-    const footTimer = setTimeout(function () { revealFoot(card); }, footAt);
-
-    const doneWrap = function (ok) {
-      clearTimeout(footTimer);
+    const notifyNumbers = function () {
+      if (card._lhcNumsNotified) return;
+      card._lhcNumsNotified = true;
       revealFoot(card);
-      card.classList.remove('is-playing');
+      if (typeof opts.onNumbers === 'function') {
+        try { opts.onNumbers(); } catch (eN) { /* ignore */ }
+      }
+    };
+    const onMsg = function (ev) {
+      const d = ev && ev.data;
+      if (!d || d.source !== 'lhc-video' || d.action !== 'numbers') return;
+      if (ev.source !== (frame && frame.contentWindow)) return;
+      notifyNumbers();
+    };
+    const doneWrap = function (ok) {
+      if (card._lhcDoneOnce) return;
+      card._lhcDoneOnce = true;
+      clearTimeout(footTimer);
+      window.removeEventListener('message', onMsg);
+      revealFoot(card);
+      notifyNumbers();
+      card.classList.remove('is-playing', 'is-hold-black');
       card.removeAttribute('data-playing');
+      card.removeAttribute('data-hold-black');
+      card._holdBlackExempt = true;
+      if (window.LotteryHoldTip) LotteryHoldTip.clear(card);
       if (window.LhcAudio && LhcAudio.endDrawCeremony) LhcAudio.endDrawCeremony();
       if (typeof onDone === 'function') onDone(ok);
     };
 
+    window.addEventListener('message', onMsg);
+    /* 兜底：iframe 未回 numbers 时按时间轴揭脚 */
+    const footTimer = setTimeout(notifyNumbers, numbersAt);
+
     whenReady(frame, function () {
+      /* 真开播后再通知父页排揭晓倒计时，避免 iframe 慢加载导致提前掐动画 */
+      if (typeof opts.onStarted === 'function') {
+        try { opts.onStarted(total, numbersAt); } catch (e0) { /* ignore */ }
+      }
       if (window.LhcAudio) {
         if (LhcAudio.unlock) LhcAudio.unlock();
         if (LhcAudio.startDrawCeremony) {
@@ -212,8 +278,13 @@
       }
       const w = frame && frame.contentWindow;
       if (w && w.LhcVideo && typeof w.LhcVideo.play === 'function') {
-        w.LhcVideo.play(order, Object.assign({}, timing, { onDone: doneWrap }));
-        return;
+        try {
+          w.LhcVideo.play(order, Object.assign({}, timing, {
+            onNumbers: notifyNumbers,
+            onDone: doneWrap,
+          }));
+          return;
+        } catch (ePlay) { /* 改走 postMessage */ }
       }
       try {
         frame.contentWindow.postMessage(
@@ -225,6 +296,10 @@
     return total;
   }
 
+  /**
+   * 软落定：只调 iframe API + 露脚，禁止改 src。
+   * 改 src 加 settle=1 会整页重载，表现为「出号后再闪一下」。
+   */
   function settle(root, nums) {
     const card = root && root.classList && root.classList.contains('lhc-video-card')
       ? root
@@ -232,22 +307,17 @@
     if (!card || !nums || nums.length !== 7) return;
     if (card.classList.contains('is-playing') || card.getAttribute('data-playing') === '1') return;
 
+    const alreadySettled = !!(card.classList.contains('is-result-shown') && card.classList.contains('is-reveal'));
     const frame = card.querySelector('.lhc-video-card__frame');
     const order = orderStr(nums);
+    /* revealFoot 内已清 tip / hold；此处再保一次 */
+    if (window.LotteryHoldTip) LotteryHoldTip.clear(card);
     revealFoot(card);
-    card.classList.add('is-frame-ready');
-
-    if (!frame) return;
-    try {
-      const cur = String(frame.getAttribute('src') || '');
-      if (cur.indexOf('settle=1') < 0) {
-        let next = cur;
-        if (next.indexOf('order=') < 0) next += '&order=' + encodeURIComponent(order);
-        if (next.indexOf('settle=1') < 0) next += '&settle=1';
-        frame.setAttribute('src', next);
-        return;
-      }
-    } catch (e) { /* ignore */ }
+    card.classList.add('is-frame-ready', 'is-settled');
+    card.removeAttribute('data-hold-black');
+    card.classList.remove('is-hold-black');
+    card._holdBlackExempt = true;
+    if (alreadySettled || !frame) return;
 
     whenReady(frame, function () {
       const w = frame.contentWindow;
@@ -261,16 +331,58 @@
     });
   }
 
+  /**
+   * 中途离房再进 / 历史重放：仪式未完时压成黑卡（不出号、不露脚），避免泄底。
+   * 播放中的卡不动。
+   */
+  function holdBlack(root) {
+    const card = root && root.classList && root.classList.contains('lhc-video-card')
+      ? root
+      : root && root.querySelector && root.querySelector('.lhc-video-card, .lhc-result-card');
+    if (!card) return false;
+    if (card.classList.contains('is-playing') || card.getAttribute('data-playing') === '1') return false;
+    /* 本页已播完/揭晓：禁止快照再压黑 */
+    if (card._holdBlackExempt || card.classList.contains('is-result-shown') || card.classList.contains('is-reveal') || card.classList.contains('is-settled')) return false;
+    if (card.getAttribute('data-hold-black') === '1' && card.classList.contains('is-drawing')) {
+      if (window.LotteryHoldTip) LotteryHoldTip.ensure(card, '.lhc-video-card__stage');
+      return true;
+    }
+
+    const order = String(card.getAttribute('data-nums') || '').trim();
+    const issue = String(card.getAttribute('data-issue') || '').trim();
+    card.setAttribute('data-hold-black', '1');
+    card.classList.remove('is-reveal', 'is-result-shown', 'is-settled', 'is-frame-ready');
+    card.classList.add('is-drawing');
+    const foot = card.querySelector('.lhc-video-card__foot');
+    if (foot) {
+      foot.classList.add('is-hidden');
+      foot.classList.remove('is-show');
+      const vs = card.querySelectorAll('.lhc-result-stat .v');
+      if (vs[1]) vs[1].textContent = '—';
+      if (vs[2]) vs[2].textContent = '—';
+    }
+    const frame = card.querySelector('.lhc-video-card__frame');
+    if (frame && order) {
+      let src = LHC_VIDEO_SRC + '&order=' + encodeURIComponent(order) + '&hold=1';
+      if (issue) src += '&issue=' + encodeURIComponent(issue);
+      frame.setAttribute('src', src);
+    }
+    if (window.LotteryHoldTip) LotteryHoldTip.ensure(card, '.lhc-video-card__stage');
+    return true;
+  }
+
   global.LhcResultCard = {
     build: function (nums, issue, opts) {
       return buildResultCardHtml(nums, issue, opts);
     },
     bindReveal: bindReveal,
     settle: settle,
+    holdBlack: holdBlack,
     temaMeta: temaMeta,
     zodiacOf: zodiacOf,
     waveColor: waveColor,
     ballSrc: ballSrc,
     revealDurationMs: revealDurationMs,
+    revealFoot: revealFoot,
   };
 })(typeof window !== 'undefined' ? window : this);

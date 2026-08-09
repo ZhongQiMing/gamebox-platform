@@ -1,4 +1,4 @@
-# 按「后台现状与下一步」分批提交（需已配置 git user.name / user.email）
+﻿# 按「后台现状与下一步」分批提交（需已配置 git user.name / user.email）
 # 用法：在仓库根目录执行  powershell -File scripts/commit-plan-batches.ps1
 $ErrorActionPreference = 'Stop'
 Set-Location (Join-Path $PSScriptRoot '..')
@@ -28,7 +28,7 @@ docs: 补充控制台验收与真分飞盘说明并更新清单
 "@
 
 # 3) 运维脚本 + seed
-git add -- scripts/backup-postgres.sh scripts/backup-postgres.env.example scripts/health-alert.mjs scripts/health-alert.env.example scripts/download-local-fonts.mjs
+git add -- scripts/backup-on-server.sh scripts/restore-on-server.sh scripts/health-alert.mjs scripts/health-alert.env.example scripts/download-local-fonts.mjs
 git add -- server/prisma/seed.ts server/.env.example
 Commit-IfStaged @"
 chore(ops): PG 备份脚本与生产 seed 禁弱口令

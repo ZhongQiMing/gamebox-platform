@@ -24,7 +24,7 @@
     <!-- 右上角弹出菜单 -->
     <div :class="['menu-popover', menuOpen ? 'show' : '']" @click.stop>
       <div class="menu-item" @click="goStaffLogin('agent')">
-        <span class="ic">⚜</span><span class="lb">代理登录</span><span class="arrow">›</span>
+        <span class="ic">⚜</span><span class="lb">代理 / 客服</span><span class="arrow">›</span>
       </div>
       <div class="menu-item" @click="goStaffLogin('branch')">
         <span class="ic">♛</span><span class="lb">房主登录</span><span class="arrow">›</span>
@@ -94,7 +94,6 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
-import { useStaffStore } from '@/stores/staff'
 import { authApi } from '@/api/auth'
 import { useToast } from '@/composables/useToast'
 import { useBodyClass } from '@/composables/useBodyClass'
@@ -104,7 +103,6 @@ useBodyClass('deco-bg', 'welcome-login')
 
 const router = useRouter()
 const userStore = useUserStore()
-const staffStore = useStaffStore()
 const { toast } = useToast()
 
 const account = ref('')
@@ -135,7 +133,8 @@ onMounted(() => {
 
 function goStaffLogin(kind: 'agent' | 'branch') {
   menuOpen.value = false
-  router.push({ name: kind === 'branch' ? 'staff-login-branch' : 'staff-login-agent' })
+  // replace：三个登录口不互相堆历史，避免返回键来回串页
+  router.replace({ name: kind === 'branch' ? 'staff-login-branch' : 'staff-login-agent' })
 }
 
 async function doLogin() {
@@ -145,19 +144,10 @@ async function doLogin() {
   try {
     const res = await authApi.login({ username: account.value.trim(), password: password.value })
     const role = res.user.role
-    // 运营账号：写入 staff 会话并进手机工作台（勿进玩家房间号页）
-    if (role === 'ADMIN' || role === 'BRANCH') {
-      staffStore.setAuth(res.user, res.token, 'branch')
-      userStore.logout()
-      toast(`欢迎 ${res.user.nickname}`)
-      await router.replace({ name: 'staff-home' })
-      return
-    }
-    if (role === 'AGENT' || role === 'PROXY') {
-      staffStore.setAuth(res.user, res.token, 'agent')
-      userStore.logout()
-      toast(`欢迎 ${res.user.nickname}`)
-      await router.replace({ name: 'staff-home' })
+    // 玩家入口只收玩家；运营账号一律当「不存在」，不暴露另有入口
+    if (['ADMIN', 'BRANCH', 'AGENT', 'PROXY', 'CS'].includes(role)) {
+      void authApi.logout().catch(() => undefined)
+      toast('账号不存在')
       return
     }
     userStore.setAuth(res.user, res.token)

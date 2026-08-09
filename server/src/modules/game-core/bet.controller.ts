@@ -9,6 +9,9 @@ import { asMoney, roundMoney } from '@gamebox/shared';
 import type { Prisma } from '@prisma/client';
 import { resolveTimeWindow } from '../../common/shanghai-range';
 import { PrismaService } from '../../prisma/prisma.service';
+import { assertCanPlaceBet } from '../../common/utils/assert-player-bet';
+
+type BetUser = { id: string; role?: string };
 
 export class TableInstantDto {
   @IsString() gameCode!: string;
@@ -21,6 +24,8 @@ export class PlaceBetDto {
   @IsInt() @Min(1) @Max(10_000_000) @Type(() => Number) amount!: number;
   @IsString() @MaxLength(100) clientRequestId!: string;
   @IsOptional() @IsString() @MaxLength(128) clientSeed?: string;
+  /** 6 位运营房间号（多房隔离必填） */
+  @IsString() @MaxLength(6) roomNo!: string;
 }
 
 export class BcbmSpinDto {
@@ -28,6 +33,7 @@ export class BcbmSpinDto {
   @IsObject() bets!: Record<string, number>;
   @IsString() @MaxLength(100) clientRequestId!: string;
   @IsOptional() @IsString() @MaxLength(128) clientSeed?: string;
+  @IsString() @MaxLength(6) roomNo!: string;
 }
 
 export class FruitSpinDto {
@@ -35,12 +41,20 @@ export class FruitSpinDto {
   @IsObject() bets!: Record<string, number>;
   @IsString() @MaxLength(100) clientRequestId!: string;
   @IsOptional() @IsString() @MaxLength(128) clientSeed?: string;
+  @IsString() @MaxLength(6) roomNo!: string;
+}
+
+export class FruitRevealDto {
+  @IsString()
+  roundId!: string;
 }
 
 export class FruitGambleDto {
   @IsInt() @Min(1) @Max(10_000_000) @Type(() => Number) amount!: number;
   @IsString() @IsIn(['big', 'small']) choice!: 'big' | 'small';
   @IsString() @MaxLength(100) clientRequestId!: string;
+  /** 可选；有则校验与当局赢分同房 */
+  @IsOptional() @IsString() @MaxLength(6) roomNo?: string;
 }
 
 @Controller('bet')
@@ -63,25 +77,44 @@ export class BetController {
    * 返回：中奖结果 + 新余额
    */
   @Post('spin')
-  async spin(@CurrentUser() u: { id: string }, @Body() dto: PlaceBetDto) {
+  async spin(@CurrentUser() u: BetUser, @Body() dto: PlaceBetDto) {
+    assertCanPlaceBet(u.role);
     const result = await this.slot.spin({
       playerId: u.id,
       gameCode: dto.gameCode,
       amount: dto.amount,
       clientSeed: dto.clientSeed,
       clientRequestId: dto.clientRequestId,
+      roomNo: dto.roomNo,
     });
 
-    const balance = asMoney(
-      result.balance ??
-        (
-          await this.prisma.pointsAccount.findUnique({
-            where: { ownerId: u.id },
-            select: { balance: true },
+    let balance = asMoney(result.balance ?? 0);
+    if (result.balance == null) {
+      const roomNo = String(dto.roomNo || '').trim();
+      const room = /^\d{6}$/.test(roomNo)
+        ? await this.prisma.room.findFirst({
+            where: { roomNo },
+            select: { id: true },
           })
-        )?.balance ??
-        0,
-    );
+        : null;
+      if (room) {
+        const member = await this.prisma.roomMember.findFirst({
+          where: { playerId: u.id, roomId: room.id, status: 'APPROVED' },
+          select: { roomId: true },
+        });
+        if (member) {
+          const acc = await this.prisma.pointsAccount.findFirst({
+            where: {
+              ownerType: 'PLAYER',
+              ownerId: u.id,
+              roomId: member.roomId,
+            },
+            select: { balance: true },
+          });
+          balance = asMoney(acc?.balance ?? 0);
+        }
+      }
+    }
 
     return {
       ...result,
@@ -93,13 +126,15 @@ export class BetController {
    * POST /api/bet/bcbm — 奔驰宝马街机：多仓位押注 + 即时开奖
    */
   @Post('bcbm')
-  async bcbmSpin(@CurrentUser() u: { id: string }, @Body() dto: BcbmSpinDto) {
+  async bcbmSpin(@CurrentUser() u: BetUser, @Body() dto: BcbmSpinDto) {
+    assertCanPlaceBet(u.role);
     return this.bcbm.spin({
       playerId: u.id,
       gameCode: dto.gameCode,
       bets: dto.bets,
       clientRequestId: dto.clientRequestId,
       clientSeed: dto.clientSeed,
+      roomNo: dto.roomNo,
     });
   }
 
@@ -107,37 +142,56 @@ export class BetController {
    * POST /api/bet/fruit — 经典水果机：多符号押注 + 跑灯开奖（含特殊大奖）
    */
   @Post('fruit')
-  async fruitSpin(@CurrentUser() u: { id: string }, @Body() dto: FruitSpinDto) {
+  async fruitSpin(@CurrentUser() u: BetUser, @Body() dto: FruitSpinDto) {
+    assertCanPlaceBet(u.role);
     return this.fruit.spin({
       playerId: u.id,
       gameCode: dto.gameCode || 'fruit-machine',
       bets: dto.bets,
       clientRequestId: dto.clientRequestId,
       clientSeed: dto.clientSeed,
+      roomNo: dto.roomNo,
     });
+  }
+
+  /**
+   * POST /api/bet/fruit/reveal — 跑灯/报奖结束后揭晓派彩（此前注单为待开奖）
+   */
+  @Post('fruit/reveal')
+  async fruitReveal(@CurrentUser() u: BetUser, @Body() dto: FruitRevealDto) {
+    assertCanPlaceBet(u.role);
+    return this.fruit.reveal(u.id, dto.roundId);
   }
 
   /** POST /api/bet/fruit/gamble — 当局赢分大小再赌 */
   @Post('fruit/gamble')
-  async fruitGamble(@CurrentUser() u: { id: string }, @Body() dto: FruitGambleDto) {
+  async fruitGamble(@CurrentUser() u: BetUser, @Body() dto: FruitGambleDto) {
+    assertCanPlaceBet(u.role);
     return this.fruit.gamble({
       playerId: u.id,
       amount: dto.amount,
       choice: dto.choice,
       clientRequestId: dto.clientRequestId,
+      roomNo: dto.roomNo,
     });
   }
 
   /** GET /api/bet/fruit/pending-gamble — 查询可猜大小的当局赢分（进页恢复） */
   @Get('fruit/pending-gamble')
-  async fruitPendingGamble(@CurrentUser() u: { id: string }) {
-    return this.fruit.getPendingGamble(u.id);
+  async fruitPendingGamble(
+    @CurrentUser() u: { id: string },
+    @Query('roomNo') roomNo?: string,
+  ) {
+    return this.fruit.getPendingGamble(u.id, roomNo);
   }
 
   /** POST /api/bet/fruit/abandon-gamble — 退币/放弃猜大小，清掉可再赌额度 */
   @Post('fruit/abandon-gamble')
-  async fruitAbandonGamble(@CurrentUser() u: { id: string }) {
-    return this.fruit.abandonGamble(u.id);
+  async fruitAbandonGamble(
+    @CurrentUser() u: { id: string },
+    @Body() body?: { roomNo?: string },
+  ) {
+    return this.fruit.abandonGamble(u.id, body?.roomNo);
   }
 
   /**
@@ -379,9 +433,19 @@ export class BetController {
       }
     }
 
-    const rows = [...byGroup.values(), ...singles].sort(
-      (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
-    )
+    const rows = [...byGroup.values(), ...singles]
+      .map((r) =>
+        r.status === 'PENDING'
+          ? {
+              ...r,
+              /* 未揭晓前不把开奖结果带回注单页，避免「一按开始就出盈亏」 */
+              outcome: null,
+              payout: 0,
+              details: r.details.map((d) => ({ ...d, payout: 0, won: false, multiplier: 0 })),
+            }
+          : r,
+      )
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
     return window ? rows : rows.slice(0, 100)
   }
 

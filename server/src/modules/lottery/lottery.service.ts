@@ -19,16 +19,33 @@ import { GameConfigCache } from '../game-core/game-config.cache';
 import { LotteryGameRegistry } from './lottery-game.registry';
 import type { LotteryBetPayload, LotteryPayTable } from './lottery.types';
 import type { Prisma } from '@prisma/client';
-import { asMoney, capWin, isValidMoney, roundMoney } from '@gamebox/shared';
+import { asMoney, capWin, highOddsBetCap, isValidMoney, roundMoney } from '@gamebox/shared';
 import { businessNo } from '../game-core/business-id';
 import { RoomChatService } from '../rooms/room-chat.service';
 import type { RoomChatPlayLine } from '../rooms/room-chat.types';
 import { formatLotteryPlayLabel } from './play-label';
 import { lotteryPrepSec } from './lottery-intervals';
 import { ConsoleControlService } from '../console/console-control.service';
-import { CONTROL_FIXED_CANDIDATE_TRIES, CONTROL_MIN_BET_COUNT } from '../console/control.constants';
+import { GlobalSoftControlService } from '../console/global-soft-control.service';
+import {
+  CONTROL_PLAYER_WIN_HOUSE_FLOOR,
+} from '../console/control.constants';
+import {
+  decidePeriodGuard,
+  globalDayNetScore,
+  isBetterSoftGlobalPick,
+  periodCandidateLegal,
+  periodLossScore,
+  softBiasScore,
+  type SoftPickRank,
+} from '../console/control-pick.util';
 import { FlyDiskService } from '../console/fly-disk.service';
 import { FlyRebateService } from '../console/fly-rebate.service';
+import {
+  closedDiskDebitBetInTx,
+  closedDiskRefundBetInTx,
+  closedDiskSettleWinInTx,
+} from '../console/player-fund.helper';
 import { RiskService } from '../risk/risk.service';
 import type { OwnerType } from '../points/points.service';
 import type { DrawResult, LotteryGameDef } from './lottery.types';
@@ -83,15 +100,22 @@ export class LotteryService {
     private risk: RiskService,
     @Optional() @Inject(forwardRef(() => ConsoleControlService))
     private control?: ConsoleControlService,
+    @Optional() @Inject(forwardRef(() => GlobalSoftControlService))
+    private globalSoft?: GlobalSoftControlService,
     @Optional() private flyDisk?: FlyDiskService,
     @Optional() private flyRebate?: FlyRebateService,
   ) {}
 
-  private async houseForPlayer(playerId: string) {
+  private async houseForPlayer(
+    playerId: string,
+    stakeAmount: number | undefined,
+    roomNo?: string | null,
+  ) {
     if (!this.flyDisk) {
       return { type: 'PLATFORM' as OwnerType, id: PLATFORM_OWNER_ID, flying: false };
     }
-    return this.flyDisk.resolveHouse(playerId);
+    const opsRoomId = await this.flyDisk.requireOpsRoomId(playerId, roomNo);
+    return this.flyDisk.resolveHouse(playerId, opsRoomId, stakeAmount, { requireRoom: true });
   }
 
   // ─── 期号管理 ─────────────────────────────────────────
@@ -218,8 +242,8 @@ export class LotteryService {
   }
 
   /**
-   * 封盘：lockAt 已到仍 PENDING → LOCKED，并立即推封盘线 + 注单核对，
-   * 随即开奖结算（不再干等 openAt，把 lock→open 窗口留给前端开奖仪式）。
+   * 封盘：lockAt → LOCKED，推封盘线 + 注单核对；
+   * 预生成开奖号码并推结果卡供动画，但注单/积分仍待 openAt 再结算。
    */
   async lockDueIssues() {
     const now = new Date();
@@ -240,27 +264,131 @@ export class LotteryService {
       } catch {
         /* 聊天失败不影响封盘状态 */
       }
-      /* 封盘后立刻开奖：号码与派彩就绪，聊天结果卡由客户端延时 1s 后播长仪式 */
       try {
-        await this.draw(issue.id);
+        await this.prepareDraw(issue.id);
       } catch (e) {
-        this.logger.error(`draw-after-lock[${issue.issueNo}] failed: ${(e as Error).message}`);
+        this.logger.error(`prepare-after-lock[${issue.issueNo}] failed: ${(e as Error).message}`);
       }
     }
   }
 
   /**
-   * 执行开奖（scheduler 检查到期的 PENDING/LOCKED 期号后调用）
+   * 封盘后预开奖：写入号码供仪式动画，状态保持 LOCKED，不派彩、不改注单。
    */
-  async draw(issueId: string) {
+  async prepareDraw(issueId: string) {
     const issue = await this.prisma.lotteryIssue.findUnique({
       where: { id: issueId },
       include: { game: true },
     });
     if (!issue || issue.status === 'DRAWN' || issue.status === 'CANCELLED') return;
 
+    let nums: number[] | null = null;
+    if (issue.drawNumbers) {
+      try {
+        const parsed = JSON.parse(issue.drawNumbers);
+        if (Array.isArray(parsed)) nums = parsed.map(Number);
+      } catch { /* ignore */ }
+    }
+
+    if (!nums) {
+      const gameDef = this.registry.get(issue.game.code);
+      if (!gameDef || !issue.serverSeed) return;
+
+      const config = await this.prisma.gameConfig.findUnique({
+        where: {
+          gameId_version: {
+            gameId: issue.gameId,
+            version: issue.configVer,
+          },
+        },
+      });
+      if (!config) return;
+
+      const payTable = config.payTable as unknown as LotteryPayTable;
+      const pendingBets = await this.prisma.bet.findMany({
+        where: { issueId: issue.id, status: 'PENDING' },
+        select: { amount: true, payload: true, playerId: true },
+      });
+      const picked = await this.pickDrawWithControl(
+        issue.game.code,
+        issue.serverSeed,
+        gameDef,
+        payTable,
+        pendingBets,
+      );
+      const { result: drawResult, nonce: drawNonce, softCommit } = picked;
+
+      const claimed = await this.prisma.lotteryIssue.updateMany({
+        where: {
+          id: issue.id,
+          status: { in: ['PENDING', 'LOCKED'] },
+          drawNumbers: null,
+        },
+        data: {
+          status: 'LOCKED',
+          drawNumbers: JSON.stringify(drawResult.numbers),
+          nonce: drawNonce,
+        },
+      });
+      if (claimed.count === 0) {
+        const again = await this.prisma.lotteryIssue.findUnique({
+          where: { id: issue.id },
+          select: { drawNumbers: true },
+        });
+        if (!again?.drawNumbers) return;
+        try {
+          const parsed = JSON.parse(again.drawNumbers);
+          if (Array.isArray(parsed)) nums = parsed.map(Number);
+        } catch { return; }
+      } else {
+        nums = drawResult.numbers.map(Number);
+        /* 仅赢家提交冷却副作用，避免 CAS 失败空烧/误清冷却 */
+        try {
+          if (this.globalSoft) {
+            await this.globalSoft.commitSoftDraw(issue.game.code, softCommit);
+          }
+        } catch {
+          /* 冷却失败不影响开奖 */
+        }
+      }
+    }
+
+    if (!nums?.length) return;
+    try {
+      await this.roomChat.fanOutIssueResult(issue.game.code, issue.issueNo, nums);
+    } catch {
+      /* 聊天失败不影响预开奖 */
+    }
+  }
+
+  /**
+   * openAt 到期后正式结算：派彩入账 + DRAWN + 中奖核对。
+   * openAt 未到时只做 prepareDraw（供封盘动画），不改积分。
+   */
+  async draw(issueId: string) {
+    let issue = await this.prisma.lotteryIssue.findUnique({
+      where: { id: issueId },
+      include: { game: true },
+    });
+    if (!issue || issue.status === 'DRAWN' || issue.status === 'CANCELLED') return;
+
+    const now = new Date();
+    if (issue.openAt.getTime() > now.getTime()) {
+      await this.prepareDraw(issueId);
+      return;
+    }
+
+    if (!issue.drawNumbers) {
+      await this.prepareDraw(issueId);
+      issue = await this.prisma.lotteryIssue.findUnique({
+        where: { id: issueId },
+        include: { game: true },
+      });
+      if (!issue || issue.status === 'DRAWN' || issue.status === 'CANCELLED') return;
+    }
+
     const gameDef = this.registry.get(issue.game.code);
-    if (!gameDef) return;
+    if (!gameDef || !issue.serverSeed) return;
 
     const config = await this.prisma.gameConfig.findUnique({
       where: {
@@ -273,19 +401,11 @@ export class LotteryService {
     if (!config) return;
 
     const payTable = config.payTable as unknown as LotteryPayTable;
-    const pendingBets = await this.prisma.bet.findMany({
-      where: { issueId: issue.id, status: 'PENDING' },
-      select: { amount: true, payload: true, playerId: true },
-    });
-    const { result: drawResult, nonce: drawNonce } = await this.pickDrawWithControl(
-      issue.game.code,
-      issue.serverSeed!,
-      gameDef,
-      payTable,
-      pendingBets,
-    );
+    const drawNonce = issue.nonce && issue.nonce > 0 ? issue.nonce : 1;
+    const drawResult = gameDef.draw(issue.serverSeed, 'server', drawNonce);
 
     const bigWins: Array<{ betId: string; playerId: string; amount: number; payout: number }> = [];
+    const biasTouches: Array<{ roomId: string; playerId: string; stake: number; payout: number }> = [];
     // 在事务内结算所有注单
     await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       // CAS 抢占：事务第一条语句拿下期号行锁并推进状态，
@@ -311,14 +431,7 @@ export class LotteryService {
         const payload = bet.payload as unknown as LotteryBetPayload;
         const amt = asMoney(bet.amount);
         const hitKey = gameDef.judge(payload, drawResult, payTable);
-        /* 和局退本：即使库内 payTable 尚未写入 refund，也按 1 倍退本 */
-        const odds = hitKey
-          ? (hitKey === 'refund'
-              ? (payTable[hitKey]?.multiplier ?? 1)
-              : (payTable[hitKey]?.multiplier ?? 0))
-          : 0;
-        const raw = hitKey ? roundMoney(amt * odds) : 0;
-        const { win: payout, capped } = capWin(amt, raw);
+        const { payout, odds, raw, capped } = this.lotterySettleMath(amt, hitKey, payTable);
         if (capped) {
           this.logger.error(
             `派彩触顶 ${issue.game.code} bet=${bet.id} 玩法=${bet.betType} 原始=${raw} 封顶=${payout}`,
@@ -347,23 +460,36 @@ export class LotteryService {
         }
 
         const flyMeta = (bet.payload as { fly?: {
-          type?: string; id?: string; flying?: boolean; agentUserId?: string; roomId?: string;
+          type?: string; id?: string; flying?: boolean; agentUserId?: string; roomId?: string; bookMode?: string;
         } } | null)?.fly;
+        const touchRoomId = String(flyMeta?.roomId || '').trim();
+        if (touchRoomId && !isRefund) {
+          biasTouches.push({
+            roomId: touchRoomId,
+            playerId: bet.playerId,
+            stake: amt,
+            payout,
+          });
+        }
         const houseType = (flyMeta?.type as OwnerType) || 'PLATFORM';
-        const houseId = flyMeta?.id || PLATFORM_OWNER_ID;
         const flying = !!flyMeta?.flying;
 
-        if (won) {
+        if (won && (flying || houseType !== 'AGENT')) {
+          const winRoomId = String(flyMeta?.roomId || '').trim();
+          if (!winRoomId) {
+            throw new BadRequestException(`派彩缺少房间快照 bet=${bet.id}`);
+          }
           await this.points.transferInTx(
             tx,
             {
-              type: houseType,
-              id: houseId,
+              type: 'PLATFORM',
+              id: PLATFORM_OWNER_ID,
               idempotencyKey: `win_house_${bet.id}`,
             },
             {
               type: 'PLAYER',
               id: bet.playerId,
+              roomId: winRoomId,
               remark: `${issue.game.name} ${issue.issueNo} 开奖`,
               idempotencyKey: `win_player_${bet.id}`,
             },
@@ -372,23 +498,42 @@ export class LotteryService {
           );
         }
 
-        if (this.flyDisk && !isRefund) {
-          await this.flyDisk.applyFlyLossInTx(tx, flyMeta?.agentUserId, flying, amt, payout);
+        if (!flying && houseType === 'AGENT') {
+          /* 关盘：含和局退本；现金只动玩家持分 */
+          await closedDiskSettleWinInTx(tx, this.points, {
+            playerId: bet.playerId,
+            agentUserId: flyMeta?.agentUserId || String(flyMeta?.id || ''),
+            roomId: flyMeta?.roomId,
+            bookMode: flyMeta?.bookMode,
+            stake: amt,
+            payout: won ? payout : 0,
+            remark: `${issue.game.name} ${issue.issueNo} 开奖(关盘)`,
+            refType: 'issue',
+            refId: issue.id,
+            idemPlayer: `win_player_${bet.id}`,
+            idemAgent: `win_agent_${bet.id}`,
+          });
+        } else if (!isRefund && flying && this.flyDisk) {
+          await this.flyDisk.applyFlyLossInTx(
+            tx,
+            flyMeta?.agentUserId,
+            true,
+            amt,
+            payout,
+            `lottery_fly_quota_${bet.id}`,
+            flyMeta?.bookMode,
+          );
         }
         if (this.flyRebate && !isRefund) {
-          await this.flyRebate.payAgentShareInTx(tx, {
+          await this.flyRebate.payBetFlowInTx(tx, {
             betId: bet.id,
             playerId: bet.playerId,
             validFlow: amt,
             flying,
             roomId: flyMeta?.roomId,
             agentUserId: flyMeta?.agentUserId,
+            bookMode: flyMeta?.bookMode,
           });
-        }
-
-        // 多级代理佣金（idemScope 用 bet.id 保证每注独立分润）
-        if (bet.player?.agentPath && !isRefund) {
-          await this.commission.distributeInTx(tx, bet.player, amt, undefined, `lottery_${bet.id}`);
         }
       }
 
@@ -398,12 +543,12 @@ export class LotteryService {
       });
     });
 
-    /* 事务成功后写入房间公共聊天（开奖结果 + 中奖核对） */
+    /* 事务成功后：补封盘线（若跳过 LOCKED）+ 结果卡（若未预推）+ 中奖核对 */
     try {
       const nums = Array.isArray(drawResult.numbers) ? drawResult.numbers.map(Number) : [];
-      /* 若调度落后跳过 LOCKED，补写封盘/注单核对（appendSystemOnce 防重） */
       await this.roomChat.fanOutIssueLocked(issue.game.code, issue.issueNo);
-      await this.roomChat.fanOutIssueDrawn(issue.game.code, issue.issueNo, nums);
+      await this.roomChat.fanOutIssueResult(issue.game.code, issue.issueNo, nums);
+      await this.roomChat.fanOutIssueWinVerify(issue.game.code, issue.issueNo, nums);
     } catch {
       /* 聊天失败不影响开奖 */
     }
@@ -431,6 +576,13 @@ export class LotteryService {
     /* 控奖目标回血金额：结算后检查是否达成并自动结束 */
     try {
       if (this.control) await this.control.refreshGoalExhaustion(issue.game.code);
+    } catch {
+      /* 不影响开奖 */
+    }
+    try {
+      if (this.globalSoft && biasTouches.length) {
+        await this.globalSoft.applySoftBiasProgress(biasTouches);
+      }
     } catch {
       /* 不影响开奖 */
     }
@@ -499,6 +651,7 @@ export class LotteryService {
     const gameDef = this.registry.get(gameCode);
     if (!gameDef) throw new BadRequestException('游戏类型不支持');
 
+    const batchPayTable = (game.configs[0]?.payTable || {}) as unknown as LotteryPayTable;
     for (const b of bets) {
       if (!isValidMoney(b.amount, 1)) throw new BadRequestException('投注额无效');
       const minBet = asMoney(game.minBet);
@@ -509,6 +662,7 @@ export class LotteryService {
       if (!gameDef.validateBet(b.betType, b.betValue)) {
         throw new BadRequestException(`玩法参数无效: ${b.betType}`);
       }
+      this.assertHighOddsCap(gameDef, batchPayTable, b);
     }
 
     const now = new Date();
@@ -524,6 +678,11 @@ export class LotteryService {
     if (!issue) throw new BadRequestException('当前无可投注期，请等待下期');
 
     const totalAmount = bets.reduce((s, b) => s + b.amount, 0);
+    /* 整批按合计额判断能否飞；不足则整批关盘、代理坐庄；必须带 roomNo */
+    const batchHouse = await this.houseForPlayer(playerId, totalAmount, opts?.roomNo);
+    const batchP = this.flyDisk
+      ? await this.flyDisk.resolvePlayerRate(playerId, batchHouse.roomId)
+      : { P: 0.018 };
 
     return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       await this.lockIssueForBet(tx, issue.id);
@@ -537,15 +696,14 @@ export class LotteryService {
 
       for (let i = 0; i < bets.length; i++) {
         const b = bets[i]!;
-        const house = await this.houseForPlayer(playerId);
-        const { P } = this.flyDisk
-          ? await this.flyDisk.resolvePlayerRate(playerId, house.roomId)
-          : { P: 0.018 };
+        const house = batchHouse;
+        const { P } = batchP;
         const payload: LotteryBetPayload & { fly?: object } = {
           betType: b.betType, value: b.betValue,
           fly: {
             type: house.type, id: house.id, flying: house.flying,
-            roomId: house.roomId, agentUserId: house.agentUserId, P,
+            roomId: house.roomId, agentUserId: house.agentUserId,
+            bookMode: house.bookMode, P,
           },
         };
         const bet = await tx.bet.create({
@@ -561,22 +719,40 @@ export class LotteryService {
             status: 'PENDING',
           },
         });
-        await this.points.transferInTx(
-          tx,
-          {
-            type: 'PLAYER',
-            id: playerId,
-            remark: `投注 ${b.betType}`,
-            idempotencyKey: `lottery_bet_player_${bet.id}`,
-          },
-          {
-            type: (payload as { fly?: { type: OwnerType; id: string } }).fly?.type || 'PLATFORM',
-            id: (payload as { fly?: { type: OwnerType; id: string } }).fly?.id || PLATFORM_OWNER_ID,
-            idempotencyKey: `lottery_bet_house_${bet.id}`,
-          },
-          b.amount,
-          { bizType: 'BET', refType: 'issue', refId: issue.id },
-        );
+        if (house.flying || house.type !== 'AGENT') {
+          const betRoomId = String(house.roomId || '').trim();
+          if (!betRoomId) throw new BadRequestException('下注缺少房间');
+          await this.points.transferInTx(
+            tx,
+            {
+              type: 'PLAYER',
+              id: playerId,
+              roomId: betRoomId,
+              remark: `投注 ${b.betType}`,
+              idempotencyKey: `lottery_bet_player_${bet.id}`,
+            },
+            {
+              type: 'PLATFORM',
+              id: PLATFORM_OWNER_ID,
+              idempotencyKey: `lottery_bet_house_${bet.id}`,
+            },
+            b.amount,
+            { bizType: 'BET', refType: 'issue', refId: issue.id },
+          );
+        } else {
+          await closedDiskDebitBetInTx(tx, this.points, {
+            playerId,
+            agentUserId: house.agentUserId || house.id,
+            roomId: house.roomId,
+            bookMode: house.bookMode,
+            amount: b.amount,
+            remark: `投注 ${b.betType}(关盘)`,
+            refType: 'issue',
+            refId: issue.id,
+            idemPlayer: `lottery_bet_player_${bet.id}`,
+            idemAgent: `lottery_bet_agent_${bet.id}`,
+          });
+        }
         results.push({
           betId: bet.id,
           betType: b.betType,
@@ -724,6 +900,7 @@ export class LotteryService {
     betValue: string | undefined,
     amount: number,
     clientRequestIdRaw?: string,
+    roomNo?: string | null,
   ) {
     const clientRequestId = this.assertClientRequestId(clientRequestIdRaw);
     if (!isValidMoney(amount, 1)) throw new BadRequestException('投注额无效');
@@ -757,6 +934,11 @@ export class LotteryService {
     const gameDef = this.registry.get(gameCode);
     if (!gameDef) throw new BadRequestException('游戏类型不支持');
     if (!gameDef.validateBet(betType, betValue)) throw new BadRequestException('玩法参数无效');
+    this.assertHighOddsCap(
+      gameDef,
+      (game.configs[0]?.payTable || {}) as unknown as LotteryPayTable,
+      { betType, betValue, amount },
+    );
 
     // 找当前可投注期号（PENDING + lockAt 未到）
     const now = new Date();
@@ -777,7 +959,7 @@ export class LotteryService {
     return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       await this.lockIssueForBet(tx, issue.id);
 
-      const house = await this.houseForPlayer(playerId);
+      const house = await this.houseForPlayer(playerId, amount, roomNo);
       const { P } = this.flyDisk
         ? await this.flyDisk.resolvePlayerRate(playerId, house.roomId)
         : { P: 0.018 };
@@ -789,6 +971,7 @@ export class LotteryService {
           flying: house.flying,
           roomId: house.roomId,
           agentUserId: house.agentUserId,
+          bookMode: house.bookMode,
           P,
         },
       };
@@ -804,22 +987,40 @@ export class LotteryService {
         },
       });
 
-      await this.points.transferInTx(
-        tx,
-        {
-          type: 'PLAYER',
-          id: playerId,
-          remark: `投注 ${betType}`,
-          idempotencyKey: `lottery_bet_player_${bet.id}`,
-        },
-        {
-          type: house.type,
-          id: house.id,
-          idempotencyKey: `lottery_bet_house_${bet.id}`,
-        },
-        amount,
-        { bizType: 'BET', refType: 'issue', refId: issue.id },
-      );
+      if (house.flying || house.type !== 'AGENT') {
+        const betRoomId = String(house.roomId || '').trim();
+        if (!betRoomId) throw new BadRequestException('下注缺少房间');
+        await this.points.transferInTx(
+          tx,
+          {
+            type: 'PLAYER',
+            id: playerId,
+            roomId: betRoomId,
+            remark: `投注 ${betType}`,
+            idempotencyKey: `lottery_bet_player_${bet.id}`,
+          },
+          {
+            type: 'PLATFORM',
+            id: PLATFORM_OWNER_ID,
+            idempotencyKey: `lottery_bet_house_${bet.id}`,
+          },
+          amount,
+          { bizType: 'BET', refType: 'issue', refId: issue.id },
+        );
+      } else {
+        await closedDiskDebitBetInTx(tx, this.points, {
+          playerId,
+          agentUserId: house.agentUserId || house.id,
+          roomId: house.roomId,
+          bookMode: house.bookMode,
+          amount,
+          remark: `投注 ${betType}(关盘)`,
+          refType: 'issue',
+          refId: issue.id,
+          idemPlayer: `lottery_bet_player_${bet.id}`,
+          idemAgent: `lottery_bet_agent_${bet.id}`,
+        });
+      }
 
       return {
         betId: bet.id,
@@ -879,28 +1080,58 @@ export class LotteryService {
         });
         if (claimed.count === 0) continue;
 
-        const cFly = (bet.payload as { fly?: { type?: OwnerType; id?: string } } | null)?.fly;
-        await this.points.transferInTx(
-          tx,
-          {
-            type: cFly?.type || 'PLATFORM',
-            id: cFly?.id || PLATFORM_OWNER_ID,
-            idempotencyKey: `lottery_cancel_house_${bet.id}`,
-          },
-          {
-            type: 'PLAYER',
-            id: playerId,
-            idempotencyKey: `lottery_cancel_player_${bet.id}`,
-          },
-          asMoney(bet.amount),
-          {
-            bizType: 'ADJUST',
+        const cFly = (bet.payload as {
+          fly?: {
+            type?: OwnerType;
+            id?: string;
+            flying?: boolean;
+            agentUserId?: string;
+            roomId?: string;
+            bookMode?: string;
+          };
+        } | null)?.fly;
+        const amt = asMoney(bet.amount);
+        if (cFly?.flying || cFly?.type !== 'AGENT') {
+          const cancelRoomId = String(cFly?.roomId || '').trim();
+          if (!cancelRoomId) {
+            throw new BadRequestException(`取消投注缺少房间 bet=${bet.id}`);
+          }
+          await this.points.transferInTx(
+            tx,
+            {
+              type: 'PLATFORM',
+              id: PLATFORM_OWNER_ID,
+              idempotencyKey: `lottery_cancel_house_${bet.id}`,
+            },
+            {
+              type: 'PLAYER',
+              id: playerId,
+              roomId: cancelRoomId,
+              idempotencyKey: `lottery_cancel_player_${bet.id}`,
+            },
+            amt,
+            {
+              bizType: 'ADJUST',
+              refType: 'issue',
+              refId: issue.id,
+              remark: `取消投注退回 ${bet.betType}`,
+            },
+          );
+        } else {
+          await closedDiskRefundBetInTx(tx, this.points, {
+            playerId,
+            agentUserId: cFly?.agentUserId || String(cFly?.id || ''),
+            roomId: cFly?.roomId,
+            bookMode: cFly?.bookMode,
+            amount: amt,
+            remark: `取消投注退回 ${bet.betType}(关盘)`,
             refType: 'issue',
             refId: issue.id,
-            remark: `取消投注退回 ${bet.betType}`,
-          },
-        );
-        refunded = roundMoney(refunded + asMoney(bet.amount));
+            idemPlayer: `lottery_cancel_player_${bet.id}`,
+            idemAgent: `lottery_cancel_agent_${bet.id}`,
+          });
+        }
+        refunded = roundMoney(refunded + amt);
         count += 1;
       }
       if (!count) throw new BadRequestException('当前期无可取消注单');
@@ -911,9 +1142,12 @@ export class LotteryService {
 
 
   /**
-   * 控奖：按「单房+单游戏+本局总下注」庄家留存比例，在 N 个候选开奖中
-   * 挑「该房派彩最接近 总下注×(1-留存%)」的结果。
-   * 该房该局无注单则跳过；仅一笔也控。多房同时控时按各房误差×下注额加权折中。
+   * 全站软控统一挑号（只看本期总账，不认玩法）：
+   *
+   * 1. 自然结果庄家亏没过开档线 → 不动。覆盖打法（买 9 个漏 1 个）
+   *    亏损比例本来就低，进不了这层，不会出现「专开你没买的号」。
+   * 2. 过线 → 在「亏不过线」的候选里朝目标亏损靠；同分优先赢家人数多的。
+   * 3. 只剩通杀候选时才看金额门：小额认赔、小盘不杀、周期赚够也认赔。
    */
   private async pickDrawWithControl(
     gameCode: string,
@@ -921,17 +1155,27 @@ export class LotteryService {
     gameDef: LotteryGameDef,
     payTable: LotteryPayTable,
     pendingBets: { amount: unknown; payload: unknown; playerId?: string }[],
-  ): Promise<{ result: DrawResult; nonce: number }> {
-    const policies = this.control
-      ? await this.control.getActiveHoldPolicies(gameCode)
-      : [];
-    const tries = policies.length ? CONTROL_FIXED_CANDIDATE_TRIES : 1;
+  ): Promise<{ result: DrawResult; nonce: number; softCommit: 'none' | 'mark' | 'consume' }> {
+    const natural = gameDef.draw(serverSeed, 'server', 1);
+    const globalRt = this.globalSoft
+      ? await this.globalSoft.getDrawRuntime(gameCode)
+      : null;
+
+    if (!globalRt?.needPick) {
+      return {
+        result: natural,
+        nonce: 1,
+        softCommit: globalRt?.cooldownActive ? 'consume' : 'none',
+      };
+    }
 
     type RoomBucket = { roomId: string; bets: typeof pendingBets; stake: number };
     const byRoom = new Map<string, RoomBucket>();
+    let periodStake = 0;
     for (const b of pendingBets) {
-      const fly = (b.payload as { fly?: { roomId?: string } } | null)?.fly;
-      const rid = fly?.roomId;
+      const amt = asMoney(b.amount);
+      periodStake = roundMoney(periodStake + amt);
+      const rid = (b.payload as { fly?: { roomId?: string } } | null)?.fly?.roomId;
       if (!rid) continue;
       let bucket = byRoom.get(rid);
       if (!bucket) {
@@ -939,46 +1183,220 @@ export class LotteryService {
         byRoom.set(rid, bucket);
       }
       bucket.bets.push(b);
-      bucket.stake += asMoney(b.amount);
+      bucket.stake = roundMoney(bucket.stake + amt);
     }
 
-    const active = policies
-      .map((p) => {
-        const bucket = byRoom.get(p.roomId);
-        if (!bucket || bucket.bets.length < CONTROL_MIN_BET_COUNT) return null;
-        const targetPayout = roundMoney(bucket.stake * (1 - p.holdRatio));
-        return { policy: p, bucket, targetPayout };
-      })
-      .filter((x): x is NonNullable<typeof x> => !!x);
-
-    if (!active.length) {
-      return { result: gameDef.draw(serverSeed, 'server', 1), nonce: 1 };
+    /* 空注/零流水：自然开奖，不占冷却 */
+    if (periodStake <= 1e-9) {
+      return { result: natural, nonce: 1, softCommit: 'none' };
     }
 
-    let best = gameDef.draw(serverSeed, 'server', 1);
-    let bestNonce = 1;
-    let bestScore = Number.POSITIVE_INFINITY;
-    for (let nonce = 1; nonce <= tries; nonce++) {
-      const cand = nonce === 1 ? best : gameDef.draw(serverSeed, 'server', nonce);
-      let score = 0;
-      for (const a of active) {
-        const pay = this.estimatePayout(gameDef, payTable, cand, a.bucket.bets);
-        const err = Math.abs(pay - a.targetPayout);
-        score += err * Math.max(a.bucket.stake, 1);
+    let brakeKeys = new Set<string>();
+    if (globalRt.playerBrakeEnabled && this.globalSoft) {
+      const brakeTargets: Array<{ playerId: string; roomId: string }> = [];
+      for (const b of pendingBets) {
+        if (!b.playerId) continue;
+        const rid = String(
+          (b.payload as { fly?: { roomId?: string } } | null)?.fly?.roomId || '',
+        ).trim();
+        if (!rid) continue;
+        brakeTargets.push({ playerId: b.playerId, roomId: rid });
       }
-      if (score < bestScore) {
-        bestScore = score;
+      brakeKeys = await this.globalSoft.playersNeedingBrake(
+        brakeTargets,
+        globalRt.playerBrakeMultiple,
+      );
+    }
+    const brakeFirst = brakeKeys.size > 0;
+    const biases = globalRt.biases || [];
+
+    const naturalPay = this.estimatePayout(gameDef, payTable, natural, pendingBets);
+    const playerCount = new Set(
+      pendingBets.map((b) => b.playerId).filter(Boolean) as string[],
+    ).size;
+    const guard = decidePeriodGuard({
+      periodStake,
+      naturalPayout: naturalPay,
+      playerCount,
+      cycleProfit: globalRt.cycleProfit,
+      params: globalRt.periodGuard,
+    });
+
+    /* 正常开奖：单期没超亏、无偏置、无缓刹 → 一号不挑 */
+    if (!guard.steer && biases.length === 0 && !brakeFirst) {
+      return { result: natural, nonce: 1, softCommit: 'none' };
+    }
+
+    const tries = Math.max(1, globalRt.tries);
+    const periodCommission = roundMoney(periodStake * (globalRt.commissionRatePct / 100));
+    const dayTol = Math.max(1, periodStake * 0.001 + globalRt.dayF * 0.0005);
+
+    let best = natural;
+    let bestNonce = 1;
+    let bestRank: SoftPickRank = {
+      valid: false,
+      day: Number.POSITIVE_INFINITY,
+      bias: Number.POSITIVE_INFINITY,
+      brake: Number.POSITIVE_INFINITY,
+      period: Number.POSITIVE_INFINITY,
+      winners: -1,
+    };
+    let sawLegal = false;
+
+    for (let nonce = 1; nonce <= tries; nonce++) {
+      const cand = nonce === 1 ? natural : gameDef.draw(serverSeed, 'server', nonce);
+      /* 每注单独估一次，总派彩/分房/分人/赢家数共用这一趟 */
+      const betPays = pendingBets.map(
+        (b) => this.estimatePayout(gameDef, payTable, cand, [b]),
+      );
+      let periodPay = 0;
+      for (const p of betPays) periodPay = roundMoney(periodPay + p);
+
+      if (guard.steer && !periodCandidateLegal({
+        periodStake,
+        periodPayout: periodPay,
+        decision: guard,
+      })) continue;
+      sawLegal = true;
+
+      /* IDLE 仅偏置：不算日账主分，避免「开一条偏置全站隐性轻控」 */
+      const day = globalRt.daySteer
+        ? globalDayNetScore({
+          dayF: globalRt.dayF,
+          dayG: globalRt.dayG,
+          dayC: globalRt.dayC,
+          periodStake,
+          periodPayout: periodPay,
+          periodCommission,
+          targetNetPct: globalRt.targetNetPct,
+        })
+        : 0;
+
+      const period = guard.steer
+        ? periodLossScore({
+          periodStake,
+          periodPayout: periodPay,
+          targetLossPct: guard.targetLossPct,
+        })
+        : 0;
+
+      const roomBooks = new Map<string, { stake: number; payout: number }>();
+      const playerPayouts = new Map<string, number>();
+      const winnerIds = new Set<string>();
+      let brake = 0;
+      for (let i = 0; i < pendingBets.length; i++) {
+        const b = pendingBets[i];
+        const pay = betPays[i];
+        if (pay > 1e-9 && b.playerId) winnerIds.add(b.playerId);
+        const rid = String(
+          (b.payload as { fly?: { roomId?: string } } | null)?.fly?.roomId || '',
+        ).trim();
+        if (!rid) continue;
+        const bucket = byRoom.get(rid);
+        const book = roomBooks.get(rid) || { stake: bucket?.stake ?? 0, payout: 0 };
+        book.payout = roundMoney(book.payout + pay);
+        roomBooks.set(rid, book);
+        if (!b.playerId) continue;
+        const key = `${rid}|${b.playerId}`;
+        playerPayouts.set(key, roundMoney((playerPayouts.get(key) ?? 0) + pay));
+        if (brakeKeys.has(key)) brake = roundMoney(brake + pay);
+      }
+      const biasRes = softBiasScore({
+        biases,
+        roomBooks,
+        playerPayouts,
+        houseFloor: CONTROL_PLAYER_WIN_HOUSE_FLOOR,
+      });
+      if (!biasRes.valid) continue;
+
+      const rank: SoftPickRank = {
+        valid: true,
+        day,
+        bias: biasRes.score,
+        brake,
+        period,
+        winners: winnerIds.size,
+      };
+      if (isBetterSoftGlobalPick(rank, bestRank, dayTol, {
+        brakeFirst,
+        periodFirst: guard.steer,
+      })) {
+        bestRank = rank;
         best = cand;
         bestNonce = nonce;
       }
     }
 
+    if (!sawLegal || !bestRank.valid) {
+      this.logger.log(
+        `control global game=${gameCode} gear=${globalRt.gear} fallback=natural ` +
+          `biasN=${biases.length} steer=${guard.steer} why=${guard.reason} ` +
+          `dayR=${globalRt.dayR ?? 'n/a'}`,
+      );
+      return { result: natural, nonce: 1, softCommit: 'none' };
+    }
+
+    const sameAsNatural = bestNonce === 1;
     this.logger.log(
-      `control hold game=${gameCode} rooms=${active.length} tries=${tries} nonce=${bestNonce} score~=${Math.round(bestScore)}`,
+      `control global game=${gameCode} mode=${globalRt.mode} gear=${globalRt.gear} ` +
+        `tries=${tries} nonce=${bestNonce} steer=${guard.steer} ` +
+        `wipeout=${guard.allowWipeout} why=${guard.reason} ` +
+        `winners=${bestRank.winners} period~=${Math.round(bestRank.period ?? 0)} ` +
+        `day~=${Math.round(bestRank.day)} bias~=${Math.round(bestRank.bias)} ` +
+        `biasN=${biases.length} brakeN=${brakeKeys.size} brakeFirst=${brakeFirst} ` +
+        `soft=${sameAsNatural ? 'none' : 'mark'}`,
     );
-    return { result: best, nonce: bestNonce };
+    return {
+      result: best,
+      nonce: bestNonce,
+      softCommit: sameAsNatural ? 'none' : 'mark',
+    };
   }
 
+  /**
+   * 高赔率玩法单注限红。
+   *
+   * 通用限红是按「一局最多输多少」定的，对 9000 倍这种玩法完全不适用：
+   * 押满 10 万中一次要赔 9 亿，撞上 2000 万绝对封顶后玩家还拿不到挂牌赔率。
+   * 这里按该注**可能拿到的最高倍率**卡，连码那种一注能命中多档的也盖得住。
+   */
+  private assertHighOddsCap(
+    gameDef: LotteryGameDef,
+    payTable: LotteryPayTable,
+    bet: { betType: string; betValue?: string | number; amount: number },
+  ): void {
+    const payload: LotteryBetPayload = { betType: bet.betType, value: bet.betValue };
+    const odds = gameDef.maxOdds
+      ? gameDef.maxOdds(payload, payTable)
+      : (payTable[bet.betType]?.multiplier ?? 0);
+    const cap = highOddsBetCap(odds);
+    if (cap != null && bet.amount > cap) {
+      throw new BadRequestException(
+        `该玩法赔率 ${odds} 倍，单注最多 ${cap}`,
+      );
+    }
+  }
+
+  /**
+   * 与 draw() 入账同一套赔付数学：refund 缺表项按 1 倍退本 + capWin 封顶。
+   * 软控估派必须走此函数，禁止另算裸倍率。
+   */
+  private lotterySettleMath(
+    amount: number,
+    hitKey: string | null | undefined,
+    payTable: LotteryPayTable,
+  ): { payout: number; odds: number; raw: number; capped: boolean } {
+    if (!hitKey) return { payout: 0, odds: 0, raw: 0, capped: false };
+    const odds = hitKey === 'refund'
+      ? (payTable[hitKey]?.multiplier ?? 1)
+      : (payTable[hitKey]?.multiplier ?? 0);
+    const raw = roundMoney(amount * odds);
+    /* 挂牌赔率高于 5000 倍的玩法（六合彩四全中 9000）按赔率放行，只留绝对额封顶 */
+    const { win: payout, capped } = capWin(amount, raw, odds);
+    return { payout, odds, raw, capped };
+  }
+
+  /** 软控挑号用：逐注累加，口径 = 真实结算派彩 */
   private estimatePayout(
     gameDef: LotteryGameDef,
     payTable: LotteryPayTable,
@@ -989,9 +1407,8 @@ export class LotteryService {
     for (const b of pendingBets) {
       const payload = (b.payload || {}) as LotteryBetPayload;
       const hit = gameDef.judge(payload, draw, payTable);
-      if (!hit) continue;
-      const mult = payTable[hit]?.multiplier ?? 0;
-      total += asMoney(b.amount) * mult;
+      const amt = asMoney(b.amount);
+      total = roundMoney(total + this.lotterySettleMath(amt, hit, payTable).payout);
     }
     return total;
   }
@@ -1062,10 +1479,24 @@ export class LotteryService {
         orderBy: { createdAt: 'desc' },
         skip: wantIssue ? 0 : (page - 1) * take,
         take,
-        include: { issue: { select: { issueNo: true, drawNumbers: true, openAt: true } } },
+        include: {
+          issue: {
+            select: { issueNo: true, drawNumbers: true, openAt: true, status: true },
+          },
+        },
       }),
     ]);
-    return { total, page, pageSize: take, list };
+    /* 开奖中（LOCKED）号码已预生成供动画，注单接口仍对玩家隐藏，避免偷看结果 */
+    const safeList = list.map((b) => {
+      if (b.issue?.status === 'DRAWN') return b;
+      return {
+        ...b,
+        issue: b.issue
+          ? { ...b.issue, drawNumbers: null as string | null }
+          : b.issue,
+      };
+    });
+    return { total, page, pageSize: take, list: safeList };
   }
 
   /** 活跃赔率表：与结算同一份 GameConfig.payTable */

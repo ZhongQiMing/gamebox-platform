@@ -29,6 +29,8 @@ export interface FruitSpinResult {
   totalWin: number
   totalPayout: number
   balance: number
+  /** true：跑灯未揭晓，注单仍为待开奖 */
+  awaitingReveal?: boolean
 }
 
 export interface FruitGambleResult {
@@ -61,57 +63,83 @@ export interface BcbmSpinResult {
 export const gamesApi = {
   list: () => http.get<GameItem[], GameItem[]>('/games'),
 
-  spin: (gameCode: string, amount: number, clientRequestId: string, clientSeed?: string) =>
+  spin: (
+    gameCode: string,
+    amount: number,
+    clientRequestId: string,
+    clientSeed?: string,
+    roomNo?: string,
+  ) =>
     http.post<SpinResult, SpinResult>('/bet/spin', {
       gameCode,
       amount,
       clientRequestId,
       clientSeed,
+      roomNo,
     }),
 
   fruitSpin: (
     bets: Record<string, number>,
     clientRequestId: string,
     clientSeed?: string,
+    roomNo?: string,
   ) =>
     http.post<FruitSpinResult, FruitSpinResult>('/bet/fruit', {
       gameCode: 'fruit-machine',
       bets,
       clientRequestId,
       clientSeed,
+      roomNo,
     }),
 
-  fruitGamble: (amount: number, choice: 'big' | 'small', clientRequestId: string) =>
+  /** 跑灯/报奖结束后揭晓派彩；此前注单为「待开奖」 */
+  fruitReveal: (roundId: string) =>
+    http.post<
+      { ok: boolean; roundId: string; balance: number; totalPayout: number; pendingGambleAmount: number },
+      { ok: boolean; roundId: string; balance: number; totalPayout: number; pendingGambleAmount: number }
+    >('/bet/fruit/reveal', { roundId }),
+
+  fruitGamble: (
+    amount: number,
+    choice: 'big' | 'small',
+    clientRequestId: string,
+    roomNo?: string,
+  ) =>
     http.post<FruitGambleResult, FruitGambleResult>('/bet/fruit/gamble', {
       amount,
       choice,
       clientRequestId,
+      roomNo,
     }),
 
-  /** 查询可猜大小的当局赢分（从历史返回时恢复 UI） */
-  fruitPendingGamble: () =>
-    http.get<
-      { pendingGambleAmount: number; balance: number; roundId?: string },
-      { pendingGambleAmount: number; balance: number; roundId?: string }
-    >('/bet/fruit/pending-gamble'),
+  /** 查询可猜大小的当局赢分（从历史返回时恢复 UI）；传 roomNo 才能在无 pending 时拿到正确余额 */
+  fruitPendingGamble: (roomNo?: string) => {
+    const q = roomNo ? `?roomNo=${encodeURIComponent(roomNo)}` : ''
+    return http.get<
+      { pendingGambleAmount: number; balance?: number; roundId?: string },
+      { pendingGambleAmount: number; balance?: number; roundId?: string }
+    >(`/bet/fruit/pending-gamble${q}`)
+  },
 
   /** 退币/放弃猜大小：清服务器 pendingGambleAmount */
-  fruitAbandonGamble: () =>
-    http.post<{ ok: boolean; balance: number }, { ok: boolean; balance: number }>(
+  fruitAbandonGamble: (roomNo?: string) =>
+    http.post<{ ok: boolean; balance?: number }, { ok: boolean; balance?: number }>(
       '/bet/fruit/abandon-gamble',
-      {},
+      roomNo ? { roomNo } : {},
     ),
 
   bcbmSpin: (
     bets: Record<string, number>,
     clientRequestId: string,
     clientSeed?: string,
+    roomNo?: string,
   ) =>
     http.post<BcbmSpinResult, BcbmSpinResult>('/bet/bcbm', {
       gameCode: 'bcbm',
       bets,
       clientRequestId,
       clientSeed,
+      roomNo,
     }),
 
   betHistory: () =>

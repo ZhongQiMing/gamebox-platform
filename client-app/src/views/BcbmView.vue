@@ -593,6 +593,7 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useWalletStore } from '@/stores/wallet'
+import { useRoomStore } from '@/stores/room'
 import { useUserStore } from '@/stores/user'
 import { useToast } from '@/composables/useToast'
 import { useGameSpinSession } from '@/composables/useGameSpinSession'
@@ -668,6 +669,7 @@ const allBets = [...PANEL_TOP_BETS, ...PANEL_BOTTOM_BETS]
 const router = useRouter()
 const route = useRoute()
 const walletStore = useWalletStore()
+const roomStore = useRoomStore()
 const userStore = useUserStore()
 const { error: toastErr } = useToast()
 const spinSession = useGameSpinSession('bcbm')
@@ -1202,6 +1204,12 @@ async function doSpin() {
     stopAutoBet()
     return
   }
+  const roomNo = String(roomStore.roomNo || '').trim()
+  if (!/^\d{6}$/.test(roomNo)) {
+    toastErr('请先进入房间再下注')
+    stopAutoBet()
+    return
+  }
 
   busy.value = true
   betAllMenuOpen.value = false
@@ -1224,7 +1232,7 @@ async function doSpin() {
   try {
     if (spinSession.disposed.value) return
     const clientRequestId = spinSession.currentOrNewClientRequestId()
-    const res = await gamesApi.bcbmSpin(bets, clientRequestId)
+    const res = await gamesApi.bcbmSpin(bets, clientRequestId, undefined, roomNo)
     spinSession.clearClientRequestId()
     if (spinSession.disposed.value) return
     walletStore.balance = res.balance
@@ -1285,7 +1293,7 @@ async function doSpin() {
       ringFaded.value = false
     } else if (res.totalPayout > 0) {
       // 官方 SmallPrize → FastJumpAmount：ding×2 与跳分同时
-      await fxRef.value?.playWin(res.totalPayout)
+      await fxRef.value?.playWin({ payout: res.totalPayout })
       clearBcbmPayout()
     } else {
       clearBcbmPayout()

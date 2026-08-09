@@ -903,7 +903,7 @@ body.ffc-bg::after {
 }
 .ffc-msg.is-robot .ffc-msg__bubble--bot {
   display: block;
-  max-width: min(380px, 98%);
+  max-width: min(320px, 98%);
   padding: 0;
   background: transparent;
   border: none;
@@ -3458,6 +3458,16 @@ body.ffc-bg::after {
 
 
 /* 短屏：侧栏压缩，避免压住底部输入 */
+.ffc-room.is-rail-compact .ffc-rail-ladder {
+  width: 26px;
+  height: 26px;
+}
+.ffc-room.is-rail-compact .ffc-rail-ladder__arrow {
+  font-size: 10px;
+}
+.ffc-room.is-rail-compact .ffc-rail-stack {
+  gap: 6px;
+}
 .ffc-room.is-rail-compact .ffc-rail {
   gap: 2px;
   width: 44px;
@@ -3501,6 +3511,64 @@ body.ffc-bg::after {
   gap: 10px;
   width: var(--rail-w, 56px);
   pointer-events: none;
+}
+
+.ffc-rail-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-height: 420px;
+  opacity: 1;
+  overflow: hidden;
+  transition: max-height 0.22s ease, opacity 0.18s ease, margin 0.18s ease;
+}
+.ffc-room.is-rail-collapsed .ffc-rail-stack {
+  max-height: 0;
+  opacity: 0;
+  margin: 0;
+  pointer-events: none;
+}
+/* 收起/展开：三角箭头 + 外圈，收起▼ 展开▲ */
+.ffc-rail-ladder {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1.5px solid rgba(244, 211, 107, 0.78);
+  border-radius: 50%;
+  background: linear-gradient(180deg, rgba(42, 34, 18, 0.92), rgba(18, 14, 10, 0.88));
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 2px 6px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 230, 150, 0.18);
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.12s ease;
+}
+.ffc-rail-ladder:hover {
+  border-color: rgba(255, 224, 130, 0.95);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 0 10px rgba(244, 211, 107, 0.35),
+    0 2px 6px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 230, 150, 0.28);
+}
+.ffc-rail-ladder__arrow {
+  display: block;
+  font-size: 11px;
+  line-height: 1;
+  color: #f4d36b;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.65);
+  transform: translateY(0.5px);
+}
+.ffc-rail-ladder:active {
+  transform: scale(0.94);
+}
+.ffc-rail-ladder:active .ffc-rail-ladder__arrow {
+  opacity: 0.9;
 }
 .ffc-rail-btn {
   display: flex;
@@ -3726,19 +3794,60 @@ body.ffc-bg::after {
 
 /* ===== 正版开奖动画结果卡 ===== */
 .ffc-video-card {
-  width: min(360px, 100%);
-  border-radius: 10px;
+  width: min(320px, 100%);
+  border-radius: 12px;
   overflow: hidden;
   background: linear-gradient(145deg, rgba(22, 17, 11, 0.98), rgba(10, 8, 5, 0.99));
-  border: 1px solid rgba(212, 175, 55, 0.28);
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(212, 175, 55, 0.06) inset;
+  border: 1.5px solid rgba(212, 175, 55, 0.42);
+  box-shadow:
+    0 12px 36px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(212, 175, 55, 0.1) inset,
+    0 0 18px rgba(212, 175, 55, 0.08);
 }
 .ffc-video-card.is-reveal {
   animation: ffc-vc-in 0.4s ease-out both;
 }
+.ffc-video-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 12px 8px;
+  border-bottom: 1px solid rgba(212, 175, 55, 0.28);
+  background:
+    linear-gradient(90deg, rgba(90, 64, 28, 0.4) 0%, rgba(40, 28, 14, 0.18) 50%, rgba(90, 64, 28, 0.32) 100%),
+    linear-gradient(180deg, rgba(56, 40, 18, 0.72) 0%, rgba(28, 20, 10, 0.35) 100%);
+}
+.ffc-video-card__title {
+  font-family: 'Noto Serif SC', serif;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--gold-bright, #f4d36b);
+  letter-spacing: 2px;
+  white-space: nowrap;
+}
+.ffc-video-card__issue {
+  flex-shrink: 0;
+  margin-left: auto;
+  font-family: ui-monospace, Consolas, 'SF Mono', monospace;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  color: rgba(244, 211, 107, 0.92);
+  white-space: nowrap;
+}
 @keyframes ffc-vc-in {
   from { opacity: 0; transform: translateY(8px) scale(0.98); }
   to { opacity: 1; transform: none; }
+}
+.ffc-video-card.is-hold-black .ffc-video-card__frame {
+  opacity: 0 !important;
+  visibility: hidden !important;
+}
+/* 开播中优先露画面，避免残留 is-hold-black 把滚号藏掉 */
+.ffc-video-card.is-playing .ffc-video-card__frame {
+  opacity: 1 !important;
+  visibility: visible !important;
 }
 .ffc-video-card__stage {
   position: relative;
@@ -3746,7 +3855,7 @@ body.ffc-bg::after {
   /* 与正版 bodybg 1200×800 一致 */
   aspect-ratio: 3 / 2;
   overflow: hidden;
-  background: #1a1410;
+  background: #0a0806;
   line-height: 0;
 }
 .ffc-video-card__frame {
@@ -3757,6 +3866,18 @@ body.ffc-bg::after {
   border: 0;
   background: #1a1410;
   pointer-events: none;
+  /* 默认藏起：未开播时只露出挂牌 Logo，像名字被放大 */
+  opacity: 0;
+  visibility: hidden;
+}
+/* 仅开播中或已结算才露画面 */
+.ffc-video-card.is-playing .ffc-video-card__frame,
+.ffc-video-card.is-settled .ffc-video-card__frame {
+  opacity: 1;
+  visibility: visible;
+}
+.ffc-video-card__foot.is-hidden {
+  display: none;
 }
 .ffc-video-card__foot {
   display: grid;

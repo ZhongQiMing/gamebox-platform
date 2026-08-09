@@ -39,7 +39,7 @@ BOOT = r"""
                 }
               }
             } catch (e2) {}
-            try { parent.postMessage({ source: 'jsr-pk10-race', action: 'ready' }, '*'); } catch (e) {}
+            try { parent.postMessage({ source: 'jsr-pk10-race', action: 'ready' }, location.origin); } catch (e) {}
           });
         </script>
 """

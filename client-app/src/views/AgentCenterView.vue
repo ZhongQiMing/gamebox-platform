@@ -14,11 +14,6 @@
     </div>
 
     <div class="page-body">
-      <section class="ag-console-tip">
-        <div class="ag-console-tip-t">运营控制台</div>
-        <div class="ag-console-tip-d">上下分、房间、机器人、报表请使用独立控制台登录（超管/房主/代理账号）。本页仅保留佣金与团队查看。</div>
-      </section>
-
       <section class="ag-hero" v-if="overview">
         <div class="ag-hero-main">
           <div class="ag-hero-item">
@@ -45,6 +40,7 @@
       </nav>
 
       <div class="ag-panel" v-if="overview?.canHang && tab === 'hang'">
+        <p class="ag-hang-tip">仅可挂本房玩家；挂靠按房间独立，跨房不返挂靠佣金。多房请在员工端按房间操作。</p>
         <div class="ag-form">
           <input v-model="friendUid" type="text" inputmode="numeric" maxlength="12" placeholder="好友玩家 ID">
           <input v-model="underUid" type="text" inputmode="numeric" maxlength="12" placeholder="挂到谁名下（推荐人 ID）">
@@ -158,3 +154,12 @@ onMounted(async () => {
   }
 })
 </script>
+
+<style scoped>
+.ag-hang-tip {
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.55);
+}
+</style>

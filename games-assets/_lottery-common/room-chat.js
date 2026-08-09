@@ -253,6 +253,10 @@
    *  - onCeremonyComplete(issue)    兼容旧回调（finishToBetting 时等价 betting）
    *  - afterResultAppended(ctx)
    *  - getRevealFallbackMs(issue)
+   *  - hasResultAnimated(issue) / markResultAnimated(issue)
+   *      一期动画只播一遍：已标记则永远 animate=false（只出终态）
+   *  - onRevealDeadline(issue)
+   *      揭晓时长到点：强制落终态（切页黑屏后到点也出领奖台，不补播）
    */
   LotteryRoomChat.create = function (opts) {
     opts = opts || {};
@@ -282,7 +286,7 @@
 
     var pendingWin = null;
     var pendingOpen = null;
-    /** 开盘线尚未刷出时暂存的下注（含机器人），保证开盘线永远在注前面 */
+    /** 开盘线尚未刷出时暂存的下注/上下分（含机器人），保证开盘线永远在它们前面 */
     var pendingBets = [];
     var revealTimer = null;
     var winWaitTimer = null;
@@ -452,11 +456,31 @@
       return nextIssue;
     }
 
+    /** 上下分闲聊（机器人氛围 / 玩家口令），须排在开盘线之后 */
+    function isFundTalkMsg(kind, p) {
+      p = p || {};
+      if (p.fundType === 'up' || p.fundType === 'down') return true;
+      if (String(kind || '') !== 'chat' && String(kind || '') !== 'bet') return false;
+      var t = String(p.text || '').replace(/\s+/g, '');
+      return /^(上分|下分)\/?\d+$/.test(t);
+    }
+
     function appendBetMessage(msg, p) {
-      var html =
-        typeof opts.buildBetHtml === 'function'
-          ? opts.buildBetHtml(p, msg)
-          : esc(String((p && p.text) || ''));
+      p = p || {};
+      var kind = String((msg && msg.kind) || '');
+      var html;
+      if (kind === 'chat' || isFundTalkMsg(kind, p)) {
+        html =
+          typeof opts.buildOtherHtml === 'function'
+            ? opts.buildOtherHtml(p, msg, kind || 'chat')
+            : esc(String(p.text || ''));
+      } else {
+        html =
+          typeof opts.buildBetHtml === 'function'
+            ? opts.buildBetHtml(p, msg)
+            : esc(String(p.text || ''));
+      }
+      if (!html) html = esc(String(p.text || ''));
       if (!html || typeof opts.appendMsg !== 'function') return;
       var userName = typeof opts.getUserName === 'function' ? opts.getUserName() : '';
       var self = !msg.isRobot && msg.senderName === userName;
@@ -511,6 +535,12 @@
       } catch (e) {
         /* ignore leftover dock */
       }
+      /* 开盘线前：清掉各游戏残留的「正在开奖」遮罩 */
+      try {
+        if (global.LotteryHoldTip && typeof global.LotteryHoldTip.clearAll === 'function') {
+          global.LotteryHoldTip.clearAll(document.getElementById('chatFeed') || document);
+        }
+      } catch (eTip) { /* ignore */ }
       var nextIssue = flushPendingOpen();
       var prev = phaseIssue;
       phase = PHASE_BETTING;
@@ -621,6 +651,19 @@
       if (phase !== PHASE_REVEALING && phase !== PHASE_DRAWING) return;
       revealDone = true;
       clearRevealTimer();
+      /* 揭晓完成：清掉压黑「正在开奖」遮罩，避免底栏已出号仍盖黑幕 */
+      try {
+        if (global.LotteryHoldTip && typeof global.LotteryHoldTip.clearAll === 'function') {
+          global.LotteryHoldTip.clearAll(document.getElementById('chatFeed') || document);
+        }
+      } catch (eTipReveal) { /* ignore */ }
+      /*
+       * 号码已揭晓：立刻通知游戏刷新顶栏历史（勿等中奖核对/开盘线）。
+       * settled 阶段仍可能停几秒，但顶栏不应再压上一期。
+       */
+      if (typeof opts.onNumbersRevealed === 'function') {
+        try { opts.onNumbersRevealed(phaseIssue); } catch (eRevealPaint) { /* ignore */ }
+      }
       ensureWinThenSettle();
     }
 
@@ -630,6 +673,20 @@
       /* scheduleRevealReady 未到期：忽略 bindReveal 瞬时 onDone；硬上限可 force */
       if (revealTimer && !force) return;
       if (revealTimer) clearRevealTimer();
+      if (typeof opts.onRevealDeadline === 'function') {
+        try { opts.onRevealDeadline(issue); } catch (e) { /* ignore */ }
+      }
+      settleAfterReveal();
+    }
+
+    /**
+     * 动画号码已落定：推进中奖核对/开盘/解冻，但不 forceSettle（尾动画可继续播）。
+     * 用于「出号 = 开完奖，顶栏/注单/资金同步」的彩种（如 1 分时时彩）。
+     */
+    function advanceReveal(issue) {
+      issue = trimIssue(issue);
+      if (!issue || (phaseIssue && issue !== phaseIssue)) return;
+      clearRevealTimer();
       settleAfterReveal();
     }
 
@@ -790,19 +847,26 @@
       var isRobot = !!msg.isRobot;
       var winVerifyDeferred = false;
       var issue = '';
+      /** 结果卡是否播动画（可能被「已播过」门控关掉） */
+      var doAnimate = animate;
 
-      if (kind === 'bet') {
+      if (kind === 'bet' || isFundTalkMsg(kind, p)) {
         /*
-         * 模拟真人：开盘线没刷出前，任何下注（含机器人）只排队，绝不插到开盘线前面。
+         * 模拟真人：开盘线没刷出前，下注/上下分（含机器人）只排队，绝不插到开盘线前面。
          */
         if (live && phase !== PHASE_BETTING) {
           pendingBets.push({ msg: msg, p: p });
           html = '';
-        } else {
+        } else if (kind === 'bet') {
           html =
             typeof opts.buildBetHtml === 'function'
               ? opts.buildBetHtml(p, msg)
               : esc(String(p.text || ''));
+        } else {
+          html =
+            typeof opts.buildOtherHtml === 'function'
+              ? opts.buildOtherHtml(p, msg, kind)
+              : esc(String(p.text || kind));
         }
       } else if (kind === 'close') {
         issue = String(p.issueNo || msg.issueNo || '');
@@ -839,9 +903,20 @@
           }
         }
       } else if (kind === 'result') {
+        var resultIssue = trimIssue(p.issueNo || msg.issueNo);
+        doAnimate = !!(live && animate);
+        /* 已播过的期号：只出终态，绝不第二遍 */
+        if (
+          doAnimate &&
+          resultIssue &&
+          typeof opts.hasResultAnimated === 'function' &&
+          opts.hasResultAnimated(resultIssue)
+        ) {
+          doAnimate = false;
+        }
         html =
           typeof opts.buildResultHtml === 'function'
-            ? opts.buildResultHtml(p, msg, { live: live, animate: animate })
+            ? opts.buildResultHtml(p, msg, { live: live, animate: doAnimate })
             : '开奖 ' + String(p.issueNo || msg.issueNo || '');
         isRobot = true;
         if (typeof opts.onResultMeta === 'function') opts.onResultMeta(p, msg);
@@ -919,22 +994,30 @@
 
       if (kind === 'result') {
         var appendedResultIssue = trimIssue(p.issueNo || msg.issueNo);
-        if (live && animate) enterRevealing(appendedResultIssue);
+        /*
+         * 一经提交展示（播或直落）即标记：中途切页再进也不会重播。
+         * 延迟 pending 的 result 尚未走到这里，不会误标记。
+         */
+        if (appendedResultIssue && typeof opts.markResultAnimated === 'function') {
+          try { opts.markResultAnimated(appendedResultIssue); } catch (eMark) { /* ignore */ }
+        }
+        if (live && doAnimate) enterRevealing(appendedResultIssue);
         if (typeof opts.afterResultAppended === 'function') {
           opts.afterResultAppended({
             issue: appendedResultIssue,
             payload: p,
             msg: msg,
             live: live,
-            animate: animate,
+            animate: doAnimate,
             docked: false,
             markRevealReady: markRevealReady,
+            advanceReveal: advanceReveal,
             scheduleRevealReady: scheduleRevealReady,
             setRevealPending: setRevealPending,
             setRevealReadyFlag: setRevealReadyFlag,
           });
         }
-        if (live && animate && appendedResultIssue) {
+        if (live && doAnimate && appendedResultIssue) {
           appendCalculatingWinCard();
           /* 结果+正在核对都进流并滚到底后，再暂停自动滚（用户手滑可解除） */
           pauseAutoScroll();
@@ -1052,6 +1135,7 @@
       releaseAutoScrollByUser: releaseAutoScrollByUser,
       resumeAutoScroll: resumeAutoScroll,
       markRevealReady: markRevealReady,
+      advanceReveal: advanceReveal,
       scheduleRevealReady: scheduleRevealReady,
       setRevealPending: setRevealPending,
       setRevealReadyFlag: setRevealReadyFlag,

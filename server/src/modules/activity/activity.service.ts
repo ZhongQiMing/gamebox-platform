@@ -8,7 +8,7 @@
  */
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { asMoney } from '@gamebox/shared';
+import { asMoney, roundMoney } from '@gamebox/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PointsService, PLATFORM_OWNER_ID } from '../points/points.service';
 
@@ -16,6 +16,12 @@ interface ActivityConfig {
   tiers?: Array<{ minDeposit: number; reward: number }>;  // FIRST_DEPOSIT / VIP
   reward?: number;                                         // NEWBIE 固定奖励
   expiresHours?: number;                                   // NEWBIE 有效时长
+}
+
+/** 活动配置是后台自由填的 JSON，出账前必须收敛成合法正金额 */
+function safeReward(raw: unknown): number {
+  const n = roundMoney(Number(raw));
+  return n > 0 ? n : 0;
 }
 
 @Injectable()
@@ -94,6 +100,19 @@ export class ActivityService {
             status: 'PENDING',
           },
         });
+        const members = await tx.roomMember.findMany({
+          where: { playerId, status: 'APPROVED' },
+          orderBy: { updatedAt: 'desc' },
+          take: 2,
+          select: { roomId: true },
+        });
+        if (members.length === 0) {
+          throw new BadRequestException('请先加入房间再领取活动奖励');
+        }
+        if (members.length > 1) {
+          throw new BadRequestException('多房间玩家暂无法自动入账，请联系客服');
+        }
+        const roomId = members[0]!.roomId;
         const idKey = `activity_${activityId}_${playerId}`;
         const { in: ledger } = await this.points.transferInTx(
           tx,
@@ -106,6 +125,7 @@ export class ActivityService {
           {
             type: 'PLAYER',
             id: playerId,
+            roomId,
             remark: `活动奖励:${act.title}`,
             idempotencyKey: `${idKey}_player`,
           },
@@ -138,7 +158,7 @@ export class ActivityService {
       const expiresHours = cfg.expiresHours ?? 24;
       const deadline = new Date(user.createdAt.getTime() + expiresHours * 3600_000);
       if (new Date() > deadline) return 0;
-      return cfg.reward ?? 0;
+      return safeReward(cfg.reward);
     }
 
     if (type === 'FIRST_DEPOSIT' || type === 'VIP') {
@@ -151,8 +171,12 @@ export class ActivityService {
 
       const tiers = cfg.tiers ?? [];
       let reward = 0;
+      let matchedMin = -Infinity;
       for (const t of tiers) {
-        if (totalDeposit >= t.minDeposit) reward = t.reward;
+        const min = Number(t?.minDeposit);
+        if (!Number.isFinite(min) || totalDeposit < min || min < matchedMin) continue;
+        matchedMin = min;
+        reward = safeReward(t?.reward);
       }
       return reward;
     }

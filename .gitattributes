@@ -1,0 +1,22 @@
+# 仓库里默认按平台自动转换换行，但下面这些文件要上服务器执行，
+# 带 \r 会让 bash 把回车当成命令的一部分，报 "$'\r': command not found"
+# 这种看不懂的错。强制 LF，Windows 上编辑也不会被转回 CRLF。
+*.sh        text eol=lf
+*.bash      text eol=lf
+Dockerfile  text eol=lf
+*.conf      text eol=lf
+docker-compose*.yml text eol=lf
+
+# 二进制素材不做任何换行处理，否则 diff 会炸且文件会损坏
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.mp3 binary
+*.ogg binary
+*.wav binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.tar.gz binary

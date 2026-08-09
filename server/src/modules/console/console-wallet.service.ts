@@ -1,7 +1,8 @@
 /**
- * 级联额度 + 真分/假分：
- * - 给代理上分：扣出资方余额，加代理余额，并增加 pointsQuota（真分库存）
- * - 给玩家上分：真分部分扣代理余额+库存并增加 flyCover；假分只加玩家余额
+ * 级联额度 + 玩家上下分：
+ * - 给代理上分 = 向平台买盘分额度（余额+上盘额度同加）
+ * - 给玩家上分 = 玩家向代理买分（扣盘分 → 加玩家）
+ * - 给玩家下分 = 代理向玩家买回（扣玩家 → 加回盘分）
  */
 import {
   BadRequestException, ForbiddenException, Injectable, NotFoundException,
@@ -19,6 +20,21 @@ import { PointsService, PLATFORM_OWNER_ID, type OwnerType } from '../points/poin
 import { AdminLogService } from '../admin/admin-log.service';
 import { ConsoleScopeService, type ConsoleActor } from './console-scope.service';
 import { RiskDetectorService } from '../risk/risk-detector.service';
+import {
+  applyAgentCreditToPlayerInTx,
+  applyCsCreditToPlayerInTx,
+  assertFundOrderNo,
+  settlePlayerDebitToAgentInTx,
+  settleCsPlayerDebitInTx,
+  withOrderRemark,
+  writeAgentQuotaInTx,
+} from './player-fund.helper';
+import {
+  cashDiskFlyAvailable,
+  creditDiskFlyAvailable,
+  sumAgentCsBalances,
+} from './credit-settle.helper';
+import { CommissionService } from '../agents/commission.service';
 
 const ISSUE_MAX = 50_000_000;
 
@@ -30,20 +46,34 @@ export class ConsoleWalletService {
     private adminLog: AdminLogService,
     private scope: ConsoleScopeService,
     private riskDetector: RiskDetectorService,
+    private commission: CommissionService,
   ) {}
 
   async myBalance(actor: ConsoleActor) {
-    const ownerId = this.scope.walletOwnerId(actor);
     const ownerType = this.scope.ownerTypeOf(actor.role);
-    const acc = await this.prisma.pointsAccount.findUnique({ where: { ownerId } });
+    // 管理员/房主共用平台池给代理记账上下分，无个人可分余额（勿查 BRANCH 小金库）
+    if (actor.role === 'ADMIN' || actor.role === 'BRANCH') {
+      return {
+        ownerType,
+        ownerId: actor.role === 'ADMIN' ? PLATFORM_OWNER_ID : actor.id,
+        balance: null,
+        noPersonalWallet: true,
+        poolMode: true,
+      };
+    }
+
+    const ownerId = this.scope.walletOwnerId(actor);
+    const acc = await this.prisma.pointsAccount.findFirst({
+      where: { ownerType: ownerType as never, ownerId, roomId: '' },
+    });
     const base = {
       ownerType,
       ownerId,
       balance: asMoney(acc?.balance ?? 0),
     };
-    if (!['AGENT', 'PROXY', 'BRANCH'].includes(actor.role)) return base;
+    if (!['AGENT', 'PROXY', 'CS'].includes(actor.role)) return base;
 
-    // PROXY 真分/飞盘在主代理账上；自己钱包余额仍用 walletOwnerId
+    // PROXY 上盘额度/飞盘在主代理账上；自己钱包余额仍用 walletOwnerId
     const agentUserId =
       actor.role === 'PROXY' ? await this.scope.scopeRootUserId(actor) : actor.id;
     const agent = await this.prisma.agent.findUnique({ where: { userId: agentUserId } });
@@ -52,21 +82,66 @@ export class ConsoleWalletService {
     const playerIds = await this.scopedPlayerIds(actor);
     let playerPointsTotal = 0;
     if (playerIds.length) {
+      const scopedRooms = await this.scope.grantedRoomIds(actor);
+      const roomFilter =
+        scopedRooms && scopedRooms.length === 1
+          ? { roomId: scopedRooms[0]! }
+          : scopedRooms && scopedRooms.length > 1
+            ? { roomId: { in: scopedRooms } }
+            : {};
       const accs = await this.prisma.pointsAccount.findMany({
-        where: { ownerId: { in: playerIds }, ownerType: 'PLAYER' },
+        where: {
+          ownerId: { in: playerIds },
+          ownerType: 'PLAYER',
+          ...roomFilter,
+        },
         select: { balance: true },
       });
       for (const a of accs) playerPointsTotal += asMoney(a.balance);
     }
     const pointsQuota = asMoney(agent.pointsQuota);
-    const flyCover = asMoney(agent.flyCover);
-    const fakeExposure = roundMoney(Math.max(0, playerPointsTotal - flyCover - pointsQuota));
+    const rooms = await this.prisma.room.findMany({
+      where: { ownerAgentId: agent.id },
+      select: {
+        id: true,
+        bookMode: true,
+        creditLimit: true,
+        agentShareRate: true,
+        settleCycle: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+    /* 主绑定房：取最早创建的一间（与房间列表默认一致） */
+    const primary = rooms[0] ?? null;
+    const bookMode = primary?.bookMode === 'CREDIT' ? 'CREDIT' : primary ? 'CASH' : undefined;
+    const csBalances = await sumAgentCsBalances(this.prisma, agent.userId);
+    /* 现金/信用可飞同一套：盘分(≥0部分)+客服未发出 */
+    const flyAvailable =
+      bookMode === 'CREDIT'
+        ? await creditDiskFlyAvailable(this.prisma, agent.userId)
+        : await cashDiskFlyAvailable(this.prisma, agent.userId);
+    /** 未进玩家账的池：额度可为负（超分）；客服未发出仍按 ≥0 */
+    const diskPoolRemaining = roundMoney(pointsQuota + Math.max(0, csBalances));
+    const overIssueUsed = roundMoney(Math.max(0, -pointsQuota));
     return {
       ...base,
       pointsQuota,
-      flyCover,
+      csBalances,
+      diskPoolRemaining,
+      flyCover: flyAvailable,
+      flyAvailable,
       playerPointsTotal: roundMoney(playerPointsTotal),
-      fakeExposure,
+      overIssueUsed,
+      overIssueLimit: 0,
+      fakeExposure: overIssueUsed,
+      bookMode,
+      creditLimit: primary ? asMoney(primary.creditLimit) : undefined,
+      agentShareRate: primary != null ? Number(primary.agentShareRate ?? 0) : undefined,
+      settleCycle: primary?.settleCycle ?? undefined,
+      primaryRoomId: primary?.id,
+      /** 顶栏信用展示：未发总额（剩余信用+客服） */
+      creditUnused: bookMode === 'CREDIT' ? diskPoolRemaining : undefined,
     };
   }
 
@@ -82,15 +157,17 @@ export class ConsoleWalletService {
 
   /**
    * 级联下发：
-   * 给 AGENT/PROXY 时同步增加真分库存 pointsQuota
-   * 给 PLAYER 时走 creditPlayer 真/假分逻辑
+   * 给 AGENT 时同步增加上盘额度 pointsQuota（与余额同加）
+   * 给 PLAYER 时走 creditPlayer（扣盘分/剩余信用 → 加玩家）
    */
   async issue(
     actor: ConsoleActor,
     toUserId: string,
     amountRaw: number,
     remark?: string,
+    clientRequestId?: string,
   ) {
+    const orderNo = assertFundOrderNo(clientRequestId);
     const amount = roundMoney(amountRaw);
     if (!isValidMoney(amount) || amount <= 0) {
       throw new BadRequestException('金额无效');
@@ -106,31 +183,49 @@ export class ConsoleWalletService {
       throw new NotFoundException('目标用户不存在或已停用');
     }
 
+    if (target.role === 'BRANCH') {
+      throw new BadRequestException('管理员与房主同级、共用平台盘口池，请直接给代理上分（只记流水）');
+    }
+    if (target.role === 'PROXY') {
+      throw new BadRequestException('子账号与主代理共用额度，请给主代理上分');
+    }
     this.assertIssueHierarchy(actor.role, target.role);
     if (actor.role !== 'ADMIN') {
       await this.scope.assertUserInScope(actor, toUserId);
     }
 
     if (target.role === 'PLAYER') {
-      if (actor.role !== 'AGENT' && actor.role !== 'PROXY') {
-        throw new ForbiddenException('玩家上下分由代理操作；超管/房主请给代理卖额度');
-      }
-      return this.creditPlayer(actor, toUserId, amount, remark);
+      throw new BadRequestException('玩家上分请使用 credit-player 并指定 roomId');
     }
 
-    return this.sellQuotaToStaff(actor, target.id, target.role, amount, remark ?? '控制台卖额度');
+    if (await this.agentHasCreditRoom(toUserId)) {
+      throw new BadRequestException(
+        '信用盘代理不能用上下分加款；请在房间详情用「调整信用额度」同步增加合同与剩余信用',
+      );
+    }
+
+    return this.sellQuotaToStaff(
+      actor,
+      target.id,
+      target.role,
+      amount,
+      withOrderRemark(orderNo, remark, '控制台给代理上分'),
+      orderNo,
+    );
   }
 
   /**
-   * 回收额度（下分）：从代理/子账号扣回余额与真分库存，退回操作方。
-   * 不可超过对方当前余额与剩余额度（pointsQuota）的较小值。
+   * 回收额度（下分）：从代理扣回余额与上盘额度，退回操作方。
+   * 不可超过对方当前余额与上盘额度（pointsQuota）的较小值。
    */
   async recall(
     actor: ConsoleActor,
     fromUserId: string,
     amountRaw: number,
     remark?: string,
+    clientRequestId?: string,
   ) {
+    const orderNo = assertFundOrderNo(clientRequestId);
     const amount = roundMoney(amountRaw);
     if (!isValidMoney(amount) || amount <= 0) {
       throw new BadRequestException('金额无效');
@@ -145,11 +240,12 @@ export class ConsoleWalletService {
     if (!target || target.status === 'DISABLED') {
       throw new NotFoundException('目标用户不存在或已停用');
     }
-    if (!['BRANCH', 'AGENT', 'PROXY'].includes(target.role)) {
-      throw new BadRequestException('只能回收房主/代理/子账号的额度');
-    }
-    if (target.role === 'PLAYER') {
-      throw new ForbiddenException('玩家下分请走玩家上下分');
+    if (target.role !== 'AGENT') {
+      throw new BadRequestException(
+        target.role === 'PROXY'
+          ? '子账号与主代理共用额度，请从主代理回收'
+          : '只能从代理回收额度（管理员与房主同级，无上下分关系）',
+      );
     }
 
     this.assertIssueHierarchy(actor.role, target.role);
@@ -157,30 +253,61 @@ export class ConsoleWalletService {
       await this.scope.assertUserInScope(actor, fromUserId);
     }
 
+    if (await this.agentHasCreditRoom(fromUserId)) {
+      throw new BadRequestException(
+        '信用盘代理不能用下分回收；信用只随玩家下分买回 / 收回客服额度回升',
+      );
+    }
+
     return this.recallQuotaFromStaff(
       actor,
       target.id,
       target.role,
       amount,
-      remark ?? '控制台回收额度',
+      withOrderRemark(orderNo, remark, '控制台回收额度'),
+      orderNo,
     );
   }
 
-  /** 超管/房主卖额度给代理：余额 + 真分库存 */
+  /** 主代理是否绑定信用盘房间（信用盘禁用代理上下分） */
+  private async agentHasCreditRoom(agentUserId: string): Promise<boolean> {
+    const agent = await this.prisma.agent.findUnique({
+      where: { userId: agentUserId },
+      select: { id: true },
+    });
+    if (!agent) return false;
+    const n = await this.prisma.room.count({
+      where: { ownerAgentId: agent.id, bookMode: 'CREDIT' },
+    });
+    return n > 0;
+  }
+
+  /** 管理/房主同级：从平台盘口池给代理上分（记账），加代理余额 + 上盘额度 */
   private async sellQuotaToStaff(
     actor: ConsoleActor,
     toUserId: string,
     toRole: string,
     amount: number,
     remark: string,
+    orderNo: string,
   ) {
-    const fromType = this.scope.ownerTypeOf(actor.role);
-    const fromId = actor.role === 'ADMIN' ? PLATFORM_OWNER_ID : actor.id;
+    if (toRole !== 'AGENT' && toRole !== 'PROXY') {
+      throw new BadRequestException('只能给代理或子账号上分');
+    }
+    /* 超管、房主共用平台池，不扣各自小金库 */
+    const fromPool = actor.role === 'ADMIN' || actor.role === 'BRANCH';
+    const fromType = (fromPool ? 'PLATFORM' : this.scope.ownerTypeOf(actor.role)) as OwnerType;
+    const fromId = fromPool ? PLATFORM_OWNER_ID : actor.id;
     const toType = this.scope.ownerTypeOf(toRole) as OwnerType;
-    const stamp = `${Date.now()}`;
-    const idemBase = `console_quota_${actor.id}_${toUserId}_${stamp}_${amount}`;
+    /* 幂等键锚定订单号：原先拼 Date.now()，两次点击间隔 >1ms 就是两个键，等于没有幂等 */
+    const idemBase = `console_quota:${orderNo}`;
 
     await this.prisma.$transaction(async (tx) => {
+      const existed = await tx.pointsLedger.findUnique({
+        where: { idempotencyKey: `${idemBase}:IN` },
+        select: { id: true },
+      });
+      if (existed) return;
       await this.points.transferInTx(
         tx,
         {
@@ -205,10 +332,17 @@ export class ConsoleWalletService {
           refId: toUserId,
         },
       );
-      await tx.agent.upsert({
-        where: { userId: toUserId },
-        update: { pointsQuota: { increment: amount } },
-        create: { userId: toUserId, pointsQuota: amount },
+      await writeAgentQuotaInTx(tx, {
+        agentUserId: toUserId,
+        bookMode: 'CASH',
+        delta: amount,
+        bizType: 'TRANSFER_IN',
+        remark,
+        refType: 'console_quota',
+        refId: toUserId,
+        idempotencyKey: `${idemBase}:QUOTA`,
+        /* 子账号首次买分时 Agent 行还不存在 */
+        createIfMissing: true,
       });
       await this.adminLog.logInTx(tx, actor.id, 'QUOTA_SELL', toUserId, {
         amount,
@@ -218,35 +352,51 @@ export class ConsoleWalletService {
         toRole,
         remark,
         direction: 'IN',
+        pool: fromPool ? 'PLATFORM' : 'SELF',
       });
     });
+
+    /* 盘分补足后自动补发挂靠佣金欠账 */
+    this.commission.triggerSettleForPayer(toUserId);
 
     return { ok: true, ...(await this.myBalance(actor)) };
   }
 
-  /** 回收下级额度：扣对方余额+pointsQuota，加回操作方余额 */
+  /** 从代理/子账号回收额度，退回平台池（超管/房主操作时）或操作方钱包 */
   private async recallQuotaFromStaff(
     actor: ConsoleActor,
     fromUserId: string,
     fromRole: string,
     amount: number,
     remark: string,
+    orderNo: string,
   ) {
-    const toType = this.scope.ownerTypeOf(actor.role);
-    const toId = actor.role === 'ADMIN' ? PLATFORM_OWNER_ID : actor.id;
+    if (fromRole !== 'AGENT' && fromRole !== 'PROXY') {
+      throw new BadRequestException('只能从代理或子账号回收');
+    }
+    const toPool = actor.role === 'ADMIN' || actor.role === 'BRANCH';
+    const toType = (toPool ? 'PLATFORM' : this.scope.ownerTypeOf(actor.role)) as OwnerType;
+    const toId = toPool ? PLATFORM_OWNER_ID : actor.id;
     const staffType = this.scope.ownerTypeOf(fromRole) as OwnerType;
-    const stamp = `${Date.now()}`;
-    const idemBase = `console_quota_recall_${actor.id}_${fromUserId}_${stamp}_${amount}`;
+    /* 幂等键锚定订单号；原先的 Date.now() 让连点变成两笔独立回收 */
+    const idemBase = `console_quota_recall:${orderNo}`;
 
     await this.prisma.$transaction(async (tx) => {
-      const acc = await tx.pointsAccount.findUnique({ where: { ownerId: fromUserId } });
+      const existed = await tx.pointsLedger.findUnique({
+        where: { idempotencyKey: `${idemBase}:OUT` },
+        select: { id: true },
+      });
+      if (existed) return;
+      const acc = await tx.pointsAccount.findUnique({
+        where: this.points.accountWhere(staffType, fromUserId),
+      });
       const agent = await tx.agent.findUnique({ where: { userId: fromUserId } });
       const bal = asMoney(acc?.balance ?? 0);
       const quota = asMoney(agent?.pointsQuota ?? 0);
       const maxTake = roundMoney(Math.min(bal, quota));
       if (amount > maxTake) {
         throw new BadRequestException(
-          `可回收额度不足：余额 ${bal}，剩余真分额度 ${quota}，最多可下分 ${maxTake}`,
+          `可回收额度不足：余额 ${bal}，上盘额度 ${quota}，最多可下分 ${maxTake}`,
         );
       }
 
@@ -274,9 +424,15 @@ export class ConsoleWalletService {
           refId: fromUserId,
         },
       );
-      await tx.agent.update({
-        where: { userId: fromUserId },
-        data: { pointsQuota: { decrement: amount } },
+      await writeAgentQuotaInTx(tx, {
+        agentUserId: fromUserId,
+        bookMode: 'CASH',
+        delta: -amount,
+        bizType: 'TRANSFER_OUT',
+        remark,
+        refType: 'console_quota_recall',
+        refId: fromUserId,
+        idempotencyKey: `${idemBase}:QUOTA`,
       });
       await this.adminLog.logInTx(tx, actor.id, 'QUOTA_RECALL', fromUserId, {
         amount,
@@ -288,118 +444,157 @@ export class ConsoleWalletService {
         direction: 'OUT',
         balanceBefore: bal,
         quotaBefore: quota,
+        pool: toPool ? 'PLATFORM' : 'SELF',
       });
     });
 
     return { ok: true, ...(await this.myBalance(actor)) };
   }
 
-  /** 给玩家上分：仅代理；真分扣库存/余额+增 flyCover；假分只加玩家余额 */
+  /** 给玩家上分：主代理或客服（客服只走客服额度，不透支主代理盘分） */
   async creditPlayer(
     actor: ConsoleActor,
     playerId: string,
     amountRaw: number,
+    roomId: string,
     remark?: string,
     clientRequestId?: string,
   ) {
-    if (actor.role !== 'AGENT' && actor.role !== 'PROXY') {
-      throw new ForbiddenException('玩家上下分由代理操作');
+    if (actor.role !== 'AGENT' && actor.role !== 'CS') {
+      throw new ForbiddenException('玩家上分由主代理或客服操作');
     }
     const amount = roundMoney(amountRaw);
     if (!isValidMoney(amount) || amount <= 0) throw new BadRequestException('金额无效');
     if (amount < PLAYER_UP_MIN) throw new BadRequestException(`上分最低 ${PLAYER_UP_MIN}`);
     if (amount > PLAYER_FUND_MAX) throw new BadRequestException(`单笔上分不超过 ${PLAYER_FUND_MAX}`);
+    const rid = String(roomId || '').trim();
+    if (!rid) throw new BadRequestException('请指定上分房间 roomId');
+    await this.scope.assertRoomAccess(actor, rid);
 
     const player = await this.prisma.user.findUnique({
       where: { id: playerId },
       select: { id: true, role: true, status: true },
     });
     if (!player || player.role !== 'PLAYER') throw new BadRequestException('只能给玩家上分');
-    if (player.status === 'DISABLED') throw new BadRequestException('玩家已停用');
+    if (player.status === 'CLOSED') throw new BadRequestException('玩家已注销，不能上分');
+    if (player.status !== 'ACTIVE') throw new BadRequestException('玩家已停用');
     await this.scope.assertUserInScope(actor, playerId);
 
-    /* 代分用上级代理的真分库存；扣款账户也走主代理 */
     const agentUserId = await this.scope.scopeRootUserId(actor);
-    const reqId = (clientRequestId || '').trim().slice(0, 64);
-    if (clientRequestId != null && clientRequestId !== '' && reqId.length < 8) {
-      throw new BadRequestException('clientRequestId 无效');
-    }
-    const stamp = reqId || `${Date.now()}`;
-    const idemBase = `console_credit_${actor.id}_${playerId}_${stamp}_${amount}`;
+    const orderNo = assertFundOrderNo(clientRequestId);
+    const ledgerRemark = withOrderRemark(orderNo, remark, '上分');
+    const idemBase = `console_credit:${orderNo}`;
     const idemIn = `${idemBase}:IN`;
 
     const result = await this.prisma.$transaction(async (tx) => {
-      /* 整笔幂等：账本命中则不再动额度/飞盘（避免重试把库存扣两次） */
       const existedIn = await tx.pointsLedger.findUnique({
         where: { idempotencyKey: idemIn },
       });
       if (existedIn) {
         const log = await tx.adminLog.findFirst({
-          where: { action: 'CONSOLE_CREDIT', target: playerId, operatorId: actor.id },
-          orderBy: { createdAt: 'desc' },
+          where: {
+            action: 'CONSOLE_CREDIT',
+            detail: { path: ['orderNo'], equals: orderNo },
+          },
           select: { detail: true },
         });
-        const detail = (log?.detail ?? {}) as { real?: number; fake?: number };
+        const detail = (log?.detail ?? {}) as {
+          real?: number;
+          fake?: number;
+          overIssue?: number;
+          wage?: number;
+        };
+        const overIssue = Number(detail.overIssue ?? detail.fake ?? 0);
         return {
-          real: Number(detail.real ?? 0),
-          fake: Number(detail.fake ?? 0),
+          orderNo,
+          real: Number(detail.real ?? amount),
+          overIssue,
+          fake: overIssue,
+          wage: Number(detail.wage ?? 0),
           replayed: true as const,
         };
       }
 
-      const agent = await tx.agent.findUnique({ where: { userId: agentUserId } });
-      if (!agent) throw new BadRequestException('代理账户不存在');
-      const quota = asMoney(agent.pointsQuota);
-      const real = roundMoney(Math.min(amount, quota));
-      const fake = roundMoney(amount - real);
-
-      const payerType = 'AGENT' as OwnerType;
-      const payerId = agentUserId;
-
-      /* 真分与玩家到账金额可能不等，先按固定顺序锁两边，再按原业务扣/加 */
-      await this.points.lockOwnersInTx(tx, [
-        { type: payerType, id: payerId },
-        { type: 'PLAYER', id: playerId },
-      ]);
-
-      if (real > 0) {
-        await this.points.creditInTx(tx, payerType, payerId, -real, 'TRANSFER_OUT', {
+      if (actor.role === 'CS') {
+        const staff = await tx.csStaff.findUnique({ where: { userId: actor.id } });
+        if (!staff || staff.parentAgentUserId !== agentUserId) {
+          throw new ForbiddenException('客服档案无效');
+        }
+        const split = await applyCsCreditToPlayerInTx(tx, this.points, {
+          csUserId: actor.id,
+          agentUserId,
+          playerId,
+          amount,
           operatorId: actor.id,
-          remark: remark ?? '真分上分',
-          refType: 'console_credit_real',
-          refId: playerId,
-          idempotencyKey: `${idemBase}:REAL_OUT`,
+          remark: ledgerRemark,
+          refType: 'console_credit_cs',
+          refId: orderNo,
+          idemOut: `${idemBase}:OUT`,
+          idemIn,
+          wageRate: staff.wageRate,
+          roomId: rid,
         });
-        await tx.agent.update({
-          where: { userId: agentUserId },
-          data: {
-            pointsQuota: { decrement: real },
-            pointsUsed: { increment: real },
-            flyCover: { increment: real },
-          },
+        await this.adminLog.logInTx(tx, actor.id, 'CONSOLE_CREDIT', playerId, {
+          amount,
+          real: split.real,
+          overIssue: 0,
+          fake: 0,
+          wage: split.wage,
+          byCs: true,
+          agentUserId,
+          roomId: rid,
+          remark: (remark || '').trim() || null,
+          direction: 'UP',
+          method: '上分',
+          orderNo,
+          operatorRole: actor.role,
+          clientRequestId: orderNo,
         });
+        return {
+          orderNo,
+          real: split.real,
+          overIssue: 0,
+          fake: 0,
+          wage: split.wage,
+        };
       }
 
-      await this.points.creditInTx(tx, 'PLAYER', playerId, amount, 'TRANSFER_IN', {
+      const split = await applyAgentCreditToPlayerInTx(tx, this.points, {
+        agentUserId,
+        playerId,
+        amount,
         operatorId: actor.id,
-        remark: remark ?? (fake > 0 ? `上分(真${real}/假${fake})` : '上分'),
+        remark: ledgerRemark,
         refType: 'console_credit',
-        refId: actor.id,
-        idempotencyKey: idemIn,
+        refId: orderNo,
+        idemOut: `${idemBase}:OUT`,
+        idemIn,
+        playerBizType: 'TRANSFER_IN',
+        roomId: rid,
       });
 
       await this.adminLog.logInTx(tx, actor.id, 'CONSOLE_CREDIT', playerId, {
         amount,
-        real,
-        fake,
+        real: split.real,
+        fromBalance: split.fromBalance,
+        overIssue: split.overIssue,
+        fake: split.overIssue,
+        roomId: split.roomId,
         agentUserId,
-        remark,
-        byProxy: actor.role === 'PROXY',
+        remark: (remark || '').trim() || null,
         direction: 'UP',
+        method: '上分',
+        orderNo,
         operatorRole: actor.role,
-        clientRequestId: reqId || null,
+        clientRequestId: orderNo,
       });
-      return { real, fake };
+      return {
+        orderNo,
+        real: split.real,
+        overIssue: split.overIssue,
+        fake: split.overIssue,
+        wage: 0,
+      };
     });
 
     return { ok: true, ...result, ...(await this.myBalance(actor)) };
@@ -423,16 +618,20 @@ export class ConsoleWalletService {
     actor: ConsoleActor,
     playerId: string,
     amountRaw: number,
+    roomId: string,
     remark?: string,
     clientRequestId?: string,
   ) {
-    if (actor.role !== 'AGENT' && actor.role !== 'PROXY') {
-      throw new ForbiddenException('玩家下分由代理操作');
+    if (actor.role !== 'AGENT' && actor.role !== 'CS') {
+      throw new ForbiddenException('玩家下分由主代理或客服操作');
     }
     const amount = roundMoney(amountRaw);
     if (!isValidMoney(amount) || amount <= 0) throw new BadRequestException('金额无效');
     if (amount < PLAYER_DOWN_MIN) throw new BadRequestException(`下分最低 ${PLAYER_DOWN_MIN}`);
     if (amount > PLAYER_FUND_MAX) throw new BadRequestException(`单笔下分不超过 ${PLAYER_FUND_MAX}`);
+    const rid = String(roomId || '').trim();
+    if (!rid) throw new BadRequestException('请指定下分房间 roomId');
+    await this.scope.assertRoomAccess(actor, rid);
 
     const player = await this.prisma.user.findUnique({
       where: { id: playerId },
@@ -442,14 +641,9 @@ export class ConsoleWalletService {
     await this.scope.assertUserInScope(actor, playerId);
 
     const agentUserId = await this.scope.scopeRootUserId(actor);
-    const toType = 'AGENT' as OwnerType;
-    const toId = agentUserId;
-    const reqId = (clientRequestId || '').trim().slice(0, 64);
-    if (clientRequestId != null && clientRequestId !== '' && reqId.length < 8) {
-      throw new BadRequestException('clientRequestId 无效');
-    }
-    const stamp = reqId || `${Date.now()}`;
-    const idemBase = `console_debit_${actor.id}_${playerId}_${stamp}_${amount}`;
+    const orderNo = assertFundOrderNo(clientRequestId);
+    const ledgerRemark = withOrderRemark(orderNo, remark, '下分');
+    const idemBase = `console_debit:${orderNo}`;
     const idemOut = `${idemBase}:OUT`;
 
     const replayed = await this.prisma.$transaction(async (tx) => {
@@ -458,104 +652,116 @@ export class ConsoleWalletService {
       });
       if (existedOut) return true;
 
-      await this.points.transferInTx(
-        tx,
-        {
-          type: 'PLAYER',
-          id: playerId,
-          remark: remark ?? '控制台下分',
-          idempotencyKey: idemOut,
-        },
-        {
-          type: toType,
-          id: toId,
-          remark: remark ?? '回收玩家下分',
-          idempotencyKey: `${idemBase}:IN`,
-        },
-        amount,
-        {
-          bizType: 'TRANSFER_OUT',
-          bizTypeIn: 'TRANSFER_IN',
-          operatorId: actor.id,
-          remark: remark ?? '控制台下分',
-          refType: 'console_debit',
-          refId: playerId,
-        },
-      );
-
-      // 下分回冲真分库存（不超过当前 flyCover，避免虚增）
-      let coverBack = 0;
-      const agent = await tx.agent.findUnique({ where: { userId: agentUserId } });
-      if (agent) {
-        const cover = asMoney(agent.flyCover);
-        coverBack = roundMoney(Math.min(amount, cover));
-        if (coverBack > 0) {
-          await tx.agent.update({
-            where: { userId: agentUserId },
-            data: {
-              flyCover: { decrement: coverBack },
-              pointsQuota: { increment: coverBack },
-              pointsUsed: { decrement: coverBack },
-            },
-          });
+      if (actor.role === 'CS') {
+        const staff = await tx.csStaff.findUnique({ where: { userId: actor.id } });
+        if (!staff || staff.parentAgentUserId !== agentUserId) {
+          throw new ForbiddenException('客服档案无效');
         }
+        await this.points.lockOwnersInTx(tx, [
+          { type: 'PLAYER', id: playerId, roomId: rid },
+          { type: 'CS', id: actor.id },
+          { type: 'AGENT', id: agentUserId },
+        ]);
+        await this.points.creditInTx(tx, 'PLAYER', playerId, -amount, 'TRANSFER_OUT', {
+          operatorId: actor.id,
+          remark: ledgerRemark,
+          refType: 'console_debit_cs',
+          refId: orderNo,
+          idempotencyKey: idemOut,
+          roomId: rid,
+        });
+        const restored = await settleCsPlayerDebitInTx(tx, this.points, {
+          csUserId: actor.id,
+          agentUserId,
+          playerId,
+          amount,
+          operatorId: actor.id,
+          remark: ledgerRemark,
+          refType: 'console_debit_cs',
+          refId: orderNo,
+          idemCs: `${idemBase}:CS`,
+          wageRate: staff.wageRate,
+          roomId: rid,
+        });
+        await this.adminLog.logInTx(tx, actor.id, 'CONSOLE_DEBIT', playerId, {
+          amount,
+          coverBack: restored.coverBack,
+          wage: restored.wage,
+          byCs: true,
+          agentUserId,
+          roomId: rid,
+          remark: (remark || '').trim() || null,
+          direction: 'DOWN',
+          method: '下分',
+          orderNo,
+          operatorRole: actor.role,
+          clientRequestId: orderNo,
+        });
+        return false;
       }
+
+      await this.points.lockOwnersInTx(tx, [
+        { type: 'PLAYER', id: playerId, roomId: rid },
+        { type: 'AGENT', id: agentUserId },
+      ]);
+
+      await this.points.creditInTx(tx, 'PLAYER', playerId, -amount, 'TRANSFER_OUT', {
+        operatorId: actor.id,
+        remark: ledgerRemark,
+        refType: 'console_debit',
+        refId: orderNo,
+        idempotencyKey: idemOut,
+        roomId: rid,
+      });
+
+      const restored = await settlePlayerDebitToAgentInTx(tx, this.points, {
+        agentUserId,
+        playerId,
+        amount,
+        operatorId: actor.id,
+        remark: ledgerRemark,
+        refType: 'console_debit',
+        refId: orderNo,
+        idemAgent: `${idemBase}:AGENT`,
+        roomId: rid,
+      });
 
       await this.adminLog.logInTx(tx, actor.id, 'CONSOLE_DEBIT', playerId, {
         amount,
-        coverBack,
+        coverBack: restored.coverBack,
+        overIssueBack: restored.overIssueBack,
+        realPart: restored.realPart,
+        roomId: restored.roomId,
         agentUserId,
-        remark,
-        byProxy: actor.role === 'PROXY',
+        remark: (remark || '').trim() || null,
         direction: 'DOWN',
+        method: '下分',
+        orderNo,
         operatorRole: actor.role,
-        clientRequestId: reqId || null,
+        clientRequestId: orderNo,
       });
       return false;
     });
 
     if (!replayed) void this.riskDetector.onPlayerDebit(playerId, amount);
 
-    return { ok: true, ...(await this.myBalance(actor)) };
-  }
+    /* 下分回盘后也可能补足挂靠佣金欠账 */
+    this.commission.triggerSettleForPayer(agentUserId);
 
-  /** 向房间盘口池注资 */
-  async fundRoom(actor: ConsoleActor, roomId: string, amountRaw: number, remark?: string) {
-    const amount = roundMoney(amountRaw);
-    if (!isValidMoney(amount) || amount <= 0) throw new BadRequestException('金额无效');
-    await this.scope.assertRoomAccess(actor, roomId);
-
-    const fromType = this.scope.ownerTypeOf(actor.role) as OwnerType;
-    const fromId = actor.role === 'ADMIN' ? PLATFORM_OWNER_ID : actor.id;
-    const stamp = `${Date.now()}`;
-    const idemBase = `room_fund_${actor.id}_${roomId}_${stamp}_${amount}`;
-
-    await this.prisma.$transaction(async (tx) => {
-      await this.points.transferInTx(
-        tx,
-        { type: fromType, id: fromId, idempotencyKey: `${idemBase}:OUT` },
-        { type: 'ROOM', id: roomId, idempotencyKey: `${idemBase}:IN` },
-        amount,
-        { bizType: 'TRANSFER_OUT', operatorId: actor.id, remark: remark ?? '房间盘口注资', refType: 'room_fund', refId: roomId },
-      );
-      await this.adminLog.logInTx(tx, actor.id, 'ROOM_FUND', roomId, { amount, remark });
-    });
-
-    const pool = await this.prisma.pointsAccount.findUnique({ where: { ownerId: roomId } });
-    return { ok: true, roomId, poolBalance: asMoney(pool?.balance ?? 0) };
-  }
-
-  async roomPoolBalance(roomId: string) {
-    const pool = await this.prisma.pointsAccount.findUnique({ where: { ownerId: roomId } });
-    return { roomId, balance: asMoney(pool?.balance ?? 0) };
+    return {
+      ok: true,
+      orderNo,
+      replayed: !!replayed,
+      ...(await this.myBalance(actor)),
+    };
   }
 
   private assertIssueHierarchy(fromRole: string, toRole: string) {
-    // 大组长只卖额度给下级干部；小组长才给玩家上下分
+    /* 额度只给主代理；子账号共用主代理额度；玩家上下分仅代理/子账号 */
     const ok =
-      (fromRole === 'ADMIN' && ['BRANCH', 'AGENT', 'PROXY'].includes(toRole)) ||
-      (fromRole === 'BRANCH' && ['AGENT', 'PROXY'].includes(toRole)) ||
-      (fromRole === 'AGENT' && ['PROXY', 'PLAYER'].includes(toRole)) ||
+      (fromRole === 'ADMIN' && toRole === 'AGENT') ||
+      (fromRole === 'BRANCH' && toRole === 'AGENT') ||
+      (fromRole === 'AGENT' && toRole === 'PLAYER') ||
       (fromRole === 'PROXY' && toRole === 'PLAYER');
     if (!ok) throw new ForbiddenException(`不允许 ${fromRole} → ${toRole} 下发`);
   }

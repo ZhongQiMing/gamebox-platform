@@ -7,30 +7,36 @@
  *  - 3s 后刷新头栏；10s 后 insertVideo 切回下一期倒计时
  *
  * 房间已有当期结果，模拟官网「竞速时段」：
- * 红绿灯最后 3 秒 → 绿灯后自由竞速（官网此时等接口出号，通常十余秒）→ finishgame
- * 默认与房间 60s 局对齐（极速赛车同结构）：中段 8s + 冲线领奖台 6s。
+ * 红绿灯最后 3 秒 → 绿灯后自由竞速 → finishgame → 领奖台后 onDone。
+ * 默认与房间 60s 局对齐：中段 8s + 冲线领奖台 6s（可由父页 opts 覆盖）。
  */
 (function (global) {
   'use strict';
 
   /** 红绿灯最后 3 秒（官网 demo / 灯序 timer<=2/1/0） */
   var COUNTDOWN_SEC = 3;
-  /**
-   * 绿灯后自由竞速。
-   * 官网：倒计时归零后 startanimation，直到接口出号才 finishgame（竞速时段，常见十余秒）。
-   * 房间已有结果，用固定时长贴近该观感（约 5 个 3s 变道周期）。
-   */
+  /** 绿灯后自由竞速（房间默认 8s；父页 midRaceMs 可覆盖） */
   var MID_RACE_MS = 8000;
-  /** 官网 creatDataHead：finishgame 后 10000ms 才 insertVideo */
+  /** finishgame 后领奖台停留（房间默认 6s；父页 afterFinishMs 可覆盖） */
   var AFTER_FINISH_MS = 6000;
+  /**
+   * finishgame 内车子冲线 + 闪光约 3.2s（TweenMax 3s + flashlight.delay(3200)）。
+   * onFinish 必须等这段结束，否则顶栏历史会早于画面冲线。
+   */
+  var FINISH_VISUAL_MS = 3300;
 
   var playTimer = null;
+  var finishNotifyTimer = null;
   var doneTimer = null;
 
   function clearTimers() {
     if (playTimer) {
       clearTimeout(playTimer);
       playTimer = null;
+    }
+    if (finishNotifyTimer) {
+      clearTimeout(finishNotifyTimer);
+      finishNotifyTimer = null;
     }
     if (doneTimer) {
       clearTimeout(doneTimer);
@@ -109,6 +115,10 @@
     clearTimers();
     muteAudio();
     if (opts.issue != null) setIssue(opts.issue);
+    /* 上一场 finishgame 可能仍占着 waitfinish，不清掉会导致 startcountdown 直接 return，画面卡起点 */
+    try {
+      if (typeof waitfinish !== 'undefined') waitfinish = false;
+    } catch (e0) { /* ignore */ }
 
     var cd = opts.countdownSec != null ? Number(opts.countdownSec) : COUNTDOWN_SEC;
     if (!(cd >= 0)) cd = COUNTDOWN_SEC;
@@ -125,7 +135,11 @@
     });
 
     if (typeof startcountdown === 'function') {
-      startcountdown(cd);
+      var started = startcountdown(cd);
+      if (started === false) {
+        try { waitfinish = false; } catch (e1) { /* ignore */ }
+        startcountdown(cd);
+      }
     }
 
     playTimer = setTimeout(function () {
@@ -133,6 +147,15 @@
       if (typeof finishgame === 'function') {
         finishgame(result);
       }
+      /* 等画面冲线/闪光后再通知父页，勿在 finishgame 调用瞬间刷历史 */
+      var visualMs = opts.finishVisualMs != null ? Number(opts.finishVisualMs) : FINISH_VISUAL_MS;
+      if (!(visualMs >= 0)) visualMs = FINISH_VISUAL_MS;
+      finishNotifyTimer = setTimeout(function () {
+        finishNotifyTimer = null;
+        if (typeof opts.onFinish === 'function') {
+          try { opts.onFinish(true); } catch (eF) { /* ignore */ }
+        }
+      }, visualMs);
     }, cd * 1000 + mid);
 
     if (typeof opts.onDone === 'function') {
@@ -185,12 +208,15 @@
     COUNTDOWN_SEC: COUNTDOWN_SEC,
     MID_RACE_MS: MID_RACE_MS,
     AFTER_FINISH_MS: AFTER_FINISH_MS,
+    FINISH_VISUAL_MS: FINISH_VISUAL_MS,
     totalDurationMs: totalDurationMs,
     setIssue: setIssue,
     play: play,
     settle: settle,
     stop: stop,
     normalizeOrder: normalizeOrder,
+    /** 父页须等 embed boot 置 true 后再 play */
+    __ready: false,
   };
 
   /* URL ?issue= 进页即写入期数（settle 由 bootFromQuery / 父页调用） */
@@ -214,6 +240,16 @@
         countdownSec: data.countdownSec,
         midRaceMs: data.midRaceMs,
         afterFinishMs: data.afterFinishMs,
+        finishVisualMs: data.finishVisualMs,
+        onFinish: function () {
+          try {
+            ev.source &&
+              ev.source.postMessage(
+                { source: 'jsb-pk10-race', action: 'finish', ok: true, issue: data.issue || '' }, location.origin);
+          } catch (e0) {
+            /* ignore */
+          }
+        },
         onDone: function (ok) {
           try {
             ev.source &&

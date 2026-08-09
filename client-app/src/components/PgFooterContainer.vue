@@ -54,7 +54,7 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-/* ć­Łç shell #footer-containerďźĺŞć CSS ć¸ĺ + çććĺ­ďźä¸éşĺşĺž */
+/* 正版 shell #footer-container：只有 CSS 渐变 + 生成文字，不铺底图 */
 .footer-container {
   display: flex;
   /* 正版 #footer-container / .footer-image-container 高度约 229，版权在此层内上浮 */

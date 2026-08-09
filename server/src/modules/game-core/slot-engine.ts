@@ -6,7 +6,7 @@
  *   派彩：PLATFORM -payout → PLAYER +payout
  *   佣金：PLATFORM -commission → 各级代理
  *
- * 回水统一由 RebateService 按 Bet.validFlow 日结，引擎内不再发放。
+ * 玩家回水进自助回水池（RebateService）；引擎内经 creditWinInTx 只发代理 A/挂靠。
  * 每次 spin = 单事务内完成下注 + 开奖 + 结算；placeBet/settle 保留以实现 IGameEngine 契约。
  */
 import {
@@ -24,8 +24,10 @@ import { businessNo } from './business-id';
 import { RiskService } from '../risk/risk.service';
 import { SettlementKernel } from './settlement-kernel';
 import { ConsoleControlService } from '../console/console-control.service';
+import { GlobalSoftControlService } from '../console/global-soft-control.service';
 import { FlyDiskService } from '../console/fly-disk.service';
-import { matchRoomHoldPolicy, pickSeedByHoldTarget } from '../console/control-pick.util';
+import { pickSeedForArcadePool } from '../console/control-pick.util';
+import { isRetiredGameCode } from '../games/retired-games';
 
 interface PayItem { label: string; multiplier: number; weight: number; }
 
@@ -42,6 +44,8 @@ export class SlotEngine implements IGameEngine {
     private kernel: SettlementKernel,
     @Optional() @Inject(forwardRef(() => ConsoleControlService))
     private control?: ConsoleControlService,
+    @Optional() @Inject(forwardRef(() => GlobalSoftControlService))
+    private globalSoft?: GlobalSoftControlService,
     @Optional() private flyDisk?: FlyDiskService,
   ) {}
 
@@ -57,6 +61,7 @@ export class SlotEngine implements IGameEngine {
     const replay = await this.replaySpinIfAny(playerId, clientRequestId);
     if (replay) return replay;
 
+    if (isRetiredGameCode(gameCode)) throw new NotFoundException('游戏不存在或已下架');
     const game = await this.configCache.get(gameCode);
     if (!game || game.status !== 'ONLINE') throw new NotFoundException('游戏不存在或已下架');
     if (amount < asMoney(game.minBet) || amount > asMoney(game.maxBet)) {
@@ -65,18 +70,30 @@ export class SlotEngine implements IGameEngine {
 
     const config = game.configs[0];
     if (!config) throw new BadRequestException('游戏未配置 payTable');
+    /*
+     * payTable 形状不对就当没配。
+     * 这里原来直接 .map()，非数组（例如街机那种 { awardWeights } 对象）会抛
+     * TypeError 冒成 500，看起来像服务挂了；实际是这个游戏根本不该走 SLOT 引擎。
+     */
     const payTable = config.payTable as unknown as PayItem[];
+    if (!Array.isArray(payTable) || !payTable.length) {
+      throw new BadRequestException('游戏未配置 payTable');
+    }
     const weights = payTable.map(p => p.weight);
 
     const house = this.flyDisk
-      ? await this.flyDisk.resolveHouse(playerId)
+      ? await this.flyDisk.resolveHouse(
+          playerId,
+          await this.flyDisk.requireOpsRoomId(playerId, input.roomNo),
+          amount,
+          { requireRoom: true },
+        )
       : null;
-    const policies = this.control
-      ? await this.control.getActiveHoldPolicies(gameCode)
-      : [];
-    const policy = matchRoomHoldPolicy(policies, house?.roomId);
-    const picked = pickSeedByHoldTarget({
-      policy,
+    const globalRt = this.globalSoft
+      ? await this.globalSoft.getArcadeDrawRuntime(gameCode)
+      : null;
+    const softPick = pickSeedForArcadePool({
+      runtime: globalRt,
       stake: amount,
       gen: () => {
         const g = genServerSeed();
@@ -91,7 +108,7 @@ export class SlotEngine implements IGameEngine {
         return { payout, rnd, idx, prize };
       },
     });
-    const { seed: serverSeed, hash: serverSeedHash, rnd, idx, prize } = picked;
+    const { seed: serverSeed, hash: serverSeedHash, rnd, idx, prize } = softPick.result;
     const flyPayload = house
       ? {
           type: house.type,
@@ -99,13 +116,9 @@ export class SlotEngine implements IGameEngine {
           flying: house.flying,
           roomId: house.roomId,
           agentUserId: house.agentUserId,
+          bookMode: house.bookMode,
         }
       : undefined;
-
-    const player = await this.prisma.user.findUnique({
-      where: { id: playerId },
-      select: { id: true, agentPath: true },
-    });
 
     const result = await this.prisma.$transaction(async (tx) => {
       const roundNo = businessNo('R');
@@ -132,6 +145,7 @@ export class SlotEngine implements IGameEngine {
         amount,
         gameName: game.name,
         keyPrefix: 'slot',
+        house: house ?? undefined,
       });
 
       const rawPayout = roundMoney(amount * prize.multiplier);
@@ -143,6 +157,7 @@ export class SlotEngine implements IGameEngine {
         remark: `${game.name} 命中 ${prize.label}`,
         keyPrefix: 'slot',
         stake: amount,
+        house: house ?? undefined,
       });
       const won = payout > 0;
 
@@ -155,13 +170,11 @@ export class SlotEngine implements IGameEngine {
         },
       });
 
-      await this.kernel.applyCommissionInTx(tx, player, amount, round.id);
-
       await tx.gameRound.update({
         where: { id: round.id },
         data: {
           state: 'SETTLED', endedAt: new Date(), totalFlow: amount,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+           
           outcome: { prize, index: idx, rnd: rnd.toFixed(8) } as any,
         },
       });
@@ -206,7 +219,11 @@ export class SlotEngine implements IGameEngine {
     } catch {
       /* 不影响开奖 */
     }
-    return { ...result, balance: await this.kernel.getBalance(playerId) };
+    const balRoomId = String(house?.roomId || '').trim();
+    return {
+      ...result,
+      balance: balRoomId ? await this.kernel.getBalance(playerId, balRoomId) : 0,
+    };
   }
 
   private async replaySpinIfAny(
@@ -220,6 +237,9 @@ export class SlotEngine implements IGameEngine {
       index?: number;
     };
     const prize = outcome.prize ?? { label: '?', multiplier: bet.multiplier ?? 0, weight: 0 };
+    const balRoomId = String(
+      (bet.payload as { fly?: { roomId?: string } } | null)?.fly?.roomId || '',
+    ).trim();
     return {
       gameCode: bet.game?.code ?? '',
       category: 'SLOT',
@@ -240,7 +260,7 @@ export class SlotEngine implements IGameEngine {
       }],
       serverSeed: bet.round.serverSeed ?? undefined,
       serverSeedHash: bet.round.serverSeedHash ?? undefined,
-      balance: await this.kernel.getBalance(playerId),
+      balance: balRoomId ? await this.kernel.getBalance(playerId, balRoomId) : 0,
     };
   }
 
@@ -287,11 +307,18 @@ export class SlotEngine implements IGameEngine {
           status: 'PENDING',
         },
       });
+      const opsRoomId = this.flyDisk
+        ? await this.flyDisk.requireOpsRoomId(playerId, input.roomNo)
+        : '';
+      if (!opsRoomId) throw new BadRequestException('请先进入房间再下注');
       await this.points.transferInTx(
         tx,
         {
-          type: 'PLAYER', id: playerId,
-          remark: `下注 ${game.name}`, idempotencyKey: `bet_player_${bet.id}`,
+          type: 'PLAYER',
+          id: playerId,
+          roomId: opsRoomId,
+          remark: `下注 ${game.name}`,
+          idempotencyKey: `bet_player_${bet.id}`,
         },
         {
           type: 'PLATFORM', id: PLATFORM_OWNER_ID,
@@ -328,12 +355,26 @@ export class SlotEngine implements IGameEngine {
     const prize = payTable[idx];
 
     const result = await this.prisma.$transaction(async (tx) => {
+      /*
+       * 抢占本局：两个请求同时 settle 时，只有把 PLAYING 改成 SETTLING 成功的那个
+       * 继续往下走。上面那次 state 检查是事务外读的，挡不住并发。
+       * 派彩本身有幂等键不会重复给钱，但注单状态和 totalFlow 会被写两遍。
+       */
+      const claimed = await tx.gameRound.updateMany({
+        where: { id: round.id, state: 'PLAYING' },
+        data: { state: 'SETTLING' },
+      });
+      if (claimed.count === 0) throw new BadRequestException('局已结算');
+
       const summaries: SettlementSummary['bets'] = [];
       let totalFlow = 0;
       for (const bet of round.bets) {
         const amt = asMoney(bet.amount);
         totalFlow = roundMoney(totalFlow + amt);
         const rawPayout = roundMoney(amt * prize.multiplier);
+        const settleRoomId = String(
+          (bet.payload as { fly?: { roomId?: string } } | null)?.fly?.roomId || '',
+        ).trim();
         const { paid: payout } = await this.kernel.creditWinInTx(tx, {
           playerId: bet.playerId,
           roundId: round.id,
@@ -342,6 +383,7 @@ export class SlotEngine implements IGameEngine {
           remark: `${round.game.name} 命中 ${prize.label}`,
           keyPrefix: 'slot',
           stake: amt,
+          opsRoomId: settleRoomId || undefined,
         });
         const won = payout > 0;
         await tx.bet.update({
@@ -355,9 +397,6 @@ export class SlotEngine implements IGameEngine {
             settledAt: new Date(),
           },
         });
-        if (bet.player?.agentPath) {
-          await this.commission.distributeInTx(tx, bet.player, amt, round.id);
-        }
         summaries.push({
           betId: bet.id,
           playerId: bet.playerId,
@@ -375,7 +414,7 @@ export class SlotEngine implements IGameEngine {
           state: 'SETTLED',
           endedAt: new Date(),
           totalFlow,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+           
           outcome: { prize, index: idx, rnd: rnd.toFixed(8) } as any,
         },
       });

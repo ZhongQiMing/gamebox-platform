@@ -9,7 +9,8 @@ export const UserRole = {
   ADMIN: 'ADMIN', // 平台管理员（后台）
   BRANCH: 'BRANCH', // 分公司
   AGENT: 'AGENT', // 代理
-  PROXY: 'PROXY', // 代分（代理的下级分销）
+  PROXY: 'PROXY', // 子账号（只读）
+  CS: 'CS', // 客服（上下分）
   PLAYER: 'PLAYER', // 玩家
 } as const;
 export type UserRole = (typeof UserRole)[keyof typeof UserRole];
@@ -17,6 +18,8 @@ export type UserRole = (typeof UserRole)[keyof typeof UserRole];
 export const UserStatus = {
   ACTIVE: 'ACTIVE',
   DISABLED: 'DISABLED',
+  /** 玩家自助注销：不可登录、不可恢复；账目保留 */
+  CLOSED: 'CLOSED',
 } as const;
 export type UserStatus = (typeof UserStatus)[keyof typeof UserStatus];
 
@@ -26,8 +29,9 @@ export const AccountOwnerType = {
   BRANCH: 'BRANCH',
   AGENT: 'AGENT',
   PROXY: 'PROXY',
+  CS: 'CS',
   PLAYER: 'PLAYER',
-  ROOM: 'ROOM', // 房间盘口池
+  ROOM: 'ROOM', // 历史房间分桶（已废弃，结算统一走平台盘口池）
 } as const;
 export type AccountOwnerType = (typeof AccountOwnerType)[keyof typeof AccountOwnerType];
 

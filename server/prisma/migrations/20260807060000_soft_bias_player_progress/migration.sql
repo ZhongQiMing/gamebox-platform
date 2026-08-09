@@ -1,0 +1,3 @@
+-- 玩家偏置：累计进度，达标自动停
+ALTER TABLE "GlobalSoftBias" ADD COLUMN "progressFrom" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP;
+ALTER TABLE "GlobalSoftBias" ADD COLUMN "progressAmount" DECIMAL(18, 2) NOT NULL DEFAULT 0;

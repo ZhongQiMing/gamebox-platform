@@ -1,15 +1,21 @@
 /**
  * 即时游戏结算内核：扣注 / 派彩 / 分佣 / 幂等回放。
- * 飞盘开 → ROOM；关盘 → AGENT；无房 → PLATFORM。
+ * 飞盘开 → PLATFORM，并按净输赢增减上盘额度（余额+上盘额度）。
+ * 关盘 → 现金 BV：只动玩家持分；信用：调剩余信用。
+ * 下注时传入的 house 快照须在派彩时复用（当期锁定，下期再生效）。
  */
 import { BadRequestException, Injectable, Logger, Optional } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
-import { asMoney, capWin, roundMoney } from '@gamebox/shared';
+import { capWin, roundMoney } from '@gamebox/shared';
 import { PrismaService } from '../../prisma/prisma.service';
-import { PointsService, PLATFORM_OWNER_ID, type OwnerType } from '../points/points.service';
+import { PointsService, PLATFORM_OWNER_ID } from '../points/points.service';
 import { CommissionService } from '../agents/commission.service';
-import { FlyDiskService } from '../console/fly-disk.service';
+import { FlyDiskService, type FlyHouse } from '../console/fly-disk.service';
 import { FlyRebateService } from '../console/fly-rebate.service';
+import {
+  closedDiskDebitBetInTx,
+  closedDiskSettleWinInTx,
+} from '../console/player-fund.helper';
 
 export type Tx = Prisma.TransactionClient;
 
@@ -47,22 +53,38 @@ export class SettlementKernel {
     return bet;
   }
 
-  async getBalance(playerId: string): Promise<number> {
-    const account = await this.prisma.pointsAccount.findUnique({
-      where: { ownerId: playerId },
-      select: { balance: true },
-    });
-    return asMoney(account?.balance ?? 0);
+  async getBalance(playerId: string, roomId: string): Promise<number> {
+    if (!roomId) return 0;
+    return this.points.getPlayerBalance(playerId, roomId);
   }
 
-  private async house(playerId: string) {
+  async resolveHouse(
+    playerId: string,
+    stakeAmount?: number,
+    opsRoomId?: string,
+  ): Promise<FlyHouse> {
     if (!this.flyDisk) {
-      return { type: 'PLATFORM' as OwnerType, id: PLATFORM_OWNER_ID, flying: false as boolean };
+      return { type: 'PLATFORM', id: PLATFORM_OWNER_ID, flying: false };
     }
-    return this.flyDisk.resolveHouse(playerId);
+    if (!opsRoomId) {
+      throw new BadRequestException('请先进入房间再下注');
+    }
+    return this.flyDisk.resolveHouse(playerId, opsRoomId, stakeAmount, { requireRoom: true });
   }
 
-  /** 玩家押注 → 飞盘对手盘 */
+  private isClosedDisk(h: FlyHouse) {
+    return !h.flying && h.type === 'AGENT';
+  }
+
+  private requirePlayerRoomId(h: FlyHouse, action: string): string {
+    const rid = String(h.roomId || '').trim();
+    if (!rid) {
+      throw new BadRequestException(`${action}缺少房间，请先进入房间`);
+    }
+    return rid;
+  }
+
+  /** 玩家押注：飞盘/无房→平台；关盘→只扣玩家（BV 房间账） */
   async debitBetInTx(
     tx: Tx,
     opts: {
@@ -71,27 +93,62 @@ export class SettlementKernel {
       amount: number;
       gameName: string;
       keyPrefix: string;
+      /** 当期锁定的对手盘；不传则须带 opsRoomId 现场解析 */
+      house?: FlyHouse;
+      opsRoomId?: string;
     },
-  ) {
+  ): Promise<FlyHouse> {
     const { playerId, roundId, amount, gameName, keyPrefix } = opts;
-    if (amount <= 0) return;
-    const h = await this.house(playerId);
-    await this.points.transferInTx(
-      tx,
-      {
-        type: 'PLAYER',
-        id: playerId,
-        remark: `${gameName} 押注`,
-        idempotencyKey: `${keyPrefix}_bet_player_${roundId}`,
-      },
-      {
-        type: h.type,
-        id: h.id,
-        idempotencyKey: `${keyPrefix}_bet_house_${roundId}`,
-      },
-      amount,
-      { bizType: 'BET', refType: 'round', refId: roundId },
-    );
+    if (amount <= 0) {
+      if (opts.house) return opts.house;
+      if (!opts.opsRoomId) {
+        throw new BadRequestException('请先进入房间再下注');
+      }
+      return this.resolveHouse(playerId, undefined, opts.opsRoomId);
+    }
+    /* 未预解析时按本注额判断：可飞不足则关盘坐庄 */
+    let h = opts.house;
+    if (!h) {
+      if (!opts.opsRoomId) {
+        throw new BadRequestException('请先进入房间再下注');
+      }
+      h = await this.resolveHouse(playerId, amount, opts.opsRoomId);
+    }
+    const playerRoomId = this.requirePlayerRoomId(h, '下注');
+
+    if (this.isClosedDisk(h)) {
+      await closedDiskDebitBetInTx(tx, this.points, {
+        playerId,
+        agentUserId: h.agentUserId || h.id,
+        roomId: playerRoomId,
+        bookMode: h.bookMode,
+        amount,
+        remark: `${gameName} 押注(关盘)`,
+        refType: 'round',
+        refId: roundId,
+        idemPlayer: `${keyPrefix}_bet_player_${roundId}`,
+        idemAgent: `${keyPrefix}_bet_agent_${roundId}`,
+      });
+    } else {
+      await this.points.transferInTx(
+        tx,
+        {
+          type: 'PLAYER',
+          id: playerId,
+          roomId: playerRoomId,
+          remark: `${gameName} 押注`,
+          idempotencyKey: `${keyPrefix}_bet_player_${roundId}`,
+        },
+        {
+          type: 'PLATFORM',
+          id: PLATFORM_OWNER_ID,
+          idempotencyKey: `${keyPrefix}_bet_house_${roundId}`,
+        },
+        amount,
+        { bizType: 'BET', refType: 'round', refId: roundId },
+      );
+    }
+    return h;
   }
 
   async creditWinInTx(
@@ -105,11 +162,24 @@ export class SettlementKernel {
       keyPrefix: string;
       stake?: number;
       skipCap?: boolean;
+      /** 猜大小等 0 边缘玩法：仍走房间对手盘，但不刷流水返水/佣金 */
+      skipFlowRebate?: boolean;
+      /** 须与扣注时同一快照 */
+      house?: FlyHouse;
+      opsRoomId?: string;
     },
-  ): Promise<{ paid: number; capped: boolean }> {
+  ): Promise<{ paid: number; capped: boolean; house: FlyHouse }> {
     const { playerId, roundId, betId, remark, keyPrefix } = opts;
     const stake = Math.max(0, roundMoney(opts.stake ?? 0));
-    const h = await this.house(playerId);
+    /* 派彩须带下注时的 house 快照；缺省时按本金再判一次飞/关 */
+    let h = opts.house;
+    if (!h) {
+      if (!opts.opsRoomId) {
+        throw new BadRequestException('派彩缺少对手盘快照');
+      }
+      h = await this.resolveHouse(playerId, stake > 0 ? stake : undefined, opts.opsRoomId);
+    }
+    const playerRoomId = this.requirePlayerRoomId(h, '派彩');
 
     let amount = 0;
     let capped = false;
@@ -124,17 +194,21 @@ export class SettlementKernel {
           `派彩触顶：round=${roundId} bet=${betId} 原始=${opts.amount} 封顶=${amount}，请立即核对赔率配置`,
         );
       }
+    }
+
+    if (h.flying) {
       if (amount > 0) {
         await this.points.transferInTx(
           tx,
           {
-            type: h.type,
-            id: h.id,
+            type: 'PLATFORM',
+            id: PLATFORM_OWNER_ID,
             idempotencyKey: `${keyPrefix}_win_house_${betId}`,
           },
           {
             type: 'PLAYER',
             id: playerId,
+            roomId: playerRoomId,
             remark,
             idempotencyKey: `${keyPrefix}_win_player_${betId}`,
           },
@@ -142,33 +216,93 @@ export class SettlementKernel {
           { bizType: 'WIN', refType: 'round', refId: roundId },
         );
       }
-    }
-
-    // 全输（派彩0）也要处理飞盘占用 / 关盘回额度 / 飞盘返水
-    if (this.flyDisk && stake > 0) {
-      await this.flyDisk.applyFlyLossInTx(tx, h.agentUserId, h.flying, stake, amount);
-    }
-    if (this.flyRebate && stake > 0) {
-      await this.flyRebate.payAgentShareInTx(tx, {
-        betId,
+      if (this.flyDisk && stake > 0) {
+        await this.flyDisk.applyFlyLossInTx(
+          tx,
+          h.agentUserId,
+          true,
+          stake,
+          amount,
+          `${keyPrefix}_fly_quota_${betId}`,
+          h.bookMode,
+        );
+      }
+      if (this.flyRebate && stake > 0 && !opts.skipFlowRebate) {
+        await this.flyRebate.payBetFlowInTx(tx, {
+          betId,
+          playerId,
+          validFlow: stake,
+          flying: true,
+          roomId: playerRoomId,
+          agentUserId: h.agentUserId,
+          bookMode: h.bookMode,
+          roundId,
+        });
+      }
+    } else if (h.type === 'PLATFORM') {
+      if (amount > 0) {
+        await this.points.transferInTx(
+          tx,
+          {
+            type: 'PLATFORM',
+            id: PLATFORM_OWNER_ID,
+            idempotencyKey: `${keyPrefix}_win_house_${betId}`,
+          },
+          {
+            type: 'PLAYER',
+            id: playerId,
+            roomId: playerRoomId,
+            remark,
+            idempotencyKey: `${keyPrefix}_win_player_${betId}`,
+          },
+          amount,
+          { bizType: 'WIN', refType: 'round', refId: roundId },
+        );
+      }
+    } else {
+      /* 关盘：派彩加玩家并从代理盘分赔出 */
+      await closedDiskSettleWinInTx(tx, this.points, {
         playerId,
-        validFlow: stake,
-        flying: h.flying,
-        roomId: h.roomId,
-        agentUserId: h.agentUserId,
+        agentUserId: h.agentUserId || h.id,
+        roomId: playerRoomId,
+        bookMode: h.bookMode,
+        stake,
+        payout: amount,
+        remark: `${remark}(关盘)`,
+        refType: 'round',
+        refId: roundId,
+        idemPlayer: `${keyPrefix}_win_player_${betId}`,
+        idemAgent: `${keyPrefix}_win_agent_${betId}`,
       });
+      if (this.flyRebate && stake > 0 && !opts.skipFlowRebate) {
+        await this.flyRebate.payBetFlowInTx(tx, {
+          betId,
+          playerId,
+          validFlow: stake,
+          flying: false,
+          roomId: playerRoomId,
+          agentUserId: h.agentUserId || h.id,
+          bookMode: h.bookMode,
+          roundId,
+        });
+      }
     }
 
-    return { paid: amount, capped };
+    return { paid: amount, capped, house: h };
   }
 
+  /**
+   * @deprecated 流水佣金已并入 creditWinInTx → payBetFlowInTx；
+   * 无 roomId 时不发挂靠佣金（按房隔离）。
+   */
   async applyCommissionInTx(
     tx: Tx,
-    player: { id: string; agentPath: string } | null,
+    player: { id: string; agentPath?: string } | null,
     validFlow: number,
     roundId: string,
+    roomId?: string,
   ) {
-    if (!player || validFlow <= 0 || !player.agentPath) return;
-    await this.commission.distributeInTx(tx, player, validFlow, roundId);
+    if (!player || validFlow <= 0 || !roomId) return;
+    await this.commission.distributeInTx(tx, player, validFlow, roundId, undefined, { roomId });
   }
 }

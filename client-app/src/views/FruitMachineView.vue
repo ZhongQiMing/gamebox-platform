@@ -330,6 +330,7 @@ import { useFruitRingLights } from '@/games/slots/useFruitRingLights'
 import { createFruitAwardFx } from '@/games/slots/fruitAwardFx'
 import { gamesApi } from '@/api/games'
 import { useWalletStore } from '@/stores/wallet'
+import { useRoomStore } from '@/stores/room'
 import { useToast } from '@/composables/useToast'
 import { useGameSpinSession } from '@/composables/useGameSpinSession'
 
@@ -399,7 +400,33 @@ const SegDigit = defineComponent({
 
 const router = useRouter()
 const walletStore = useWalletStore()
+const roomStore = useRoomStore()
 const { toast } = useToast()
+
+function requireRoomNo(): string | null {
+  const roomNo = String(roomStore.roomNo || '').trim()
+  if (!/^\d{6}$/.test(roomNo)) {
+    toast('请先进入房间再下注')
+    return null
+  }
+  return roomNo
+}
+
+/** 仅在服务端明确给出余额时写入；缺省则回拉房间余额，避免被 balance:0 覆盖 */
+async function applyFruitBalance(bal: unknown) {
+  if (typeof bal === 'number' && Number.isFinite(bal)) {
+    walletStore.balance = Math.round(bal * 100) / 100
+    syncScoreFromWallet()
+    return
+  }
+  try {
+    await walletStore.fetchBalance()
+  } catch {
+    /* 保持现有显示 */
+  }
+  syncScoreFromWallet()
+}
+
 const spinSession = useGameSpinSession('fruit')
 /** 服务端游戏限额（默认与 seed 一致，进页后刷新） */
 const fruitMinBet = ref(1)
@@ -723,12 +750,12 @@ async function abandonGambleAndLeaveUi() {
   stageAwardType.value = 'normal'
   gambleResultNum.value = null
   try {
-    const res = await gamesApi.fruitAbandonGamble()
-    if (typeof res.balance === 'number') walletStore.balance = res.balance
+    const res = await gamesApi.fruitAbandonGamble(String(roomStore.roomNo || '') || undefined)
+    await applyFruitBalance(res.balance)
   } catch {
-    /* 忽略 */
+    try { await walletStore.fetchBalance() } catch { /* 忽略 */ }
+    syncScoreFromWallet()
   }
-  syncScoreFromWallet()
 }
 
 function isInGamblePhase() {
@@ -828,12 +855,12 @@ async function onControlClick(id: ControlId) {
     collectPendingWin()
     clearBoardBets(true)
     try {
-      const res = await gamesApi.fruitAbandonGamble()
-      if (typeof res.balance === 'number') walletStore.balance = res.balance
+      const res = await gamesApi.fruitAbandonGamble(String(roomStore.roomNo || '') || undefined)
+      await applyFruitBalance(res.balance)
     } catch {
-      /* 忽略：本地已清，下次开跑服务端也会清 pending */
+      try { await walletStore.fetchBalance() } catch { /* 忽略 */ }
+      syncScoreFromWallet()
     }
-    syncScoreFromWallet()
     clearHitLit()
     setCursor(-1)
     clearTrainVisual()
@@ -892,9 +919,8 @@ async function onAutoClick() {
       stageAwardType.value = 'normal'
       gambleResultNum.value = null
       try {
-        const res = await gamesApi.fruitAbandonGamble()
-        if (typeof res.balance === 'number') walletStore.balance = res.balance
-        syncScoreFromWallet()
+        const res = await gamesApi.fruitAbandonGamble(String(roomStore.roomNo || '') || undefined)
+        await applyFruitBalance(res.balance)
       } catch {
         /* 下次开跑服务端也会清*/
       }
@@ -984,6 +1010,8 @@ async function doGamble(choice: 'big' | 'small') {
     return
   }
   if (stageMode.value === 'gamble_win' || stageMode.value === 'gamble_lose') return
+  const roomNo = requireRoomNo()
+  if (!roomNo) return
   busy.value = true
   playFruitSfx(choice === 'big' ? 'big' : 'small')
   const amount = winScore.value
@@ -991,10 +1019,10 @@ async function doGamble(choice: 'big' | 'small') {
     const clientRequestId = spinSession.currentOrNewClientRequestId()
     let res
     try {
-      res = await gamesApi.fruitGamble(amount, choice, clientRequestId)
+      res = await gamesApi.fruitGamble(amount, choice, clientRequestId, roomNo)
     } catch {
       // 幂等重试：响应丢失时用同一 clientRequestId 拉回结果
-      res = await gamesApi.fruitGamble(amount, choice, clientRequestId)
+      res = await gamesApi.fruitGamble(amount, choice, clientRequestId, roomNo)
     }
     spinSession.clearClientRequestId()
     walletStore.balance = res.balance
@@ -1071,6 +1099,8 @@ async function doSpin() {
     playFruitSfx('lose', 0.4)
     return
   }
+  const roomNo = requireRoomNo()
+  if (!roomNo) return
 
   // 开跑前记下本局注数，供下次「开始」复用
   lastBetCounts.value = { ...betCounts.value }
@@ -1092,6 +1122,7 @@ async function doSpin() {
     stopIndex: number
     hitIndexes: number[]
     totalWin: number
+    roundId?: string
     wins?: Array<{ cellIndex: number; amount: number; symbol?: string; mult?: number }>
     balance?: number
   }
@@ -1099,13 +1130,15 @@ async function doSpin() {
 
   try {
     try {
-      result = await gamesApi.fruitSpin(payload, clientRequestId)
+      result = await gamesApi.fruitSpin(payload, clientRequestId, undefined, roomNo)
     } catch {
-      // 响应丢失时幂等重试：服务端已结算则回放，未结算则补开
-      result = await gamesApi.fruitSpin(payload, clientRequestId)
+      // 响应丢失时幂等重试：服务端已落单则回放，未落单则补开
+      result = await gamesApi.fruitSpin(payload, clientRequestId, undefined, roomNo)
     }
     spinSession.clearClientRequestId()
+    // 此时仅扣了押注，派彩等跑灯结束后再揭晓（注单显示「待开奖」）
     if (typeof result.balance === 'number') walletStore.balance = result.balance
+    syncScoreFromWallet()
 
     const wins = (result.wins ?? []).map((w) => ({
       cellIndex: w.cellIndex,
@@ -1118,6 +1151,17 @@ async function doSpin() {
     // 报奖累加前先归零，避免与上局残值叠算；最终以 totalWin 校准
     winScore.value = 0
     await revealHits(award, result.stopIndex, result.hitIndexes, wins)
+
+    // 动画结束再入账，注单才出盈亏
+    if (result.roundId) {
+      try {
+        const revealed = await gamesApi.fruitReveal(result.roundId)
+        if (typeof revealed.balance === 'number') walletStore.balance = revealed.balance
+      } catch {
+        const revealed = await gamesApi.fruitReveal(result.roundId)
+        if (typeof revealed.balance === 'number') walletStore.balance = revealed.balance
+      }
+    }
 
     const win = result.totalWin ?? 0
     winScore.value = win
@@ -1172,15 +1216,18 @@ onMounted(async () => {
   }
   syncScoreFromWallet()
   // 从历史记录返回等：恢复仍可猜大小的当局赢分
+  // 注意：无 pending 时旧接口会回 balance:0，绝不能覆盖刚拉到的房间积分
   try {
-    const pend = await gamesApi.fruitPendingGamble()
-    if (typeof pend.balance === 'number') walletStore.balance = pend.balance
+    const roomNo = String(roomStore.roomNo || '').trim()
+    const pend = await gamesApi.fruitPendingGamble(/^\d{6}$/.test(roomNo) ? roomNo : undefined)
     const amt = Math.max(0, Number(pend.pendingGambleAmount) || 0)
     if (amt > 0) {
+      if (typeof pend.balance === 'number') walletStore.balance = pend.balance
       winScore.value = amt
       stageMode.value = 'gamble_roll'
+      syncScoreFromWallet()
     }
-    syncScoreFromWallet()
+    /* 无 pending 时勿用接口余额覆盖：旧版会回 0 把刚拉到的积分清掉 */
   } catch {
     /* 忽略：无 pending 或接口暂不可用*/
   }
@@ -1204,7 +1251,8 @@ onUnmounted(() => {
   // 开奖进行中勿抢 abandon（结算后 pending 可由下次进页恢复）。
   // 主动点返回/历史时由 goBack、openBetRecords 控制 abandonOnUnmount
   if (abandonOnUnmount && !busy.value) {
-    void gamesApi.fruitAbandonGamble().catch(() => {})
+    const roomNo = String(roomStore.roomNo || '').trim()
+    void gamesApi.fruitAbandonGamble(/^\d{6}$/.test(roomNo) ? roomNo : undefined).catch(() => {})
   }
   stopAutoPlay()
   stopBetHold()

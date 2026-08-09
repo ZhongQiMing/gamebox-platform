@@ -127,7 +127,7 @@ export function computePoses(angles: number[], props: CircleProps): IconPose[] {
     const scale =
       (Math.hypot(px - px2, py - py2) / halfIcon) * props.iconMaxScale
     const y = py * props.circleYScale
-    let zIndex = 12
+    let zIndex: number
     if (a > frontMin && a < frontMax) zIndex = 23
     else if (a > backMin && a < backMax) zIndex = 0
     else if (a > 0 && a < 180) zIndex = 18

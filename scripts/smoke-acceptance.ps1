@@ -1,7 +1,16 @@
-# Local smoke acceptance for gamebox API
+﻿# Local smoke acceptance for gamebox API
 # Usage: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke-acceptance.ps1
+#
+# 默认打本机 3000，是给开发机用的。对生产验收必须显式指定域名，否则等于在自己电脑上
+# 测了一遍然后宣布线上没问题：
+#   $env:SMOKE_BASE_URL='https://你的域名/api'
+#   $env:SMOKE_ADMIN_PASSWORD='线上管理员密码'
+# 生产管理员口令不会是 seed 默认值，所以 SMOKE_ADMIN_PASSWORD 也要一起给。
 $ErrorActionPreference = 'Stop'
 $Base = if ($env:SMOKE_BASE_URL) { $env:SMOKE_BASE_URL } else { 'http://localhost:3000/api' }
+if ($Base -match 'localhost|127\.0\.0\.1') {
+  Write-Host '[smoke] 目标是本机，仅作开发自测；生产验收请设置 SMOKE_BASE_URL' -ForegroundColor Yellow
+}
 
 function Invoke-Api {
   param(
@@ -59,7 +68,8 @@ Record 'health' {
 }
 
 Record 'admin_login' {
-  $r = Invoke-Api POST '/auth/login' @{ username = 'admin'; password = 'Admin@123456' }
+  $adminPwd = if ($env:SMOKE_ADMIN_PASSWORD) { $env:SMOKE_ADMIN_PASSWORD } else { 'Admin@123456' }
+  $r = Invoke-Api POST '/auth/login' @{ username = 'admin'; password = $adminPwd }
   Assert-True ($r.code -eq 0) 'login ok'
   Assert-True (-not [string]::IsNullOrEmpty($r.data.token)) 'has token'
   $script:adminToken = [string]$r.data.token

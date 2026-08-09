@@ -619,6 +619,8 @@ html, body { margin: 0 !important; padding: 0 !important; overflow: hidden !impo
 #preloader { display: none !important; }
 #an-btn1, #an-btn2, #an-btn3, #an-btn4, #an-btn5 { display: none !important; }
 #closeSound { display: none !important; }
+/* 音效改由父页开奖卡按钮控制 */
+.soundBox, #soundBtn { display: none !important; visibility: hidden !important; }
 html.is-embed body > br { display: none !important; }
 /* 进房历史默认不露红绿灯；startcountdown 会再 display:block */
 html.is-embed .trafficlight { display: none; }

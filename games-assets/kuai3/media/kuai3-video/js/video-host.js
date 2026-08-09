@@ -99,13 +99,12 @@
   function setMuted(muted) {
     ensureOpen();
     try {
+      /* 顶栏声音按钮已去掉；仍按 mute 控制 iframe 内音效 */
       var btn = document.getElementById('spanbtn');
-      if (!btn) return;
+      if (btn) btn.className = muted ? 'sounds2' : 'sounds';
       if (muted) {
-        btn.className = 'sounds2';
         if (global.k3v && k3v.sound) k3v.sound.stop('');
       } else {
-        btn.className = 'sounds';
         if (global.k3v && k3v.sound) k3v.sound.play('all');
       }
     } catch (e) { /* ignore */ }
@@ -291,6 +290,10 @@
           drawTime: drawTime,
           order: nums,
         });
+        /* 最后一骰落地写号：通知父页刷历史（勿等 after 收尾） */
+        if (typeof opts.onNumbers === 'function') {
+          try { opts.onNumbers(true); } catch (eNum) { /* ignore */ }
+        }
       };
       if (headerDelay <= 0) revealHeader();
       else playTimers.push(setTimeout(revealHeader, headerDelay));
@@ -358,6 +361,7 @@
           drawTime: opts.drawTime,
           muted: opts.muted,
           afterMs: afterMs,
+          onNumbers: opts.onNumbers,
           onDone: opts.onDone,
         });
       }, mid));
@@ -401,6 +405,7 @@
 
   function readyPing() {
     try {
+      if (global.K3Video) global.K3Video.__ready = true;
       if (window.parent && window.parent !== window) {
         parent.postMessage({ source: 'kuai3-video', action: 'ready' }, location.origin);
       }
@@ -424,6 +429,8 @@
     issueNext: issueNext,
     fitStage: fitStage,
     isPlaying: function () { return !!playing; },
+    /** 父页须等 embed boot 置 true 后再 play */
+    __ready: false,
   };
 
   global.addEventListener('message', function (ev) {
@@ -439,6 +446,12 @@
         midMs: data.midMs,
         afterMs: data.afterMs,
         muted: data.muted,
+        onNumbers: function () {
+          try {
+            ev.source && ev.source.postMessage(
+              { source: 'kuai3-video', action: 'numbers', ok: true, issue: data.issue || '' }, location.origin);
+          } catch (e0) { /* ignore */ }
+        },
         onDone: function (ok) {
           try {
             ev.source && ev.source.postMessage(
@@ -513,6 +526,17 @@
       global.addEventListener('orientationchange', fitStage);
     }
     var q = global.location && global.location.search || '';
+    /* embed 续播：先藏 LOADING 文字，背景就绪后再加 k3-bg-ready */
+    if (/(?:\?|&)embed=1(?:&|$)/.test(q) || /(?:\?|&)settle=1(?:&|$)/.test(q)) {
+      try {
+        var $early = jq();
+        if ($early) $early('.loading .loadtxt').hide();
+        else {
+          var txt = document.querySelector('.loading .loadtxt');
+          if (txt) txt.style.display = 'none';
+        }
+      } catch (eEarly) { /* ignore */ }
+    }
     var muted = /(?:\?|&)mute=1(?:&|$)/.test(q);
     if (muted) setMuted(true);
 

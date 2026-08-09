@@ -1,12 +1,13 @@
 import {
   Controller, Get, Post, Query, Body,
-  ForbiddenException, BadRequestException, NotFoundException,
+  ForbiddenException, BadRequestException,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { IsString, Length } from 'class-validator';
+import { IsOptional, IsString, Length } from 'class-validator';
 import { asMoney } from '@gamebox/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { Roles } from '../../common/decorators/roles.decorator';
+import { HangService } from './hang.service';
 
 class HangDto {
   @IsString()
@@ -16,23 +17,32 @@ class HangDto {
   @IsString()
   @Length(6, 16)
   underUid!: string;
+
+  /** 多房时代理必传；单房可省略由服务端推断 */
+  @IsOptional()
+  @IsString()
+  roomId?: string;
 }
 
 const AGENT_ROLES = new Set(['BRANCH', 'AGENT', 'PROXY']);
 
+/*
+ * 类级 @Roles 收口。
+ *
+ * 方法里虽然都用 isAgentRole 挡了，但那是一条条手写的——
+ * 以后随手加个接口忘了写，任何登录用户都能调。放到类上兜底，
+ * 方法内的检查保留（返回的是更具体的中文提示）。
+ */
 @Controller('agent')
+@Roles('ADMIN', 'BRANCH', 'AGENT', 'PROXY')
 export class AgentController {
   constructor(
     private prisma: PrismaService,
-    private cfg: ConfigService,
+    private hangService: HangService,
   ) {}
 
   private isAgentRole(role: string) {
     return AGENT_ROLES.has(role);
-  }
-
-  private inTeam(callerId: string, user: { id: string; agentPath: string }) {
-    return user.id === callerId || user.agentPath.includes(`/${callerId}/`);
   }
 
   @Get('overview')
@@ -148,102 +158,14 @@ export class AgentController {
     if (!this.isAgentRole(me.role)) {
       throw new ForbiddenException('仅代理可操作挂靠，请联系您的代理处理');
     }
-
-    const friendUid = dto.friendUid.trim();
-    const underUid = dto.underUid.trim();
-    if (friendUid === underUid) {
-      throw new BadRequestException('好友与推荐人不能相同');
+    if (!dto.friendUid?.trim() || !dto.underUid?.trim()) {
+      throw new BadRequestException('请填写好友与推荐人 UID');
     }
-
-    const [friend, under] = await Promise.all([
-      this.prisma.user.findUnique({
-        where: { uid: friendUid },
-        select: { id: true, uid: true, nickname: true, parentId: true, agentPath: true, depth: true, role: true },
-      }),
-      this.prisma.user.findUnique({
-        where: { uid: underUid },
-        select: { id: true, uid: true, nickname: true, parentId: true, agentPath: true, depth: true, role: true },
-      }),
-    ]);
-    if (!friend) throw new NotFoundException('好友 UID 不存在');
-    if (!under) throw new NotFoundException('推荐人 UID 不存在');
-    if (friend.id === me.id) throw new BadRequestException('不能挂靠自己');
-
-    if (!this.inTeam(me.id, under)) {
-      throw new ForbiddenException('推荐人不在您的团队内，无法挂靠');
-    }
-
-    if (friend.parentId && !this.inTeam(me.id, friend)) {
-      throw new ForbiddenException('该好友已挂在其他代理名下，无法操作');
-    }
-
-    if (under.agentPath.includes(`/${friend.id}/`) || under.id === friend.id) {
-      throw new BadRequestException('不能将上级挂到下级名下');
-    }
-
-    if (friend.parentId === under.id) {
-      return { ok: true, message: '已在该推荐人名下，无需重复挂靠', friend: friend.nickname, under: under.nickname };
-    }
-
-    const oldPrefix = `${friend.agentPath}${friend.id}/`;
-    const newAgentPath = `${under.agentPath}${under.id}/`;
-    const newDepth = under.depth + 1;
-    const depthDelta = newDepth - friend.depth;
-    const newPrefix = `${newAgentPath}${friend.id}/`;
-    const playerRate = Number(this.cfg.get('PLAYER_COMMISSION_RATE') ?? 0.002);
-
-    await this.prisma.$transaction(async (tx) => {
-      await tx.user.update({
-        where: { id: friend.id },
-        data: {
-          parentId: under.id,
-          agentPath: newAgentPath,
-          depth: newDepth,
-        },
-      });
-
-      const descendants = await tx.user.findMany({
-        where: { agentPath: { startsWith: oldPrefix } },
-        select: { id: true, agentPath: true, depth: true },
-      });
-      for (const d of descendants) {
-        await tx.user.update({
-          where: { id: d.id },
-          data: {
-            agentPath: newPrefix + d.agentPath.slice(oldPrefix.length),
-            depth: d.depth + depthDelta,
-          },
-        });
-      }
-
-      if (under.role === 'PLAYER') {
-        const existing = await tx.agent.findUnique({
-          where: { userId: under.id },
-          select: { commissionRate: true },
-        });
-        if (!existing) {
-          await tx.agent.create({
-            data: { userId: under.id, commissionRate: playerRate },
-          });
-        } else if (existing.commissionRate <= 0) {
-          await tx.agent.update({
-            where: { userId: under.id },
-            data: { commissionRate: playerRate },
-          });
-        }
-      }
-    });
-
-    return {
-      ok: true,
-      message: `已将 ${friend.nickname} 挂到 ${under.nickname} 名下`,
-      friend: { uid: friend.uid, nickname: friend.nickname },
-      under: { uid: under.uid, nickname: under.nickname },
-    };
+    return this.hangService.hang(me.id, dto.friendUid, dto.underUid, dto.roomId);
   }
 
   @Post('transfer')
-  async transfer() {
+  transfer(): never {
     throw new ForbiddenException('禁止私下转分，请通过官方充值通道上分');
   }
 }

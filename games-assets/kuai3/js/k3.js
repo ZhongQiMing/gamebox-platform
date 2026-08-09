@@ -101,8 +101,10 @@ $(function () {
     else if (typeof syncServerSnapshot === 'function') syncServerSnapshot();
   }
   const REVEALED_STORAGE_KEY = 'k3_revealed_v1';
+  const PLAYED_ANIM_STORAGE_KEY = 'k3_played_anim_v1';
   const CLOSED_STORAGE_KEY = 'k3_closed_v1';
   let revealedIssues = new Set();
+  let playedAnimIssues = new Set();
   /** 进房后首次拉到历史头：只对齐顶栏，不往聊天推「进房前已开奖」 */
   let historyHeadBootstrapped = false;
   let lastBetText = '';
@@ -119,8 +121,6 @@ $(function () {
     side: 1.995,
     sum: 5,
     dice: 2.3,
-    dice2: 3.5,
-    dice3: 4.5,
     pairN: 11,
     tripletN: 168,
     tripletAny: 26,
@@ -140,8 +140,6 @@ $(function () {
     ODDS.side = mulOf(pt, 'big', ODDS.side);
     ODDS.sum = mulOf(pt, 'sum', ODDS.sum);
     ODDS.dice = mulOf(pt, 'dice1', ODDS.dice);
-    ODDS.dice2 = mulOf(pt, 'dice2', ODDS.dice2);
-    ODDS.dice3 = mulOf(pt, 'dice3', ODDS.dice3);
     ODDS.pairN = mulOf(pt, 'pair', ODDS.pairN);
     ODDS.tripletN = mulOf(pt, 'tripletN', ODDS.tripletN);
     ODDS.tripletAny = mulOf(pt, 'triplet', ODDS.tripletAny);
@@ -325,8 +323,7 @@ $(function () {
       case 'dice': {
         const c = countOf(nums, p.num);
         if (c <= 0) return { winAmount: 0, profit: -amount, hit: '' };
-        const diceOdds = c === 1 ? ODDS.dice : (c === 2 ? ODDS.dice2 : ODDS.dice3);
-        const winAmount = Math.round(amount * diceOdds * 100) / 100;
+        const winAmount = Math.round(amount * ODDS.dice * 100) / 100;
         return { winAmount, profit: winAmount - amount, hit: play };
       }
       case 'pairN':
@@ -672,6 +669,8 @@ $(function () {
     if (!serverSynced || !serverCurrent) return false;
     const open = serverCurrent.status === 'PENDING' && Date.now() < new Date(serverCurrent.lockAt).getTime();
     if (!open) return false;
+    /* 开奖仪式未回到 betting：禁止下注 */
+    if (roomChat && typeof roomChat.isBettingOpen === 'function' && !roomChat.isBettingOpen()) return false;
     /* 仅冻结「仍是封盘那一期」；已换新期以服务端 lockAt 为准 */
     if (roomBetFrozen && sealedIssueNo && String(serverCurrent.issueNo) === String(sealedIssueNo)) return false;
     return true;
@@ -1109,13 +1108,18 @@ $(function () {
   }
 
   /** 正版开奖动画：倒计时 3s → 摇骰 5s → 出号 */
-  const K3_VIDEO_SRC = './media/kuai3-video/Kuai3_jisu.html?v=16&embed=1&mute=1';
+  const K3_VIDEO_SRC = './media/kuai3-video/Kuai3_jisu.html?v=1742046&embed=1&mute=1';
   const K3_VIDEO_COUNTDOWN_MS = 3000;
   const K3_VIDEO_MID_MS = 5000;
   /** 正版 stopGame：第 3 骰 1600ms 落地，顶栏/底栏此时揭晓 */
   const K3_VIDEO_LAND_MS = 1600;
   /** 正版 stopGame 后等 2s 再收尾（盖住交错出号） */
   const K3_VIDEO_AFTER_MS = 2000;
+  /** mid 只许拉长：出号对齐 openAt，收尾 after 仍原速 */
+  const K3_VIDEO_MID_MAX_MS = Math.max(
+    K3_VIDEO_MID_MS,
+    PREP_SEC * 1000 - K3_VIDEO_COUNTDOWN_MS - K3_VIDEO_LAND_MS - 500
+  );
 
   function k3VideoOrderStr(nums) {
     return (nums || []).map(function (n) { return String(Number(n)); }).join(',');
@@ -1191,7 +1195,13 @@ $(function () {
 
   /** 动画收尾后揭晓底部三格（与顶栏出号同步意图） */
   function revealK3VideoCardFoot(card) {
-    if (!card || card.classList.contains('is-result-shown')) return;
+    if (!card) return;
+    /* 已揭晓也要清遮罩（防 settle 漏清后卡在「正在开奖」） */
+    card.classList.remove('is-hold-black');
+    card.removeAttribute('data-hold-black');
+    card._holdBlackExempt = true;
+    if (window.LotteryHoldTip) LotteryHoldTip.clear(card);
+    if (card.classList.contains('is-result-shown')) return;
     const sum = card.getAttribute('data-sum') || '—';
     const side = card.getAttribute('data-side') || '—';
     const shape = card.getAttribute('data-shape') || '—';
@@ -1258,9 +1268,11 @@ $(function () {
       } catch (e) { /* ignore */ }
       if (typeof cb === 'function') cb(!!ok);
     };
-    const hasApi = function () {
+    /* 必须等 iframe boot（__ready / ready 消息），不能仅凭 API 对象存在就 play */
+    const isBooted = function () {
       try {
-        return !!(frame.contentWindow && frame.contentWindow.K3Video);
+        const api = frame.contentWindow && frame.contentWindow.K3Video;
+        return !!(api && api.__ready && typeof api.play === 'function');
       } catch (e) {
         return false;
       }
@@ -1268,20 +1280,21 @@ $(function () {
     const onMsg = function (ev) {
       const d = ev && ev.data;
       if (!d || d.source !== 'kuai3-video') return;
-      if (d.action === 'ready' && ev.source === frame.contentWindow) finish(true);
+      if (d.action === 'ready' && ev.source === frame.contentWindow && isBooted()) finish(true);
     };
     window.addEventListener('message', onMsg);
-    if (hasApi()) {
+    if (isBooted()) {
       finish(true);
       return;
     }
     frame.addEventListener('load', function () {
-      setTimeout(function () { finish(true); }, 80);
+      setTimeout(function () { if (isBooted()) finish(true); }, 80);
     });
     let n = 0;
     pollTimer = setInterval(function () {
       n += 1;
-      if (hasApi() || n >= 40) finish(!!hasApi() || n >= 40);
+      if (isBooted()) finish(true);
+      else if (n >= 80) finish(false);
     }, 50);
   }
 
@@ -1298,46 +1311,123 @@ $(function () {
       return;
     }
     card.classList.add('is-playing');
+    card.classList.remove('is-hold-black');
+    card.removeAttribute('data-hold-black');
+    if (window.LotteryHoldTip) LotteryHoldTip.clear(card);
     card.setAttribute('data-playing', '1');
-    whenK3VideoReady(frame, function () {
-      /* 与 iframe 顶栏同步：倒计时+摇骰+最后一骰落地后再揭底栏 */
-      const footRevealAt = K3_VIDEO_COUNTDOWN_MS + K3_VIDEO_MID_MS + K3_VIDEO_LAND_MS;
-      const footTimer = setTimeout(function () { revealK3VideoCardFoot(card); }, footRevealAt);
-      const doneWrap = function (ok) {
-        clearTimeout(footTimer);
+    card._k3NumsNotified = false;
+    card._k3DoneOnce = false;
+    whenK3VideoReady(frame, function (booted) {
+      const onNumbersReady = function () {
+        if (card._k3NumsNotified) return;
+        card._k3NumsNotified = true;
         revealK3VideoCardFoot(card);
-        card.classList.remove('is-playing');
+        if (typeof notifyDrawBarNumbersReady === 'function') {
+          notifyDrawBarNumbersReady(issue, nums, 3);
+        }
+      };
+      const onMsg = function (ev) {
+        const d = ev && ev.data;
+        if (!d || d.source !== 'kuai3-video' || d.action !== 'numbers') return;
+        if (ev.source !== frame.contentWindow) return;
+        onNumbersReady();
+      };
+      const doneWrap = function (ok) {
+        if (card._k3DoneOnce) return;
+        card._k3DoneOnce = true;
+        window.removeEventListener('message', onMsg);
+        revealK3VideoCardFoot(card);
+        onNumbersReady();
+        card.classList.remove('is-playing', 'is-hold-black');
         card.removeAttribute('data-playing');
+        card.removeAttribute('data-hold-black');
         /* 禁止改 iframe.src（整页重载会闪一下）；只写 chatLog */
         persistK3VideoSettled(card);
+        card._k3PlayedLive = true;
+        card._holdBlackExempt = true;
+        /* 尾动画播完：再开盘线 + 顶栏倒计时 */
+        if (typeof notifyDrawCeremonyReady === 'function') {
+          notifyDrawCeremonyReady(issue);
+        }
         if (window.K3Audio && K3Audio.endDrawCeremony) K3Audio.endDrawCeremony();
         else if (window.K3Audio && K3Audio.onRevealDone) K3Audio.onRevealDone();
         if (typeof opts.onDone === 'function') opts.onDone(ok);
       };
-      if (window.K3Audio) {
-        if (K3Audio.unlock) K3Audio.unlock();
-        if (K3Audio.startDrawCeremony) {
-          K3Audio.startDrawCeremony({
-            countdownMs: K3_VIDEO_COUNTDOWN_MS,
-            midMs: K3_VIDEO_MID_MS,
-            afterMs: K3_VIDEO_AFTER_MS,
-          });
+      if (!booted) {
+        card.classList.remove('is-playing');
+        card.removeAttribute('data-playing');
+        try { settleK3VideoCard(card, nums); } catch (e) { /* ignore */ }
+        onNumbersReady();
+        if (typeof notifyDrawCeremonyReady === 'function') {
+          notifyDrawCeremonyReady(issue);
+        }
+        card._k3DoneOnce = true;
+        card._holdBlackExempt = true;
+        if (typeof opts.onDone === 'function') opts.onDone(false);
+        return;
+      }
+      window.addEventListener('message', onMsg);
+      const cdMs = opts.countdownMs != null ? Number(opts.countdownMs) : K3_VIDEO_COUNTDOWN_MS;
+      let midMs = opts.midMs != null ? Number(opts.midMs) : K3_VIDEO_MID_MS;
+      const afterMs = opts.afterMs != null ? Number(opts.afterMs) : K3_VIDEO_AFTER_MS;
+      const landMs = Math.min(K3_VIDEO_LAND_MS, Math.max(0, afterMs));
+      /*
+       * 出号点 = 倒计时 + 摇骰 + 最后一骰落地，对齐 openAt。
+       * mid 只许拉长；收尾 after 原速，onDone 落在开奖之后。
+       */
+      if (opts.midMs == null && serverCurrent && String(serverCurrent.issueNo || '') === String(issue || '')) {
+        const openAt = new Date(serverCurrent.openAt).getTime();
+        if (Number.isFinite(openAt)) {
+          const remain = openAt - Date.now();
+          const targetMid = remain - Math.max(0, cdMs) - landMs - 200;
+          if (Number.isFinite(targetMid) && targetMid >= K3_VIDEO_MID_MS) {
+            midMs = Math.min(K3_VIDEO_MID_MAX_MS, targetMid);
+          }
         }
       }
+      const numbersAtMs = Math.max(0, cdMs) + Math.max(0, midMs) + landMs;
+      const totalMs = Math.max(0, cdMs) + Math.max(0, midMs) + Math.max(0, afterMs);
+      /* 兜底从真正开播起算，避免 iframe ready 慢时提前 forceSettle */
+      try {
+        if (roomChat && typeof roomChat.scheduleRevealReady === 'function') {
+          let armMs = Math.max(totalMs, numbersAtMs) + 1200;
+          if (serverCurrent && String(serverCurrent.issueNo || '') === String(issue || '')) {
+            const openAt = new Date(serverCurrent.openAt).getTime();
+            if (Number.isFinite(openAt)) {
+              armMs = Math.max(armMs, openAt - Date.now() + 1200);
+            }
+          }
+          roomChat.scheduleRevealReady(issue, armMs);
+        }
+      } catch (eArm) { /* ignore */ }
+      try {
+        if (window.K3Audio) {
+          if (K3Audio.unlock) K3Audio.unlock();
+          if (K3Audio.startDrawCeremony) {
+            K3Audio.startDrawCeremony({
+              countdownMs: cdMs,
+              midMs: midMs,
+              afterMs: afterMs,
+            });
+          }
+        }
+      } catch (eAudio) { /* ignore */ }
       const w = frame.contentWindow;
       if (w && w.K3Video && typeof w.K3Video.play === 'function') {
-        /* iframe 静音，音效由父页 K3Audio 播 */
-        w.K3Video.play(order, {
-          issue: issue,
-          nextIssue: nextIssue,
-          drawAt: drawAt,
-          countdownMs: K3_VIDEO_COUNTDOWN_MS,
-          midMs: K3_VIDEO_MID_MS,
-          afterMs: K3_VIDEO_AFTER_MS,
-          muted: true,
-          onDone: doneWrap,
-        });
-        return;
+        try {
+          w.K3Video.play(order, {
+            issue: issue,
+            nextIssue: nextIssue,
+            drawAt: drawAt,
+            countdownMs: cdMs,
+            midMs: midMs,
+            afterMs: afterMs,
+            muted: true,
+            onNumbers: onNumbersReady,
+            onDone: doneWrap,
+          });
+          return;
+        } catch (ePlay) { /* 改走 postMessage */ }
       }
       postToK3VideoFrame(frame, {
         action: 'play',
@@ -1345,19 +1435,35 @@ $(function () {
         issue: issue,
         nextIssue: nextIssue,
         drawAt: drawAt,
-        countdownMs: K3_VIDEO_COUNTDOWN_MS,
-        midMs: K3_VIDEO_MID_MS,
-        afterMs: K3_VIDEO_AFTER_MS,
+        countdownMs: cdMs,
+        midMs: midMs,
+        afterMs: afterMs,
         muted: true,
       });
-      setTimeout(function () { doneWrap(true); }, resultRevealDurationMs());
+      setTimeout(onNumbersReady, numbersAtMs);
+      setTimeout(function () { doneWrap(true); }, totalMs || resultRevealDurationMs());
     });
   }
 
+  /**
+   * 软落定：只调 iframe API + 露脚，禁止改 src。
+   * 改 src 加 settle=1 会整页重载，表现为「出号后再闪一下」。
+   */
   function settleK3VideoCard(card, nums) {
     if (card && (card.classList.contains('is-playing') || card.getAttribute('data-playing') === '1')) {
-      return;
+      return; /* 摇骰中禁止打断 */
     }
+    const alreadySettled = !!(card && (
+      card.getAttribute('data-settled') === '1' || card.classList.contains('is-result-shown')
+    ));
+    if (card) {
+      card.removeAttribute('data-hold-black');
+      card.classList.remove('is-hold-black');
+      if (window.LotteryHoldTip) LotteryHoldTip.clear(card);
+      revealK3VideoCardFoot(card);
+      card.classList.add('is-frame-ready');
+    }
+    if (alreadySettled) return;
     const frame = card && card.querySelector('.k3-video-card__frame');
     let order = '';
     if (Array.isArray(nums) && nums.length === 3) order = k3VideoOrderStr(nums);
@@ -1366,19 +1472,6 @@ $(function () {
     const nextIssue = String((card && card.getAttribute('data-next')) || k3IssueNext(issue)).trim();
     const drawAt = Number((card && card.getAttribute('data-draw-at')) || k3OpenAtFromIssue(issue));
     if (!frame || !order) return;
-    try {
-      const cur = String(frame.getAttribute('src') || '');
-      if (cur && cur.indexOf('settle=1') < 0) {
-        let next = cur;
-        if (next.indexOf('order=') < 0) next += '&order=' + encodeURIComponent(order);
-        if (issue && next.indexOf('issue=') < 0) next += '&issue=' + encodeURIComponent(issue);
-        if (nextIssue && next.indexOf('nextIssue=') < 0) next += '&nextIssue=' + encodeURIComponent(nextIssue);
-        if (isFinite(drawAt) && next.indexOf('drawAt=') < 0) next += '&drawAt=' + encodeURIComponent(String(drawAt));
-        next += '&settle=1';
-        frame.setAttribute('src', next);
-        return;
-      }
-    } catch (e) { /* fall through */ }
     whenK3VideoReady(frame, function () {
       const w = frame.contentWindow;
       if (w && w.K3Video && typeof w.K3Video.settle === 'function') {
@@ -1400,6 +1493,90 @@ $(function () {
         muted: true,
       });
     });
+  }
+
+  /** 服务端仍封盘/开奖中：该期结果卡不可泄底 */
+  function isServerDrawingIssue(issue) {
+    issue = String(issue || '').trim();
+    if (!issue || !serverCurrent) return false;
+    if (String(serverCurrent.issueNo || '') !== issue) return false;
+    const st = String(serverCurrent.status || '');
+    const lockAt = new Date(serverCurrent.lockAt).getTime();
+    const now = Date.now();
+    return st === 'LOCKED' || (st === 'PENDING' && Number.isFinite(lockAt) && now >= lockAt);
+  }
+
+  /**
+   * 中途离房再进 / 历史重放：仪式未完时压成黑卡（倒计时脸、底栏 —），避免泄底。
+   */
+  function holdBlackK3VideoCard(card) {
+    if (!card) return false;
+    if (card.classList.contains('is-playing') || card.getAttribute('data-playing') === '1') return false;
+    /* 本页已播完/揭晓：禁止快照再压黑（否则会 setRevealPending 清掉 winFlushed，卡住开盘线） */
+    if (card._holdBlackExempt || card.classList.contains('is-result-shown') || card.getAttribute('data-settled') === '1') return false;
+    if (card.getAttribute('data-hold-black') === '1' && !card.classList.contains('is-result-shown')) {
+      const frame0 = card.querySelector('.k3-video-card__frame');
+      const src0 = frame0 ? String(frame0.getAttribute('src') || '') : '';
+      if (src0 && src0.indexOf('settle=1') < 0) {
+        if (window.LotteryHoldTip) LotteryHoldTip.ensure(card, '.k3-video-card__stage');
+        return true;
+      }
+    }
+    const order = String(card.getAttribute('data-nums') || '').trim();
+    const issue = String(card.getAttribute('data-issue') || '').trim();
+    const nextIssue = String(card.getAttribute('data-next') || k3IssueNext(issue)).trim();
+    const drawAt = Number(card.getAttribute('data-draw-at') || k3OpenAtFromIssue(issue));
+    card.setAttribute('data-hold-black', '1');
+    card.removeAttribute('data-settled');
+    card.classList.remove('is-result-shown', 'is-frame-ready');
+    card.classList.add('is-hold-black');
+    const setV = function (key, val) {
+      const el = card.querySelector('.k3-video-card__pill[data-k="' + key + '"] .v');
+      if (el) el.textContent = val;
+    };
+    setV('sum', '—');
+    setV('side', '—');
+    setV('shape', '—');
+    const frame = card.querySelector('.k3-video-card__frame');
+    if (frame && order) {
+      let src = K3_VIDEO_SRC + '&hold=1&order=' + encodeURIComponent(order);
+      if (issue) src += '&issue=' + encodeURIComponent(issue);
+      if (nextIssue) src += '&nextIssue=' + encodeURIComponent(nextIssue);
+      if (isFinite(drawAt)) src += '&drawAt=' + encodeURIComponent(String(drawAt));
+      frame.setAttribute('src', src);
+    }
+    if (window.LotteryHoldTip) LotteryHoldTip.ensure(card, '.k3-video-card__stage');
+    return true;
+  }
+
+  /** 刷新/重进：开奖中压黑幕，避免泄底 */
+  function holdBlackLockedK3VideoCards() {
+    if (!serverCurrent) return;
+    const issue = String(serverCurrent.issueNo || '').trim();
+    if (!issue || !isServerDrawingIssue(issue)) return;
+    let newlyHeld = false;
+    $('#chatFeed .k3-video-card, #chatDock .k3-video-card').each(function () {
+      const card = this;
+      if (String(card.getAttribute('data-issue') || '').trim() !== issue) return;
+      const frame = card.querySelector('.k3-video-card__frame');
+      const src = frame ? String(frame.getAttribute('src') || '') : '';
+      if (card.getAttribute('data-hold-black') === '1' && card.classList.contains('is-hold-black') && src.indexOf('settle=1') < 0) return;
+      if (holdBlackK3VideoCard(card)) newlyHeld = true;
+    });
+    if (!newlyHeld || !roomChat) return;
+    /* 仪式已过揭晓/已在等开盘：勿重置 revealDone/winFlushed */
+    if (roomChat.isRevealReady && roomChat.isRevealReady(issue)) return;
+    if (typeof roomChat.getPhase === 'function' && roomChat.getPhase() === 'settled') return;
+    if (typeof roomChat.beginCeremonyHold === 'function') roomChat.beginCeremonyHold(issue);
+    if (typeof roomChat.setRevealPending === 'function') roomChat.setRevealPending(issue);
+    const openAt = new Date(serverCurrent.openAt).getTime();
+    const readyMs = resultRevealDurationMs() + 1400;
+    const remain = Number.isFinite(openAt)
+      ? Math.max(1200, openAt - Date.now() + 600)
+      : readyMs;
+    if (typeof roomChat.scheduleRevealReady === 'function') {
+      roomChat.scheduleRevealReady(issue, Math.min(remain, readyMs + 400));
+    }
   }
 
   function scrollChat() {
@@ -1473,19 +1650,32 @@ $(function () {
     scrollChat();
   }
 
-  /** 进房/恢复：历史视频卡补 settle，跳过正在播的 */
+  /** 进房/恢复：历史视频卡补 settle，跳过正在播的 / 当期开奖中 */
   function settleRestoredK3VideoCards() {
+    const holdIssue = (roomChat && typeof roomChat.getCeremonyHoldIssue === 'function')
+      ? String(roomChat.getCeremonyHoldIssue() || '').trim()
+      : '';
+    const phaseIssue = (roomChat && typeof roomChat.getPhaseIssue === 'function')
+      ? String(roomChat.getPhaseIssue() || '').trim()
+      : '';
     $('#chatFeed .k3-video-card').each(function () {
       const card = this;
       if (card.classList.contains('is-playing') || card.getAttribute('data-playing') === '1') return;
+      const issue = String(card.getAttribute('data-issue') || '').trim();
+      if (issue && isServerDrawingIssue(issue)) return;
+      if (issue && ((holdIssue && issue === holdIssue) || (phaseIssue && issue === phaseIssue))) {
+        if (typeof isCeremonyHolding === 'function' && isCeremonyHolding()) return;
+      }
       const frame = card.querySelector('.k3-video-card__frame');
       const src = frame ? String(frame.getAttribute('src') || '') : '';
       if (src && src.indexOf('settle=1') >= 0) {
         card.classList.add('is-frame-ready', 'is-result-shown');
+        revealK3VideoCardFoot(card);
         return;
       }
       if (card.getAttribute('data-settled') === '1') {
         card.classList.add('is-frame-ready');
+        revealK3VideoCardFoot(card);
         return;
       }
       settleK3VideoCard(card);
@@ -1534,6 +1724,8 @@ $(function () {
     if (!App.fetchMyLotteryBets) return;
     App.fetchMyLotteryBets(SERVER_GAME, issue).then(function (res) {
       const list = (res && res.list) || [];
+      /* 派彩已入账：立刻拉余额，避免顶栏积分仍停在扣注后 */
+      refreshAfterServerSettle();
       if (list.length && typeof refineUserStatsFromServer === 'function') refineUserStatsFromServer(issue, list);
       if (typeof buildMineLineHtmlFromServer !== 'function' || typeof applyMineLineToWinHtml !== 'function') return;
       const mine = buildMineLineHtmlFromServer(issue, list);
@@ -1563,7 +1755,48 @@ $(function () {
     });
   }
 
-  const roomChat = LotteryRoomChat.create({
+  function hasResultAnimated(issue) {
+    issue = String(issue || '').trim();
+    if (!issue) return false;
+    if (typeof isServerDrawingIssue === 'function' && isServerDrawingIssue(issue)) return false;
+    return playedAnimIssues.has(issue);
+  }
+  function markResultAnimated(issue) {
+    issue = String(issue || '').trim();
+    if (!issue) return;
+    playedAnimIssues.add(issue);
+    try {
+      localStorage.setItem(PLAYED_ANIM_STORAGE_KEY, JSON.stringify(Array.from(playedAnimIssues).slice(-120)));
+    } catch (e) { /* ignore */ }
+  }
+  function forceSettleResultCard(issue) {
+    issue = String(issue || '').trim();
+    $('#chatFeed .k3-video-card, #chatDock .k3-video-card').each(function () {
+      const card = this;
+      if (issue && String(card.getAttribute('data-issue') || '').trim() !== issue) return;
+      /* 摇骰/尾段仍在播：勿掐动画，只保证脚注；仪式在 onDone 再推进 */
+      if (card.classList.contains('is-playing') || card.getAttribute('data-playing') === '1') {
+        revealK3VideoCardFoot(card);
+        card._holdBlackExempt = true;
+        return;
+      }
+      card.classList.remove('is-playing');
+      card.removeAttribute('data-playing');
+      let nums = null;
+      const raw = String(card.getAttribute('data-nums') || '').trim();
+      if (raw) {
+        const arr = raw.split(',').map(Number);
+        if (arr.length === 3) nums = arr;
+      }
+      settleK3VideoCard(card, nums);
+      card._holdBlackExempt = true;
+      if (typeof persistK3VideoSettled === 'function') persistK3VideoSettled(card);
+    });
+  }
+
+  /* let 而非 const：settleRestored 可能在赋值前被调用，避免 TDZ 整页崩 */
+  let roomChat = null;
+  roomChat = LotteryRoomChat.create({
     gameCode: SERVER_GAME,
     appendMsg: appendMsg,
     clearFeed: function () {
@@ -1573,6 +1806,9 @@ $(function () {
     getUserName: function () { return user.name; },
     robotFallbackName: (typeof ROBOT !== 'undefined' && ROBOT.name) ? ROBOT.name : '机器人',
     fmtTime: typeof fmtTime === 'function' ? fmtTime : undefined,
+    hasResultAnimated: hasResultAnimated,
+    markResultAnimated: markResultAnimated,
+    onRevealDeadline: forceSettleResultCard,
     buildBetHtml: function (p) {
       return (typeof escapeHtml === 'function') ? escapeHtml(String(p.text || '')) : String(p.text || '');
     },
@@ -1585,8 +1821,18 @@ $(function () {
     buildResultHtml: function (p, msg, o) {
       const nums = Array.isArray(p.nums) ? p.nums.map(Number) : [];
       const issue = String(p.issueNo || msg.issueNo || '');
+      /*
+       * 历史回放先黑卡：若先 settle 再压黑会「漏一下再变黑」。
+       * 仅直播且不重播、且服务端已非开奖中，才直接终态。
+       */
+      const settle = !!(
+        o &&
+        o.live &&
+        !o.animate &&
+        !(typeof isServerDrawingIssue === 'function' && isServerDrawingIssue(issue))
+      );
       if (typeof resultCardHtml === 'function') {
-        return resultCardHtml(nums, issue, { settle: !(o && o.animate && o.live) });
+        return resultCardHtml(nums, issue, { settle: settle });
       }
       return '开奖 ' + issue;
     },
@@ -1605,8 +1851,17 @@ $(function () {
     onResultMeta: function (p, msg) {
       const nums = Array.isArray(p.nums) ? p.nums.map(Number) : [];
       const issue = String(p.issueNo || msg.issueNo || '');
-      if (typeof revealedIssues !== 'undefined' && revealedIssues.add) revealedIssues.add(issue);
-      if (nums.length) lastDraw = nums.slice();
+      if (issue) {
+        revealedIssues.add(issue);
+        saveRevealedIssues();
+      }
+      if (nums.length === 3) {
+        lastDraw = nums.slice();
+        if (issue) upsertHistoryHeadFromDraw(issue, nums);
+      }
+    },
+    onNumbersRevealed: function (issue) {
+      if (typeof paintDrawBarAfterReveal === 'function') paintDrawBarAfterReveal(issue);
     },
     onWinVerifyUnlocked: function () {
       /* 解冻只在开盘线刷出（onCeremonyComplete），仪式中禁止下注 */
@@ -1629,6 +1884,7 @@ $(function () {
       if (phase === 'betting') {
         roomBetFrozen = false;
         sealedIssueNo = '';
+        drawBarRevealIssue = '';
         if (window.K3Audio && K3Audio.onBetting) K3Audio.onBetting();
         if (typeof requestLotteryResync === 'function') requestLotteryResync();
         else if (typeof syncServerSnapshot === 'function') syncServerSnapshot();
@@ -1652,15 +1908,40 @@ $(function () {
       const nums = Array.isArray(ctx.payload.nums) ? ctx.payload.nums.map(Number) : [];
       const issue = ctx.issue;
       const card = $('#chatDock .k3-video-card, #chatDock .k3-result-card, #chatDock .k3-bot-card--result, #chatFeed .k3-video-card, #chatFeed .k3-result-card, #chatFeed .k3-bot-card--result').last()[0];
-      const readyMs = resultRevealDurationMs() + 400;
+      const readyMs = resultRevealDurationMs() + 800;
       if (card && card.classList.contains('k3-video-card')) {
         if (ctx.animate && ctx.live) {
           ctx.setRevealPending(issue);
+          /* scheduleRevealReady 改在 play 真正开播后武装（见 playK3VideoCard） */
           playK3VideoCard(card, nums, { issue: issue });
-          ctx.scheduleRevealReady(issue, readyMs);
+        } else if (ctx.live && !ctx.animate) {
+          const phaseIss = (roomChat && roomChat.getPhaseIssue)
+            ? String(roomChat.getPhaseIssue() || '')
+            : '';
+          const holding = isServerDrawingIssue(issue) || (
+            typeof isCeremonyHolding === 'function' &&
+            isCeremonyHolding() &&
+            phaseIss &&
+            phaseIss === String(issue || '')
+          );
+          if (holding) {
+            holdBlackK3VideoCard(card);
+            ctx.setRevealPending(issue);
+            const openAt = serverCurrent && new Date(serverCurrent.openAt).getTime();
+            const remain = Number.isFinite(openAt)
+              ? Math.max(1200, openAt - Date.now() + 600)
+              : readyMs;
+            ctx.scheduleRevealReady(issue, Math.min(remain, readyMs + 400));
+          } else {
+            settleK3VideoCard(card, nums);
+            ctx.setRevealReadyFlag(issue, true);
+          }
         } else {
-          settleK3VideoCard(card, nums);
+          /* 历史回放：保持黑卡，等 snapshot holdBlack */
           ctx.setRevealReadyFlag(issue, true);
+          if (typeof holdBlackLockedK3VideoCards === 'function') {
+            setTimeout(function () { try { holdBlackLockedK3VideoCards(); } catch (eR) { /* ignore */ } }, 0);
+          }
         }
       } else if (card && window.K3ResultCard) {
         /* 兼容旧 Canvas 卡（历史 localStorage） */
@@ -1670,7 +1951,7 @@ $(function () {
           const shape = (typeof shapeRow === 'function') ? shapeRow(nums) : '';
           K3ResultCard.startRoll(card, nums, issue, meta, shape, resultRevealDurationMs());
           ctx.scheduleRevealReady(issue, readyMs);
-        } else if (K3ResultCard.initSettled) {
+        } else if (ctx.live && K3ResultCard.initSettled) {
           K3ResultCard.initSettled(card);
           ctx.setRevealReadyFlag(issue, true);
         } else {
@@ -1684,7 +1965,7 @@ $(function () {
       }
     },
     getRevealFallbackMs: function () {
-      return resultRevealDurationMs() + 800;
+      return resultRevealDurationMs() + 1000 + 800;
     },
   });
 
@@ -2891,6 +3172,10 @@ $(function () {
       const list = JSON.parse(localStorage.getItem(REVEALED_STORAGE_KEY) || '[]');
       if (Array.isArray(list)) revealedIssues = new Set(list.slice(-120).map(String));
     } catch (e) { revealedIssues = new Set(); }
+    try {
+      const played = JSON.parse(localStorage.getItem(PLAYED_ANIM_STORAGE_KEY) || '[]');
+      if (Array.isArray(played)) playedAnimIssues = new Set(played.slice(-120).map(String));
+    } catch (e2) { playedAnimIssues = new Set(); }
   }
   function saveRevealedIssues() {
     try { localStorage.setItem(REVEALED_STORAGE_KEY, JSON.stringify(Array.from(revealedIssues).slice(-120))); } catch (e) { /* ignore */ }
@@ -2915,16 +3200,104 @@ $(function () {
       return phase === 'drawing' || phase === 'revealing' || phase === 'settled';
     } catch (e) { return false; }
   }
-  /** 开奖仪式中：顶栏用上一期；揭晓完再跟历史头 */
+  function upsertHistoryHeadFromDraw(issue, nums) {
+    const iss = String(issue || '').trim();
+    if (!iss || !Array.isArray(nums) || nums.length !== 3) return null;
+    const meta = sumMeta(nums);
+    const row = {
+      issue: iss,
+      nums: nums.slice(),
+      gy: meta.text,
+      lh: shapeRow(nums),
+    };
+    const idx = historyRows.findIndex(function (r) { return String(r.issue) === iss; });
+    if (idx >= 0) historyRows[idx] = Object.assign({}, historyRows[idx], row);
+    else historyRows.unshift(row);
+    if (historyRows.length > 80) historyRows.length = 80;
+    return row;
+  }
+  /** 滚号/揭晓中：顶栏压上一期；号码揭完后立刻跟历史头（含 snapshot 轮询勿再压回去） */
   function pickDrawBarRow(rows) {
     if (!rows || !rows.length) return null;
     try {
+      const phase = roomChat && roomChat.getPhase ? String(roomChat.getPhase() || '') : '';
       const hold = roomChat && roomChat.getPhaseIssue ? String(roomChat.getPhaseIssue() || '') : '';
-      if (isCeremonyHolding() && hold && String(rows[0].issue) === hold) {
+      const revealed = isDrawBarUnlocked(hold) ||
+        !!(roomChat && roomChat.isRevealReady && roomChat.isRevealReady(hold));
+      if (!revealed && (phase === 'drawing' || phase === 'revealing') && hold && String(rows[0].issue) === hold) {
         return rows[1] || null;
       }
     } catch (e) { /* ignore */ }
     return rows[0];
+  }
+  /**
+   * 号码落定：只刷顶部历史栏。
+   * 开盘线 / 顶栏倒计时要等尾动画播完 → notifyDrawCeremonyReady。
+   */
+  let drawBarRevealIssue = '';
+  let drawCeremonyReadyIssue = '';
+  function notifyDrawBarNumbersReady(issue, nums, expectLen) {
+    try {
+      const iss = String(issue || '').trim();
+      const need = expectLen > 0 ? expectLen : 0;
+      if (Array.isArray(nums) && (!need || nums.length === need)) {
+        lastDraw = nums.slice();
+        if (iss && typeof upsertHistoryHeadFromDraw === 'function') {
+          upsertHistoryHeadFromDraw(iss, nums);
+        }
+      }
+      if (iss) drawBarRevealIssue = iss;
+      if (typeof paintDrawBarAfterReveal === 'function') paintDrawBarAfterReveal(iss);
+    } catch (e) { /* ignore */ }
+  }
+  /** 尾动画结束：中奖核对 → 开盘线 → 解冻 → 顶栏倒计时 */
+  function notifyDrawCeremonyReady(issue) {
+    try {
+      const iss = String(issue || '').trim();
+      if (iss && drawCeremonyReadyIssue === iss) return;
+      if (iss) drawCeremonyReadyIssue = iss;
+      if (roomChat && typeof roomChat.advanceReveal === 'function') {
+        roomChat.advanceReveal(iss);
+      }
+      if (typeof refreshAfterServerSettle === 'function') refreshAfterServerSettle();
+      if (iss && typeof applyRoomWinVerifyMineLine === 'function') applyRoomWinVerifyMineLine(iss);
+      if (typeof requestLotteryResync === 'function') requestLotteryResync();
+      else if (typeof syncServerSnapshot === 'function') syncServerSnapshot();
+      if (typeof tick === 'function') {
+        try { tick(); } catch (eTick) { /* ignore */ }
+      }
+      [200, 600, 1200].forEach(function (ms) {
+        setTimeout(function () {
+          try {
+            if (typeof refreshAfterServerSettle === 'function') refreshAfterServerSettle();
+            if (iss && typeof applyRoomWinVerifyMineLine === 'function') applyRoomWinVerifyMineLine(iss);
+            if (typeof requestLotteryResync === 'function') requestLotteryResync();
+            if (typeof tick === 'function') tick();
+          } catch (e2) { /* ignore */ }
+        }, ms);
+      });
+    } catch (e) { /* ignore */ }
+  }
+  function isDrawBarUnlocked(issue) {
+    const iss = String(issue || '').trim();
+    return !!(iss && drawBarRevealIssue && drawBarRevealIssue === iss);
+  }
+  /** 结果卡号码已出齐：顶栏马上对齐，不跟中奖核对/开盘线抢时间 */
+  function paintDrawBarAfterReveal(issueHint) {
+    try {
+      const iss = String(issueHint || '').trim();
+      if (iss && lastDraw && lastDraw.length === 3 && typeof upsertHistoryHeadFromDraw === 'function') {
+        upsertHistoryHeadFromDraw(iss, lastDraw);
+      }
+      let row = null;
+      if (iss && Array.isArray(historyRows)) {
+        row = historyRows.find(function (r) { return String(r.issue) === iss; }) || null;
+      }
+      if (!row && historyRows && historyRows[0]) row = historyRows[0];
+      if (row && typeof renderDrawBar === 'function') renderDrawBar(row);
+      if (typeof flashDrawBarReveal === 'function') flashDrawBarReveal();
+      if (typeof renderDrawTable === 'function') renderDrawTable();
+    } catch (e) { /* ignore */ }
   }
 
   function syncServerSnapshot() {
@@ -2935,10 +3308,25 @@ $(function () {
       const rows = parseServerHistory(snapshot && snapshot.history);
       const headChanged = rows[0] && (!historyRows[0] || rows[0].issue !== historyRows[0].issue);
       historyRows = rows;
-      if (rows.length) {
-        lastDraw = rows[0].nums.slice();
+      try {
+        const holdIss = roomChat && roomChat.getPhaseIssue ? String(roomChat.getPhaseIssue() || '') : '';
+        if (
+          holdIss &&
+          (isDrawBarUnlocked(holdIss) || (roomChat && roomChat.isRevealReady && roomChat.isRevealReady(holdIss))) &&
+          lastDraw && lastDraw.length === 3
+        ) {
+          upsertHistoryHeadFromDraw(holdIss, lastDraw);
+        }
+      } catch (eKeepHead) { /* ignore */ }
+      if (historyRows.length) {
+        const holdNow = roomChat && roomChat.getPhaseIssue ? String(roomChat.getPhaseIssue() || '') : '';
+        if (!(isDrawBarUnlocked(holdNow) || (roomChat && roomChat.isRevealReady && roomChat.isRevealReady(holdNow)))) {
+          lastDraw = historyRows[0].nums.slice();
+        } else if (!lastDraw || !lastDraw.length) {
+          lastDraw = historyRows[0].nums.slice();
+        }
         /* 仪式未结束前顶栏仍显示上一期，避免比结果卡更早露号 */
-        const barRow = pickDrawBarRow(rows);
+        const barRow = pickDrawBarRow(historyRows);
         if (barRow) renderDrawBar(barRow);
       } else if (typeof renderDrawBar === 'function') {
         try { renderDrawBar(null); } catch (e) { /* ignore */ }
@@ -2960,6 +3348,8 @@ $(function () {
       renderDrawTable();
       /* 仪式中期号由 tick/phase 接管，勿被快照 current 盖掉 */
       if (!isCeremonyHolding() && serverCurrent && serverCurrent.issueNo) setCurIssueDisplay(serverCurrent.issueNo);
+      if (typeof settleRestoredK3VideoCards === 'function') settleRestoredK3VideoCards();
+      try { holdBlackLockedK3VideoCards(); } catch (eHold) { /* ignore */ }
       if (rows[0]) {
         const holdIss = roomChat && roomChat.getPhaseIssue ? String(roomChat.getPhaseIssue() || '') : '';
         if (!(isCeremonyHolding() && holdIss && String(rows[0].issue) === holdIss)) {
@@ -3075,7 +3465,38 @@ $(function () {
       } catch (e) { /* ignore */ }
     }
   }
-  /* === chat-rail handlers (k3) === */
+  
+  /* 右侧四钮：默认收起，点梯子展开/收起 */
+  (function initRailLadder() {
+    const KEY = 'k3_rail_collapsed';
+    const room = document.querySelector('.k3-room');
+    const btn = document.getElementById('btnRailToggle');
+    if (!room || !btn) return;
+    let collapsed = true;
+    try {
+      const saved = localStorage.getItem(KEY);
+      if (saved === '0') collapsed = false;
+      if (saved === '1') collapsed = true;
+    } catch (e) { /* ignore */ }
+    function apply() {
+      room.classList.toggle('is-rail-collapsed', collapsed);
+      btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      btn.title = collapsed ? '展开菜单' : '收起菜单';
+      const arrow = btn.querySelector('.k3-rail-ladder__arrow');
+      if (arrow) arrow.textContent = collapsed ? '▼' : '▲';
+      try { localStorage.setItem(KEY, collapsed ? '1' : '0'); } catch (e) { /* ignore */ }
+      if (typeof layoutRail === 'function') layoutRail();
+    }
+    apply();
+    btn.addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      collapsed = !collapsed;
+      apply();
+    });
+  })();
+
+/* === chat-rail handlers (k3) === */
 
   function playCatRulesHtml(cat) {
     const id = (cat && cat.id) || '';
@@ -3087,7 +3508,7 @@ $(function () {
         '投注【11】；开奖号码：2,3,6，即中奖。',
       dice:
         '● 三军：<br><br>选择1个号码形成1注，开奖号码包含所选号码，即中奖。<br><br>' +
-        '投注【1】；开奖号码：1,1,2，即中奖。',
+        '投注【1】；开奖号码：1,1,2，即中奖。所选号码出现1次、2次或3次均只派彩一次。',
       pair:
         '● 二同号：<br><br>选择1个二同号形成1注，所选二同号在开奖号码中出现2次或以上，即中奖。<br><br>' +
         '投注【11】；开奖号码：1,1,2，即中奖。(不含豹子)',
@@ -3140,7 +3561,7 @@ $(function () {
             <tbody>
               <tr><td>两面</td><td>三骰和值：4～10 小，11～17 大；奇单偶双。开出豹子通杀</td><td>${o.side}</td></tr>
               <tr><td>和值</td><td>猜总和 3～18，各点数赔率不同（面板可见）</td><td>约 ${o.sum} 起</td></tr>
-              <tr><td>三军 / 独</td><td>指定点数至少出现 1 次（出现越多派彩规则按服务端）</td><td>${o.dice}</td></tr>
+              <tr><td>三军 / 独</td><td>指定点数至少出现 1 次；出现多次也只派彩一次</td><td>${o.dice}</td></tr>
               <tr><td>二同号</td><td>指定点数恰好出现 2 次（非豹子）</td><td>${o.pairN}</td></tr>
               <tr><td>三同号</td><td>指定豹子点数；「三同号」为通选</td><td>单号 ${o.tripletN} · 通选 ${o.tripletAny}</td></tr>
               <tr><td>三连号</td><td>单选 123/234/345/456；通选任意顺子</td><td>单选 ${o.straightN} · 通选 ${o.straight}</td></tr>

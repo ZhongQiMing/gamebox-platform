@@ -48,6 +48,15 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     if (keys.length) await this.client.del(...keys);
   }
 
+  /** INCR；若是新建 key 则设置 TTL（秒） */
+  async incrWithExpire(key: string, ttlSec: number): Promise<number> {
+    const n = await this.client.incr(key);
+    if (n === 1 && ttlSec > 0) {
+      await this.client.expire(key, ttlSec);
+    }
+    return n;
+  }
+
   async publish(channel: string, message: string): Promise<void> {
     await this.client.publish(channel, message);
   }
