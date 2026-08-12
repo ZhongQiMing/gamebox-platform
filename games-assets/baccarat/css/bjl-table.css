@@ -163,7 +163,7 @@ html.bjl-in-iframe body.bjl-body {
   flex-shrink: 0;
   transform: scale(var(--bjl-scale));
   transform-origin: center center;
-  background: url('../assets/ui/page-unified-v51.png?v=1') center top / 100% 100% no-repeat;
+  background: url('../assets/ui/page-unified-v51.webp?v=1') center top / 100% 100% no-repeat;
   overflow: hidden;
 }
 

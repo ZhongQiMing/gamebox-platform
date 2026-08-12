@@ -2333,7 +2333,7 @@
   if (backBtn) {
     backBtn.addEventListener('click', function () {
       if (window.App && App.go) App.go('../../client-app/pages/game-lobby/game-lobby.html' + q);
-      else if (window.parent !== window) window.parent.postMessage({ type: 'assets-game-nav', path: '/lobby' + q }, location.origin);
+      else if (window.parent !== window) window.parent.postMessage({ type: 'assets-game-nav', path: '/lobby' + q }, (window.App && App.parentOrigin) || location.origin);
       else history.back();
     });
   }
@@ -2487,7 +2487,7 @@
   }
 
   window.addEventListener('message', function (ev) {
-    if (!ev || !ev.origin || ev.origin !== location.origin) return;
+    if (!ev || !ev.origin || ev.origin !== ((window.App && App.parentOrigin) || location.origin) || ev.source !== window.parent) return;
     var data = ev && ev.data;
     if (!data || typeof data !== 'object') return;
     if (data.type === 'assets-game-pause') {
@@ -2560,7 +2560,7 @@
     function nav(path) {
       if (window.App && App.go) App.go(path);
       else if (window.parent !== window) {
-        window.parent.postMessage({ type: 'assets-game-nav', path: path }, location.origin);
+        window.parent.postMessage({ type: 'assets-game-nav', path: path }, (window.App && App.parentOrigin) || location.origin);
       }
     }
 
