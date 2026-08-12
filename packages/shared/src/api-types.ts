@@ -74,6 +74,12 @@ export interface PagedDTO<T> {
 }
 
 /** 游戏目录条目 */
+export interface PublicGameConfigDTO {
+  version: number;
+  /** 仅含玩家展示所需内容；不得包含 RTP、权重或服务端参数。 */
+  payTable: unknown;
+}
+
 export interface GameItemDTO {
   id: string;
   code: string;
@@ -86,7 +92,7 @@ export interface GameItemDTO {
   sortOrder: number;
   minBet: number;
   maxBet: number;
-  configs: Array<{ version: number; rtp: number; payTable: unknown }>;
+  configs: PublicGameConfigDTO[];
 }
 
 export interface BetHistoryDetailDTO {
