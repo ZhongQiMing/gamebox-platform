@@ -14,8 +14,8 @@ export interface PixelBox {
   h: number
 }
 
-export const cabinetBodyUrl = '/images/games/slots/fruit-cabinet-base.png'
-export const cabinetAmbientUrl = '/images/games/slots/fruit-cabinet-bg-ambient.png'
+export const cabinetBodyUrl = '/images/games/slots/fruit-cabinet-base.webp'
+export const cabinetAmbientUrl = '/images/games/slots/fruit-cabinet-bg-ambient.webp'
 export const fruitRingUrl = '/images/games/slots/24格.png'
 
 /** 24 格盘面（位置不动） */

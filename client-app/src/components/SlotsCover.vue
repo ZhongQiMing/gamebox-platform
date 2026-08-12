@@ -1,7 +1,7 @@
 <template>
   <GameCoverShell
     :visible="visible"
-    bg-src="/images/games/slots/fruit-cover.png"
+    bg-src="/images/games/slots/fruit-cover.webp"
     alt="水果机"
     bg-color="#0a0604"
     :duration-ms="750"
