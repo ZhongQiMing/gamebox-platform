@@ -170,7 +170,7 @@ html.dn-in-iframe body.dn-body {
   flex-shrink: 0;
   transform: scale(var(--dn-scale));
   transform-origin: center center;
-  background: url('../assets/ui/page-unified-v51.png') center top / 100% 100% no-repeat;
+  background: url('../assets/ui/page-unified-v51.webp') center top / 100% 100% no-repeat;
   overflow: hidden;
 }
 

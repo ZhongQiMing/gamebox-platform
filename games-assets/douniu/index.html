@@ -5,7 +5,7 @@
   <link rel="stylesheet" href="/fonts/gamebox-fonts.css">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>斗牛</title>
-<link rel="stylesheet" href="./css/dn.css?v=54">
+<link rel="stylesheet" href="./css/dn.css?v=55">
   <link rel="stylesheet" href="/games-assets/_table-common/table-ui.css?v=7">
   <script>
     (function () {
@@ -343,8 +343,8 @@
   </section>
 </div><!-- /.dn-viewport -->
 
-<script src="/legacy/js/games-common.js?v=32"></script>
-<script src="/games-assets/_table-common/table-shell.js?v=11"></script>
+<script src="/legacy/js/games-common.js?v=33"></script>
+<script src="/games-assets/_table-common/table-shell.js?v=12"></script>
 <script src="/games-assets/_lottery-common/app-audio-level.js?v=1"></script>
 <script src="/games-assets/_table-common/table-audio.js?v=3"></script>
 <script>
@@ -3044,7 +3044,7 @@
       if (window.App && App.go) {
         App.go('../../client-app/pages/game-lobby/game-lobby.html' + q);
       } else if (window.parent !== window) {
-        window.parent.postMessage({ type: 'assets-game-nav', path: '/lobby' + q }, location.origin);
+        window.parent.postMessage({ type: 'assets-game-nav', path: '/lobby' + q }, (window.App && App.parentOrigin) || location.origin);
       } else {
         history.back();
       }
@@ -3082,7 +3082,7 @@
 
     function nav(path) {
       if (window.App && App.go) App.go(path);
-      else if (window.parent !== window) window.parent.postMessage({ type: 'assets-game-nav', path: path }, location.origin);
+      else if (window.parent !== window) window.parent.postMessage({ type: 'assets-game-nav', path: path }, (window.App && App.parentOrigin) || location.origin);
     }
 
     var csBtn = document.getElementById('railCs');
@@ -3388,7 +3388,7 @@
   }
 
   window.addEventListener('message', function (ev) {
-    if (!ev || !ev.origin || ev.origin !== location.origin) return;
+    if (!ev || !ev.origin || ev.origin !== ((window.App && App.parentOrigin) || location.origin) || ev.source !== window.parent) return;
     var data = ev && ev.data;
     if (!data || typeof data !== 'object') return;
     if (data.type === 'assets-game-pause') {
