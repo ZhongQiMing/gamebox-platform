@@ -1,9 +1,9 @@
 <template>
   <div class="screen-deco" aria-hidden="true">
-    <img class="cd cd-tl" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-tr" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-bl" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-br" src="/images/corner-flourish.png" alt="">
+    <img class="cd cd-tl" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-tr" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-bl" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-br" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
   </div>
 
   <div class="page staff-console-page">
@@ -130,7 +130,9 @@ const roleLabel = computed(() => {
 
 function applyProfile(p: UserProfile) {
   staff.profile = p
-  if (user.token && user.token === staff.token) {
+  /* 进游戏期间玩家壳用的就是这张运营票，同步一份。
+     网页版两边都没有可比的 token（凭证在 Cookie 里），只能看 play 态。 */
+  if (staff.playActive) {
     user.profile = p
   }
 }

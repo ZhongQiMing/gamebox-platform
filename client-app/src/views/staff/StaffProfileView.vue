@@ -1,9 +1,9 @@
 <template>
   <div class="screen-deco" aria-hidden="true">
-    <img class="cd cd-tl" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-tr" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-bl" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-br" src="/images/corner-flourish.png" alt="">
+    <img class="cd cd-tl" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-tr" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-bl" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-br" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
   </div>
 
   <div class="page settings-page staff-settings-page">
@@ -512,14 +512,13 @@ async function goRooms() {
   }
   await router.push({ name: 'staff-rooms' })
 }
-function confirmLogout() {
+async function confirmLogout() {
   showLogoutModal.value = false
-  staff.endPlay()
-  user.clearStaffPlay()
+  await Promise.all([staff.endPlay(), user.clearStaffPlay()])
   roomStore.clearCurrent()
-  staff.logout()
+  await staff.logout()
   // 回玩家登录：退出运营后应能直接登玩家号自己玩
-  router.replace({ name: 'login' })
+  await router.replace({ name: 'login' })
 }
 
 async function load() {

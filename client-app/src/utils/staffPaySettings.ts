@@ -31,9 +31,11 @@ function normalizePayQrs(
   list: PayQrItem[] | undefined,
   legacyUrl?: string,
 ): PayQrItem[] {
+  const isPrivateMedia = (url: unknown) =>
+    /^\/api\/cs\/media\/[A-Za-z0-9_-]{10,64}$/.test(String(url || '').trim())
   if (Array.isArray(list) && list.length) {
     return list
-      .filter((q) => q && q.url)
+      .filter((q) => q && isPrivateMedia(q.url))
       .map((q, i) => ({
         id: q.id || `q-${i}`,
         url: String(q.url),
@@ -42,7 +44,7 @@ function normalizePayQrs(
       }))
       .slice(0, 8)
   }
-  if (legacyUrl) {
+  if (isPrivateMedia(legacyUrl)) {
     return [{ id: 'legacy', url: String(legacyUrl) }]
   }
   return []

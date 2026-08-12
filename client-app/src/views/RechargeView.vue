@@ -1,9 +1,9 @@
 <template>
   <div class="screen-deco" aria-hidden="true">
-    <img class="cd cd-tl" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-tr" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-bl" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-br" src="/images/corner-flourish.png" alt="">
+    <img class="cd cd-tl" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-tr" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-bl" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-br" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
   </div>
 
   <div class="page recharge-page">
@@ -155,7 +155,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onActivated, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { useWalletStore } from '@/stores/wallet'
@@ -165,6 +165,7 @@ import { useToast } from '@/composables/useToast'
 import { useBodyClass } from '@/composables/useBodyClass'
 import { pushCsScoreApply } from '@/composables/csLocalChat'
 import { newFundOrderNo } from '@/utils/fundOrderNo'
+import { fundRequestIntentKey } from '@/utils/fundRequestIntent'
 import TabBar from '@/components/TabBar.vue'
 import { PLAYER_DOWN_MIN, PLAYER_FUND_MAX, PLAYER_UP_MIN } from '@gamebox/shared'
 import '@/assets/recharge.css'
@@ -189,7 +190,7 @@ const curPayType = ref('wechat')
 const amountStr = ref('')
 const quickActive = ref<number | null>(null)
 const loading = ref(false)
-/** 当前这笔的订单号与它对应的「类型+金额」，用于连点/重发复用同一个幂等键 */
+/** 当前完整提交意图及订单号，仅网络重试同一意图时复用。 */
 const pendingOrderNo = ref('')
 const pendingOrderKey = ref('')
 
@@ -260,10 +261,15 @@ async function submit() {
     return
   }
   /*
-   * 订单号只在「这一笔金额+类型」变化时才换新：
+   * 订单号只在完整不可变提交意图完全相同时复用：
    * 连点或超时重发都复用同一个号，服务端按号去重，不会重复建单／重复冻结。
    */
-  const orderKey = `${curType.value}:${amount}`
+  const orderKey = fundRequestIntentKey({
+    type: curType.value,
+    amount,
+    channel: curPayType.value,
+    roomNo,
+  })
   if (pendingOrderKey.value !== orderKey || !pendingOrderNo.value) {
     pendingOrderKey.value = orderKey
     pendingOrderNo.value = newFundOrderNo(curType.value)
@@ -281,7 +287,7 @@ async function submit() {
         channel: curPayType.value,
       })
     } else {
-      await rechargeApi.withdraw(amount, roomNo, clientRequestId)
+      await rechargeApi.withdraw(amount, roomNo, clientRequestId, curPayType.value)
       await walletStore.fetchBalance()
       pushCsScoreApply({
         uid: userStore.profile?.uid,
@@ -320,4 +326,14 @@ function goBack() {
 }
 
 onMounted(() => walletStore.fetchBalance())
+/* 页面被 keep-alive 缓存，重新进入不会走 onMounted，余额得在这里补。
+   首次挂载时 onActivated 紧跟 onMounted，跳过一次否则每次首进都双发请求。 */
+let skipFirstActivate = true
+onActivated(() => {
+  if (skipFirstActivate) {
+    skipFirstActivate = false
+    return
+  }
+  void walletStore.fetchBalance()
+})
 </script>

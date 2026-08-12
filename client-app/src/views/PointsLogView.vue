@@ -1,9 +1,9 @@
 <template>
   <div class="screen-deco" aria-hidden="true">
-    <img class="cd cd-tl" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-tr" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-bl" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-br" src="/images/corner-flourish.png" alt="">
+    <img class="cd cd-tl" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-tr" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-bl" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-br" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
   </div>
 
   <div class="page pl-page">

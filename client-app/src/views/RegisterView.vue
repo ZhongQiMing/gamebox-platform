@@ -1,10 +1,10 @@
 <template>
   <div class="screen-deco" aria-hidden="true">
-    <img class="crown-deco" src="/images/crown-emblem.png" alt="">
-    <img class="cd cd-tl" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-tr" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-bl" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-br" src="/images/corner-flourish.png" alt="">
+    <img class="crown-deco" src="/images/crown-emblem.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-tl" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-tr" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-bl" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-br" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
   </div>
 
   <div class="page register-page">
@@ -21,7 +21,7 @@
       <div class="welcome-hero register-hero">
         <div class="hero-medal" aria-hidden="true">
           <span class="hero-medal-ring"></span>
-          <img class="hero-medal-img" src="/images/splash-medal.png" alt="">
+          <img class="hero-medal-img" src="/images/splash-medal.webp" alt="">
         </div>
         <h1 class="hero-title" aria-label="金御汇">
           <span>金</span><span>御</span><span>汇</span>

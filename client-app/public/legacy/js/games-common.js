@@ -31,7 +31,24 @@
   App._bridgeToken = ''
   App._roomNo = ''
 
-  /* bridgeToken 仅由父页 assets-game-init 下发，禁止写入 iframe URL */
+  /*
+   * 跨 Origin iframe 只接受 URL 中声明的父页 Origin，并且消息 source 必须是 window.parent。
+   * 该值只决定消息投递目标，不承担授权；真正授权在父页按游戏 Origin + contentWindow 校验。
+   */
+  App.parentOrigin = (function () {
+    try {
+      const raw = new URLSearchParams(location.search).get('parentOrigin')
+      if (!raw) return location.origin
+      const parsed = new URL(raw)
+      if (parsed.protocol === 'capacitor:') {
+        return raw === 'capacitor://localhost' ? raw : location.origin
+      }
+      if (!/^https?:$/.test(parsed.protocol)) return location.origin
+      return parsed.origin
+    } catch (_) {
+      return location.origin
+    }
+  })()
 
   App.getUser = function () {
 
@@ -90,11 +107,12 @@
       if (App._bridgeToken && payload && typeof payload === 'object' && !payload.bridgeToken) {
         payload.bridgeToken = App._bridgeToken
       }
-      window.parent.postMessage(payload, location.origin)
+      window.parent.postMessage(payload, App.parentOrigin)
       return true
     }
     return false
   }
+  App.postToParent = postToParent
 
   function nextRequestId() {
     App._reqSeq += 1
@@ -165,6 +183,15 @@
     return ''
   }
 
+  /*
+   * 外壳（Vue 侧 AssetsGameView）把游戏页 keep-alive 起来后，玩家退回大厅时
+   * iframe 并不卸载。此时浏览器仍在前台，document.hidden 是 false，游戏自己
+   * 判断不出已经离开，轮询会一直打下去。父页会发 assets-game-pause/resume，
+   * 这里用一个全局开关统一控制所有 adaptive 轮询。
+   */
+  App._shellPaused = false
+  App._shellWakes = new Set()
+
   /**
    * 前台 activeMs / 后台 hiddenMs 自适应轮询；切回前台立即跑一轮。
    * opts.runNow === false 时不立刻执行（适合已手动跑过首轮）。
@@ -183,35 +210,46 @@
         return activeMs
       }
     }
+    function tick() {
+      /* 外壳把本页挂起了（玩家回大厅了），别再打接口 */
+      if (App._shellPaused) return
+      try { fn() } catch (_) { /* ignore */ }
+    }
     function schedule() {
       if (stopped) return
       if (timer) clearTimeout(timer)
       timer = setTimeout(function () {
         timer = null
         if (stopped) return
-        try { fn() } catch (_) { /* ignore */ }
+        tick()
         schedule()
       }, delay())
     }
     function onVis() {
       if (stopped) return
       if (!document.hidden) {
-        try { fn() } catch (_) { /* ignore */ }
+        tick()
         schedule()
       }
     }
     try {
       document.addEventListener('visibilitychange', onVis)
     } catch (_) { /* ignore */ }
-    if (runNow) {
-      try { fn() } catch (_) { /* ignore */ }
+    /* 外壳 resume 时立刻补一轮，不用干等一个 activeMs */
+    const wake = function () {
+      if (stopped) return
+      tick()
+      schedule()
     }
+    App._shellWakes.add(wake)
+    if (runNow) tick()
     schedule()
     return {
       stop: function () {
         stopped = true
         if (timer) clearTimeout(timer)
         timer = null
+        App._shellWakes.delete(wake)
         try { document.removeEventListener('visibilitychange', onVis) } catch (_) { /* ignore */ }
       },
     }
@@ -1056,8 +1094,7 @@
   App.mountTabbar = function () { /* 游戏内不显示底部 Tab */ }
 
   window.addEventListener('message', function (ev) {
-    /* 只接受同源父页；跨域伪造一律忽略 */
-    if (!ev.origin || ev.origin !== location.origin) return
+    if (!ev.origin || ev.origin !== App.parentOrigin || ev.source !== window.parent) return
     const data = ev.data
     if (!data || typeof data !== 'object') return
 
@@ -1082,6 +1119,10 @@
 
     /* 外壳 keep-alive 切回：iframe 内往往收不到 visibilitychange，靠父页通知重对开奖轴 */
     if (data.type === 'assets-game-resume') {
+      App._shellPaused = false
+      App._shellWakes.forEach(function (wake) {
+        try { wake() } catch (_) { /* ignore */ }
+      })
       if (typeof App.onAssetsGameResume === 'function') {
         try { App.onAssetsGameResume(data) } catch (_) { /* ignore */ }
       }
@@ -1094,6 +1135,7 @@
     }
 
     if (data.type === 'assets-game-pause') {
+      App._shellPaused = true
       if (typeof App.onAssetsGamePause === 'function') {
         try { App.onAssetsGamePause(data) } catch (_) { /* ignore */ }
       }

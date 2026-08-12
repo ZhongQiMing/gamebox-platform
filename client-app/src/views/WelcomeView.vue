@@ -1,11 +1,11 @@
 <template>
   <!-- 屏幕级装饰层：皇冠铺底 + 四角卷草（与原型一致，依赖 body.deco-bg 的 fixed 定位） -->
   <div class="screen-deco" aria-hidden="true">
-    <img class="crown-deco" src="/images/crown-emblem.png" alt="">
-    <img class="cd cd-tl" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-tr" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-bl" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-br" src="/images/corner-flourish.png" alt="">
+    <img class="crown-deco" src="/images/crown-emblem.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-tl" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-tr" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-bl" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-br" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
   </div>
 
   <div class="page welcome-page">
@@ -39,7 +39,7 @@
       <div class="welcome-hero">
         <div class="hero-medal" aria-hidden="true">
           <span class="hero-medal-ring"></span>
-          <img class="hero-medal-img" src="/images/splash-medal.png" alt="">
+          <img class="hero-medal-img" src="/images/splash-medal.webp" alt="">
         </div>
         <h1 class="hero-title" aria-label="金御汇">
           <span>金</span><span>御</span><span>汇</span>
@@ -97,13 +97,14 @@ import { useUserStore } from '@/stores/user'
 import { authApi } from '@/api/auth'
 import { useToast } from '@/composables/useToast'
 import { useBodyClass } from '@/composables/useBodyClass'
+import { acceptLoginRole } from '@/utils/loginRoleGuard'
 import '@/assets/welcome.css'
 
 useBodyClass('deco-bg', 'welcome-login')
 
 const router = useRouter()
 const userStore = useUserStore()
-const { toast } = useToast()
+const { toast, error: toastError } = useToast()
 
 const account = ref('')
 const password = ref('')
@@ -138,16 +139,20 @@ function goStaffLogin(kind: 'agent' | 'branch') {
 }
 
 async function doLogin() {
-  if (!account.value.trim()) { toast('请输入账号'); return }
-  if (!password.value) { toast('请输入密码'); return }
+  if (!account.value.trim()) { toastError('请输入账号'); return }
+  if (!password.value) { toastError('请输入密码'); return }
   loading.value = true
   try {
     const res = await authApi.login({ username: account.value.trim(), password: password.value })
     const role = res.user.role
     // 玩家入口只收玩家；运营账号一律当「不存在」，不暴露另有入口
-    if (['ADMIN', 'BRANCH', 'AGENT', 'PROXY', 'CS'].includes(role)) {
-      void authApi.logout().catch(() => undefined)
-      toast('账号不存在')
+    const accepted = await acceptLoginRole(
+      role,
+      (candidate) => !['ADMIN', 'BRANCH', 'AGENT', 'PROXY', 'CS'].includes(candidate),
+      authApi.logout,
+    )
+    if (!accepted) {
+      toastError('账号不存在')
       return
     }
     userStore.setAuth(res.user, res.token)
@@ -163,7 +168,7 @@ async function doLogin() {
     toast(`欢迎 ${res.user.nickname}`)
     await router.replace({ name: 'room' })
   } catch (e: unknown) {
-    toast(e instanceof Error ? e.message : '登录失败')
+    toastError(e instanceof Error ? e.message : '登录失败')
   } finally {
     loading.value = false
   }

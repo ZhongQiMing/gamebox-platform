@@ -1,9 +1,9 @@
 <template>
   <div class="screen-deco" aria-hidden="true">
-    <img class="cd cd-tl" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-tr" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-bl" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-br" src="/images/corner-flourish.png" alt="">
+    <img class="cd cd-tl" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-tr" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-bl" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-br" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
   </div>
 
   <div class="page staff-console-page">
@@ -67,8 +67,8 @@ async function submit() {
     })
     toast('密码已修改，请重新登录')
     const kind = staff.loginKind
-    staff.logout()
-    router.replace({ name: kind === 'branch' ? 'staff-login-branch' : 'staff-login-agent' })
+    await staff.logout()
+    await router.replace({ name: kind === 'branch' ? 'staff-login-branch' : 'staff-login-agent' })
   } catch (e: unknown) {
     toast(e instanceof Error ? e.message : '修改失败')
   } finally {

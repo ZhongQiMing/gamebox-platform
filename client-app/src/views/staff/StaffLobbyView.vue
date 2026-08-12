@@ -1,11 +1,11 @@
 <template>
   <!-- 与玩家大厅同一套装饰 / 背景 / 游戏卡片 -->
   <div class="lobby-deco" aria-hidden="true">
-    <img class="lobby-deco-crown" src="/images/crown-emblem.png" alt="">
-    <img class="lobby-deco-corner lobby-deco-corner-tl" src="/images/corner-flourish.png" alt="">
-    <img class="lobby-deco-corner lobby-deco-corner-tr" src="/images/corner-flourish.png" alt="">
-    <img class="lobby-deco-corner lobby-deco-corner-bl" src="/images/corner-flourish.png" alt="">
-    <img class="lobby-deco-corner lobby-deco-corner-br" src="/images/corner-flourish.png" alt="">
+    <img class="lobby-deco-crown" src="/images/crown-emblem.webp" alt="">
+    <img class="lobby-deco-corner lobby-deco-corner-tl" src="/images/corner-flourish.webp" alt="">
+    <img class="lobby-deco-corner lobby-deco-corner-tr" src="/images/corner-flourish.webp" alt="">
+    <img class="lobby-deco-corner lobby-deco-corner-bl" src="/images/corner-flourish.webp" alt="">
+    <img class="lobby-deco-corner lobby-deco-corner-br" src="/images/corner-flourish.webp" alt="">
   </div>
 
   <div class="page lobby-page staff-lobby-page">
@@ -186,7 +186,8 @@ async function attachPlaySession() {
   if (!activeRoom.value) throw new Error('请选择房间')
   const card = await staffConsoleApi.playEnter(activeRoom.value.id)
   staff.beginPlay()
-  if (staff.profile && staff.token) {
+  /* 网页版 staff.token 恒为空（凭证在 Cookie 里），只能判 profile */
+  if (staff.profile) {
     user.attachStaffPlay(staff.profile, staff.token)
   }
   roomStore.setCurrent({

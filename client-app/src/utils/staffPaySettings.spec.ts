@@ -32,17 +32,26 @@ describe('loadStaffPaySettings', () => {
     expect(loadStaffPaySettings(USER).quickReplies).toEqual(DEFAULT_QUICK_REPLIES)
   })
 
-  it('旧版单个收款码字段能读出来，不至于升级后收款码消失', () => {
+  it('旧版公开 bearer URL 不再恢复到客服界面', () => {
     localStorage.setItem(KEY, JSON.stringify({ wechatQrUrl: 'https://cdn/wx.png' }))
     const s = loadStaffPaySettings(USER)
-    expect(s.wechatQrs).toEqual([{ id: 'legacy', url: 'https://cdn/wx.png' }])
+    expect(s.wechatQrs).toEqual([])
   })
 
-  it('丢掉没有 url 的脏项，最多保留 8 张', () => {
-    const list = Array.from({ length: 12 }, (_, i) => ({ id: `q${i}`, url: `https://cdn/${i}.png` }))
+  it('丢掉非私有 URL 与脏项，最多保留 8 张', () => {
+    const list = Array.from({ length: 12 }, (_, i) => ({
+      id: `q${i}`,
+      url: `/api/cs/media/private-media-${i}`,
+    }))
     localStorage.setItem(
       KEY,
-      JSON.stringify({ alipayQrs: [{ id: 'bad' }, ...list] }),
+      JSON.stringify({
+        alipayQrs: [
+          { id: 'bad' },
+          { id: 'public', url: 'https://cdn/public.png' },
+          ...list,
+        ],
+      }),
     )
     const s = loadStaffPaySettings(USER)
     expect(s.alipayQrs).toHaveLength(8)
@@ -57,7 +66,9 @@ describe('loadStaffPaySettings', () => {
   it('不同客服各存各的，不会读到别人的收款码', () => {
     localStorage.setItem(
       `cs_desk_settings_other`,
-      JSON.stringify({ wechatQrs: [{ id: 'a', url: 'https://cdn/other.png' }] }),
+      JSON.stringify({
+        wechatQrs: [{ id: 'a', url: '/api/cs/media/private-media-other' }],
+      }),
     )
     expect(loadStaffPaySettings(USER).wechatQrs).toEqual([])
   })

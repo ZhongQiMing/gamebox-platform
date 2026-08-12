@@ -1,9 +1,9 @@
 <template>
   <div class="screen-deco" aria-hidden="true">
-    <img class="cd cd-tl" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-tr" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-bl" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-br" src="/images/corner-flourish.png" alt="">
+    <img class="cd cd-tl" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-tr" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-bl" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-br" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
   </div>
 
   <div class="page cs-page">
@@ -23,13 +23,25 @@
           <div class="cs-bubble-avatar"><img :src="AGENT_AVATAR" alt=""></div>
           <div class="cs-bubble">
             <template v-if="m.caption">{{ m.caption }}</template>
-            <img v-if="m.img" class="cs-bubble-img" :src="m.img" alt="收款码">
+            <PrivateMediaImage
+              v-if="m.img"
+              class="cs-bubble-img"
+              :src="m.img"
+              session="player"
+              alt="收款码"
+            />
           </div>
         </div>
         <div v-else-if="m.type === 'user'" class="cs-msg user">
           <div class="cs-bubble">
             <template v-if="m.caption">{{ m.caption }}</template>
-            <img v-if="m.img" class="cs-bubble-img" :src="m.img" alt="">
+            <PrivateMediaImage
+              v-if="m.img"
+              class="cs-bubble-img"
+              :src="m.img"
+              session="player"
+              alt=""
+            />
           </div>
         </div>
       </template>
@@ -88,12 +100,19 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useToast } from '@/composables/useToast'
+import { useActiveInterval } from '@/composables/useActiveInterval'
 import { useBodyClass } from '@/composables/useBodyClass'
 import TabBar from '@/components/TabBar.vue'
+import PrivateMediaImage from '@/components/PrivateMediaImage.vue'
 import { csApi, type CsMessageDto } from '@/api/cs'
+import {
+  completeCsRequest,
+  csRequestForText,
+  type PendingCsRequest,
+} from '@/utils/csClientRequest'
 import '@/assets/cs.css'
 
 useBodyClass('deco-bg')
@@ -115,7 +134,7 @@ interface ViewMsg {
 
 function safeUploadImg(url: string) {
   const u = String(url || '').trim()
-  if (/^\/uploads\/[A-Za-z0-9/_.\-]+$/i.test(u) && !u.includes('..')) return u
+  if (/^\/api\/cs\/media\/[A-Za-z0-9_-]{10,64}$/.test(u)) return u
   return ''
 }
 
@@ -133,7 +152,7 @@ const sending = ref(false)
 const msgListEl = ref<HTMLElement>()
 const inputEl = ref<HTMLTextAreaElement>()
 const fileEl = ref<HTMLInputElement>()
-let pollTimer: ReturnType<typeof setInterval> | undefined
+let pendingTextRequest: PendingCsRequest | null = null
 
 function nowLabel(ts = Date.now()) {
   const d = new Date(ts)
@@ -212,10 +231,13 @@ async function appendMessages(added: CsMessageDto[]) {
 async function send() {
   const text = draft.value.trim()
   if (!text || sending.value) return
+  const request = csRequestForText(text, pendingTextRequest)
+  pendingTextRequest = request
   sending.value = true
   try {
-    const res = await csApi.send(text)
+    const res = await csApi.send(text, request.clientRequestId)
     await appendMessages(res.list || [])
+    pendingTextRequest = completeCsRequest(pendingTextRequest, request)
     draft.value = ''
     if (inputEl.value) inputEl.value.style.height = 'auto'
   } catch (e: unknown) {
@@ -252,7 +274,9 @@ async function onImagePicked(ev: Event) {
   try {
     const dataUrl = await readAsDataUrl(file)
     const up = await csApi.upload(dataUrl)
-    const res = await csApi.send(`[img]${up.url}`)
+    const text = `[img]${up.url}`
+    const request = csRequestForText(text, null)
+    const res = await csApi.send(text, request.clientRequestId)
     await appendMessages(res.list || [])
   } catch (e: unknown) {
     toast((e as Error).message || '图片发送失败')
@@ -273,12 +297,9 @@ function goBack() {
   else router.push('/lobby')
 }
 
+useActiveInterval(() => void load(true), 4000)
+
 onMounted(() => {
   void load()
-  pollTimer = setInterval(() => void load(true), 4000)
-})
-
-onUnmounted(() => {
-  clearInterval(pollTimer)
 })
 </script>

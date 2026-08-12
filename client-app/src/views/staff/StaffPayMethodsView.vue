@@ -1,9 +1,9 @@
 <template>
   <div class="screen-deco" aria-hidden="true">
-    <img class="cd cd-tl" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-tr" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-bl" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-br" src="/images/corner-flourish.png" alt="">
+    <img class="cd cd-tl" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-tr" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-bl" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-br" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
   </div>
 
   <div class="page staff-console-page">
@@ -44,7 +44,7 @@
         </div>
         <div v-if="!settings.wechatQrs.length" class="sp-empty">暂无</div>
         <div v-for="(q, i) in settings.wechatQrs" :key="q.id" class="pay-card">
-          <img :src="q.url" alt="微信码">
+          <PrivateMediaImage :src="q.url" session="staff" alt="微信码" />
           <button type="button" class="pay-del" @click="remove('wechat', i)">删除</button>
         </div>
       </section>
@@ -58,7 +58,7 @@
         </div>
         <div v-if="!settings.alipayQrs.length" class="sp-empty">暂无</div>
         <div v-for="(q, i) in settings.alipayQrs" :key="q.id" class="pay-card">
-          <img :src="q.url" alt="支付宝码">
+          <PrivateMediaImage :src="q.url" session="staff" alt="支付宝码" />
           <button type="button" class="pay-del" @click="remove('alipay', i)">删除</button>
         </div>
       </section>
@@ -79,6 +79,7 @@
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { staffConsoleApi } from '@/api/staffConsole'
+import PrivateMediaImage from '@/components/PrivateMediaImage.vue'
 import StaffTabBar from '@/components/StaffTabBar.vue'
 import { useStaffStore } from '@/stores/staff'
 import { useToast } from '@/composables/useToast'

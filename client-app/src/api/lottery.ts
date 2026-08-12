@@ -43,6 +43,13 @@ export const lotteryApi = {
   history: (gameCode: string, limit = 10) =>
     http.get<DrawHistory[], DrawHistory[]>(`/lottery/${gameCode}/history?limit=${limit}`),
 
+  /** 当前期 + 历史一次取回：游戏内 2s 一轮的快照走这个，省掉一半往返 */
+  snapshot: (gameCode: string, limit = 20) =>
+    http.get<
+      { current: LotteryIssue | null; history: DrawHistory[] },
+      { current: LotteryIssue | null; history: DrawHistory[] }
+    >(`/lottery/${gameCode}/snapshot?limit=${limit}`),
+
   /** 活跃赔率表（与结算同一份） */
   payTable: (gameCode: string) =>
     http.get<{ gameCode: string; payTable: LotteryPayTable }, { gameCode: string; payTable: LotteryPayTable }>(

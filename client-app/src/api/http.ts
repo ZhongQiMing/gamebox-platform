@@ -2,6 +2,7 @@ import axios from 'axios'
 import type { AxiosResponse, InternalAxiosRequestConfig } from 'axios'
 import { useUserStore } from '@/stores/user'
 import { API_BASE } from './apiBase'
+import { PLAYER_TOKEN_KEY, loadToken, sessionKind } from './session'
 
 /** 后端统一响应信封 */
 interface Envelope<T = unknown> {
@@ -62,9 +63,10 @@ function errorMessage(err: { response?: { status?: number; data?: { message?: st
   return String(raw)
 }
 
-// 请求拦截：注入 Bearer token；若有 CSRF Cookie 一并带上（防同域残留会话）
+// 请求拦截：App 注入 Bearer；网页版没有可注入的 token，靠同域自动带上的
+// HttpOnly Cookie 认证。CSRF 头两边都带（Cookie 会话的写操作必须回传）。
 http.interceptors.request.use((config: HttpConfig) => {
-  const token = localStorage.getItem('token') || ''
+  const token = loadToken(PLAYER_TOKEN_KEY)
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
     config.__userToken = token
@@ -81,14 +83,15 @@ http.interceptors.response.use(
     if (envelope.code === 0) return envelope.data as never
     return Promise.reject(new Error(envelope.message ?? '请求失败'))
   },
-  (err) => {
+  async (err) => {
     if (err.response?.status === 401 && !isAuthSessionCall(err.config)) {
       const userStore = useUserStore()
       const staffPlay = localStorage.getItem('staff_play') === '1'
       const kind = (localStorage.getItem('staff_login_kind') as 'agent' | 'branch') || 'agent'
-      const current = localStorage.getItem('token') || ''
+      const current = loadToken(PLAYER_TOKEN_KEY)
       const reqToken = tokenOf(err.config as HttpConfig | undefined)
-      // 过期请求的 401（票已换/已清）忽略，避免误踢新登录
+      // 过期请求的 401（票已换/已清）忽略，避免误踢新登录。
+      // 网页版没有票可比，401 只可能是 Cookie 会话没了，照常往下踢。
       if (reqToken && current && reqToken !== current) {
         return Promise.reject(new Error(errorMessage(err)))
       }
@@ -98,15 +101,17 @@ http.interceptors.response.use(
        * /auth/login 密码错误的 401 已在上方排除，否则会把运营登录页整页踢去玩家登录。
        */
       if (staffPlay) {
-        void import('@/stores/staff').then(({ useStaffStore }) => {
-          useStaffStore().logout()
+        await import('@/stores/staff').then(async ({ useStaffStore }) => {
+          await useStaffStore().logout()
+          window.location.replace(`/staff/login/${kind}`)
         })
-        window.location.replace(`/staff/login/${kind}`)
-      } else if (localStorage.getItem('staff_token')) {
-        userStore.clearLocal()
+      } else if (sessionKind() === 'staff') {
+        await userStore.clearLocal().catch(() => undefined)
       } else {
-        userStore.clearLocal()
-        void import('@/api/auth').then(({ authApi }) => authApi.logout()).catch(() => undefined)
+        await Promise.all([
+          userStore.clearLocal().catch(() => undefined),
+          import('@/api/auth').then(({ authApi }) => authApi.logout()).catch(() => undefined),
+        ])
         const path = window.location.pathname
         if (!path.startsWith('/login') && !path.startsWith('/staff/login')) {
           window.location.replace('/login')

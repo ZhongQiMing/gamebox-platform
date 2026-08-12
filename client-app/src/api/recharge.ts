@@ -37,9 +37,14 @@ export const rechargeApi = {
       amount, channel, roomNo, clientRequestId,
     }),
 
-  withdraw: (amount: number, roomNo: string | undefined, clientRequestId: string) =>
+  withdraw: (
+    amount: number,
+    roomNo: string | undefined,
+    clientRequestId: string,
+    channel?: string,
+  ) =>
     http.post<RechargeOrder, RechargeOrder>('/recharge/withdraw', {
-      amount, roomNo, clientRequestId,
+      amount, channel, roomNo, clientRequestId,
     }),
 
   myOrders: (

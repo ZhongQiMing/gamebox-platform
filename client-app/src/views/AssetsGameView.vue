@@ -7,6 +7,8 @@
       :src="iframeSrc"
       :title="gameTitle"
       allow="autoplay"
+      sandbox="allow-scripts allow-same-origin"
+      referrerpolicy="no-referrer"
       @load="onFrameLoad"
     />
     <div v-else class="assets-game-loading">加载中…首次进入可能需下载素材</div>
@@ -18,7 +20,7 @@
  * 静态 H5 游戏壳：通过 postMessage 与 iframe 桥接。
  * iframe 内下注 / 查余额 / 上下分 / 聊天等走父页 JWT 调 /api，再回传给 H5。
  */
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { useWalletStore } from '@/stores/wallet'
@@ -30,19 +32,25 @@ import { rechargeApi } from '@/api/recharge'
 import http from '@/api/http'
 import { newFundOrderNo } from '@/utils/fundOrderNo'
 import { useToast } from '@/composables/useToast'
+import {
+  gameAssetUrl,
+  gameOrigin,
+  isTrustedGameMessage,
+} from '@/utils/gameOrigin'
+import { frameActivityMessage } from '@/utils/frameActivity'
 
 const ASSET_GAMES: Record<string, string> = {
-  bjsc: '/games-assets/bjsc/index.html?v=174',
-  ssc: '/games-assets/ssc/index.html?v=194',
-  ffc: '/games-assets/ffc/index.html?v=182',
-  'speed-racing': '/games-assets/speed-racing/index.html?v=241',
-  'speed-boat': '/games-assets/speed-boat/index.html?v=166',
-  kuai3: '/games-assets/kuai3/index.html?v=166',
-  lhc: '/games-assets/lhc/index.html?v=199',
-  zhajinhua: '/games-assets/zhajinhua/index.html?v=361',
-  douniu: '/games-assets/douniu/index.html?v=170',
-  baccarat: '/games-assets/baccarat/index.html?v=61',
-  longhu: '/games-assets/longhu/index.html?v=59',
+  bjsc: '/games-assets/bjsc/index.html?v=175',
+  ssc: '/games-assets/ssc/index.html?v=195',
+  ffc: '/games-assets/ffc/index.html?v=183',
+  'speed-racing': '/games-assets/speed-racing/index.html?v=242',
+  'speed-boat': '/games-assets/speed-boat/index.html?v=167',
+  kuai3: '/games-assets/kuai3/index.html?v=167',
+  lhc: '/games-assets/lhc/index.html?v=200',
+  zhajinhua: '/games-assets/zhajinhua/index.html?v=362',
+  douniu: '/games-assets/douniu/index.html?v=171',
+  baccarat: '/games-assets/baccarat/index.html?v=62',
+  longhu: '/games-assets/longhu/index.html?v=60',
 }
 
 /** H5 gameCode → 服务端 lottery/table code */
@@ -60,14 +68,18 @@ const walletStore = useWalletStore()
 const roomStore = useRoomStore()
 const frameEl = ref<HTMLIFrameElement | null>(null)
 const frameReady = ref(false)
-/** 桥接 token：iframe 就绪后 init 下发；部分 WebView contentWindow === 不可靠时作备用校验 */
+/** 业务消息的二次关联值；安全边界始终是严格的 origin + contentWindow。 */
 const bridgeToken = ref('')
 let frameWindow: Window | null = null
+/** keep-alive 壳层是否仍是当前页面；不能依赖 iframe 自己的 document.hidden。 */
+let shellActive = true
 
 function ensureBridgeToken() {
   if (!bridgeToken.value) {
     bridgeToken.value =
-      'bt_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10)
+      typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? `bt_${crypto.randomUUID()}`
+        : `bt_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`
   }
   return bridgeToken.value
 }
@@ -78,12 +90,12 @@ const gameCode = computed(
 const iframeSrc = computed(() => {
   const base = ASSET_GAMES[gameCode.value]
   if (!base) return ''
-  /* bt 写入 URL，便于 ready/无 source 时校验 token，再由 init 下发 */
-  const parts = [`bt=${encodeURIComponent(ensureBridgeToken())}`]
+  const url = new URL(gameAssetUrl(base))
+  /* 父页 Origin 仅用于游戏把消息定向发回；授权仍由父页校验 event.source + origin。 */
+  url.searchParams.set('parentOrigin', location.origin)
   const room = roomStore.roomNo
-  if (room) parts.push(`roomNo=${encodeURIComponent(room)}`)
-  const sep = base.includes('?') ? '&' : '?'
-  return `${base}${sep}${parts.join('&')}`
+  if (room) url.searchParams.set('roomNo', room)
+  return url.toString()
 })
 const gameTitle = computed(() => {
   const titles: Record<string, string> = {
@@ -105,7 +117,7 @@ const gameTitle = computed(() => {
 function postToFrame(payload: Record<string, unknown>) {
   const win = frameEl.value?.contentWindow
   if (!win) return
-  win.postMessage(payload, location.origin)
+  win.postMessage(payload, gameOrigin)
 }
 
 function syncLegacyUserOnly() {
@@ -146,9 +158,14 @@ function pushInit() {
   })
 }
 
+function syncFrameActivity() {
+  postToFrame(frameActivityMessage(shellActive))
+}
+
 function onFrameLoad() {
   frameWindow = frameEl.value?.contentWindow ?? null
   pushInit()
+  syncFrameActivity()
 }
 
 async function handleLotteryBet(
@@ -227,10 +244,7 @@ async function handleRoomChat(
 
 async function handleLotterySnapshot(requestId: string, code: string) {
   try {
-    const [current, history] = await Promise.all([
-      lotteryApi.currentIssue(code),
-      lotteryApi.history(code, 20),
-    ])
+    const { current, history } = await lotteryApi.snapshot(code, 20)
     postToFrame({
       type: 'assets-game-lottery-snapshot-ok',
       requestId,
@@ -543,47 +557,27 @@ function navigateFromGame(rawPath: string) {
 
 function isFromGameFrame(ev: MessageEvent) {
   const win = frameWindow || frameEl.value?.contentWindow
-  if (!win) return false
-  try {
-    return ev.source === win
-  } catch {
-    return false
-  }
-}
-
-/** source 对不上时，用 bridgeToken（init 后）识别 iframe */
-function acceptGameMessage(ev: MessageEvent, data: Record<string, unknown>): boolean {
-  if (isFromGameFrame(ev)) return true
-  const token = String(data.bridgeToken || '')
-  return !!bridgeToken.value && token === bridgeToken.value
+  return isTrustedGameMessage(ev, win ?? null)
 }
 
 async function onGameMessage(ev: MessageEvent) {
   const data = ev.data
   if (!data || typeof data !== 'object') return
+  if (!isFromGameFrame(ev)) return
 
-  /* ready：同源校验 token，或 iframe source 匹配时在 @load 前也可 pushInit */
+  /* ready 也必须同时命中独立游戏 Origin 与当前 iframe Window。 */
   if (data.type === 'assets-game-ready') {
-    if (isFromGameFrame(ev) || String((data as { bridgeToken?: string }).bridgeToken || '') === bridgeToken.value) {
-      pushInit()
-    }
+    pushInit()
+    syncFrameActivity()
     return
   }
+  /* pause 是协作通知，父壳仍须硬性拒绝离页后迟到的轮询与资金指令。 */
+  if (!shellActive) return
 
-  const accepted = acceptGameMessage(ev, data as Record<string, unknown>)
-
-  /* 返回大厅：即使 iframe source 对不上（部分 WebView），有 frame 也放行 */
   if (data.type === 'assets-game-nav' && typeof data.path === 'string') {
-    const raw = String(data.path)
-    const pathname = (raw.split('?')[0] || '').trim()
-    const isLobby = pathname === '/lobby' || pathname === 'lobby'
-    if (accepted || (isLobby && !!frameEl.value)) {
-      navigateFromGame(raw)
-    }
+    navigateFromGame(String(data.path))
     return
   }
-
-  if (!accepted) return
 
   if (data.type === 'assets-game-get-balance') {
     try {
@@ -755,7 +749,26 @@ onMounted(async () => {
   }
 })
 
+/*
+ * 本页被 keep-alive 缓存：退回大厅时组件不卸载，iframe 继续跑。
+ *
+ * iframe 里的 document.hidden 在「浏览器仍在前台、只是 Vue 切走了这一页」时是 false，
+ * 游戏自己察觉不到已经离开，牌桌 1s、彩票 2s 的轮询会一直打下去；玩过几个游戏就是
+ * 几份幽灵轮询叠加。桥接两端早就约定了 pause/resume，这里补上发送方。
+ */
+onActivated(() => {
+  shellActive = true
+  syncFrameActivity()
+})
+
+onDeactivated(() => {
+  shellActive = false
+  syncFrameActivity()
+})
+
 onUnmounted(() => {
+  shellActive = false
+  syncFrameActivity()
   window.removeEventListener('message', onGameMessage)
   frameWindow = null
   bridgeToken.value = ''

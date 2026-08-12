@@ -1,4 +1,5 @@
 import http from './http'
+import { publicMediaUrl } from '@/utils/publicMediaUrl'
 
 export interface RoomCard {
   roomNo: string
@@ -21,10 +22,19 @@ export interface RoomChatMessage {
   createdAt: string
 }
 
+function withPublicRoomIcon(room: RoomCard): RoomCard {
+  return { ...room, icon: publicMediaUrl(room.icon) || null }
+}
+
+function withPublicSenderAvatar(message: RoomChatMessage): RoomChatMessage {
+  return { ...message, senderAvatar: publicMediaUrl(message.senderAvatar) || null }
+}
+
 export const roomsApi = {
-  mine: () => http.get<RoomCard[], RoomCard[]>('/rooms/mine'),
+  mine: () => http.get<RoomCard[], RoomCard[]>('/rooms/mine')
+    .then((rooms) => rooms.map(withPublicRoomIcon)),
   enter: (roomNo: string) =>
-    http.post<RoomCard, RoomCard>('/rooms/enter', { roomNo }),
+    http.post<RoomCard, RoomCard>('/rooms/enter', { roomNo }).then(withPublicRoomIcon),
   chat: (roomNo: string, gameCode: string, params?: { after?: string; limit?: number }) => {
     const q = new URLSearchParams()
     if (params?.after) q.set('after', params.after)
@@ -32,7 +42,7 @@ export const roomsApi = {
     const qs = q.toString()
     return http.get<RoomChatMessage[], RoomChatMessage[]>(
       `/rooms/${encodeURIComponent(roomNo)}/games/${encodeURIComponent(gameCode)}/chat${qs ? `?${qs}` : ''}`,
-    )
+    ).then((messages) => messages.map(withPublicSenderAvatar))
   },
   /** 牌桌气氛：当前房间该游戏的有效托人数 */
   atmosphere: (roomNo: string, gameCode: string) =>

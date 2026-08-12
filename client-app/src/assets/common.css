@@ -71,7 +71,7 @@ html, body {
 }
 
 /* 背景：博彩 VIP 招待厅
-   - 主底图 bg-dark-baroque-portrait.png：竖屏比例 (2:3 ≈ 0.67:1)，专为手机竖屏视口设计
+   - 主底图 bg-dark-baroque-portrait.webp：竖屏比例 (2:3 ≈ 0.67:1)，专为手机竖屏视口设计
      四边巴洛克花纹 + 中央留白，用 background-size: cover 保持比例不变形
      手机竖屏按高度铺满，左右仅裁极少，四边花纹完整保留
    - 顶部金光晕 + 底部酒红微光做氛围 */
@@ -83,7 +83,7 @@ body {
     /* 2 底部酒红微光 */
     radial-gradient(ellipse 500px 300px at 50% 106%, rgba(163, 33, 48, 0.14), transparent 65%),
     /* 3 主底图：竖屏巴洛克 cover 铺满（不变形） */
-    url('/images/textures/bg-dark-baroque-portrait.png');
+    url('/images/textures/bg-dark-baroque-portrait.webp');
   background-size:
     auto, auto,
     cover;

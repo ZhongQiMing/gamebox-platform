@@ -1,16 +1,26 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import type { UserProfile } from '@/api/auth'
+import {
+  PLAYER_TOKEN_KEY, STAFF_TOKEN_KEY, clearSessionMark, isNativeApp, loadToken,
+  markSession, removeToken, saveToken, sessionKind,
+} from '@/api/session'
+import { publicMediaUrl } from '@/utils/publicMediaUrl'
 
-const TOKEN_KEY = 'staff_token'
+const TOKEN_KEY = STAFF_TOKEN_KEY
 const KIND_KEY = 'staff_login_kind'
 const PLAY_KEY = 'staff_play'
 
 export type StaffLoginKind = 'agent' | 'branch'
 
+function withPublicAvatar(user: UserProfile): UserProfile {
+  return { ...user, avatar: publicMediaUrl(user.avatar) || null }
+}
+
 export const useStaffStore = defineStore('staff', () => {
   const profile = ref<UserProfile | null>(null)
-  const token = ref<string>(localStorage.getItem(TOKEN_KEY) ?? '')
+  /* 网页版恒为空：凭证在 HttpOnly Cookie 里（见 api/session.ts） */
+  const token = ref<string>(loadToken(TOKEN_KEY))
   const loginKind = ref<StaffLoginKind>(
     (localStorage.getItem(KIND_KEY) as StaffLoginKind) || 'agent',
   )
@@ -20,7 +30,8 @@ export const useStaffStore = defineStore('staff', () => {
   /** 登录/退出递增，作废进行中的 restore，防止旧 me() 401 或晚到结果写回会话 */
   let sessionEpoch = 0
 
-  const isLoggedIn = computed(() => !!token.value && !!profile.value)
+  const isLoggedIn = computed(() =>
+    !!profile.value && (isNativeApp() ? !!token.value : sessionKind() === 'staff'))
   const role = computed(() => profile.value?.role || '')
   const isBranch = computed(() => role.value === 'BRANCH' || role.value === 'ADMIN')
   const isAgentSide = computed(() => role.value === 'AGENT' || role.value === 'PROXY')
@@ -43,48 +54,59 @@ export const useStaffStore = defineStore('staff', () => {
 
   function setAuth(user: UserProfile, tk: string, kind: StaffLoginKind) {
     bumpEpoch()
-    localStorage.removeItem('token')
+    removeToken(PLAYER_TOKEN_KEY)
     localStorage.removeItem(PLAY_KEY)
     playActive.value = false
-    profile.value = user
+    profile.value = withPublicAvatar(user)
     token.value = tk
     loginKind.value = kind
-    localStorage.setItem(TOKEN_KEY, tk)
+    saveToken(TOKEN_KEY, tk)
+    markSession('staff')
     localStorage.setItem(KIND_KEY, kind)
     restored.value = true
   }
 
-  /** 进入玩家游戏链路：镜像 token，不退出运营会话 */
+  /**
+   * 进入玩家游戏链路：不退出运营会话。
+   * App 把票镜像一份给玩家端用；网页版两边本来就是同一个 Cookie，不用镜像。
+   * 所以这里只能判 profile，判 token 会让网页版永远进不去游戏。
+   */
   function beginPlay() {
-    if (!token.value || !profile.value) return
+    if (!profile.value) return
     playActive.value = true
     localStorage.setItem(PLAY_KEY, '1')
-    localStorage.setItem('token', token.value)
+    saveToken(PLAYER_TOKEN_KEY, token.value)
   }
 
-  function endPlay() {
+  function endPlay(): Promise<void> {
     playActive.value = false
     localStorage.removeItem(PLAY_KEY)
-    if (token.value && localStorage.getItem('token') === token.value) {
-      localStorage.removeItem('token')
+    if (token.value && loadToken(PLAYER_TOKEN_KEY) === token.value) {
+      return removeToken(PLAYER_TOKEN_KEY)
     }
+    return Promise.resolve()
   }
 
   /** 只清本地运营态；玩家刚登录时不要顺带 logout，否则会拆掉新 Cookie */
-  function clearLocal() {
+  function clearLocal(): Promise<void> {
     bumpEpoch()
-    endPlay()
+    const playRemoved = endPlay()
     profile.value = null
     token.value = ''
     restored.value = true
-    localStorage.removeItem(TOKEN_KEY)
+    const staffRemoved = removeToken(TOKEN_KEY)
+    clearSessionMark('staff')
     localStorage.removeItem(PLAY_KEY)
+    return Promise.all([playRemoved, staffRemoved]).then(() => undefined)
   }
 
-  function logout() {
-    clearLocal()
+  async function logout(): Promise<void> {
+    const removed = clearLocal()
     // 清 Cookie，避免同域残留会话挡玩家登录 / CSRF
-    void import('@/api/auth').then(({ authApi }) => authApi.logout()).catch(() => undefined)
+    const remote = import('@/api/auth')
+      .then(({ authApi }) => authApi.logout())
+      .catch(() => undefined)
+    await Promise.all([removed.catch(() => undefined), remote])
   }
 
   function restoreSession(): Promise<void> {
@@ -94,7 +116,8 @@ export const useStaffStore = defineStore('staff', () => {
     const tkAtStart = token.value
     restoreInflight = (async () => {
       try {
-        if (!tkAtStart) {
+        const hasSession = isNativeApp() ? !!tkAtStart : sessionKind() === 'staff'
+        if (!hasSession) {
           if (epoch === sessionEpoch) restored.value = true
           return
         }
@@ -106,16 +129,16 @@ export const useStaffStore = defineStore('staff', () => {
         try {
           const me = await staffHttp.get<UserProfile, UserProfile>('/users/me')
           // 登录/退出已发生：丢弃过期结果，绝不能写回或再 logout
-          if (epoch !== sessionEpoch || localStorage.getItem(TOKEN_KEY) !== tkAtStart) return
-          profile.value = me
+          if (epoch !== sessionEpoch) return
+          profile.value = withPublicAvatar(me)
           playActive.value = localStorage.getItem(PLAY_KEY) === '1'
           if (playActive.value) {
-            localStorage.setItem('token', token.value)
+            saveToken(PLAYER_TOKEN_KEY, token.value)
           }
           restored.value = true
         } catch {
-          if (epoch !== sessionEpoch || localStorage.getItem(TOKEN_KEY) !== tkAtStart) return
-          logout()
+          if (epoch !== sessionEpoch) return
+          void logout()
         }
       } finally {
         if (epoch === sessionEpoch) restoreInflight = null

@@ -1,10 +1,10 @@
 <template>
   <div class="screen-deco" aria-hidden="true">
-    <img class="crown-deco" src="/images/crown-emblem.png" alt="">
-    <img class="cd cd-tl" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-tr" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-bl" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-br" src="/images/corner-flourish.png" alt="">
+    <img class="crown-deco" src="/images/crown-emblem.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-tl" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-tr" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-bl" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-br" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
   </div>
 
   <button class="page-back-fixed" type="button" aria-label="退出" @click="onExit"></button>
@@ -80,12 +80,21 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import {
+  computed,
+  nextTick,
+  onActivated,
+  onDeactivated,
+  onMounted,
+  onUnmounted,
+  ref,
+} from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { useRoomStore } from '@/stores/room'
 import { useToast } from '@/composables/useToast'
 import { useBodyClass } from '@/composables/useBodyClass'
+import { createActivationGate } from '@/utils/activationGate'
 import type { RoomCard } from '@/api/rooms'
 import '@/assets/referral-input.css'
 
@@ -105,6 +114,10 @@ const digits = ref(['', '', '', '', '', ''])
 const shakeIdx = ref(-1)
 const submitting = ref(false)
 let stageLastW = -1
+let orientationTimer: ReturnType<typeof setTimeout> | undefined
+let focusTimer: ReturnType<typeof setTimeout> | undefined
+let lobbyTimer: ReturnType<typeof setTimeout> | undefined
+let shakeTimer: ReturnType<typeof setTimeout> | undefined
 
 const avatarSrc = computed(() => userStore.profile?.avatar || '/images/avatars/001.jpg')
 
@@ -115,6 +128,7 @@ function setBoxRef(el: unknown, idx: number) {
 }
 
 function fitStage() {
+  if (!lifecycle.active) return
   const el = stageEl.value
   if (!el) return
   const w = window.innerWidth
@@ -132,6 +146,44 @@ function fitStage() {
 function onResize() {
   if (window.innerWidth !== stageLastW) fitStage()
 }
+
+function onOrientationChange() {
+  clearTimeout(orientationTimer)
+  orientationTimer = setTimeout(fitStage, 250)
+}
+
+function onWindowLoad() {
+  fitStage()
+}
+
+function clearViewTimers() {
+  clearTimeout(orientationTimer)
+  clearTimeout(focusTimer)
+  clearTimeout(lobbyTimer)
+  clearTimeout(shakeTimer)
+  orientationTimer = undefined
+  focusTimer = undefined
+  lobbyTimer = undefined
+  shakeTimer = undefined
+  shakeIdx.value = -1
+}
+
+const lifecycle = createActivationGate(
+  () => {
+    window.addEventListener('resize', onResize)
+    window.addEventListener('orientationchange', onOrientationChange)
+    window.addEventListener('load', onWindowLoad)
+    fitStage()
+    focusTimer = setTimeout(() => boxRefs.value[0]?.focus(), 200)
+  },
+  () => {
+    window.removeEventListener('resize', onResize)
+    window.removeEventListener('orientationchange', onOrientationChange)
+    window.removeEventListener('load', onWindowLoad)
+    clearViewTimers()
+    stageLastW = -1
+  },
+)
 
 function getCode() {
   return digits.value.join('')
@@ -175,7 +227,8 @@ function onPaste(e: ClipboardEvent) {
 async function goLobby(room: RoomCard) {
   toast(`正在进入 · ${room.name}`)
   resetCode()
-  setTimeout(() => router.replace('/lobby'), 500)
+  clearTimeout(lobbyTimer)
+  lobbyTimer = setTimeout(() => router.replace('/lobby'), 500)
 }
 
 async function enterApproved(room: RoomCard) {
@@ -199,7 +252,8 @@ async function submitEnter() {
     const idx = empty >= 0 ? empty : 0
     shakeIdx.value = idx
     boxRefs.value[idx]?.focus()
-    setTimeout(() => { shakeIdx.value = -1 }, 400)
+    clearTimeout(shakeTimer)
+    shakeTimer = setTimeout(() => { shakeIdx.value = -1 }, 400)
     return
   }
   submitting.value = true
@@ -220,18 +274,14 @@ async function submitEnter() {
 }
 
 /** 输入房间号页：返回/退出直接退回登录页，无需二次确认 */
-function onExit() {
+async function onExit() {
   roomStore.clearCurrent()
-  userStore.logout()
-  router.replace('/login')
+  await userStore.logout()
+  await router.replace('/login')
 }
 
 onMounted(async () => {
-  fitStage()
-  window.addEventListener('resize', onResize)
-  window.addEventListener('orientationchange', () => setTimeout(fitStage, 250))
-  window.addEventListener('load', fitStage)
-  setTimeout(() => boxRefs.value[0]?.focus(), 200)
+  lifecycle.activate()
   try {
     await roomStore.fetchMine()
   } catch {
@@ -241,7 +291,7 @@ onMounted(async () => {
   fitStage()
 })
 
-onUnmounted(() => {
-  window.removeEventListener('resize', onResize)
-})
+onActivated(lifecycle.activate)
+onDeactivated(lifecycle.deactivate)
+onUnmounted(lifecycle.deactivate)
 </script>

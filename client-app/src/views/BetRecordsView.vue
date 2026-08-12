@@ -1,9 +1,9 @@
 <template>
   <div class="screen-deco" aria-hidden="true">
-    <img class="cd cd-tl" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-tr" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-bl" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-br" src="/images/corner-flourish.png" alt="">
+    <img class="cd cd-tl" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-tr" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-bl" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-br" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
   </div>
 
   <div class="page br-page">
@@ -135,7 +135,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onActivated, onDeactivated, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import http from '@/api/http'
 import { lotteryApi, type LotteryBet } from '@/api/lottery'
@@ -703,6 +703,7 @@ function startLotteryPollIfNeeded() {
   const needsPoll = !!(activeLotteryGame.value || activeTableGame.value || activeArcadeGame.value)
   if (lotteryPollTimer || !needsPoll) return
   lotteryPollTimer = setInterval(() => {
+    if (document.visibilityState === 'hidden') return
     if (!(activeLotteryGame.value || activeTableGame.value || activeArcadeGame.value)) return
     if (sscLog.value.some(g => !g.settled)) void loadLotteryBetLog()
   }, 2000)
@@ -865,6 +866,19 @@ onMounted(async () => {
   document.addEventListener('visibilitychange', onLotteryLogVisible)
   loading.value = false
 })
+
+/* 被 keep-alive 挂起时组件不卸载，得靠 activated/deactivated 收停轮询 */
+let skipFirstActivate = true
+onActivated(() => {
+  if (skipFirstActivate) {
+    skipFirstActivate = false
+    return
+  }
+  void loadLotteryBetLog()
+  startLotteryPollIfNeeded()
+})
+
+onDeactivated(stopLotteryPoll)
 
 onUnmounted(() => {
   stopLotteryPoll()

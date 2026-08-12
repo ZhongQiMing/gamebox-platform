@@ -2,6 +2,7 @@ import axios from 'axios'
 import type { AxiosResponse, InternalAxiosRequestConfig } from 'axios'
 import { useStaffStore } from '@/stores/staff'
 import { API_BASE } from './apiBase'
+import { STAFF_TOKEN_KEY, isNativeApp, loadToken, sessionKind } from './session'
 
 interface Envelope<T = unknown> {
   code: number
@@ -34,7 +35,7 @@ function tokenOf(config?: StaffConfig): string {
 }
 
 staffHttp.interceptors.request.use((config: StaffConfig) => {
-  const token = localStorage.getItem('staff_token') || ''
+  const token = loadToken(STAFF_TOKEN_KEY)
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
     config.__staffToken = token
@@ -50,18 +51,24 @@ staffHttp.interceptors.response.use(
     if (envelope.code === 0) return envelope.data as never
     return Promise.reject(new Error(envelope.message ?? '请求失败'))
   },
-  (err) => {
+  async (err) => {
     if (err.response?.status === 401) {
-      const current = localStorage.getItem('staff_token') || ''
+      const current = loadToken(STAFF_TOKEN_KEY)
       const reqToken = tokenOf(err.config as StaffConfig | undefined)
       /*
-       * 必须「请求票 === 当前票」才踢会话。
+       * Bearer（App）必须「请求票 === 当前票」才踢会话。
        * AxiosHeaders 读不到 Authorization 时绝不能用 !reqToken 兜底，否则任意 401 都会误踢刚登录的人。
+       *
+       * 网页版走 Cookie，压根没有票可比，401 就是会话没了；但要先确认这台机器上
+       * 确实是运营会话，否则玩家态的 401 会把人踢去运营登录页。
        */
-      if (current && reqToken && reqToken === current) {
+      const shouldKick = isNativeApp()
+        ? !!current && !!reqToken && reqToken === current
+        : sessionKind() === 'staff'
+      if (shouldKick) {
         const staff = useStaffStore()
         const kind = staff.loginKind || 'agent'
-        staff.logout()
+        await staff.logout()
         if (!window.location.pathname.startsWith('/staff/login')) {
           window.location.replace(`/staff/login/${kind}`)
         }

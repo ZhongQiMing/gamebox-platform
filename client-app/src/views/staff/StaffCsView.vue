@@ -1,9 +1,9 @@
 <template>
   <div class="screen-deco" aria-hidden="true">
-    <img class="cd cd-tl" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-tr" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-bl" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-br" src="/images/corner-flourish.png" alt="">
+    <img class="cd cd-tl" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-tr" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-bl" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-br" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
   </div>
 
   <div class="page staff-console-page scs-page" :class="{ 'is-chat': !!active }">
@@ -78,7 +78,13 @@
           >
             <div class="scs-bubble">
               <p v-if="msgCaption(m.text)">{{ msgCaption(m.text) }}</p>
-              <img v-if="msgImage(m.text)" class="scs-img" :src="msgImage(m.text)!" alt="">
+              <PrivateMediaImage
+                v-if="msgImage(m.text)"
+                class="scs-img"
+                :src="msgImage(m.text)"
+                session="staff"
+                alt=""
+              />
               <time>{{ fmtClock(m.createdAt) }}</time>
             </div>
           </div>
@@ -222,6 +228,7 @@
 import { computed, nextTick, onActivated, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppModal from '@/components/AppModal.vue'
+import PrivateMediaImage from '@/components/PrivateMediaImage.vue'
 import StaffTabBar from '@/components/StaffTabBar.vue'
 import {
   staffConsoleApi,
@@ -282,6 +289,21 @@ const approveMessage = computed(() => {
 })
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
+let activeGeneration = 0
+
+interface ActiveRequest {
+  playerId: string
+  generation: number
+}
+
+function activeRequest(): ActiveRequest | null {
+  const playerId = active.value?.playerId
+  return playerId ? { playerId, generation: activeGeneration } : null
+}
+
+function isActiveRequest(request: ActiveRequest): boolean {
+  return request.generation === activeGeneration && active.value?.playerId === request.playerId
+}
 
 async function reloadQuickSettings() {
   try {
@@ -323,7 +345,7 @@ function msgCaption(text: string) {
 function msgImage(text: string) {
   const m = String(text || '').match(/\[img\](\S+)/i)
   const u = String(m?.[1] || '').trim()
-  if (/^\/uploads\/[A-Za-z0-9/_.\-]+$/i.test(u) && !u.includes('..')) return u
+  if (/^\/api\/cs\/media\/[A-Za-z0-9_-]{10,64}$/.test(u)) return u
   return ''
 }
 
@@ -394,12 +416,14 @@ function channelLabel(ch?: string | null) {
 }
 
 async function refreshPlayerFundCount() {
-  if (!canReviewFund.value || !active.value?.playerId) {
+  const request = activeRequest()
+  if (!canReviewFund.value || !request) {
     playerFundCount.value = 0
     return
   }
   try {
-    const res = await staffConsoleApi.fundPending(1, active.value.playerId)
+    const res = await staffConsoleApi.fundPending(1, request.playerId)
+    if (!isActiveRequest(request)) return
     playerFundCount.value = Number(res.total || 0)
     if (fundSheetVisible.value) playerFunds.value = res.list || []
   } catch {
@@ -408,18 +432,20 @@ async function refreshPlayerFundCount() {
 }
 
 async function openPlayerFund() {
-  if (!active.value?.playerId) return
+  const request = activeRequest()
+  if (!request) return
   fundSheetVisible.value = true
   rejectVisible.value = false
   fundLoading.value = true
   try {
-    const res = await staffConsoleApi.fundPending(1, active.value.playerId)
+    const res = await staffConsoleApi.fundPending(1, request.playerId)
+    if (!isActiveRequest(request)) return
     playerFunds.value = res.list || []
     playerFundCount.value = Number(res.total || 0)
   } catch (e: unknown) {
-    toast(e instanceof Error ? e.message : '加载失败')
+    if (isActiveRequest(request)) toast(e instanceof Error ? e.message : '加载失败')
   } finally {
-    fundLoading.value = false
+    if (isActiveRequest(request)) fundLoading.value = false
   }
 }
 
@@ -443,20 +469,22 @@ function closeApprove() {
 
 async function doApproveFund() {
   const row = approveTarget.value
-  if (!row || fundBusyId.value) return
+  const request = activeRequest()
+  if (!row || !request || fundBusyId.value) return
   approveVisible.value = false
   fundBusyId.value = row.id
   try {
     await staffConsoleApi.fundApprove(row.id)
+    if (!isActiveRequest(request)) return
     toast('已通过')
     playerFunds.value = playerFunds.value.filter((x) => x.id !== row.id)
     playerFundCount.value = Math.max(0, playerFundCount.value - 1)
     approveTarget.value = null
-    await loadMessages(true)
+    await loadMessages(true, request)
   } catch (e: unknown) {
-    toast(e instanceof Error ? e.message : '操作失败')
+    if (isActiveRequest(request)) toast(e instanceof Error ? e.message : '操作失败')
   } finally {
-    fundBusyId.value = null
+    if (isActiveRequest(request)) fundBusyId.value = null
   }
 }
 
@@ -473,21 +501,23 @@ function closeReject() {
 }
 
 async function doReject() {
-  if (!rejectTarget.value || fundBusyId.value) return
+  const request = activeRequest()
+  if (!rejectTarget.value || !request || fundBusyId.value) return
   const id = rejectTarget.value.id
   fundBusyId.value = id
   try {
     await staffConsoleApi.fundReject(id, rejectReason.value.trim() || '不同意')
+    if (!isActiveRequest(request)) return
     toast('已拒绝')
     rejectVisible.value = false
     rejectTarget.value = null
     playerFunds.value = playerFunds.value.filter((x) => x.id !== id)
     playerFundCount.value = Math.max(0, playerFundCount.value - 1)
-    await loadMessages(true)
+    await loadMessages(true, request)
   } catch (e: unknown) {
-    toast(e instanceof Error ? e.message : '操作失败')
+    if (isActiveRequest(request)) toast(e instanceof Error ? e.message : '操作失败')
   } finally {
-    fundBusyId.value = null
+    if (isActiveRequest(request)) fundBusyId.value = null
   }
 }
 
@@ -499,15 +529,19 @@ async function sendQuick(text: string) {
 }
 
 async function sendPayQr(kind: 'wechat' | 'alipay') {
-  if (!active.value || sending.value) return
+  const request = activeRequest()
+  if (!request || sending.value) return
   let settings = paySettingsCache.value
   try {
     settings = await fetchStaffPaySettings(staff.profile?.id || 'anon')
-    paySettingsCache.value = settings
-    quickReplies.value = settings.quickReplies || []
+    if (isActiveRequest(request)) {
+      paySettingsCache.value = settings
+      quickReplies.value = settings.quickReplies || []
+    }
   } catch {
     settings = settings || loadStaffPaySettings(staff.profile?.id || 'anon')
   }
+  if (!isActiveRequest(request)) return
   const list = kind === 'wechat' ? settings.wechatQrs : settings.alipayQrs
   if (!list.length) {
     toast(kind === 'wechat' ? '请先在收款方式上传微信码' : '请先在收款方式上传支付宝码')
@@ -516,16 +550,18 @@ async function sendPayQr(kind: 'wechat' | 'alipay') {
   }
   const caption = kind === 'wechat' ? '微信收款码' : '支付宝收款码'
   const text = `${caption}\n[img]${list[0].url}`
+  if (!isActiveRequest(request)) return
   sending.value = true
   try {
-    const res = await staffConsoleApi.csReply(active.value.playerId, text)
+    const res = await staffConsoleApi.csReply(request.playerId, text)
+    if (!isActiveRequest(request)) return
     if (res.message) messages.value = [...messages.value, res.message]
-    else await loadMessages(true)
+    else await loadMessages(true, request)
     await scrollBottom()
   } catch (e: unknown) {
-    toast(e instanceof Error ? e.message : '发送失败')
+    if (isActiveRequest(request)) toast(e instanceof Error ? e.message : '发送失败')
   } finally {
-    sending.value = false
+    if (isActiveRequest(request)) sending.value = false
   }
 }
 
@@ -547,56 +583,73 @@ async function loadSessions() {
   }
 }
 
-async function loadMessages(silent = false) {
-  if (!active.value) return
+async function loadMessages(silent = false, fixedRequest?: ActiveRequest) {
+  const request = fixedRequest || activeRequest()
+  if (!request || !isActiveRequest(request)) return
   if (!silent) msgLoading.value = true
   try {
-    const res = await staffConsoleApi.csMessages(active.value.playerId)
+    const res = await staffConsoleApi.csMessages(request.playerId)
+    if (!isActiveRequest(request)) return
     const prevLen = messages.value.length
     messages.value = res.list || []
     if (!silent || messages.value.length !== prevLen) await scrollBottom()
   } catch (e: unknown) {
-    if (!silent) toast(e instanceof Error ? e.message : '加载失败')
+    if (!silent && isActiveRequest(request)) toast(e instanceof Error ? e.message : '加载失败')
   } finally {
-    msgLoading.value = false
+    if (isActiveRequest(request)) msgLoading.value = false
   }
 }
 
 async function openSession(s: StaffCsSession) {
+  activeGeneration += 1
   active.value = s
   messages.value = []
   draft.value = ''
+  sending.value = false
+  msgLoading.value = false
+  fundLoading.value = false
+  fundBusyId.value = null
   playerFunds.value = []
   playerFundCount.value = 0
   fundSheetVisible.value = false
   reloadQuickSettings()
+  const request = activeRequest()
+  if (!request) return
   await router.replace({ name: 'staff-cs', query: { playerId: s.playerId } })
-  await loadMessages()
+  if (!isActiveRequest(request)) return
+  await loadMessages(false, request)
   void refreshPlayerFundCount()
   try {
-    await staffConsoleApi.csRead(s.playerId)
-    s.unread = 0
+    await staffConsoleApi.csRead(request.playerId)
+    if (isActiveRequest(request)) s.unread = 0
   } catch {
     /* ignore */
   }
 }
 
 async function closeSession() {
+  activeGeneration += 1
   active.value = null
   messages.value = []
   playerFunds.value = []
   playerFundCount.value = 0
   fundSheetVisible.value = false
+  sending.value = false
+  msgLoading.value = false
+  fundLoading.value = false
+  fundBusyId.value = null
   await router.replace({ name: 'staff-cs', query: {} })
   await loadSessions()
 }
 
 async function reloadChat() {
-  await loadMessages()
-  if (active.value) {
+  const request = activeRequest()
+  if (!request) return
+  await loadMessages(false, request)
+  if (isActiveRequest(request)) {
     try {
-      await staffConsoleApi.csRead(active.value.playerId)
-      active.value.unread = 0
+      await staffConsoleApi.csRead(request.playerId)
+      if (isActiveRequest(request) && active.value) active.value.unread = 0
     } catch {
       /* ignore */
     }
@@ -604,20 +657,22 @@ async function reloadChat() {
 }
 
 async function send() {
-  if (!active.value || sending.value) return
+  const request = activeRequest()
+  if (!request || sending.value) return
   const text = draft.value.trim()
   if (!text) return
   sending.value = true
   try {
-    const res = await staffConsoleApi.csReply(active.value.playerId, text)
+    const res = await staffConsoleApi.csReply(request.playerId, text)
+    if (!isActiveRequest(request)) return
     draft.value = ''
     if (res.message) messages.value = [...messages.value, res.message]
-    else await loadMessages(true)
+    else await loadMessages(true, request)
     await scrollBottom()
   } catch (e: unknown) {
-    toast(e instanceof Error ? e.message : '发送失败')
+    if (isActiveRequest(request)) toast(e instanceof Error ? e.message : '发送失败')
   } finally {
-    sending.value = false
+    if (isActiveRequest(request)) sending.value = false
   }
 }
 
@@ -639,7 +694,8 @@ async function onImagePicked(ev: Event) {
   const input = ev.target as HTMLInputElement
   const file = input.files?.[0]
   input.value = ''
-  if (!file || !active.value || sending.value) return
+  const request = activeRequest()
+  if (!file || !request || sending.value) return
   if (file.size > 8_000_000) {
     toast('图片请小于 8MB')
     return
@@ -648,14 +704,15 @@ async function onImagePicked(ev: Event) {
   try {
     const dataUrl = await readAsDataUrl(file)
     const up = await staffConsoleApi.csUploadImage(dataUrl)
-    const res = await staffConsoleApi.csReply(active.value.playerId, `[img]${up.url}`)
+    const res = await staffConsoleApi.csReply(request.playerId, `[img]${up.url}`)
+    if (!isActiveRequest(request)) return
     if (res.message) messages.value = [...messages.value, res.message]
-    else await loadMessages(true)
+    else await loadMessages(true, request)
     await scrollBottom()
   } catch (e: unknown) {
-    toast(e instanceof Error ? e.message : '图片发送失败')
+    if (isActiveRequest(request)) toast(e instanceof Error ? e.message : '图片发送失败')
   } finally {
-    sending.value = false
+    if (isActiveRequest(request)) sending.value = false
   }
 }
 

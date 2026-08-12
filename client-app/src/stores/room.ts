@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { roomsApi, type RoomCard } from '@/api/rooms'
+import { publicMediaUrl } from '@/utils/publicMediaUrl'
 
 const STORAGE_KEY = 'gamebox_current_room'
 
@@ -9,7 +10,9 @@ function loadStored(): RoomCard | null {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return null
     const parsed = JSON.parse(raw) as RoomCard
-    if (parsed?.roomNo && parsed?.name) return parsed
+    if (parsed?.roomNo && parsed?.name) {
+      return { ...parsed, icon: publicMediaUrl(parsed.icon) || null }
+    }
   } catch {
     /* ignore */
   }

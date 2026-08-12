@@ -1,4 +1,5 @@
 import http from './http'
+import { publicMediaUrl } from '@/utils/publicMediaUrl'
 
 export interface ActivityItem {
   id: string
@@ -25,6 +26,10 @@ export interface ClaimResult {
 }
 
 export const activityApi = {
-  list: () => http.get<ActivityItem[], ActivityItem[]>('/activities'),
+  list: () => http.get<ActivityItem[], ActivityItem[]>('/activities')
+    .then((items) => items.map((item) => ({
+      ...item,
+      bannerUrl: publicMediaUrl(item.bannerUrl) || undefined,
+    }))),
   claim: (id: string) => http.post<ClaimResult, ClaimResult>(`/activities/${id}/claim`),
 }

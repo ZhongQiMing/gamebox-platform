@@ -1,10 +1,10 @@
 <template>
   <div class="screen-deco" aria-hidden="true">
-    <img class="crown-deco" src="/images/crown-emblem.png" alt="">
-    <img class="cd cd-tl" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-tr" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-bl" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-br" src="/images/corner-flourish.png" alt="">
+    <img class="crown-deco" src="/images/crown-emblem.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-tl" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-tr" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-bl" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-br" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
   </div>
 
   <div class="page welcome-page">
@@ -38,7 +38,7 @@
       <div class="welcome-hero">
         <div class="hero-medal" aria-hidden="true">
           <span class="hero-medal-ring"></span>
-          <img class="hero-medal-img" src="/images/splash-medal.png" alt="">
+          <img class="hero-medal-img" src="/images/splash-medal.webp" alt="">
         </div>
         <h1 class="hero-title" aria-label="金御汇">
           <span>金</span><span>御</span><span>汇</span>
@@ -103,6 +103,7 @@ import { useStaffStore, type StaffLoginKind } from '@/stores/staff'
 import { useUserStore } from '@/stores/user'
 import { useToast } from '@/composables/useToast'
 import { useBodyClass } from '@/composables/useBodyClass'
+import { acceptLoginRole } from '@/utils/loginRoleGuard'
 import '@/assets/welcome.css'
 
 useBodyClass('deco-bg', 'welcome-login')
@@ -111,7 +112,7 @@ const route = useRoute()
 const router = useRouter()
 const staff = useStaffStore()
 const userStore = useUserStore()
-const { toast } = useToast()
+const { toast, error: toastError } = useToast()
 
 const kind = computed<StaffLoginKind>(() =>
   route.name === 'staff-login-branch' ? 'branch' : 'agent',
@@ -152,18 +153,20 @@ watch(kind, () => {
   restoreRemember()
 })
 
-function goBack() {
+async function goBack() {
   // 固定回玩家登录，不用 history.back（否则会在房主/代理登录之间来回串）
   menuOpen.value = false
-  if (staff.isLoggedIn) staff.logout()
-  userStore.clearLocal()
-  router.replace({ name: 'login' })
+  const writes = [userStore.clearLocal()]
+  if (staff.isLoggedIn) writes.push(staff.logout())
+  await Promise.all(writes)
+  await router.replace({ name: 'login' })
 }
-function goPlayerLogin() {
+async function goPlayerLogin() {
   menuOpen.value = false
-  if (staff.isLoggedIn) staff.logout()
-  userStore.clearLocal()
-  router.replace({ name: 'login' })
+  const writes = [userStore.clearLocal()]
+  if (staff.isLoggedIn) writes.push(staff.logout())
+  await Promise.all(writes)
+  await router.replace({ name: 'login' })
 }
 function goOtherLogin() {
   menuOpen.value = false
@@ -174,11 +177,11 @@ function goOtherLogin() {
 
 async function doLogin() {
   if (!account.value.trim()) {
-    toast(kind.value === 'branch' ? '请输入房主账号' : '请输入账号')
+    toastError(kind.value === 'branch' ? '请输入房主账号' : '请输入账号')
     return
   }
   if (!password.value) {
-    toast('请输入密码')
+    toastError('请输入密码')
     return
   }
   loading.value = true
@@ -188,17 +191,15 @@ async function doLogin() {
       password: password.value,
     })
     const role = res.user.role
-    if (kind.value === 'branch') {
-      // 房主入口：房主 + 超管（电脑控制台同权，手机可进工作台）
-      if (role !== 'BRANCH' && role !== 'ADMIN') {
-        // 服务端登录已成功并下发了 Cookie，入口不对也要清掉，否则下一次会被 CSRF 卡住
-        void authApi.logout().catch(() => undefined)
-        toast('账号不存在')
-        return
-      }
-    } else if (role !== 'AGENT' && role !== 'PROXY' && role !== 'CS') {
-      void authApi.logout().catch(() => undefined)
-      toast('账号不存在')
+    const accepted = await acceptLoginRole(
+      role,
+      kind.value === 'branch'
+        ? (candidate) => candidate === 'BRANCH' || candidate === 'ADMIN'
+        : (candidate) => candidate === 'AGENT' || candidate === 'PROXY' || candidate === 'CS',
+      authApi.logout,
+    )
+    if (!accepted) {
+      toastError('账号不存在')
       return
     }
     // 只清本地玩家态：勿调 userStore.logout()/auth logout，否则会拆掉刚登录下发的 Cookie，
@@ -217,7 +218,7 @@ async function doLogin() {
     toast(`欢迎 ${res.user.nickname}`)
     await router.replace({ name: staff.homeRouteName() })
   } catch (e: unknown) {
-    toast(e instanceof Error ? e.message : '登录失败')
+    toastError(e instanceof Error ? e.message : '登录失败')
   } finally {
     loading.value = false
   }

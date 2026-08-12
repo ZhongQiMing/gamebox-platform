@@ -1,9 +1,9 @@
 <template>
   <div class="screen-deco" aria-hidden="true">
-    <img class="cd cd-tl" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-tr" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-bl" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-br" src="/images/corner-flourish.png" alt="">
+    <img class="cd cd-tl" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-tr" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-bl" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-br" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
   </div>
 
   <div class="page settings-page">
@@ -213,7 +213,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, reactive, onMounted } from 'vue'
+import { ref, computed, reactive, onActivated, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { useWalletStore } from '@/stores/wallet'
@@ -333,14 +333,26 @@ function openLogout() {
   showLogoutModal.value = true
 }
 
-function confirmLogout() {
+async function confirmLogout() {
   showLogoutModal.value = false
-  userStore.logout()
+  await userStore.logout()
   window.location.replace('/login')
 }
 
 onMounted(() => {
   hidden.value = localStorage.getItem(WALLET_STORE.value) === '1'
+  void walletStore.fetchBalance()
+  void loadWalletStats()
+})
+
+/* 页面被 keep-alive 缓存，重新进入不会走 onMounted，余额与统计得在这里补。
+   首次挂载时 onActivated 紧跟 onMounted，跳过一次否则每次首进都双发请求。 */
+let skipFirstActivate = true
+onActivated(() => {
+  if (skipFirstActivate) {
+    skipFirstActivate = false
+    return
+  }
   void walletStore.fetchBalance()
   void loadWalletStats()
 })

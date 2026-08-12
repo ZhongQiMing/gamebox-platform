@@ -292,8 +292,9 @@ router.beforeEach(async (to) => {
       return { name: staffHome }
     }
     if (isGamePath && play) {
-      // 挂上玩家会话壳（刷新后）
-      if (!userStore.isLoggedIn && staffStore.profile && staffStore.token) {
+      // 挂上玩家会话壳（刷新后）。网页版凭证在 Cookie 里，staffStore.token 恒为空，
+      // 判它会让代理永远进不去游戏——有 profile 就说明运营会话是活的。
+      if (!userStore.isLoggedIn && staffStore.profile) {
         userStore.attachStaffPlay(staffStore.profile, staffStore.token)
       }
       return true

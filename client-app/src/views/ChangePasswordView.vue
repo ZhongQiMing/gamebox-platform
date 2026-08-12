@@ -1,9 +1,9 @@
 <template>
   <div class="screen-deco" aria-hidden="true">
-    <img class="cd cd-tl" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-tr" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-bl" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-br" src="/images/corner-flourish.png" alt="">
+    <img class="cd cd-tl" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-tr" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-bl" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-br" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
   </div>
 
   <div class="page password-page">
@@ -178,9 +178,9 @@ async function doSubmit() {
       newPassword: newPwd.value,
     })
     toast('密码已修改，请重新登录')
-    setTimeout(() => {
-      userStore.logout()
-      router.push('/login')
+    setTimeout(async () => {
+      await userStore.logout()
+      await router.push('/login')
     }, 1200)
   } catch (e: unknown) {
     toast((e as Error).message ?? '修改失败')

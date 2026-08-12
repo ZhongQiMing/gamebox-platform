@@ -1,4 +1,5 @@
 import staffHttp from './staffHttp'
+import { publicMediaUrl } from '@/utils/publicMediaUrl'
 
 export interface StaffWalletMe {
   ownerType: string
@@ -313,12 +314,18 @@ export interface StaffReportByRoomRow {
   agentNickname?: string | null
 }
 
+function withPublicRoomIcon<T extends { icon?: string | null }>(room: T): T {
+  return { ...room, icon: publicMediaUrl(room.icon) || null }
+}
+
 export const staffConsoleApi = {
   walletMe: () => staffHttp.get<StaffWalletMe, StaffWalletMe>('/console/wallet/me'),
 
-  rooms: () => staffHttp.get<StaffRoom[], StaffRoom[]>('/console/rooms'),
+  rooms: () => staffHttp.get<StaffRoom[], StaffRoom[]>('/console/rooms')
+    .then((rooms) => rooms.map(withPublicRoomIcon)),
 
-  room: (id: string) => staffHttp.get<StaffRoomDetail, StaffRoomDetail>(`/console/rooms/${id}`),
+  room: (id: string) => staffHttp.get<StaffRoomDetail, StaffRoomDetail>(`/console/rooms/${id}`)
+    .then(withPublicRoomIcon),
 
   /** 上传房间图标（管理/房主/代理）；data URL */
   uploadRoomIcon: (roomId: string, image: string) =>
@@ -326,7 +333,7 @@ export const staffConsoleApi = {
       `/console/rooms/${roomId}/icon`,
       { image },
       { timeout: 30000 },
-    ),
+    ).then((result) => ({ ...result, icon: publicMediaUrl(result.icon) })),
 
   setRoomStatus: (roomId: string, status: string) =>
     staffHttp.patch(`/console/rooms/${roomId}/status`, { status }),
@@ -482,7 +489,14 @@ export const staffConsoleApi = {
     staffHttp.patch<{ ok?: boolean }, { ok?: boolean }>(`/recharge/${id}/reject`, { reason }),
 
   csSessions: () =>
-    staffHttp.get<{ list: StaffCsSession[] }, { list: StaffCsSession[] }>('/console/cs/sessions'),
+    staffHttp.get<{ list: StaffCsSession[] }, { list: StaffCsSession[] }>('/console/cs/sessions')
+      .then((result) => ({
+        ...result,
+        list: (result.list || []).map((session) => ({
+          ...session,
+          avatar: publicMediaUrl(session.avatar) || null,
+        })),
+      })),
 
   csMessages: (playerId: string, limit = 100) =>
     staffHttp.get<{ list: StaffCsMessage[] }, { list: StaffCsMessage[] }>(

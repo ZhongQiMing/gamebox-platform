@@ -7,6 +7,8 @@ interface ImportMetaEnv {
   readonly VITE_SLIM_APP?: string
   /** 后端域名。网页版留空走同域相对路径；APK 必填，否则请求会打到手机自己身上 */
   readonly VITE_API_ORIGIN?: string
+  /** 独立 H5 游戏 Origin。生产 Web 必填；Native 未填时沿用 VITE_ASSET_ORIGIN */
+  readonly VITE_GAME_ORIGIN?: string
 }
 
 interface ImportMeta {

@@ -1,9 +1,9 @@
 <template>
   <div class="screen-deco" aria-hidden="true">
-    <img class="cd cd-tl" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-tr" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-bl" src="/images/corner-flourish.png" alt="">
-    <img class="cd cd-br" src="/images/corner-flourish.png" alt="">
+    <img class="cd cd-tl" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-tr" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-bl" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
+    <img class="cd cd-br" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
   </div>
 
   <div class="page close-page">
@@ -136,8 +136,8 @@ async function doClose() {
   try {
     const res = await userApi.closeAccount(password.value)
     toast(`账号已注销，注销单号 ${res.orderNo}`)
-    userStore.logout()
-    router.replace('/login')
+    await userStore.logout()
+    await router.replace('/login')
   } catch (err: any) {
     toast(err?.message || '注销失败')
     /* 可能是这期间又产生了新的待处理事项，重新拉一次让玩家看到原因 */

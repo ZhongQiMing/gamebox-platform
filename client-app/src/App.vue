@@ -5,9 +5,11 @@
         <!--
           keep-alive 子节点不能用 v-if 掏空：进注单时若 slot 变空，缓存会被拆掉，
           iframe 重载后开奖只剩「开奖中」、没有发牌翻牌。
-          include 只缓存 AssetsGameView；其它页照常挂载、不进缓存。
+          底部 Tab 五页一并缓存：每次切换重建要重跑一遍 onMounted 的接口，
+          大厅那次是 19 个并发请求，弱网下就是几秒白屏。
+          这些页的轮询已改用 useActiveInterval / onDeactivated，挂起时不会继续打接口。
         -->
-        <keep-alive include="AssetsGameView" :max="6">
+        <keep-alive :include="KEEP_ALIVE_VIEWS" :max="10">
           <component
             :is="Component"
             :key="route.meta.assetGame ? 'game-' + String(route.meta.assetGame) : route.fullPath"
@@ -35,6 +37,16 @@ import AppToast from '@/components/AppToast.vue'
 import AppErrorBoundary from '@/components/AppErrorBoundary.vue'
 import PrivacyConsentDialog from '@/components/PrivacyConsentDialog.vue'
 import { useToast } from '@/composables/useToast'
+
+/* 组件名由 <script setup> 从文件名推导，改名会让缓存静默失效 */
+const KEEP_ALIVE_VIEWS = [
+  'AssetsGameView',
+  'GameLobbyView',
+  'RechargeView',
+  'BetRecordsView',
+  'CsView',
+  'ProfileView',
+]
 
 const boundaryRef = ref<InstanceType<typeof AppErrorBoundary> | null>(null)
 const router = useRouter()
