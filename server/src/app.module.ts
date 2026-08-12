@@ -18,6 +18,7 @@ import { AgentsModule } from './modules/agents/agents.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { LotteryModule } from './modules/lottery/lottery.module';
 import { TableModule } from './modules/table/table.module';
+import { LobbyModule } from './modules/lobby/lobby.module';
 import { ActivityModule } from './modules/activity/activity.module';
 import { HealthModule } from './modules/health/health.module';
 import { FundReconModule } from './modules/fund-recon/fund-recon.module';
@@ -72,6 +73,7 @@ import { ConsoleModule } from './modules/console/console.module';
     ConsoleModule,
     LotteryModule,
     TableModule,
+    LobbyModule,
     ActivityModule,
     RiskModule,
     RoomsModule,

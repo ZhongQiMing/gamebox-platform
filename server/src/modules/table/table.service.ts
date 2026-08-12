@@ -51,6 +51,7 @@ import {
   tableOutcomesMatch,
 } from './table-rules';
 import {
+  equivalentBetSides,
   oppositeHedgeSides,
   sideExposure,
   TABLE_RISK,
@@ -908,6 +909,54 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
+  /**
+   * 首注并发建局：ON CONFLICT 不会让事务进入 aborted 状态，随后可在同一事务继续锁行和下注。
+   */
+  private async ensurePlayingRoundInTx(
+    tx: Prisma.TransactionClient,
+    room: { roundNo: string; gameId: string; serverSeedHash: string },
+  ): Promise<string> {
+    const inserted = await tx.$queryRaw<{ id: string; state: string }[]>`
+      INSERT INTO "GameRound"
+        ("id", "roundNo", "gameId", "category", "state", "serverSeedHash", "nonce")
+      VALUES
+        (${randomUUID()}, ${room.roundNo}, ${room.gameId}, 'TABLE'::"GameCategory",
+         'PLAYING', ${room.serverSeedHash}, 0)
+      ON CONFLICT ("roundNo") DO NOTHING
+      RETURNING "id", "state"
+    `;
+    const currentRound =
+      inserted[0] ??
+      (await tx.gameRound.findUnique({
+        where: { roundNo: room.roundNo },
+        select: { id: true, state: true },
+      }));
+    if (!currentRound || currentRound.state !== 'PLAYING') {
+      throw new BadRequestException('本局已封盘');
+    }
+    return currentRound.id;
+  }
+
+  /** 同一逻辑供平台全局与玩家单边累计复用；龙虎大小写 alias 视为同方向。 */
+  private async pendingSideExposureInTx(
+    tx: Prisma.TransactionClient,
+    gameCode: string,
+    roundId: string,
+    side: string,
+    playerId?: string,
+  ): Promise<number> {
+    const aggregate = await tx.bet.aggregate({
+      where: {
+        roundId,
+        ...(playerId ? { playerId } : {}),
+        status: 'PENDING',
+        betType: { in: equivalentBetSides(gameCode, side) },
+      },
+      _sum: { amount: true },
+    });
+    return asMoney(aggregate._sum.amount || 0);
+  }
+
   /** 玩家下注：挂单扣分，封盘后整局结算 */
   async placeBet(playerId: string, payload: TableBetPayload) {
     const side = String(payload.side || '');
@@ -1010,35 +1059,7 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
       await this.prisma.$transaction(async (tx) => {
         /* 1) 先落/锁住本局，再做对冲与单边上限（避免首注竞态绕过） */
         if (!roundId) {
-          try {
-            const created = await tx.gameRound.create({
-              data: {
-                roundNo: room.roundNo,
-                gameId: room.gameId,
-                category: 'TABLE',
-                state: 'PLAYING',
-                serverSeedHash: room.serverSeedHash,
-                /* 开奖 nonce 封盘时再定（控奖可在候选中挑选），此处占位 */
-                nonce: 0,
-              },
-            });
-            roundId = created.id;
-          } catch (err) {
-            if (
-              !(err instanceof Prisma.PrismaClientKnownRequestError) ||
-              err.code !== 'P2002'
-            ) {
-              throw err;
-            }
-            const existingRound = await tx.gameRound.findUnique({
-              where: { roundNo: room.roundNo },
-              select: { id: true, state: true },
-            });
-            if (!existingRound || existingRound.state !== 'PLAYING') {
-              throw new BadRequestException('本局已封盘');
-            }
-            roundId = existingRound.id;
-          }
+          roundId = await this.ensurePlayingRoundInTx(tx, room);
         }
 
         await tx.$queryRaw`SELECT id FROM "GameRound" WHERE id = ${roundId} FOR UPDATE`;
@@ -1049,6 +1070,21 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
         });
         if (!live || live.state !== 'PLAYING') {
           throw new BadRequestException('本局已封盘');
+        }
+
+        /* GameRound 行锁串行同局下注；DB 聚合才是平台单边暴露的权威判断。 */
+        const platformSideTotal = await this.pendingSideExposureInTx(
+          tx,
+          room.gameCode,
+          roundId!,
+          side,
+        );
+        const nextPlatformSide = platformSideTotal + amount;
+        if (nextPlatformSide > TABLE_RISK.maxPlatformSideExposure) {
+          this.logger.warn(
+            `平台暴露超限(DB) game=${room.gameCode} side=${side} next=${nextPlatformSide}`,
+          );
+          throw new BadRequestException('该方向投注已满，请稍后再试');
         }
 
         if (oppSides.length) {
@@ -1071,16 +1107,14 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
           }
         }
 
-        const userSideAgg = await tx.bet.aggregate({
-          where: {
-            roundId: roundId!,
-            playerId,
-            status: 'PENDING',
-            betType: side,
-          },
-          _sum: { amount: true },
-        });
-        const nextUserSide = asMoney(userSideAgg._sum.amount || 0) + amount;
+        const userSideTotal = await this.pendingSideExposureInTx(
+          tx,
+          room.gameCode,
+          roundId!,
+          side,
+          playerId,
+        );
+        const nextUserSide = userSideTotal + amount;
         const userCap = Math.min(sideCap, TABLE_RISK.maxUserSidePerRound);
         if (nextUserSide > userCap) {
           throw new BadRequestException(`该方向本局累计不可超过 ${userCap}`);

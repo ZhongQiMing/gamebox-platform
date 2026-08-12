@@ -7,11 +7,6 @@ import {
   PlatformEmergencyService,
 } from './platform-emergency.service';
 
-/** 唯一键冲突（幂等键并发撞车） */
-function isUniqueConflict(e: unknown): boolean {
-  return (e as { code?: string })?.code === 'P2002';
-}
-
 export type OwnerType = 'PLATFORM' | 'BRANCH' | 'AGENT' | 'PROXY' | 'CS' | 'PLAYER' | 'ROOM';
 export type BizType =
   | 'RECHARGE'
@@ -136,6 +131,17 @@ export class PointsService {
   }
 
   /**
+   * PostgreSQL 事务级 advisory lock 把同一幂等键串行化。
+   * 必须在任何余额变动前加锁，避免先改余额、写流水撞 P2002 后再在 aborted tx 中重读。
+   */
+  private async lockIdempotencyKeyInTx(tx: Prisma.TransactionClient, key?: string) {
+    if (!key) return;
+    await tx.$queryRaw<{ locked: string }[]>`
+      SELECT pg_advisory_xact_lock(hashtextextended(${`points:${key}`}, 0))::text AS locked
+    `;
+  }
+
+  /**
    * 多账户同事务时先按 (ownerId, roomId) 排序加行锁，再改余额。
    */
   async lockOwnersInTx(
@@ -240,6 +246,7 @@ export class PointsService {
   ) {
     amount = roundMoney(amount);
     if (opts.idempotencyKey) {
+      await this.lockIdempotencyKeyInTx(tx, opts.idempotencyKey);
       const existed = await tx.pointsLedger.findUnique({
         where: { idempotencyKey: opts.idempotencyKey },
       });
@@ -291,35 +298,19 @@ export class PointsService {
     }
     const newBalance = asMoney(rows[0].balance);
 
-    try {
-      return await tx.pointsLedger.create({
-        data: {
-          accountId: account.id,
-          bizType: bizType as never,
-          amount: amountSql,
-          balanceAfter: new Prisma.Decimal(newBalance.toFixed(2)),
-          refType: opts.refType,
-          refId: opts.refId,
-          remark: opts.remark,
-          operatorId: opts.operatorId,
-          idempotencyKey: opts.idempotencyKey,
-        },
-      });
-    } catch (e) {
-      /*
-       * 两个请求同时越过上面那次 findUnique 时，后一个会撞唯一键。
-       * 唯一键本身保证了不会重复加钱，但如果把 P2002 抛出去，
-       * 整个外层事务（结算/分润可能已经写了别的行）会一起回滚——
-       * 明明幂等生效了，结果表现成一次失败。这里按 key 重读返回既有那条。
-       */
-      if (isUniqueConflict(e) && opts.idempotencyKey) {
-        const existed = await tx.pointsLedger.findUnique({
-          where: { idempotencyKey: opts.idempotencyKey },
-        });
-        if (existed) return existed;
-      }
-      throw e;
-    }
+    return tx.pointsLedger.create({
+      data: {
+        accountId: account.id,
+        bizType: bizType as never,
+        amount: amountSql,
+        balanceAfter: new Prisma.Decimal(newBalance.toFixed(2)),
+        refType: opts.refType,
+        refId: opts.refId,
+        remark: opts.remark,
+        operatorId: opts.operatorId,
+        idempotencyKey: opts.idempotencyKey,
+      },
+    });
   }
 
   /** 标准转账：A 扣，B 加，同事务两条流水（加锁顺序与 transferInTx 一致） */
@@ -366,6 +357,7 @@ export class PointsService {
     if (amount <= 0) throw new BadRequestException('冻结金额必须 > 0');
     const roomId = resolveAccountRoomId('PLAYER', opts.roomId);
     if (opts.idempotencyKey) {
+      await this.lockIdempotencyKeyInTx(tx, opts.idempotencyKey);
       const existed = await tx.pointsLedger.findUnique({
         where: { idempotencyKey: opts.idempotencyKey },
       });
@@ -416,6 +408,7 @@ export class PointsService {
     if (amount <= 0) throw new BadRequestException('解冻金额必须 > 0');
     const roomId = resolveAccountRoomId('PLAYER', opts.roomId);
     if (opts.idempotencyKey) {
+      await this.lockIdempotencyKeyInTx(tx, opts.idempotencyKey);
       const existed = await tx.pointsLedger.findUnique({
         where: { idempotencyKey: opts.idempotencyKey },
       });

@@ -57,6 +57,22 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     return n;
   }
 
+  /**
+   * 固定窗口计数：INCR 与首次 EXPIRE 在同一段 Lua 内完成，避免并发首请求留下无 TTL key。
+   * 返回当前计数，由调用方决定是否超过上限。
+   */
+  async consumeFixedWindow(key: string, ttlSec: number): Promise<number> {
+    const script = `
+      local n = redis.call("INCR", KEYS[1])
+      if n == 1 and tonumber(ARGV[1]) > 0 then
+        redis.call("EXPIRE", KEYS[1], ARGV[1])
+      end
+      return n
+    `;
+    const res = await this.client.eval(script, 1, key, String(ttlSec));
+    return Number(res);
+  }
+
   async publish(channel: string, message: string): Promise<void> {
     await this.client.publish(channel, message);
   }

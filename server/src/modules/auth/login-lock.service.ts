@@ -1,13 +1,16 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 
 const FAIL_LIMIT = 10;
-/** 同 IP 试密窗口（仅限流，不单独冻账号） */
-const IP_FAIL_WINDOW_SEC = 15 * 60;
+const FAIL_WINDOW_SEC = 15 * 60;
 
-function userFailKey(username: string) {
+/** 旧版本永久计数 key，仅用于成功登录/人工解冻时顺手清理 */
+function legacyUserFailKey(username: string) {
   return `login:fail:user:${username.toLowerCase()}`;
+}
+function pairFailKey(username: string, ip: string | null) {
+  return `login:fail:pair:${username.toLowerCase()}:${ip || 'unknown'}`;
 }
 function ipFailKey(ip: string) {
   return `login:fail:ip:${ip}`;
@@ -15,6 +18,8 @@ function ipFailKey(ip: string) {
 
 @Injectable()
 export class LoginLockService {
+  private readonly logger = new Logger(LoginLockService.name);
+
   constructor(
     private prisma: PrismaService,
     private redis: RedisService,
@@ -25,53 +30,58 @@ export class LoginLockService {
   }
 
   async clearFailCounters(username: string, ip?: string | null) {
-    const keys = [userFailKey(username)];
-    if (ip) keys.push(ipFailKey(ip));
-    await this.redis.del(...keys);
+    const normalizedIp = (ip || '').trim() || null;
+    const keys = [
+      legacyUserFailKey(username),
+      pairFailKey(username, normalizedIp),
+    ];
+    try {
+      /*
+       * 不清整个 IP 计数：否则攻击者只要拿一个正确账号登录，就能重置同 IP 的撞库额度。
+       * IP key 自行在 15 分钟后过期。
+       */
+      await this.redis.del(...keys);
+    } catch (error) {
+      this.logger.warn(`清理登录失败计数失败：${(error as Error).message}`);
+    }
   }
 
   /**
-   * 记录一次失败：
-   * - 同账号连续错满 10 次 → 写库冻结（须房主/管理员重置密码解冻）；计数成功登录或解冻才清
-   * - 同 IP 15 分钟内 ≥10 次 → 仅拒绝继续试，不冻别人账号
+   * 记录一次失败。只写 15 分钟 Redis 窗口，不写 loginLockedAt、不吊销 tokenVersion：
+   * - 账号+IP：让同一来源反复猜同一账号进入退避
+   * - IP：限制同一来源轮换用户名撞库
+   *
+   * 正确密码仍由 AuthService 先验证并放行，因此攻击者不能靠这些计数锁住别人的账号。
    */
   async recordFailure(opts: {
     username: string;
-    userId?: string | null;
     ip?: string | null;
-  }): Promise<{ locked: boolean; blocked: boolean }> {
+  }): Promise<{ blocked: boolean; pairBlocked: boolean; ipBlocked: boolean }> {
     const username = opts.username.toLowerCase();
     const ip = (opts.ip || '').trim() || null;
 
-    /* 账号连续失败：不设短 TTL，成功登录/解冻才清零。
-       账号不存在时不建 key，否则乱试用户名会在 Redis 堆出永不过期的垃圾键 */
-    const userCount = opts.userId
-      ? await this.redis.incrWithExpire(userFailKey(username), 0)
-      : 0;
-    let ipCount = 0;
-    if (ip) {
-      ipCount = await this.redis.incrWithExpire(ipFailKey(ip), IP_FAIL_WINDOW_SEC);
+    try {
+      const [pairCount, ipCount] = await Promise.all([
+        this.redis.consumeFixedWindow(pairFailKey(username, ip), FAIL_WINDOW_SEC),
+        ip
+          ? this.redis.consumeFixedWindow(ipFailKey(ip), FAIL_WINDOW_SEC)
+          : Promise.resolve(0),
+      ]);
+      const pairBlocked = pairCount >= FAIL_LIMIT;
+      const ipBlocked = ipCount >= FAIL_LIMIT;
+      return {
+        blocked: pairBlocked || ipBlocked,
+        pairBlocked,
+        ipBlocked,
+      };
+    } catch (error) {
+      /*
+       * Redis 故障时由控制器/Nginx IP 限流继续兜底；绝不能退回数据库永久冻号。
+       * 登录失败本身仍返回 401，不会因为配额故障放行错误密码。
+       */
+      this.logger.warn(`记录登录失败计数失败：${(error as Error).message}`);
+      return { blocked: false, pairBlocked: false, ipBlocked: false };
     }
-
-    const userHit = userCount >= FAIL_LIMIT;
-    const ipHit = ipCount >= FAIL_LIMIT;
-
-    if (userHit && opts.userId) {
-      await this.prisma.user.update({
-        where: { id: opts.userId },
-        data: {
-          loginLockedAt: new Date(),
-          tokenVersion: { increment: 1 },
-        },
-      });
-      await this.clearFailCounters(username, ip);
-      return { locked: true, blocked: true };
-    }
-
-    if (userHit || ipHit) {
-      return { locked: false, blocked: true };
-    }
-    return { locked: false, blocked: false };
   }
 
   /** 重置密码后解冻并清计数（仅房主/管理员调用路径） */

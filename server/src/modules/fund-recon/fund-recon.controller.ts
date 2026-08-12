@@ -1,6 +1,7 @@
-import { Body, Controller, Get, HttpStatus, Post, Res } from '@nestjs/common';
+import { Body, Controller, ForbiddenException, Get, HttpStatus, Post, Req, Res } from '@nestjs/common';
 import { SkipThrottle } from '@nestjs/throttler';
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { IsString, Length } from 'class-validator';
 import { Public } from '../../common/decorators/public.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -23,12 +24,22 @@ class FixDto {
   adminPassword!: string;
 }
 
+/** 定长摘要后再比，避免按字符提前返回泄露前缀，也免去长度不等的报错 */
+function tokenMatches(provided: string, expected: string): boolean {
+  const a = createHash('sha256').update(provided).digest();
+  const b = createHash('sha256').update(expected).digest();
+  return timingSafeEqual(a, b);
+}
+
 /**
- * 对账探活：给宝塔的 health-alert.mjs 用，配置里把 HEALTH_URL 指到这里即可复用
+ * 对账探活：给宿主机的 health-alert.mjs 用，配置里把 HEALTH_URL 指到这里即可复用
  * 现成的 Telegram 告警，服务端不必再配一份 Bot Token。
  *
- * 只念定时任务算好的缓存、不查库，所以公开也不怕刷。刻意与 /api/health 分开：
+ * 只念定时任务算好的缓存、不查库，所以不怕刷。刻意与 /api/health 分开：
  * 那个被容器存活探针盯着，一返回 503 容器就重启，而账对不上重启一万次也还是不对。
+ *
+ * 不走 JWT（探活脚本没有账号），改用共享密钥头：响应里带着差额金额与对不上的科目，
+ * 这是账务健康度，不该谁都能拉。密钥由 deploy-on-server.sh 生成并同步给探活脚本。
  */
 @Controller('health')
 export class ReconHealthController {
@@ -37,7 +48,18 @@ export class ReconHealthController {
   @Public()
   @SkipThrottle()
   @Get('reconcile')
-  check(@Res({ passthrough: true }) res: Response) {
+  check(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    const expected = String(process.env.RECON_HEALTH_TOKEN ?? '').trim();
+    if (expected) {
+      const got = String(req.headers['x-recon-token'] ?? '');
+      if (!got || !tokenMatches(got, expected)) {
+        throw new ForbiddenException('对账探活需要 X-Recon-Token');
+      }
+    } else if ((process.env.NODE_ENV ?? 'development') === 'production') {
+      /* 生产没配密钥就别裸奔：宁可探活报错被发现，也不要默默公开账务差额 */
+      throw new ForbiddenException('未配置 RECON_HEALTH_TOKEN，对账探活已关闭');
+    }
+
     const last = this.svc.getLast();
     if (!last) {
       /* 进程刚起还没到 05:00，没有结论可报，不算异常 */

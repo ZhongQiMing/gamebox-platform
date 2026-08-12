@@ -60,7 +60,11 @@ export class PlatformEmergencyService {
     if (codes.length) {
       await this.prisma.game.updateMany({
         where: { id: { in: online.map((g) => g.id) } },
-        data: { status: 'MAINTENANCE' },
+        data: {
+          status: 'MAINTENANCE',
+          maintenanceSource: 'EMERGENCY',
+          maintenanceBatchId: null,
+        },
       });
       this.configCache.invalidateAll();
     }

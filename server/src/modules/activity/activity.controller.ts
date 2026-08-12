@@ -1,6 +1,7 @@
 import { Controller, Get, Post, Param } from '@nestjs/common';
 import { ActivityService } from './activity.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { Roles } from '../../common/decorators/roles.decorator';
 
 @Controller('activities')
 export class ActivityController {
@@ -12,7 +13,8 @@ export class ActivityController {
     return this.activityService.listForPlayer(u.id);
   }
 
-  /** POST /api/activities/:id/claim — 领取活动奖励 */
+  /** POST /api/activities/:id/claim — 领取活动奖励（奖励进玩家账户，运营账号不该走这条） */
+  @Roles('PLAYER')
   @Post(':id/claim')
   claim(@CurrentUser() u: { id: string }, @Param('id') id: string) {
     return this.activityService.claimActivity(u.id, id);

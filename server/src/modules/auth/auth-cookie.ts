@@ -2,15 +2,16 @@ import { randomBytes } from 'node:crypto';
 import type { Request, Response } from 'express';
 
 /**
- * 管理后台的会话 Cookie。
+ * 浏览器端的会话 Cookie（管理后台、玩家网页版、手机运营端网页都走它）。
  *
- * 为什么后台用 Cookie、App 继续用 Bearer：
- * 后台是浏览器里的网页，跟接口同域，Cookie 能设成 HttpOnly——JS 读不到，
- * 就算哪天出了 XSS 也偷不走管理员身份。而 App 的页面是从安装包本地加载的，
+ * 为什么浏览器用 Cookie、App 继续用 Bearer：
+ * 浏览器里的页面跟接口同域，Cookie 能设成 HttpOnly——JS 读不到，
+ * 就算哪天出了 XSS 也偷不走身份。而 App 的页面是从安装包本地加载的，
  * 来源是 capacitor://localhost，跟接口天然跨站，iOS 的 WKWebView 又对
  * 跨站 Cookie 卡得很死，硬上会变成「安卓能用、iOS 登不上」。
  *
  * 两条路并存：JWT 校验先看 Authorization 头，没有再看 Cookie。
+ * 客户端选哪条见 client-app/src/api/session.ts。
  */
 export const AUTH_COOKIE = 'gb_session';
 

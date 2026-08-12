@@ -65,18 +65,17 @@ describe('幂等键', () => {
     const accountId = await seedPlayerBalance(prisma, playerId, ROOM, 0);
     const key = `test:idem-race:${playerId}`;
 
-    /* 并发下没抢到唯一键的事务会整笔回滚，失败是预期内的，只看最终账 */
-    await runConcurrently(20, () =>
-      prisma
-        .$transaction((tx) =>
-          points.creditInTx(tx, 'PLAYER', playerId, 50, 'WIN', {
-            roomId: ROOM,
-            idempotencyKey: key,
-          }),
-        )
-        .catch(() => null),
+    /* 同键先拿事务级 advisory lock；所有调用都应成功重放，不能靠 P2002 失败兜底。 */
+    const concurrent = await runConcurrently(20, () =>
+      prisma.$transaction((tx) =>
+        points.creditInTx(tx, 'PLAYER', playerId, 50, 'WIN', {
+          roomId: ROOM,
+          idempotencyKey: key,
+        }),
+      ),
     );
 
+    expect(concurrent).toMatchObject({ ok: 20, failed: 0, errors: [] });
     expect(await readBalance(prisma, 'PLAYER', playerId, ROOM)).toBe(50);
     expect(await prisma.pointsLedger.count({ where: { idempotencyKey: key } })).toBe(1);
     expect(await ledgerSum(prisma, accountId)).toBe(50);

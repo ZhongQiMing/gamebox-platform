@@ -9,6 +9,7 @@
  */
 import { BadRequestException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
+import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { GameConfigCache } from '../game-core/game-config.cache';
@@ -153,65 +154,77 @@ export class GameOpsScheduler implements OnModuleInit {
 
   async reconcileMaintenanceWindow() {
     if (this.inMaintWindow()) {
-      const raw = await this.redis.get(REDIS_MAINT_CODES);
-      if (!raw) {
-        this.logger.warn('boot reconcile: inside maint window without Redis marker → enter');
+      const batch = await this.resolveAutoMaintBatch();
+      const online = await this.prisma.game.findMany({
+        where: { status: 'ONLINE' },
+        select: { id: true, code: true },
+      });
+      if (!batch) {
+        this.logger.warn('boot reconcile: inside maint window without valid AUTO batch → enter');
         await this.enterDailyMaintenance();
+      } else if (online.length) {
+        /*
+         * Redis marker 不能证明库状态完整。重启期间仍 ONLINE 的游戏并入数据库权威批次；
+         * 查询只选 ONLINE，因此不会触碰 MANUAL / EMERGENCY 维护。
+         */
+        await this.prisma.game.updateMany({
+          where: { id: { in: online.map((game) => game.id) }, status: 'ONLINE' },
+          data: {
+            status: 'MAINTENANCE',
+            maintenanceSource: 'AUTO',
+            maintenanceBatchId: batch.batchId,
+          },
+        });
+        const codes = [...new Set([...batch.codes, ...online.map((game) => game.code)])];
+        await this.redis
+          .set(
+            REDIS_MAINT_CODES,
+            JSON.stringify({ batchId: batch.batchId, codes }),
+            26 * 3600,
+          )
+          .catch((e: Error) => this.logger.warn(`refresh maint marker: ${e.message}`));
+        this.configCache.invalidateAll();
+        this.logger.warn(
+          `boot reconcile: joined ${online.length} ONLINE games into AUTO batch ${batch.batchId}`,
+        );
       }
       return;
     }
-    /* 窗外：有 Redis 标记、或 Redis 丢失但库里仍卡在维护 → 都尝试恢复 */
+    /* 窗外只恢复持久化标记为 AUTO 的批次；人工/紧急维护绝不参与 */
     const raw = await this.redis.get(REDIS_MAINT_CODES);
-    const stuck = await this.prisma.game.count({ where: { status: 'MAINTENANCE' } });
-    if (raw || stuck > 0) {
+    const autoStuck = await this.prisma.game.count({
+      where: { status: 'MAINTENANCE', maintenanceSource: 'AUTO' },
+    });
+    if (raw || autoStuck > 0) {
       this.logger.warn(
-        `boot reconcile: outside maint window (redis=${!!raw}, stuckMaint=${stuck}) → exit`,
+        `boot reconcile: outside maint window (redis=${!!raw}, autoMaint=${autoStuck}) → exit`,
       );
       await this.exitDailyMaintenance();
     }
   }
 
-  /** 解析本次自动维护的游戏码：Redis → 当日 START 日志 → 当前仍维护的游戏 */
-  private async resolveAutoMaintCodes(): Promise<string[]> {
-    const raw = await this.redis.get(REDIS_MAINT_CODES);
-    if (raw) {
-      try {
-        const codes = JSON.parse(raw) as string[];
-        if (Array.isArray(codes) && codes.length) return codes.filter((c) => !!c);
-      } catch {
-        /* fall through */
-      }
-    }
-
-    const dayStart = this.shanghaiDayStart();
-    const startLog = await this.prisma.adminLog.findFirst({
-      where: { action: 'GAME_DAILY_MAINT_START', createdAt: { gte: dayStart } },
-      orderBy: { createdAt: 'desc' },
-      select: { createdAt: true, detail: true, target: true },
+  /** 解析本次自动维护批次：数据库来源+最新批次是唯一权威，Redis 不参与选择 */
+  private async resolveAutoMaintBatch(): Promise<{ batchId: string; codes: string[] } | null> {
+    const latest = await this.prisma.game.findFirst({
+      where: {
+        status: 'MAINTENANCE',
+        maintenanceSource: 'AUTO',
+        maintenanceBatchId: { not: null },
+      },
+      orderBy: { updatedAt: 'desc' },
+      select: { maintenanceBatchId: true },
     });
-    if (startLog) {
-      const endAfter = await this.prisma.adminLog.findFirst({
-        where: {
-          action: 'GAME_DAILY_MAINT_END',
-          createdAt: { gte: startLog.createdAt },
-        },
-        select: { id: true },
-      });
-      if (!endAfter) {
-        const detail = (startLog.detail ?? {}) as { codes?: string[] };
-        if (Array.isArray(detail.codes) && detail.codes.length) return detail.codes;
-        if (startLog.target) {
-          return startLog.target.split(',').map((s) => s.trim()).filter(Boolean);
-        }
-      }
-    }
-
-    /* Redis/日志都丢了：窗外仍维护的视为卡死的自动维护，全部拉回上架 */
-    const stuck = await this.prisma.game.findMany({
-      where: { status: 'MAINTENANCE' },
+    const batchId = String(latest?.maintenanceBatchId || '').trim();
+    if (!batchId) return null;
+    const rows = await this.prisma.game.findMany({
+      where: {
+        status: 'MAINTENANCE',
+        maintenanceSource: 'AUTO',
+        maintenanceBatchId: batchId,
+      },
       select: { code: true },
     });
-    return stuck.map((g) => g.code);
+    return rows.length ? { batchId, codes: rows.map((row) => row.code) } : null;
   }
 
   /**
@@ -282,17 +295,27 @@ export class GameOpsScheduler implements OnModuleInit {
       }
 
       const codes = online.map((g) => g.code);
+      const batchId = randomUUID();
       await this.prisma.game.updateMany({
         where: { id: { in: online.map((g) => g.id) } },
-        data: { status: 'MAINTENANCE' },
+        data: {
+          status: 'MAINTENANCE',
+          maintenanceSource: 'AUTO',
+          maintenanceBatchId: batchId,
+        },
       });
       /* TTL 覆盖到次日维护窗，避免 4h 过期后 06:01/重启无法恢复 */
-      await this.redis.set(REDIS_MAINT_CODES, JSON.stringify(codes), 26 * 3600);
+      await this.redis.set(
+        REDIS_MAINT_CODES,
+        JSON.stringify({ batchId, codes }),
+        26 * 3600,
+      );
       this.configCache.invalidateAll();
 
       this.logger.log(`daily maint start: ${codes.join(',')}`);
       await this.safeLog('GAME_DAILY_MAINT_START', codes.join(','), {
         codes,
+        batchId,
         window: GAME_OPS_SCHEDULE.maintWindow,
       });
     } catch (e) {
@@ -319,15 +342,22 @@ export class GameOpsScheduler implements OnModuleInit {
         return;
       }
 
-      const codes = await this.resolveAutoMaintCodes();
-      if (!codes.length) {
+      const batch = await this.resolveAutoMaintBatch();
+      if (!batch?.codes.length) {
+        await this.redis.del(REDIS_MAINT_CODES);
         this.logger.log('daily maint end: no scheduled codes');
         return;
       }
+      const { batchId, codes } = batch;
 
       const restored = await this.prisma.game.updateMany({
-        where: { code: { in: codes }, status: 'MAINTENANCE' },
-        data: { status: 'ONLINE' },
+        where: {
+          code: { in: codes },
+          status: 'MAINTENANCE',
+          maintenanceSource: 'AUTO',
+          maintenanceBatchId: batchId,
+        },
+        data: { status: 'ONLINE', maintenanceSource: null, maintenanceBatchId: null },
       });
       await this.redis.del(REDIS_MAINT_CODES);
       this.configCache.invalidateAll();
@@ -335,6 +365,7 @@ export class GameOpsScheduler implements OnModuleInit {
       this.logger.log(`daily maint end: restored=${restored.count} codes=${codes.join(',')}`);
       await this.safeLog('GAME_DAILY_MAINT_END', codes.join(','), {
         codes,
+        batchId,
         restored: restored.count,
       });
     } catch (e) {
@@ -368,7 +399,7 @@ export class GameOpsScheduler implements OnModuleInit {
     }
     const restored = await this.prisma.game.updateMany({
       where: { code: { in: codes }, status: 'MAINTENANCE' },
-      data: { status: 'ONLINE' },
+      data: { status: 'ONLINE', maintenanceSource: null, maintenanceBatchId: null },
     });
     await this.redis.del(REDIS_MAINT_CODES);
     await this.platformEmergency.clearEmergencyFlag();

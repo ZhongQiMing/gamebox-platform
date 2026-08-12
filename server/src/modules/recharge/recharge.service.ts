@@ -1,6 +1,7 @@
 import {
   Injectable,
   BadRequestException,
+  ConflictException,
   NotFoundException,
   ForbiddenException,
   Inject,
@@ -42,11 +43,6 @@ export type ApplyFundOpts = {
   clientRequestId?: string;
 };
 
-/** 唯一键冲突 */
-function isUniqueConflict(e: unknown): boolean {
-  return (e as { code?: string })?.code === 'P2002';
-}
-
 @Injectable()
 export class RechargeService {
   constructor(
@@ -80,10 +76,58 @@ export class RechargeService {
     return { role: reviewer.role, prefix: `${reviewer.agentPath}${reviewerId}/` };
   }
 
+  private async reviewOrderScope(
+    tx: Prisma.TransactionClient | PrismaService,
+    reviewerId: string,
+  ): Promise<{
+    role: string;
+    prefix: string;
+    agentRootId: string;
+    ownedRoomIds: string[];
+  }> {
+    const team = await this.teamPlayerPrefix(tx, reviewerId);
+    if (!team) {
+      throw new ForbiddenException('仅代理/客服可查看上下分申请');
+    }
+    const agentRootId = await this.agentRootUserId(tx, reviewerId);
+    const ownedRoomIds = (
+      await tx.room.findMany({
+        where: { ownerAgent: { userId: agentRootId } },
+        select: { id: true },
+      })
+    ).map((room) => room.id);
+    return { ...team, agentRootId, ownedRoomIds };
+  }
+
+  /**
+   * 有 roomId 的新订单只按房间归属授权；agentPath 仅兼容 roomId 为空的旧订单。
+   * 列表、历史和处理动作必须复用这一条件，避免“看得见但不能批”或拒绝路径漏校验。
+   */
+  private reviewOrderWhere(scope: {
+    prefix: string;
+    ownedRoomIds: string[];
+  }): Prisma.RechargeOrderWhereInput {
+    return {
+      OR: [
+        ...(scope.ownedRoomIds.length
+          ? [{ roomId: { in: scope.ownedRoomIds } }]
+          : []),
+        {
+          roomId: null,
+          player: { agentPath: { startsWith: scope.prefix } },
+        },
+        {
+          roomId: '',
+          player: { agentPath: { startsWith: scope.prefix } },
+        },
+      ],
+    };
+  }
+
   /**
    * 审核范围与控制台/客服会话对齐：
-   * 1) 订单房间属于主代理，且玩家在该房 APPROVED（同人多房按房间隔离）
-   * 2) 或玩家挂在主代理 agentPath 团队树下（兼容旧挂线）
+   * 1) 订单有 roomId：只能由该房主代理或其粘性客服处理
+   * 2) 订单无 roomId：才允许按旧 agentPath 团队树兼容
    */
   private async assertReviewScope(
     tx: Prisma.TransactionClient,
@@ -99,51 +143,49 @@ export class RechargeService {
     if (reviewer?.role !== 'AGENT' && reviewer?.role !== 'CS') {
       throw new ForbiddenException('仅主代理或客服可审核玩家上下分');
     }
-    const team = await this.teamPlayerPrefix(tx, reviewerId);
-    if (!team) throw new ForbiddenException('仅代理/客服可审核玩家上下分申请');
-    const player = await tx.user.findUnique({
-      where: { id: playerId },
-      select: { agentPath: true },
-    });
-    if (!player) throw new NotFoundException('玩家不存在');
-
-    const agentRootId = await this.agentRootUserId(tx, reviewerId);
+    const scope = await this.reviewOrderScope(tx, reviewerId);
     const rid = String(roomId || '').trim();
-    let inScope = false;
     if (rid) {
-      const mem = await tx.roomMember.findFirst({
+      const room = await tx.room.findFirst({
         where: {
-          playerId,
-          roomId: rid,
-          status: 'APPROVED',
-          room: { ownerAgent: { userId: agentRootId } },
+          id: rid,
+          ownerAgent: { userId: scope.agentRootId },
         },
         select: { id: true },
       });
-      inScope = !!mem;
-    }
-    if (!inScope && player.agentPath.startsWith(team.prefix)) {
-      inScope = true;
-    }
-    if (!inScope) {
-      throw new ForbiddenException('只能审核所属房间玩家的订单');
+      if (!room) {
+        throw new ForbiddenException('只能审核所属房间的订单');
+      }
+    } else {
+      const player = await tx.user.findUnique({
+        where: { id: playerId },
+        select: { agentPath: true },
+      });
+      if (!player) throw new NotFoundException('玩家不存在');
+      if (!player.agentPath.startsWith(scope.prefix)) {
+        throw new ForbiddenException('只能审核所属团队的历史订单');
+      }
     }
 
     /* 客服还要过粘性派单：与控制台上下分、客服会话同一口径，
        否则任意客服都能审掉整个代理树下的单 */
-    if (team.role === 'CS' && !(await this.cs.isAssignedToCs(reviewerId, playerId))) {
+    if (
+      scope.role === 'CS' &&
+      !(await this.cs.isAssignedToCs(reviewerId, playerId))
+    ) {
       throw new ForbiddenException('该玩家未分配给你，无法审核');
     }
   }
 
   /** 解析并校验玩家 APPROVED 运营房间 */
   private async resolveOrderRoomId(
+    tx: Prisma.TransactionClient | PrismaService,
     playerId: string,
     opts?: ApplyFundOpts,
   ): Promise<string> {
     const roomId = String(opts?.roomId || '').trim();
     if (roomId) {
-      const member = await this.prisma.roomMember.findFirst({
+      const member = await tx.roomMember.findFirst({
         where: { playerId, roomId, status: 'APPROVED' },
         select: { roomId: true },
       });
@@ -152,12 +194,12 @@ export class RechargeService {
     }
     const roomNo = String(opts?.roomNo || '').trim();
     if (roomNo) {
-      const room = await this.prisma.room.findFirst({
+      const room = await tx.room.findFirst({
         where: { roomNo },
         select: { id: true },
       });
       if (!room) throw new BadRequestException('房间不存在');
-      const member = await this.prisma.roomMember.findFirst({
+      const member = await tx.roomMember.findFirst({
         where: { playerId, roomId: room.id, status: 'APPROVED' },
         select: { roomId: true },
       });
@@ -165,7 +207,7 @@ export class RechargeService {
       return member.roomId;
     }
     /* CS 聊天等未传房号：取最近 APPROVED 房；多房时仍要求显式指定 */
-    const members = await this.prisma.roomMember.findMany({
+    const members = await tx.roomMember.findMany({
       where: { playerId, status: 'APPROVED' },
       orderBy: { updatedAt: 'desc' },
       take: 2,
@@ -189,17 +231,44 @@ export class RechargeService {
     return raw;
   }
 
-  /** 同号重放：确认确实是本人同类型的那张单再返回，避免猜号拿到别人的订单 */
-  private async findReplayedOrder(orderNo: string, playerId: string, type: 'UP' | 'DOWN') {
-    const existed = await this.prisma.rechargeOrder.findUnique({ where: { orderNo } });
-    if (!existed || existed.playerId !== playerId || existed.type !== type) {
-      throw new BadRequestException('订单号已被占用，请重新提交');
+  private normalizeChannel(channel?: string): string {
+    return String(channel || '').trim() || '人工';
+  }
+
+  /** 同号重放的不可变参数必须完全一致，否则明确返回 409，不能静默复用旧单。 */
+  private async findReplayedOrder(
+    tx: Prisma.TransactionClient,
+    orderNo: string,
+    playerId: string,
+    type: 'UP' | 'DOWN',
+    amount: number,
+    roomId: string,
+    channel: string,
+  ) {
+    const existed = await tx.rechargeOrder.findUnique({ where: { orderNo } });
+    if (
+      !existed ||
+      existed.playerId !== playerId ||
+      existed.type !== type ||
+      asMoney(existed.amount) !== asMoney(amount) ||
+      String(existed.roomId || '').trim() !== roomId ||
+      this.normalizeChannel(existed.channel ?? undefined) !== channel
+    ) {
+      throw new ConflictException('同一订单号的玩家、类型、金额、房间或渠道不一致');
     }
     return existed;
   }
 
-  /** 玩家申请上分（RECHARGE） */
-  async applyRecharge(
+  /** 同一订单号先串行再查重，避免唯一冲突使 PostgreSQL 事务进入 aborted 状态。 */
+  private async lockOrderNoInTx(tx: Prisma.TransactionClient, orderNo: string) {
+    await tx.$queryRaw<{ locked: string }[]>`
+      SELECT pg_advisory_xact_lock(hashtextextended(${`recharge:${orderNo}`}, 0))::text AS locked
+    `;
+  }
+
+  /** 事务内建上分单，供客服消息把消息、订单和回执原子提交。 */
+  async applyRechargeInTx(
+    tx: Prisma.TransactionClient,
     playerId: string,
     amount: number,
     channel?: string,
@@ -211,27 +280,46 @@ export class RechargeService {
     if (amount > PLAYER_FUND_MAX) {
       throw new BadRequestException(`单笔上分不超过 ${PLAYER_FUND_MAX}`);
     }
-
-    const roomId = await this.resolveOrderRoomId(playerId, opts);
     const orderNo = this.resolveOrderNo(opts?.clientRequestId);
-    let order;
-    try {
-      order = await this.prisma.rechargeOrder.create({
-        data: {
-          orderNo,
-          playerId,
-          type: 'UP',
-          amount,
-          channel: channel ?? '人工',
-          status: 'PENDING',
-          roomId,
-        },
-      });
-    } catch (e) {
-      /* 连点：同一个订单号只该有一张单，返回已建的那张而不是再建一张 */
-      if (!isUniqueConflict(e)) throw e;
-      return this.findReplayedOrder(orderNo, playerId, 'UP');
+    const normalizedChannel = this.normalizeChannel(channel);
+    await this.lockOrderNoInTx(tx, orderNo);
+    /* 房间是幂等请求的一部分，必须先解析业务语义再判断是否重放。 */
+    const roomId = await this.resolveOrderRoomId(tx, playerId, opts);
+    const replay = await tx.rechargeOrder.findUnique({ where: { orderNo } });
+    if (replay) {
+      return this.findReplayedOrder(
+        tx,
+        orderNo,
+        playerId,
+        'UP',
+        amount,
+        roomId,
+        normalizedChannel,
+      );
     }
+    return tx.rechargeOrder.create({
+      data: {
+        orderNo,
+        playerId,
+        type: 'UP',
+        amount,
+        channel: normalizedChannel,
+        status: 'PENDING',
+        roomId,
+      },
+    });
+  }
+
+  /** 玩家申请上分（RECHARGE） */
+  async applyRecharge(
+    playerId: string,
+    amount: number,
+    channel?: string,
+    opts?: ApplyFundOpts,
+  ) {
+    const order = await this.prisma.$transaction((tx) =>
+      this.applyRechargeInTx(tx, playerId, amount, channel, opts),
+    );
 
     if (!opts?.skipCsNotify) {
       void this.cs
@@ -247,8 +335,9 @@ export class RechargeService {
     return order;
   }
 
-  /** 玩家申请下分：冻结余额 + 建单；通过后出冻结并结算到代理；驳回解冻 */
-  async applyWithdraw(
+  /** 事务内建下分单并冻结，订单号锁保证重放不会重复冻结。 */
+  async applyWithdrawInTx(
+    tx: Prisma.TransactionClient,
     playerId: string,
     amount: number,
     channel?: string,
@@ -260,48 +349,64 @@ export class RechargeService {
     if (amount > PLAYER_FUND_MAX) {
       throw new BadRequestException(`单笔下分不超过 ${PLAYER_FUND_MAX}`);
     }
-
-    const roomId = await this.resolveOrderRoomId(playerId, opts);
-    const account = await this.prisma.pointsAccount.findUnique({
+    const orderNo = this.resolveOrderNo(opts?.clientRequestId);
+    const normalizedChannel = this.normalizeChannel(channel);
+    await this.lockOrderNoInTx(tx, orderNo);
+    const roomId = await this.resolveOrderRoomId(tx, playerId, opts);
+    const replay = await tx.rechargeOrder.findUnique({ where: { orderNo } });
+    if (replay) {
+      return this.findReplayedOrder(
+        tx,
+        orderNo,
+        playerId,
+        'DOWN',
+        amount,
+        roomId,
+        normalizedChannel,
+      );
+    }
+    const account = await tx.pointsAccount.findUnique({
       where: this.points.accountWhere('PLAYER', playerId, roomId),
     });
     if (!account || asMoney(account.balance) < amount) throw new BadRequestException('余额不足');
+    const created = await tx.rechargeOrder.create({
+      data: {
+        orderNo,
+        playerId,
+        type: 'DOWN',
+        amount,
+        status: 'PENDING',
+        channel: normalizedChannel,
+        roomId,
+      },
+    });
+    await this.points.freezeInTx(tx, playerId, amount, {
+      refType: 'recharge',
+      refId: created.id,
+      remark: '下分冻结（待客服审核）',
+      idempotencyKey: `withdraw_freeze_${created.id}`,
+      roomId,
+    });
+    return created;
+  }
 
-    const orderNo = this.resolveOrderNo(opts?.clientRequestId);
-    let order;
-    try {
-      order = await this.prisma.$transaction(async (tx) => {
-        const created = await tx.rechargeOrder.create({
-          data: {
-            orderNo,
-            playerId,
-            type: 'DOWN',
-            amount,
-            status: 'PENDING',
-            channel: channel ?? '人工',
-            roomId,
-          },
-        });
-        await this.points.freezeInTx(tx, playerId, amount, {
-          refType: 'recharge',
-          refId: created.id,
-          remark: '下分冻结（待客服审核）',
-          idempotencyKey: `withdraw_freeze_${created.id}`,
-          roomId,
-        });
-        return created;
-      });
-    } catch (e) {
-      /*
-       * 连点下分特别要命：每点一次就冻一笔，余额会被全部冻住，
-       * 玩家看着钱在却动不了，还得客服一张张驳回。
-       * 同号重放直接返回已建的单，不再冻第二笔。
-       */
-      if (!isUniqueConflict(e)) throw e;
-      return this.findReplayedOrder(orderNo, playerId, 'DOWN');
-    }
-
+  /** 供把下分落在外层事务的调用方在提交后触发异步风控。 */
+  onWithdrawCommitted(playerId: string, amount: number) {
     void this.riskDetector.onPlayerDebit(playerId, amount);
+  }
+
+  /** 玩家申请下分：冻结余额 + 建单；通过后出冻结并结算到代理；驳回解冻 */
+  async applyWithdraw(
+    playerId: string,
+    amount: number,
+    channel?: string,
+    opts?: ApplyFundOpts,
+  ) {
+    const order = await this.prisma.$transaction((tx) =>
+      this.applyWithdrawInTx(tx, playerId, amount, channel, opts),
+    );
+
+    this.onWithdrawCommitted(playerId, amount);
 
     if (!opts?.skipCsNotify) {
       void this.cs
@@ -669,28 +774,15 @@ export class RechargeService {
 
   /** 代理/代分：待审核订单列表 */
   async pendingOrders(reviewerId: string, page = 1, pageSize = 50, playerId?: string) {
-    const team = await this.teamPlayerPrefix(this.prisma, reviewerId);
-    if (!team) {
-      throw new ForbiddenException('仅代理/客服可查看待审上下分');
-    }
-    const agentRootId = await this.agentRootUserId(this.prisma, reviewerId);
-    const ownedRoomIds = (
-      await this.prisma.room.findMany({
-        where: { ownerAgent: { userId: agentRootId } },
-        select: { id: true },
-      })
-    ).map((r) => r.id);
+    const scope = await this.reviewOrderScope(this.prisma, reviewerId);
     const pid = playerId?.trim() || '';
     const where: Prisma.RechargeOrderWhereInput = {
       status: 'PENDING',
       ...(pid ? { playerId: pid } : {}),
-      OR: [
-        { player: { agentPath: { startsWith: team.prefix } } },
-        ...(ownedRoomIds.length ? [{ roomId: { in: ownedRoomIds } }] : []),
-      ],
+      AND: [this.reviewOrderWhere(scope)],
     };
     /* 与 assertReviewScope 对齐：客服只看派给自己的玩家，避免列出批不动的单 */
-    if (team.role === 'CS') {
+    if (scope.role === 'CS') {
       const assigned = await this.cs.assignedPlayerIdsForCs(reviewerId);
       where.playerId = pid
         ? (assigned.includes(pid) ? pid : '__none__')
@@ -728,10 +820,7 @@ export class RechargeService {
       toMs?: number;
     } = {},
   ) {
-    const team = await this.teamPlayerPrefix(this.prisma, reviewerId);
-    if (!team) {
-      throw new ForbiddenException('仅代理/客服可查看上下分明细');
-    }
+    const scope = await this.reviewOrderScope(this.prisma, reviewerId);
     const statusRaw = (opts.status || 'APPROVED').trim().toUpperCase();
     const status =
       statusRaw === 'APPROVED' || statusRaw === 'REJECTED' || statusRaw === 'PENDING'
@@ -751,32 +840,24 @@ export class RechargeService {
       fromMs: opts.fromMs,
       toMs: opts.toMs,
     });
+    const and: Prisma.RechargeOrderWhereInput[] = [
+      this.reviewOrderWhere(scope),
+    ];
     if (window) {
       const [from, to] = window;
       /* 已审单按审核时间落在报表区间；无 reviewedAt 时回退创建时间 */
-      where.AND = [
+      and.push(
         {
           OR: [
             { reviewedAt: { gte: from, lt: to } },
             { reviewedAt: null, createdAt: { gte: from, lt: to } },
           ],
         },
-      ];
+      );
     }
-    if (team.role === 'CS') {
+    where.AND = and;
+    if (scope.role === 'CS') {
       where.reviewerId = reviewerId;
-    } else {
-      const agentRootId = await this.agentRootUserId(this.prisma, reviewerId);
-      const ownedRoomIds = (
-        await this.prisma.room.findMany({
-          where: { ownerAgent: { userId: agentRootId } },
-          select: { id: true },
-        })
-      ).map((r) => r.id);
-      where.OR = [
-        { player: { agentPath: { startsWith: team.prefix } } },
-        ...(ownedRoomIds.length ? [{ roomId: { in: ownedRoomIds } }] : []),
-      ];
     }
 
     const [total, list] = await this.prisma.$transaction([

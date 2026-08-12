@@ -140,7 +140,7 @@ model User {
   /// 会话吊销：改密/停用时自增，JWT 携带的 version 不一致即失效
   tokenVersion Int @default(0)
 
-  /// 登录失败过多被冻结；重置密码后清空
+  /// 后台人工/历史冻结标记；错密临时退避只存 Redis，不写此字段
   loginLockedAt DateTime?
 
   lastLoginAt DateTime?
@@ -163,7 +163,10 @@ model User {
   slotFeatureSessions      SlotFeatureSession[]
   feedbacks                Feedback[]
   csMessages               CsMessage[]
+  csMessageRequests        CsMessageRequest[]
   csDeskSetting            CsDeskSetting?
+  csUploadsOwned           CsUpload[]              @relation("CsUploadOwner")
+  csUploadsForPlayer       CsUpload[]              @relation("CsUploadPlayer")
   ledgerOps                PointsLedger[]          @relation("LedgerOperator")
   adminLogs                AdminLog[]
   roomMembers              RoomMember[]
@@ -646,6 +649,10 @@ model Game {
   name            String
   category        GameCategory
   status          GameStatus   @default(OFFLINE)
+  /// MAINTENANCE 来源：AUTO（日常维护）| MANUAL（后台人工）| EMERGENCY（平台触底）
+  maintenanceSource  String?
+  /// AUTO 维护批次；仅同批次的游戏允许被定时恢复
+  maintenanceBatchId String?
   iconUrl         String?
   entryUrl        String? // games-assets 入口
   minBet          Decimal      @default(1) @db.Decimal(18, 2)
@@ -661,6 +668,8 @@ model Game {
   rounds              GameRound[]
   bets                Bet[]
   slotFeatureSessions SlotFeatureSession[]
+
+  @@index([status, maintenanceSource, maintenanceBatchId])
 }
 
 // 爆率/赔率配置：服务端据此裁决结果，前端拿不到、改不了
@@ -901,6 +910,8 @@ model DailyRebateSettlement {
   id         String   @id @default(cuid())
   playerId   String
   player     User     @relation(fields: [playerId], references: [id], onDelete: Restrict)
+  /// 新结算必填；null 仅兼容迁移前跨房共享游标的历史记录
+  roomId     String?
   rebateDate DateTime @db.Date
   validFlow  Decimal  @db.Decimal(18, 2)
   rate       Float
@@ -912,6 +923,7 @@ model DailyRebateSettlement {
   claimedAt  DateTime @default(now())
 
   /// 同一自然日可多次领取：领完后新流水从 periodEnd 起重新累计
+  @@index([playerId, roomId, rebateDate, periodEnd])
   @@index([playerId, rebateDate])
   @@index([playerId, claimedAt])
   @@index([playerId, periodEnd])
@@ -971,6 +983,48 @@ model CsMessage {
   @@index([playerId, roomNo, createdAt])
   @@index([assigneeId, createdAt])
   @@index([rechargeOrderId])
+}
+
+/// 玩家发送客服消息的持久化幂等锚点；资金口令的消息、订单与回执在同一事务完成。
+model CsMessageRequest {
+  id               String   @id @default(cuid())
+  playerId         String
+  player           User     @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  clientRequestId  String
+  text             String
+  playerMessageId  String
+  systemMessageId  String?
+  rechargeOrderId  String?
+  createdAt        DateTime @default(now())
+  completedAt      DateTime @default(now())
+
+  @@unique([playerId, clientRequestId])
+  @@index([playerMessageId])
+  @@index([systemMessageId])
+  @@index([rechargeOrderId])
+}
+
+/// 客服私有媒体元数据；文件本体位于 private-uploads，不经过静态目录公开。
+model CsUpload {
+  id          String    @id @default(cuid())
+  ownerId     String
+  owner       User      @relation("CsUploadOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  /// 玩家上传时即为本人；运营复用收款码时为空，读取权限由实际 CsMessage 引用决定。
+  playerId    String?
+  player      User?     @relation("CsUploadPlayer", fields: [playerId], references: [id], onDelete: Cascade)
+  policy      String // PLAYER_CHAT | STAFF_CHAT | STAFF_PAY_QR
+  kind        String
+  mimeType    String
+  sizeBytes   Int
+  storageKey  String    @unique
+  attachedAt  DateTime?
+  expiresAt   DateTime
+  createdAt   DateTime  @default(now())
+
+  @@index([ownerId, createdAt])
+  @@index([playerId, createdAt])
+  @@index([attachedAt, createdAt])
+  @@index([expiresAt])
 }
 
 model Feedback {

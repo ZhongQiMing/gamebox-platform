@@ -45,6 +45,21 @@ function genPassword() {
   return `Ag${randomBytes(4).toString('hex')}9`;
 }
 
+/** 报表可见名称只允许普通文字，长度限制也避免导出/日志被异常长值污染。 */
+function safeDisplayName(raw: unknown, label: string, maxLength: number): string {
+  const value = String(raw ?? '').trim().replace(/\s+/g, ' ');
+  if (!value) throw new BadRequestException(`${label}必填`);
+  if (value.length > maxLength) {
+    throw new BadRequestException(`${label}最多 ${maxLength} 字`);
+  }
+  if (!/^[\p{L}\p{N}·][\p{L}\p{N}· _().（）-]*$/u.test(value)) {
+    throw new BadRequestException(
+      `${label}仅支持中文、字母、数字、空格及 _-.()`,
+    );
+  }
+  return value;
+}
+
 /** 下次扣费：以 billingDay 为每月几号，并保留 from 的时分秒 */
 function computeNextBillAt(from: Date, billingDay: number): Date {
   const day = Math.min(28, Math.max(1, billingDay));
@@ -234,7 +249,7 @@ export class ConsoleRoomsService {
     if (!this.scope.canCreateRoom(actor)) {
       throw new ForbiddenException('仅管理员/房主可创建房间');
     }
-    if (!body.name?.trim()) throw new BadRequestException('房间名必填');
+    const roomName = safeDisplayName(body.name, '房间名', 40);
 
     const status = body.status && ['OPEN', 'MAINTENANCE', 'FROZEN'].includes(body.status)
       ? body.status
@@ -271,7 +286,7 @@ export class ConsoleRoomsService {
     const settleCycle = normalizeSettleCycle(body.settleCycle);
     const settleWeekday = settleCycleToWeekday(settleCycle);
 
-    const username = (body.agentUsername || genAgentUsername(body.name)).toLowerCase().trim();
+    const username = (body.agentUsername || genAgentUsername(roomName)).toLowerCase().trim();
     if (!/^[a-z0-9]{8,20}$/.test(username)) {
       throw new BadRequestException('代理用户名须 8-20 位小写字母数字');
     }
@@ -347,7 +362,11 @@ export class ConsoleRoomsService {
 
     const passwordHash = await bcrypt.hash(plainPassword, PASSWORD_SALT_ROUNDS);
     const uid = await this.allocUid();
-    const nickname = body.agentNickname?.trim() || `代理${uid.slice(-4)}`;
+    const nickname = safeDisplayName(
+      body.agentNickname || `代理${uid.slice(-4)}`,
+      '代理昵称',
+      20,
+    );
 
     let result: { room: { id: string; roomNo: string; name: string; status: string }; agentUser: { id: string; username: string; uid: string; nickname: string } };
     try {
@@ -387,7 +406,7 @@ export class ConsoleRoomsService {
         const room = await tx.room.create({
           data: {
             roomNo,
-            name: body.name.trim(),
+            name: roomName,
             ownerAgentId: agent.id,
             status,
             enabledGames: JSON.stringify(games),

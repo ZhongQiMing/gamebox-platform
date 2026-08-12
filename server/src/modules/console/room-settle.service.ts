@@ -6,6 +6,7 @@ import { asMoney, roundMoney } from '@gamebox/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AdminLogService } from '../admin/admin-log.service';
 import { PLATFORM_OWNER_ID, PointsService } from '../points/points.service';
+import { csvRow } from '../../common/utils/csv';
 import { ConsoleScopeService, type ConsoleActor } from './console-scope.service';
 import { ConsoleReportsService } from './console-reports.service';
 import {
@@ -641,12 +642,6 @@ export class RoomSettleService {
     opts?: { period?: 'current' | 'last' | 'early'; weekStart?: string },
   ) {
     const s = await this.statement(actor, roomId, opts);
-    const cell = (v: string | number | null | undefined) => {
-      const raw = v == null ? '' : String(v);
-      if (/[",\n\r]/.test(raw)) return `"${raw.replace(/"/g, '""')}"`;
-      return raw;
-    };
-    const row = (cols: Array<string | number | null | undefined>) => cols.map(cell).join(',');
 
     /** 横排两行账单：上行项目名，下行金额（去掉应付基数等重复项） */
     const skipKeys = new Set(['platformSharePay']);
@@ -693,7 +688,7 @@ export class RoomSettleService {
       ? `${s.room.agent.nickname}/${s.room.agent.username}`
       : '';
     const lines = [
-      row([
+      csvRow([
         '房间结账对账单',
         `${s.room.name}（${s.room.roomNo}）`,
         s.room.bookLabel,
@@ -703,9 +698,9 @@ export class RoomSettleService {
         s.period.label,
         `${s.period.fromText}～${s.period.toText}`,
       ]),
-      row(names),
-      row(amounts),
-      row([
+      csvRow(names),
+      csvRow(amounts),
+      csvRow([
         '结论',
         s.settlement.netLabel,
         '代理赢利(份额+飞盘返水)',

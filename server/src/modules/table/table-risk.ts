@@ -1,4 +1,4 @@
-import { normalizeGameCode } from './table-rules';
+import { allowedSides, normalizeGameCode } from './table-rules';
 
 /** 庄家风控：对冲互斥、单用户单边、平台单边暴露 */
 export const TABLE_RISK = {
@@ -22,6 +22,13 @@ export function normalizeBetSide(side: string): string {
   if (s === 'TIGER' || s === '虎') return 'tiger';
   if (s === 'TIE' || s === '和') return 'tie';
   return s.toLowerCase();
+}
+
+/** DB 查询用的同方向等价值；仅从该游戏明确允许的 side 中取，避免跨方向合并。 */
+export function equivalentBetSides(gameCode: string, side: string): string[] {
+  const norm = normalizeBetSide(side);
+  const aliases = allowedSides(gameCode).filter((candidate) => normalizeBetSide(candidate) === norm);
+  return aliases.length ? [...new Set(aliases)] : [side];
 }
 
 /** 若下注 side 与某对立边互斥，返回对立边（含大小写别名） */

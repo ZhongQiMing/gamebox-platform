@@ -2,6 +2,7 @@ import { Controller, Get, Post, Body, Query } from '@nestjs/common';
 import { IsOptional, IsString, Matches } from 'class-validator';
 import { RebateService } from './rebate.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { Roles } from '../../common/decorators/roles.decorator';
 
 class ClaimDto {
   @IsOptional()
@@ -26,7 +27,9 @@ export class RebateController {
     return this.svc.getStatus(u.id, r);
   }
 
-  /** POST /api/rebate/claim — 领指定日；不传 date 则提前领光池内全部 */
+  /** POST /api/rebate/claim — 领指定日；不传 date 则提前领光池内全部
+   *  运营侧走 /console/players/:id/rebate/claim，这里只认玩家 */
+  @Roles('PLAYER')
   @Post('claim')
   claim(@CurrentUser() u: { id: string }, @Body() dto: ClaimDto) {
     return this.svc.claim(u.id, dto.date);

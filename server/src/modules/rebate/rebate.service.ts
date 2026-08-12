@@ -94,6 +94,18 @@ interface UnclaimedSlice {
   games: GameRebateFlow[];
 }
 
+function rebateRoomId(payload: Prisma.JsonValue | null | undefined): string {
+  return String((payload as { fly?: { roomId?: string } } | null)?.fly?.roomId || '').trim();
+}
+
+/** 新注单持久化下注时 P；历史注单没有时才回退到当前房间配置。 */
+function persistedPlayerRate(payload: Prisma.JsonValue | null | undefined): number | null {
+  const raw = (payload as { fly?: { P?: unknown } } | null)?.fly?.P;
+  return typeof raw === 'number' && Number.isFinite(raw) && raw > 0 && raw <= 1
+    ? raw
+    : null;
+}
+
 @Injectable()
 export class RebateService {
   private readonly log = new Logger(RebateService.name);
@@ -125,20 +137,29 @@ export class RebateService {
   }
 
   private sliceFromBets(
-    bets: Array<{ validFlow: Prisma.Decimal | number; gameId: string }>,
-    defaultP: number,
+    bets: Array<{
+      validFlow: Prisma.Decimal | number;
+      gameId: string;
+      payload?: Prisma.JsonValue | null;
+    }>,
+    roomFallbackP: number,
   ): Omit<UnclaimedSlice, 'date'> | null {
     const gameMap = new Map<string, number>();
     for (const b of bets) {
-      gameMap.set(b.gameId, roundMoney((gameMap.get(b.gameId) ?? 0) + asMoney(b.validFlow)));
+      const rate = persistedPlayerRate(b.payload) ?? roomFallbackP;
+      const key = `${b.gameId}:${rate}`;
+      gameMap.set(key, roundMoney((gameMap.get(key) ?? 0) + asMoney(b.validFlow)));
     }
-    const items = [...gameMap.entries()].map(([gameId, validFlow]) => {
+    const items = [...gameMap.entries()].map(([key, validFlow]) => {
+      const splitAt = key.lastIndexOf(':');
+      const gameId = key.slice(0, splitAt);
+      const rate = Number(key.slice(splitAt + 1));
       const meta = this.rateMap.get(gameId);
       return {
         gameCode: meta?.code ?? gameId,
         gameName: meta?.name ?? '未知游戏',
         validFlow,
-        rate: defaultP,
+        rate,
       };
     });
     const calc = calcRebateFromFlows(items);
@@ -157,13 +178,13 @@ export class RebateService {
     const [rangeStart] = boundsForDateKey(oldestKey);
     const now = new Date();
 
-    const [settlements, bets, { P: defaultP }] = await Promise.all([
+    const [settlements, bets] = await Promise.all([
       this.prisma.dailyRebateSettlement.findMany({
         where: {
           playerId,
           rebateDate: { gte: dateAtUtcMidnight(oldestKey) },
         },
-        select: { rebateDate: true, periodEnd: true },
+        select: { rebateDate: true, roomId: true, periodEnd: true },
         orderBy: { periodEnd: 'asc' },
       }),
       this.prisma.bet.findMany({
@@ -175,40 +196,70 @@ export class RebateService {
         },
         select: { validFlow: true, gameId: true, settledAt: true, payload: true },
       }),
-      this.flyDisk.resolvePlayerRate(playerId),
     ]);
 
-    const lastPeriodEndByDate = new Map<string, Date>();
+    const legacyPeriodEndByDate = new Map<string, Date>();
+    const lastPeriodEndByDateRoom = new Map<string, Date>();
     for (const s of settlements) {
-      const key = rebateDateKey(s.rebateDate);
-      const prev = lastPeriodEndByDate.get(key);
-      if (!prev || s.periodEnd > prev) lastPeriodEndByDate.set(key, s.periodEnd);
+      const dateKey = rebateDateKey(s.rebateDate);
+      const roomId = String(s.roomId || '').trim();
+      const map = roomId ? lastPeriodEndByDateRoom : legacyPeriodEndByDate;
+      const key = roomId ? `${dateKey}:${roomId}` : dateKey;
+      const prev = map.get(key);
+      if (!prev || s.periodEnd > prev) map.set(key, s.periodEnd);
     }
 
-    const flowByDateGame = new Map<string, Map<string, number>>();
+    const betsByDateRoom = new Map<
+      string,
+      Map<string, Array<(typeof bets)[number]>>
+    >();
     for (const b of bets) {
       if (!b.settledAt) continue;
       /* 历史笔结已发过的注单，不再进自助池 */
       if (isFlowRebatePaid(b.payload)) continue;
       const dateKey = dateKeyFromDate(b.settledAt);
-      const since = lastPeriodEndByDate.get(dateKey);
+      const roomId = rebateRoomId(b.payload);
+      /* 无房间的历史异常流水无法安全入任一房账本，不展示为可领 */
+      if (!roomId) continue;
+      const roomCursor = lastPeriodEndByDateRoom.get(`${dateKey}:${roomId}`);
+      const legacyCursor = legacyPeriodEndByDate.get(dateKey);
+      const since =
+        roomCursor && legacyCursor
+          ? (roomCursor > legacyCursor ? roomCursor : legacyCursor)
+          : roomCursor ?? legacyCursor;
       if (since && b.settledAt <= since) continue;
 
-      let gameMap = flowByDateGame.get(dateKey);
-      if (!gameMap) {
-        gameMap = new Map();
-        flowByDateGame.set(dateKey, gameMap);
+      let roomMap = betsByDateRoom.get(dateKey);
+      if (!roomMap) {
+        roomMap = new Map();
+        betsByDateRoom.set(dateKey, roomMap);
       }
-      gameMap.set(b.gameId, roundMoney((gameMap.get(b.gameId) ?? 0) + asMoney(b.validFlow)));
+      const roomBets = roomMap.get(roomId) ?? [];
+      roomBets.push(b);
+      roomMap.set(roomId, roomBets);
     }
 
     const result = new Map<string, UnclaimedSlice>();
-    for (const [dateKey, gameMap] of flowByDateGame) {
-      const calc = this.sliceFromBets(
-        [...gameMap.entries()].map(([gameId, validFlow]) => ({ gameId, validFlow })),
-        defaultP,
-      );
-      if (calc) result.set(dateKey, { date: dateKey, ...calc });
+    for (const [dateKey, roomMap] of betsByDateRoom) {
+      const roomSlices: Array<Omit<UnclaimedSlice, 'date'>> = [];
+      for (const [roomId, roomBets] of roomMap) {
+        const needsFallback = roomBets.some((bet) => persistedPlayerRate(bet.payload) == null);
+        const fallbackP = needsFallback
+          ? (await this.flyDisk.resolvePlayerRate(playerId, roomId)).P
+          : 0;
+        const calc = this.sliceFromBets(roomBets, fallbackP);
+        if (calc) roomSlices.push(calc);
+      }
+      if (!roomSlices.length) continue;
+      const validFlow = roundMoney(roomSlices.reduce((sum, slice) => sum + slice.validFlow, 0));
+      const amount = roundMoney(roomSlices.reduce((sum, slice) => sum + slice.amount, 0));
+      result.set(dateKey, {
+        date: dateKey,
+        validFlow,
+        amount,
+        rate: validFlow > 0 ? amount / validFlow : 0,
+        games: roomSlices.flatMap((slice) => slice.games),
+      });
     }
     return result;
   }
@@ -224,116 +275,152 @@ export class RebateService {
 
     await this.ensureRateMap();
     const [dayStart, dayEnd] = boundsForDateKey(dateKey);
-    const { P: defaultP } = await this.flyDisk.resolvePlayerRate(playerId);
 
     return this.prisma.$transaction(async (tx) => {
       /* 串行化同一玩家领取，避免并发双发 */
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`rebate:${playerId}`}))`;
 
-      const lastSameDay = await tx.dailyRebateSettlement.findFirst({
-        where: { playerId, rebateDate: dateAtUtcMidnight(dateKey) },
-        orderBy: { periodEnd: 'desc' },
-        select: { periodEnd: true },
-      });
       const periodEnd = new Date();
       const until = periodEnd < dayEnd ? periodEnd : new Date(dayEnd.getTime() - 1);
-      const settledAt = lastSameDay
-        ? { gt: lastSameDay.periodEnd, lte: until, lt: dayEnd }
-        : { gte: dayStart, lte: until, lt: dayEnd };
-
-      const rawBets = await tx.bet.findMany({
-        where: {
-          playerId,
-          status: { in: ['WON', 'LOST'] },
-          validFlow: { gt: 0 },
-          settledAt,
-        },
-        select: { validFlow: true, gameId: true, payload: true, settledAt: true },
-        orderBy: { settledAt: 'asc' },
-        take: CLAIM_BET_LIMIT,
-      });
-      /* 命中条数上限时只结算到最后一个完整时间点，余量留给下次领取，不能被 periodEnd 抹掉 */
+      /*
+       * 游标按 (玩家, 日期, 房间) 取；roomId=null 的迁移前记录是跨房共享历史游标，
+       * 对所有房间继续生效，避免升级后重复发放。SQL 在库内先排除已领流水，
+       * 不会因某房大量历史注单占满 take 而饿死另一房的新流水。
+       */
+      const rawBets = await tx.$queryRaw<
+        Array<{
+          validFlow: Prisma.Decimal;
+          gameId: string;
+          payload: Prisma.JsonValue | null;
+          settledAt: Date;
+        }>
+      >`
+        SELECT b."validFlow", b."gameId", b."payload", b."settledAt"
+        FROM "Bet" b
+        WHERE b."playerId" = ${playerId}
+          AND b."status" IN ('WON'::"BetStatus", 'LOST'::"BetStatus")
+          AND b."validFlow" > 0
+          AND b."settledAt" >= ${dayStart}
+          AND b."settledAt" <= ${until}
+          AND b."settledAt" < ${dayEnd}
+          AND COALESCE(b."payload" #>> '{fly,roomId}', '') <> ''
+          AND COALESCE(b."payload" #>> '{flowRebatePaid}', 'false') <> 'true'
+          AND b."settledAt" > COALESCE((
+            SELECT MAX(s."periodEnd")
+            FROM "DailyRebateSettlement" s
+            WHERE s."playerId" = ${playerId}
+              AND s."rebateDate" = ${dateAtUtcMidnight(dateKey)}::date
+              AND (
+                s."roomId" = b."payload" #>> '{fly,roomId}'
+                OR s."roomId" IS NULL
+              )
+          ), ${new Date(dayStart.getTime() - 1)})
+        ORDER BY b."settledAt" ASC
+        LIMIT ${CLAIM_BET_LIMIT}
+      `;
+      /* 游标只允许推进到“已完整取完”的时间戳；同毫秒边界必须整组纳入。 */
       let pagedBets = rawBets;
-      let claimEnd = periodEnd;
+      let claimEnd = until;
       if (rawBets.length === CLAIM_BET_LIMIT) {
         const lastAt = rawBets[rawBets.length - 1]!.settledAt;
         if (lastAt) {
-          const trimmed = rawBets.filter((b) => b.settledAt && b.settledAt < lastAt);
-          if (trimmed.length > 0) {
-            pagedBets = trimmed;
-            claimEnd = new Date(lastAt.getTime() - 1);
-          } else {
-            claimEnd = lastAt;
-          }
+          const boundaryBets = await tx.$queryRaw<typeof rawBets>`
+            SELECT b."validFlow", b."gameId", b."payload", b."settledAt"
+            FROM "Bet" b
+            WHERE b."playerId" = ${playerId}
+              AND b."status" IN ('WON'::"BetStatus", 'LOST'::"BetStatus")
+              AND b."validFlow" > 0
+              AND b."settledAt" = ${lastAt}
+              AND b."settledAt" >= ${dayStart}
+              AND b."settledAt" <= ${until}
+              AND b."settledAt" < ${dayEnd}
+              AND COALESCE(b."payload" #>> '{fly,roomId}', '') <> ''
+              AND COALESCE(b."payload" #>> '{flowRebatePaid}', 'false') <> 'true'
+              AND b."settledAt" > COALESCE((
+                SELECT MAX(s."periodEnd")
+                FROM "DailyRebateSettlement" s
+                WHERE s."playerId" = ${playerId}
+                  AND s."rebateDate" = ${dateAtUtcMidnight(dateKey)}::date
+                  AND (
+                    s."roomId" = b."payload" #>> '{fly,roomId}'
+                    OR s."roomId" IS NULL
+                  )
+              ), ${new Date(dayStart.getTime() - 1)})
+          `;
+          pagedBets = [
+            ...rawBets.filter((bet) => bet.settledAt < lastAt),
+            ...boundaryBets,
+          ];
+          claimEnd = lastAt;
         }
       }
       const bets = pagedBets.filter((b) => !isFlowRebatePaid(b.payload));
-
-      const slice = this.sliceFromBets(bets, defaultP);
-      if (!slice) {
-        throw new BadRequestException('当前无可领取的回水');
+      const betsByRoom = new Map<string, typeof bets>();
+      for (const bet of bets) {
+        const roomId = rebateRoomId(bet.payload);
+        if (!roomId) continue;
+        const roomBets = betsByRoom.get(roomId) ?? [];
+        roomBets.push(bet);
+        betsByRoom.set(roomId, roomBets);
       }
+      if (!betsByRoom.size) throw new BadRequestException('当前无可领取的回水');
 
-      const roomIds = [
-        ...new Set(
-          bets
-            .map((b) => (b.payload as { fly?: { roomId?: string } } | null)?.fly?.roomId)
-            .filter((id): id is string => !!String(id || '').trim())
-            .map((id) => String(id).trim()),
-        ),
-      ];
-      if (roomIds.length === 0) {
-        throw new BadRequestException('无法确定回水房间，请先在房间内产生流水');
-      }
-      if (roomIds.length > 1) {
-        throw new BadRequestException('跨房间流水请分房领取回水');
-      }
-      const claimRoomId = roomIds[0]!;
-      const house = await this.flyDisk.resolveHouse(playerId, claimRoomId);
-      const payerParts = this.splitRebatePayersFromBets(
-        bets,
-        slice.amount,
-        slice.validFlow,
-        house,
-      );
-
-      const row = await tx.dailyRebateSettlement.create({
-        data: {
-          playerId,
-          rebateDate: dateAtUtcMidnight(dateKey),
-          validFlow: slice.validFlow,
-          rate: slice.rate,
-          amount: slice.amount,
-          claimType,
-          periodEnd: claimEnd,
-          gameDetail: slice.games as unknown as Prisma.InputJsonValue,
-        },
-      });
-
-      const idem = `daily_rebate_${row.id}`;
-      let lastLedgerId: string | undefined;
-      for (let i = 0; i < payerParts.length; i++) {
-        const part = payerParts[i]!;
-        if (part.amount <= 0) continue;
-        const ledger = await this.payClaimPartInTx(tx, {
-          part,
-          playerId,
+      let totalAmount = 0;
+      const rows = [];
+      for (const [claimRoomId, roomBets] of betsByRoom) {
+        const needsFallback = roomBets.some((bet) => persistedPlayerRate(bet.payload) == null);
+        const fallbackP = needsFallback
+          ? (await this.flyDisk.resolvePlayerRate(playerId, claimRoomId)).P
+          : 0;
+        const slice = this.sliceFromBets(roomBets, fallbackP);
+        if (!slice) continue;
+        const house = await this.flyDisk.resolveHouse(playerId, claimRoomId);
+        const payerParts = this.splitRebatePayersFromBets(
+          roomBets,
+          slice.amount,
+          slice.validFlow,
           house,
-          dateKey,
-          idem,
-          index: i,
-          settlementId: row.id,
+        );
+        const row = await tx.dailyRebateSettlement.create({
+          data: {
+            playerId,
+            roomId: claimRoomId,
+            rebateDate: dateAtUtcMidnight(dateKey),
+            validFlow: slice.validFlow,
+            rate: slice.rate,
+            amount: slice.amount,
+            claimType,
+            periodEnd: claimEnd,
+            gameDetail: slice.games as unknown as Prisma.InputJsonValue,
+          },
         });
-        if (ledger?.id) lastLedgerId = ledger.id;
+        const idem = `daily_rebate_${row.id}`;
+        let lastLedgerId: string | undefined;
+        for (let i = 0; i < payerParts.length; i++) {
+          const part = payerParts[i]!;
+          if (part.amount <= 0) continue;
+          const ledger = await this.payClaimPartInTx(tx, {
+            part,
+            playerId,
+            house,
+            dateKey,
+            idem,
+            index: i,
+            settlementId: row.id,
+          });
+          if (ledger?.id) lastLedgerId = ledger.id;
+        }
+        if (!lastLedgerId) throw new BadRequestException('回水出资金额异常');
+        rows.push(
+          await tx.dailyRebateSettlement.update({
+            where: { id: row.id },
+            data: { ledgerId: lastLedgerId },
+          }),
+        );
+        totalAmount = roundMoney(totalAmount + slice.amount);
       }
-      if (!lastLedgerId) {
-        throw new BadRequestException('回水出资金额异常');
-      }
-
-      return tx.dailyRebateSettlement.update({
-        where: { id: row.id },
-        data: { ledgerId: lastLedgerId },
-      });
+      if (!rows.length) throw new BadRequestException('当前无可领取的回水');
+      return { ...rows[0]!, amount: new Prisma.Decimal(totalAmount), settlements: rows };
     });
   }
 

@@ -11,7 +11,17 @@ function expectRejected(secret: string) {
 }
 
 function expectAccepted(secret: string) {
-  expect(() => assertProdSecrets(cfg({ JWT_SECRET: secret }), true)).not.toThrow();
+  expect(() =>
+    assertProdSecrets(
+      cfg({
+        JWT_SECRET: secret,
+        PUBLIC_BASE_URL: 'https://app.example',
+        AUTH_ALLOWED_ORIGINS:
+          'https://app.example,https://admin.example',
+      }),
+      true,
+    ),
+  ).not.toThrow();
 }
 
 describe('生产密钥门禁', () => {
@@ -35,6 +45,31 @@ describe('生产密钥门禁', () => {
   it('放行真随机串', () => {
     expectAccepted(randomBytes(32).toString('hex'));
     expectAccepted(randomBytes(48).toString('base64url'));
+  });
+
+  it('生产环境拒绝缺失、同源或非 HTTPS 的认证 Origin', () => {
+    const secret = randomBytes(32).toString('hex');
+    expect(() =>
+      assertProdSecrets(
+        cfg({
+          JWT_SECRET: secret,
+          PUBLIC_BASE_URL: 'https://app.example',
+          AUTH_ALLOWED_ORIGINS: 'https://app.example',
+        }),
+        true,
+      ),
+    ).toThrow(/AUTH_ALLOWED_ORIGINS/);
+    expect(() =>
+      assertProdSecrets(
+        cfg({
+          JWT_SECRET: secret,
+          PUBLIC_BASE_URL: 'https://app.example',
+          AUTH_ALLOWED_ORIGINS:
+            'https://app.example,http://admin.example',
+        }),
+        true,
+      ),
+    ).toThrow(/HTTPS Origin/);
   });
 
   it('开发环境只告警不抛', () => {

@@ -26,7 +26,7 @@ export class GameAdminController {
   /** 游戏列表（含所有配置版本） */
   @Get()
   async list() {
-    return this.prisma.game.findMany({
+    const games = await this.prisma.game.findMany({
       where: { code: { notIn: [...GameAdminController.RETIRED_CODES] } },
       orderBy: { sortOrder: 'asc' },
       include: {
@@ -36,6 +36,11 @@ export class GameAdminController {
         },
       },
     });
+    return games.map((game) => ({
+      ...game,
+      minBet: Number(game.minBet),
+      maxBet: Number(game.maxBet),
+    }));
   }
 
   /** 平台定时运维规则（日切 / 每日维护窗） */
@@ -109,7 +114,14 @@ export class GameAdminController {
       }
     }
 
-    await this.prisma.game.update({ where: { code }, data: { status: status as never } });
+    await this.prisma.game.update({
+      where: { code },
+      data: {
+        status: status as never,
+        maintenanceSource: status === 'MAINTENANCE' ? 'MANUAL' : null,
+        maintenanceBatchId: null,
+      },
+    });
     this.configCache.invalidate(code);
     await this.adminLog.log(user.id, 'GAME_STATUS_CHANGE', code, { from: game.status, to: status });
     return { ok: true };
@@ -188,7 +200,10 @@ export class GameAdminController {
   ) {
     const game = await this.prisma.game.findUnique({ where: { code } });
     if (!game) throw new NotFoundException('游戏不存在');
-    if (body.rtp <= 0 || body.rtp >= 1) throw new BadRequestException('RTP 须在 0~1 之间');
+    /* 只比大小挡不住漏传：undefined 与 NaN 的两个比较都是 false，会一路写进库 */
+    if (!Number.isFinite(body?.rtp) || body.rtp <= 0 || body.rtp >= 1) {
+      throw new BadRequestException('RTP 须在 0~1 之间');
+    }
     validateGamePayTable(game, body.payTable);
 
     // 最新版本号 + 1

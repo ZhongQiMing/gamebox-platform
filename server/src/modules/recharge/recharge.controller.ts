@@ -40,6 +40,7 @@ export class RechargeController {
   constructor(private svc: RechargeService) {}
 
   /** POST /api/recharge/apply — 申请上分 */
+  @Roles('PLAYER')
   @Post('apply')
   apply(@CurrentUser() u: { id: string }, @Body() dto: ApplyRechargeDto) {
     return this.svc.applyRecharge(u.id, dto.amount, dto.channel, {
@@ -50,6 +51,7 @@ export class RechargeController {
   }
 
   /** POST /api/recharge/withdraw — 申请下分 */
+  @Roles('PLAYER')
   @Post('withdraw')
   withdraw(@CurrentUser() u: { id: string }, @Body() dto: ApplyWithdrawDto) {
     return this.svc.applyWithdraw(u.id, dto.amount, dto.channel, {

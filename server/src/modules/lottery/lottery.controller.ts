@@ -116,6 +116,26 @@ export class LotteryController {
     return this.lottery.currentIssue(gameCode);
   }
 
+  /**
+   * 当前期 + 历史开奖合并（公开）。
+   *
+   * 游戏内每 2 秒要一次「快照」，原本前端拆成 current / history 两个请求打出去，
+   * 一局下来就是双倍往返。两者本就同源同时效，合并成一枪。
+   */
+  @Public()
+  @SkipThrottle()
+  @Get(':gameCode/snapshot')
+  async snapshot(
+    @Param('gameCode') gameCode: string,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
+  ) {
+    const [current, history] = await Promise.all([
+      this.lottery.currentIssue(gameCode),
+      this.lottery.history(gameCode, Math.min(limit, 80)),
+    ]);
+    return { current, history };
+  }
+
   /** 历史开奖（公开；同上） */
   @Public()
   @SkipThrottle()

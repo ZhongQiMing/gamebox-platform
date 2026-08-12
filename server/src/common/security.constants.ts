@@ -9,6 +9,13 @@
 export const PASSWORD_SALT_ROUNDS = 12;
 
 /**
+ * 用户名不存在时也做一次同成本 bcrypt，避免通过响应时延枚举账号。
+ * 这是预生成的无对应明文业务账号 hash，不是凭证，也绝不能拿来创建用户。
+ */
+export const DUMMY_PASSWORD_HASH =
+  '$2b$12$HnhY3KyfrQMvG0jHiG9xy.L1VgCmbrMKO05k6BTJC9N5virDYXxHO';
+
+/**
  * Capacitor App 的页面来源。
  *
  * App 里的页面是从安装包本地加载的，浏览器认定的来源是下面这几个地址，

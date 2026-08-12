@@ -9,6 +9,7 @@ import {
   DefaultValuePipe,
   ParseIntPipe,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import {
   IsArray,
   IsIn,
@@ -44,7 +45,7 @@ class UploadPayQrDto {
 class UploadCsChatImageDto {
   @IsString()
   @MinLength(32)
-  @MaxLength(12_000_000)
+  @MaxLength(3_000_000)
   dataUrl!: string;
 }
 
@@ -129,22 +130,24 @@ export class CsConsoleController {
 
   /**
    * POST /api/console/cs/pay-qr
-   * 上传微信/支付宝收款码，返回可发给玩家的 /uploads/... 地址
+   * 上传微信/支付宝收款码，返回可发给玩家的鉴权媒体地址
    */
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('pay-qr')
   uploadPayQr(
     @CurrentUser() u: { id: string },
     @Body() dto: UploadPayQrDto,
   ) {
-    return this.svc.saveUploadedImage(u.id, dto.dataUrl, dto.kind);
+    return this.svc.saveUploadedImage(u.id, dto.dataUrl, dto.kind, 'STAFF_PAY_QR');
   }
 
   /** POST /api/console/cs/upload — 聊天本地图片 */
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('upload')
   uploadChatImage(
     @CurrentUser() u: { id: string },
     @Body() dto: UploadCsChatImageDto,
   ) {
-    return this.svc.saveUploadedImage(u.id, dto.dataUrl, 'chat');
+    return this.svc.saveUploadedImage(u.id, dto.dataUrl, 'chat', 'STAFF_CHAT');
   }
 }

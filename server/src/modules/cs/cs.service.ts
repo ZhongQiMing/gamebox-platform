@@ -4,16 +4,24 @@
  */
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
   forwardRef,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { Cron } from '@nestjs/schedule';
 import type { Prisma } from '@prisma/client';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { createHash, randomBytes } from 'node:crypto';
+import { mkdir, stat, unlink, writeFile } from 'node:fs/promises';
+import { basename, join, resolve, sep } from 'node:path';
 import { PrismaService } from '../../prisma/prisma.service';
+import { RedisService } from '../../redis/redis.service';
 import { isRealImage } from '../../common/utils/image-magic';
 import { RechargeService } from '../recharge/recharge.service';
 import { CsStaffService } from '../console/cs-staff.service';
@@ -21,16 +29,22 @@ import { CsStaffService } from '../console/cs-staff.service';
 const UP_RE = /^上分\s*\/?\s*(\d+)$/;
 const DOWN_RE = /^下分\s*\/?\s*(\d+)$/;
 
-/** 聊天图只允许本站上传路径，禁止外链 */
+/** 聊天图只允许鉴权媒体接口，禁止公开静态路径与外链。 */
 const CS_IMG_RE = /\[img\](\S+)/gi;
-function sanitizeCsMessageText(text: string): string {
-  return text.replace(CS_IMG_RE, (_full, url: string) => {
+const CS_MEDIA_URL_RE = /^\/api\/cs\/media\/([A-Za-z0-9_-]{10,64})$/;
+
+function parseCsMessageText(text: string): { text: string; mediaIds: string[] } {
+  const mediaIds: string[] = [];
+  const sanitized = text.replace(CS_IMG_RE, (_full, url: string) => {
     const u = String(url || '').trim();
-    if (/^\/uploads\/[A-Za-z0-9/_.\-]+$/i.test(u) && !u.includes('..')) {
+    const match = CS_MEDIA_URL_RE.exec(u);
+    if (match) {
+      mediaIds.push(match[1]);
       return `[img]${u}`;
     }
     throw new BadRequestException('图片地址无效，请重新上传发送');
   });
+  return { text: sanitized, mediaIds: [...new Set(mediaIds)] };
 }
 
 const CHANNEL_LABEL: Record<string, string> = {
@@ -40,6 +54,17 @@ const CHANNEL_LABEL: Record<string, string> = {
   bank: '银行卡',
   usdt: 'USDT',
 };
+
+export type CsUploadPolicy = 'PLAYER_CHAT' | 'STAFF_CHAT' | 'STAFF_PAY_QR';
+
+const UPLOAD_WINDOW_SEC = 24 * 60 * 60;
+const DEFAULT_PLAYER_UPLOAD_LIMIT = 10;
+const DEFAULT_STAFF_UPLOAD_LIMIT = 30;
+const DEFAULT_CHAT_IMAGE_MAX_BYTES = 2 * 1024 * 1024;
+const DEFAULT_PAY_QR_MAX_BYTES = 8_000_000;
+const DEFAULT_MEDIA_RETENTION_DAYS = 90;
+const DEFAULT_ORPHAN_RETENTION_DAYS = 7;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 function fundChannelLabel(channel?: string | null): string {
   const ch = String(channel ?? '').trim();
@@ -58,12 +83,39 @@ function fundChannelLabel(channel?: string | null): string {
 
 @Injectable()
 export class CsService {
+  private readonly logger = new Logger(CsService.name);
+
   constructor(
     private prisma: PrismaService,
+    private config: ConfigService,
+    private redis: RedisService,
     @Inject(forwardRef(() => RechargeService))
     private recharge: RechargeService,
     private csStaff: CsStaffService,
   ) {}
+
+  private mediaUrl(id: string): string {
+    return `/api/cs/media/${id}`;
+  }
+
+  private mediaRoot(): string {
+    const configured = String(
+      this.config.get<string>('CS_PRIVATE_UPLOAD_DIR') ?? 'private-uploads/cs',
+    ).trim();
+    return resolve(process.cwd(), configured || 'private-uploads/cs');
+  }
+
+  private mediaFilePath(storageKey: string): string {
+    if (!/^[A-Za-z0-9_-]+\/[A-Za-z0-9_.-]+$/.test(storageKey)) {
+      throw new NotFoundException('媒体文件不存在');
+    }
+    const root = this.mediaRoot();
+    const file = resolve(root, storageKey);
+    if (!file.startsWith(`${root}${sep}`)) {
+      throw new NotFoundException('媒体文件不存在');
+    }
+    return file;
+  }
 
   /** 团队玩家 agentPath 前缀：AGENT 用自身；CS 用上级主代理。子账号不可客服会话。 */
   private async teamPlayerPrefix(
@@ -316,13 +368,211 @@ export class CsService {
     });
   }
 
+  private async assertCanAttachMedia(
+    actorId: string,
+    sender: 'PLAYER' | 'STAFF',
+    mediaIds: string[],
+  ) {
+    if (!mediaIds.length) return;
+    const uploads = await this.prisma.csUpload.findMany({
+      where: { id: { in: mediaIds } },
+      select: {
+        id: true,
+        ownerId: true,
+        playerId: true,
+        policy: true,
+        expiresAt: true,
+      },
+    });
+    if (uploads.length !== mediaIds.length) {
+      throw new BadRequestException('图片不存在或已过期，请重新上传');
+    }
+    const now = Date.now();
+    for (const upload of uploads) {
+      const allowed =
+        upload.ownerId === actorId &&
+        upload.expiresAt.getTime() > now &&
+        (sender === 'PLAYER'
+          ? upload.policy === 'PLAYER_CHAT' && upload.playerId === actorId
+          : upload.policy !== 'PLAYER_CHAT');
+      if (!allowed) {
+        throw new ForbiddenException('只能发送自己上传且未过期的图片');
+      }
+    }
+  }
+
+  private async markMediaAttached(mediaIds: string[]) {
+    if (!mediaIds.length) return;
+    await this.prisma.csUpload.updateMany({
+      where: { id: { in: mediaIds }, attachedAt: null },
+      data: { attachedAt: new Date() },
+    });
+  }
+
+  private fundOrderNo(playerId: string, clientRequestId: string): string {
+    const digest = createHash('sha256')
+      .update(playerId)
+      .update('\0')
+      .update(clientRequestId)
+      .digest('hex')
+      .slice(0, 48);
+    return `cs_${digest}`;
+  }
+
+  private exceptionMessage(e: HttpException): string {
+    const response = e.getResponse();
+    const msg =
+      typeof response === 'string'
+        ? response
+        : ((response as { message?: string | string[] })?.message ?? e.message);
+    return Array.isArray(msg) ? msg.join('；') : String(msg);
+  }
+
+  /** 有 clientRequestId 的消息用数据库事务做持久化重放；资金口令同时原子落单/冻结/回执。 */
+  private async playerSendIdempotent(
+    playerId: string,
+    text: string,
+    mediaIds: string[],
+    clientRequestId: string,
+    assigneeId: string | null,
+    up: RegExpMatchArray | null,
+    down: RegExpMatchArray | null,
+  ) {
+    const result = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw<{ locked: string }[]>`
+        SELECT pg_advisory_xact_lock(
+          hashtextextended(${`cs-message:${playerId}:${clientRequestId}`}, 0)
+        )::text AS locked
+      `;
+      const replay = await tx.csMessageRequest.findUnique({
+        where: { playerId_clientRequestId: { playerId, clientRequestId } },
+      });
+      if (replay) {
+        if (replay.text !== text) {
+          throw new ConflictException('clientRequestId 已用于不同消息');
+        }
+        const ids = [replay.playerMessageId, replay.systemMessageId].filter(
+          (id): id is string => !!id,
+        );
+        const messages = await tx.csMessage.findMany({ where: { id: { in: ids } } });
+        const byId = new Map(messages.map((message) => [message.id, message]));
+        const ordered = ids
+          .map((id) => byId.get(id))
+          .filter((m): m is (typeof messages)[number] => !!m);
+        if (ordered.length !== ids.length) {
+          throw new BadRequestException('消息幂等记录不完整，请联系客服');
+        }
+        return { list: ordered.map((m) => this.serializeMsg(m)), created: false, down: false };
+      }
+
+      const playerMsg = await tx.csMessage.create({
+        data: {
+          playerId,
+          sender: 'PLAYER',
+          text,
+          isRead: false,
+          assigneeId,
+        },
+      });
+      if (mediaIds.length) {
+        await tx.csUpload.updateMany({
+          where: { id: { in: mediaIds }, attachedAt: null },
+          data: { attachedAt: new Date() },
+        });
+      }
+
+      let orderId: string | null = null;
+      let sysMsg: typeof playerMsg | null = null;
+      if (up || down) {
+        const amount = Number(up?.[1] ?? down?.[1]);
+        let sysText: string;
+        try {
+          const opts = {
+            skipCsNotify: true,
+            clientRequestId: this.fundOrderNo(playerId, clientRequestId),
+          };
+          const order = up
+            ? await this.recharge.applyRechargeInTx(tx, playerId, amount, 'cs', opts)
+            : await this.recharge.applyWithdrawInTx(tx, playerId, amount, 'cs', opts);
+          orderId = order.id;
+          sysText = up
+            ? `已收到上分申请${amount}积分，请等待客服审核。`
+            : `已收到下分申请${amount}积分，余额已扣除，请等待客服审核。`;
+          await tx.csMessage.update({
+            where: { id: playerMsg.id },
+            data: { rechargeOrderId: orderId },
+          });
+        } catch (e: unknown) {
+          if (!(e instanceof HttpException) || e.getStatus() >= HttpStatus.INTERNAL_SERVER_ERROR) {
+            throw e;
+          }
+          sysText = this.exceptionMessage(e);
+        }
+        sysMsg = await tx.csMessage.create({
+          data: {
+            playerId,
+            sender: 'SYSTEM',
+            text: sysText,
+            isRead: true,
+            assigneeId,
+            rechargeOrderId: orderId,
+          },
+        });
+      }
+
+      await tx.csMessageRequest.create({
+        data: {
+          playerId,
+          clientRequestId,
+          text,
+          playerMessageId: playerMsg.id,
+          systemMessageId: sysMsg?.id ?? null,
+          rechargeOrderId: orderId,
+        },
+      });
+      const list = [
+        this.serializeMsg({ ...playerMsg, rechargeOrderId: orderId }),
+        ...(sysMsg ? [this.serializeMsg(sysMsg)] : []),
+      ];
+      return { list, created: true, down: !!down && !!orderId };
+    });
+    if (result.created && result.down) {
+      const amount = Number(down?.[1]);
+      this.recharge.onWithdrawCommitted(playerId, amount);
+    }
+    return { list: result.list };
+  }
+
   /** 玩家发消息；匹配上分/下分则建单并回执 */
-  async playerSend(playerId: string, textRaw: string) {
-    const text = sanitizeCsMessageText(String(textRaw ?? '').trim());
+  async playerSend(playerId: string, textRaw: string, clientRequestIdRaw?: string) {
+    const parsed = parseCsMessageText(String(textRaw ?? '').trim());
+    const { text, mediaIds } = parsed;
     if (!text) throw new BadRequestException('消息不能为空');
     if (text.length > 500) throw new BadRequestException('消息过长');
+    const clientRequestId = String(clientRequestIdRaw || '').trim();
+    if (clientRequestId && !/^[A-Za-z0-9_-]{8,64}$/.test(clientRequestId)) {
+      throw new BadRequestException('clientRequestId 格式无效');
+    }
+    await this.assertCanAttachMedia(playerId, 'PLAYER', mediaIds);
 
+    const up = text.match(UP_RE);
+    const down = text.match(DOWN_RE);
+    if ((up || down) && !clientRequestId) {
+      throw new BadRequestException('上分/下分消息必须提供 clientRequestId');
+    }
     const assigneeId = await this.resolveAssignee(playerId);
+    if (clientRequestId) {
+      return this.playerSendIdempotent(
+        playerId,
+        text,
+        mediaIds,
+        clientRequestId,
+        assigneeId,
+        up,
+        down,
+      );
+    }
+
     const playerMsg = await this.prisma.csMessage.create({
       data: {
         playerId,
@@ -332,10 +582,9 @@ export class CsService {
         assigneeId,
       },
     });
+    await this.markMediaAttached(mediaIds);
 
     const out = [this.serializeMsg(playerMsg)];
-    const up = text.match(UP_RE);
-    const down = text.match(DOWN_RE);
 
     if (up || down) {
       const amount = Number(up?.[1] ?? down?.[1]);
@@ -496,9 +745,11 @@ export class CsService {
     const { team } = await this.assertPlayerInTeam(actorId, playerId);
     if (team.role === 'CS') await this.assertCsOwnsSession(actorId, playerId);
 
-    const text = sanitizeCsMessageText(String(textRaw ?? '').trim());
+    const parsed = parseCsMessageText(String(textRaw ?? '').trim());
+    const { text, mediaIds } = parsed;
     if (!text) throw new BadRequestException('消息不能为空');
     if (text.length > 800) throw new BadRequestException('消息过长');
+    await this.assertCanAttachMedia(actorId, 'STAFF', mediaIds);
 
     // 主代理回复时保留原客服粘性，避免会话被抢走
     let assigneeId = actorId;
@@ -518,6 +769,7 @@ export class CsService {
         assigneeId,
       },
     });
+    await this.markMediaAttached(mediaIds);
     return { message: this.serializeMsg(msg) };
   }
 
@@ -583,6 +835,35 @@ export class CsService {
     return list.length ? list : [...CsService.DEFAULT_QUICK];
   }
 
+  private async assertDeskQrOwnership(
+    userId: string,
+    items: Array<{ url: string }>,
+    kind: 'wechat' | 'alipay',
+  ): Promise<string[]> {
+    const ids = items.map((item) => {
+      const match = CS_MEDIA_URL_RE.exec(item.url);
+      if (!match) {
+        throw new BadRequestException('收款码须重新上传为私有媒体');
+      }
+      return match[1];
+    });
+    if (!ids.length) return [];
+    const uniqueIds = [...new Set(ids)];
+    const count = await this.prisma.csUpload.count({
+      where: {
+        id: { in: uniqueIds },
+        ownerId: userId,
+        policy: 'STAFF_PAY_QR',
+        kind,
+        expiresAt: { gt: new Date() },
+      },
+    });
+    if (count !== uniqueIds.length) {
+      throw new ForbiddenException('收款码不存在、已过期或不属于当前账号');
+    }
+    return uniqueIds;
+  }
+
   /** GET 客服桌面设置（话术+收款码）；无记录返回默认话术 */
   async getDeskSettings(userId: string) {
     const row = await this.prisma.csDeskSetting.findUnique({ where: { userId } });
@@ -612,6 +893,10 @@ export class CsService {
     const quickReplies = this.normalizeDeskQuick(body.quickReplies);
     const wechatQrs = this.normalizeDeskQrList(body.wechatQrs);
     const alipayQrs = this.normalizeDeskQrList(body.alipayQrs);
+    const mediaIds = [
+      ...(await this.assertDeskQrOwnership(userId, wechatQrs, 'wechat')),
+      ...(await this.assertDeskQrOwnership(userId, alipayQrs, 'alipay')),
+    ];
     await this.prisma.csDeskSetting.upsert({
       where: { userId },
       create: {
@@ -626,18 +911,65 @@ export class CsService {
         alipayQrs: alipayQrs as unknown as Prisma.InputJsonValue,
       },
     });
+    await this.markMediaAttached([...new Set(mediaIds)]);
     return { quickReplies, wechatQrs, alipayQrs };
   }
 
+  private positiveConfigInt(key: string, fallback: number, max: number): number {
+    const n = Math.floor(Number(this.config.get<string | number>(key) ?? fallback));
+    return Number.isFinite(n) && n > 0 ? Math.min(n, max) : fallback;
+  }
+
+  private async assertPlayerCanUpload(playerId: string) {
+    const member = await this.prisma.roomMember.findFirst({
+      where: {
+        playerId,
+        status: 'APPROVED',
+        room: {
+          status: 'OPEN',
+          ownerAgentId: { not: null },
+        },
+      },
+      select: { id: true },
+    });
+    if (!member) {
+      throw new ForbiddenException('请先加入房间并通过审核后再上传图片');
+    }
+  }
+
+  private async consumeUploadQuota(actorId: string, policy: CsUploadPolicy) {
+    const isPlayer = policy === 'PLAYER_CHAT';
+    const limit = this.positiveConfigInt(
+      isPlayer ? 'CS_PLAYER_UPLOAD_DAILY_LIMIT' : 'CS_STAFF_UPLOAD_DAILY_LIMIT',
+      isPlayer ? DEFAULT_PLAYER_UPLOAD_LIMIT : DEFAULT_STAFF_UPLOAD_LIMIT,
+      500,
+    );
+    const key = `cs:upload:24h:${isPlayer ? 'player' : 'staff'}:${actorId}`;
+    let count: number;
+    try {
+      count = await this.redis.consumeFixedWindow(key, UPLOAD_WINDOW_SEC);
+    } catch {
+      /* 文件上传不是核心登录链路：配额不可用时宁可暂时拒绝，也不能静默无限落盘 */
+      throw new HttpException('上传配额服务暂不可用，请稍后再试', HttpStatus.SERVICE_UNAVAILABLE);
+    }
+    if (count > limit) {
+      throw new HttpException('今日图片上传次数已达上限', HttpStatus.TOO_MANY_REQUESTS);
+    }
+  }
+
   /**
-   * 客服聊天图 / 收款码：dataUrl → /uploads/cs/{actorId}/…
-   * kind 仅影响文件名前缀（wechat / alipay / chat）
+   * 客服聊天图 / 收款码写入私有目录并登记元数据。
+   * 返回的是鉴权 API URL，不再返回可长期转发的公开静态路径。
    */
-  saveUploadedImage(
+  async saveUploadedImage(
     actorId: string,
     dataUrl: string,
-    kind = 'chat',
-  ): { kind: string; url: string } {
+    kind: 'chat' | 'wechat' | 'alipay',
+    policy: CsUploadPolicy,
+  ): Promise<{ kind: string; url: string }> {
+    if (policy === 'PLAYER_CHAT') {
+      await this.assertPlayerCanUpload(actorId);
+    }
     const m = /^data:(image\/(?:png|jpeg|jpg|webp));base64,([A-Za-z0-9+/=\s]+)$/i.exec(
       String(dataUrl || '').trim(),
     );
@@ -651,14 +983,181 @@ export class CsService {
       throw new BadRequestException('图片数据无效');
     }
     if (buf.length < 64) throw new BadRequestException('图片过小');
-    if (buf.length > 8_000_000) throw new BadRequestException('图片请小于 8MB');
+    const maxBytes = policy === 'STAFF_PAY_QR'
+      ? DEFAULT_PAY_QR_MAX_BYTES
+      : this.positiveConfigInt(
+        'CS_CHAT_IMAGE_MAX_BYTES',
+        DEFAULT_CHAT_IMAGE_MAX_BYTES,
+        DEFAULT_PAY_QR_MAX_BYTES,
+      );
+    if (buf.length > maxBytes) {
+      throw new BadRequestException(
+        `图片请小于 ${Math.max(1, Math.floor(maxBytes / 1024 / 1024))}MB`,
+      );
+    }
     if (!isRealImage(buf)) throw new BadRequestException('文件不是有效图片');
 
+    await this.consumeUploadQuota(actorId, policy);
     const safeKind = String(kind || 'chat').replace(/[^a-z0-9_-]/gi, '').slice(0, 24) || 'chat';
-    const dir = join(process.cwd(), 'uploads', 'cs', actorId);
-    mkdirSync(dir, { recursive: true });
-    const filename = `${safeKind}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
-    writeFileSync(join(dir, filename), buf);
-    return { kind: safeKind, url: `/uploads/cs/${actorId}/${filename}` };
+    const dir = join(this.mediaRoot(), actorId);
+    await mkdir(dir, { recursive: true });
+    const filename = `${safeKind}_${Date.now()}_${randomBytes(6).toString('hex')}.${ext}`;
+    const storageKey = `${actorId}/${filename}`;
+    const filePath = this.mediaFilePath(storageKey);
+    await writeFile(filePath, buf, { flag: 'wx' });
+
+    try {
+      const retentionDays = this.positiveConfigInt(
+        'CS_MEDIA_RETENTION_DAYS',
+        DEFAULT_MEDIA_RETENTION_DAYS,
+        3650,
+      );
+      const upload = await this.prisma.csUpload.create({
+        data: {
+          ownerId: actorId,
+          playerId: policy === 'PLAYER_CHAT' ? actorId : null,
+          policy,
+          kind: safeKind,
+          mimeType: mime === 'image/jpg' ? 'image/jpeg' : mime,
+          sizeBytes: buf.length,
+          storageKey,
+          expiresAt: new Date(Date.now() + retentionDays * DAY_MS),
+        },
+        select: { id: true },
+      });
+      return { kind: safeKind, url: this.mediaUrl(upload.id) };
+    } catch (error) {
+      await unlink(filePath).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async openMedia(
+    actor: { id: string; role: string },
+    mediaId: string,
+  ): Promise<{
+    path: string;
+    filename: string;
+    mimeType: string;
+    sizeBytes: number;
+  }> {
+    const upload = await this.prisma.csUpload.findUnique({
+      where: { id: mediaId },
+      select: {
+        id: true,
+        ownerId: true,
+        playerId: true,
+        mimeType: true,
+        sizeBytes: true,
+        storageKey: true,
+        expiresAt: true,
+      },
+    });
+    if (!upload || upload.expiresAt.getTime() <= Date.now()) {
+      throw new NotFoundException('媒体文件不存在或已过期');
+    }
+
+    let allowed = upload.ownerId === actor.id;
+    const url = this.mediaUrl(upload.id);
+    if (!allowed && actor.role === 'PLAYER') {
+      allowed =
+        upload.playerId === actor.id ||
+        !!(await this.prisma.csMessage.findFirst({
+          where: { playerId: actor.id, text: { contains: url } },
+          select: { id: true },
+        }));
+    }
+    if (!allowed && (actor.role === 'AGENT' || actor.role === 'CS')) {
+      const refs = await this.prisma.csMessage.findMany({
+        where: { text: { contains: url } },
+        select: { playerId: true },
+        distinct: ['playerId'],
+        take: 200,
+      });
+      for (const ref of refs) {
+        try {
+          const { team } = await this.assertPlayerInTeam(
+            actor.id,
+            ref.playerId,
+          );
+          if (team.role === 'CS') {
+            await this.assertCsOwnsSession(actor.id, ref.playerId);
+          }
+          allowed = true;
+          break;
+        } catch (error) {
+          if (
+            !(error instanceof ForbiddenException) &&
+            !(error instanceof NotFoundException)
+          ) {
+            throw error;
+          }
+        }
+      }
+    }
+    if (!allowed) {
+      throw new ForbiddenException('无权读取该客服媒体');
+    }
+
+    const path = this.mediaFilePath(upload.storageKey);
+    let info;
+    try {
+      info = await stat(path);
+    } catch {
+      throw new NotFoundException('媒体文件不存在');
+    }
+    if (!info.isFile()) throw new NotFoundException('媒体文件不存在');
+    if (info.size !== upload.sizeBytes) {
+      this.logger.warn(`客服媒体大小与元数据不符：${upload.id}`);
+      throw new NotFoundException('媒体文件校验失败');
+    }
+    return {
+      path,
+      filename: basename(path),
+      mimeType: upload.mimeType,
+      sizeBytes: info.size,
+    };
+  }
+
+  /** 每日清理 7 天未发送的孤儿文件，以及超过业务保留期的媒体。 */
+  @Cron('40 4 * * *', { timeZone: 'Asia/Shanghai' })
+  async cleanupExpiredMedia(): Promise<number> {
+    const orphanDays = this.positiveConfigInt(
+      'CS_MEDIA_ORPHAN_DAYS',
+      DEFAULT_ORPHAN_RETENTION_DAYS,
+      365,
+    );
+    const now = new Date();
+    const orphanBefore = new Date(now.getTime() - orphanDays * DAY_MS);
+    const rows = await this.prisma.csUpload.findMany({
+      where: {
+        OR: [
+          { attachedAt: null, createdAt: { lt: orphanBefore } },
+          { expiresAt: { lt: now } },
+        ],
+      },
+      select: { id: true, storageKey: true },
+      orderBy: { createdAt: 'asc' },
+      take: 500,
+    });
+
+    let removed = 0;
+    for (const row of rows) {
+      const path = this.mediaFilePath(row.storageKey);
+      try {
+        await unlink(path);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+          this.logger.warn(
+            `清理客服媒体失败 ${row.id}: ${(error as Error).message}`,
+          );
+          continue;
+        }
+      }
+      await this.prisma.csUpload.deleteMany({ where: { id: row.id } });
+      removed += 1;
+    }
+    if (removed) this.logger.log(`已清理 ${removed} 个过期客服媒体`);
+    return removed;
   }
 }

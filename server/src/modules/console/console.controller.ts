@@ -85,6 +85,16 @@ export class PlayerFundDto {
   clientRequestId!: string;
 }
 
+/**
+ * 只含密码的请求体（重置密码 / 二次验密）。
+ *
+ * 原来是裸对象，whitelist 对 TS 接口不生效：多余字段照进，长度也没有上限。
+ * 密码要过 bcrypt，放任超长串等于白送一个廉价的 CPU 消耗面。
+ */
+export class PasswordDto {
+  @IsOptional() @IsString() @MaxLength(128) password?: string;
+}
+
 /** 软控偏置：写操作一律带管理员密码二次验证 */
 export class SoftBiasCreateDto {
   @IsString() @MaxLength(32) kind!: string;
@@ -309,7 +319,7 @@ export class ConsoleController {
   resetAgentPassword(
     @CurrentUser() u: { id: string; role: string },
     @Param('id') id: string,
-    @Body() body: { password?: string },
+    @Body() body: PasswordDto,
   ) {
     return this.rooms.resetAgentPassword(this.actor(u), id, body);
   }
@@ -601,7 +611,7 @@ export class ConsoleController {
   resetProxyPassword(
     @CurrentUser() u: { id: string; role: string },
     @Param('userId') userId: string,
-    @Body() body: { password?: string },
+    @Body() body: PasswordDto,
   ) {
     return this.players.resetProxyPassword(this.actor(u), userId, body.password);
   }
@@ -633,7 +643,7 @@ export class ConsoleController {
   resetPlayerPassword(
     @CurrentUser() u: { id: string; role: string },
     @Param('id') id: string,
-    @Body() body: { password?: string },
+    @Body() body: PasswordDto,
   ) {
     return this.players.resetPlayerPassword(this.actor(u), id, body?.password);
   }
@@ -830,7 +840,7 @@ export class ConsoleController {
   @Roles('ADMIN')
   verifyAdminPassword(
     @CurrentUser() u: { id: string; role: string },
-    @Body() body: { password?: string },
+    @Body() body: PasswordDto,
   ) {
     return this.globalSoft.verifyAdminPassword(this.actor(u), String(body?.password || ''));
   }
@@ -1172,7 +1182,7 @@ export class ConsoleController {
   resetCsStaffPassword(
     @CurrentUser() u: { id: string; role: string },
     @Param('id') id: string,
-    @Body() body: { password?: string },
+    @Body() body: PasswordDto,
   ) {
     return this.csStaff.resetPassword(this.actor(u), id, body?.password);
   }

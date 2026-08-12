@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import type { GameItemDTO } from '@gamebox/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { sscFfcPayTable } from '../lottery/games/ffc.game';
 import { LOTTERY_INTERVALS } from '../lottery/lottery-intervals';
@@ -7,18 +8,14 @@ import { RETIRED_GAME_CODES, isRetiredGameCode } from './retired-games';
 /** 从 payTable 剥离 weight / awardWeights / rtp 等敏感字段，只保留展示信息 */
 function stripWeights(payTable: unknown): unknown {
   if (Array.isArray(payTable)) {
-    return payTable.map((row) => {
-      if (!row || typeof row !== 'object') return row;
-      const { weight: _w, awardWeights: _aw, ...rest } = row as Record<string, unknown>;
-      return rest;
-    });
+    return payTable.map(stripWeights);
   }
   if (payTable && typeof payTable === 'object') {
-    const o = { ...(payTable as Record<string, unknown>) };
-    delete o.weight;
-    delete o.awardWeights;
-    delete o.weights;
-    return o;
+    return Object.fromEntries(
+      Object.entries(payTable as Record<string, unknown>)
+        .filter(([key]) => !['weight', 'weights', 'awardWeights', 'rtp'].includes(key))
+        .map(([key, value]) => [key, stripWeights(value)]),
+    );
   }
   return payTable;
 }
@@ -32,7 +29,7 @@ export class GamesService {
    * 维护态前端可见但不可进；只返回展示字段，不暴露爆率权重。
    * 退役码硬过滤：旧库残留行被误改回 ONLINE 也不该出现在大厅。
    */
-  async listOnline() {
+  async listOnline(): Promise<GameItemDTO[]> {
     const games = await this.prisma.game.findMany({
       where: {
         status: { in: ['ONLINE', 'MAINTENANCE'] },
@@ -42,36 +39,36 @@ export class GamesService {
       include: {
         configs: {
           where: { active: true },
-          select: { version: true, rtp: true, payTable: true, params: true },
+          select: { version: true, payTable: true },
           take: 1,
         },
       },
     });
-    return games.map(g => ({
+    return games.map((g) => ({
       id: g.id,
       code: g.code,
       name: g.name,
       category: g.category,
       status: g.status,
+      iconUrl: g.iconUrl ?? null,
       sortOrder: g.sortOrder,
-      minBet: g.minBet,
-      maxBet: g.maxBet,
-      configs: g.configs.map(c => ({
+      minBet: Number(g.minBet),
+      maxBet: Number(g.maxBet),
+      configs: g.configs.map((c) => ({
         version: c.version,
-        /* 公开接口不返回 rtp / 权重 */
         payTable: stripWeights(c.payTable),
       })),
     }));
   }
 
   /** 获取单个游戏详情（不暴露爆率权重；仅上架可查） */
-  async getGame(code: string) {
+  async getGame(code: string): Promise<GameItemDTO> {
     const game = await this.prisma.game.findUnique({
       where: { code },
       include: {
         configs: {
           where: { active: true },
-          select: { version: true, rtp: true, payTable: true, params: true },
+          select: { version: true, payTable: true },
           take: 1,
         },
       },
@@ -85,10 +82,11 @@ export class GamesService {
       name: game.name,
       category: game.category,
       status: game.status,
+      iconUrl: game.iconUrl ?? null,
       sortOrder: game.sortOrder,
-      minBet: game.minBet,
-      maxBet: game.maxBet,
-      configs: game.configs.map(c => ({
+      minBet: Number(game.minBet),
+      maxBet: Number(game.maxBet),
+      configs: game.configs.map((c) => ({
         version: c.version,
         payTable: stripWeights(c.payTable),
       })),

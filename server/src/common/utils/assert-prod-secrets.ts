@@ -59,6 +59,15 @@ function isWeakSecret(raw: string): boolean {
   return shannonEntropyPerChar(v) < 3.5;
 }
 
+function isHttpsOrigin(raw: string): boolean {
+  try {
+    const url = new URL(raw);
+    return url.protocol === 'https:' && url.origin === raw;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * 启动前校验运行期密钥：生产直接终止进程，开发只告警。
  * JWT_SECRET 一旦沿用占位值，任何人都能伪造管理员 token。
@@ -69,6 +78,29 @@ export function assertProdSecrets(config: ConfigService, isProd: boolean) {
 
   if (isWeakSecret(String(config.get<string>('JWT_SECRET') ?? ''))) {
     problems.push(`JWT_SECRET 需为至少 ${MIN_SECRET_LEN} 位随机串，且不得沿用 .env.example 占位值`);
+  }
+
+  if (isProd) {
+    const origins = String(
+      config.get<string>('AUTH_ALLOWED_ORIGINS') ?? '',
+    )
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean);
+    if (
+      new Set(origins).size < 2 ||
+      origins.some((origin) => !isHttpsOrigin(origin))
+    ) {
+      problems.push(
+        'AUTH_ALLOWED_ORIGINS 必须至少包含两个不同、无路径的 HTTPS Origin（玩家端与管理端）',
+      );
+    }
+    const publicOrigin = String(
+      config.get<string>('PUBLIC_BASE_URL') ?? '',
+    ).trim();
+    if (!publicOrigin || !origins.includes(publicOrigin)) {
+      problems.push('PUBLIC_BASE_URL 必须包含在 AUTH_ALLOWED_ORIGINS 中');
+    }
   }
 
   if (isProd && !String(config.get<string>('CORS_ORIGIN') ?? '').trim()) {

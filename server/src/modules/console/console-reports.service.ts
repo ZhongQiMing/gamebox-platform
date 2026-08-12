@@ -8,6 +8,7 @@ import {
   shanghaiRangeBounds,
   type TimeRangeKey,
 } from '../../common/shanghai-range';
+import { csvRow } from '../../common/utils/csv';
 import { ConsoleScopeService, type ConsoleActor } from './console-scope.service';
 
 function formatShanghaiDt(d: Date): string {
@@ -985,25 +986,17 @@ export class ConsoleReportsService {
       this.byRoom(actor, { ...opts, roomId }),
     ]);
 
-    const csvCell = (v: string | number | null | undefined) => {
-      const raw = v == null ? '' : String(v);
-      if (/[",\n\r]/.test(raw)) return `"${raw.replace(/"/g, '""')}"`;
-      return raw;
-    };
-    const row = (cols: Array<string | number | null | undefined>) =>
-      cols.map(csvCell).join(',');
-
     const fromText = s.range.fromText || s.range.from;
     const toText = s.range.toText || s.range.to;
     // 整段写进一格，避免 Excel 把日期拆到窄列里显示成 ######
     const lines = [
-      row(['报表区间（上海时间）', `${fromText} 至 ${toText}`]),
-      row([
+      csvRow(['报表区间（上海时间）', `${fromText} 至 ${toText}`]),
+      csvRow([
         '说明',
         '流水/盈亏仅含已结算注单；房间优先按 fly.roomId 归因；平台占成=庄家盈亏×(1-代理占成)；净盈亏=平台占成-代理佣金',
       ]),
       '',
-      row([
+      csvRow([
         '房号',
         '房间名',
         '状态',
@@ -1019,7 +1012,7 @@ export class ConsoleReportsService {
         '活跃玩家',
         '成员数',
       ]),
-      row([
+      csvRow([
         '合计',
         '',
         '',
@@ -1042,7 +1035,7 @@ export class ConsoleReportsService {
           FROZEN: '冻结',
           CLOSED: '关闭',
         };
-        return row([
+        return csvRow([
           r.roomNo,
           r.name,
           statusMap[r.status] || r.status,

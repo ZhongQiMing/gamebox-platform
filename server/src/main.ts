@@ -5,6 +5,7 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import { join } from 'node:path';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
+import type { Request, Response } from 'express';
 import { AppModule } from './app.module';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
@@ -43,7 +44,7 @@ async function bootstrap() {
   /*
    * CSP。
    *
-   * 这一层只覆盖 API 与 /uploads 静态目录——前端页面由 web 容器的 Nginx 发，
+   * 这一层只覆盖 API 与公开头像/房间图标——前端页面由 web 容器的 Nginx 发，
    * 它那份 CSP 在 client-app/deploy/nginx.conf 里，两边别互相指望。
    * 这里的目标很窄：万一有人把 HTML 塞进上传目录，浏览器打开时不许它加载任何外部脚本。
    * 之前整个关掉是因为管理端要内联样式，可 API 侧根本不返回页面，没有关的理由。
@@ -65,7 +66,12 @@ async function bootstrap() {
     }),
   );
 
-  /* 须在 helmet 之后注册，否则上传目录不带 nosniff 等安全响应头 */
+  /*
+   * 历史客服文件路径必须先封死；新客服媒体只走 /api/cs/media/:id 鉴权读取。
+   * /uploads 仅继续承载可公开的头像与房间图标。
+   */
+  app.use('/uploads/cs', (_req: Request, res: Response) => res.sendStatus(404));
+  /* 须在 helmet 之后注册，否则公开上传目录不带 nosniff 等安全响应头 */
   app.useStaticAssets(join(process.cwd(), 'uploads'), {
     prefix: '/uploads/',
     index: false,
@@ -104,7 +110,10 @@ async function bootstrap() {
   }
 
   const port = config.get<number>('PORT') ?? 3000;
-  /* 生产建议 HOST=127.0.0.1，只让 Nginx 反代进来，避免绕过反代伪造 X-Forwarded-For */
+  /*
+   * Compose 内必须监听 0.0.0.0 供 web 容器访问，且 server 不映射宿主机端口；
+   * 只有裸机同机 Nginx 部署才应改为 127.0.0.1。
+   */
   const host = (config.get<string>('HOST') ?? '0.0.0.0').trim() || '0.0.0.0';
   await app.listen(port, host);
    
