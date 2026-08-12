@@ -36,7 +36,7 @@ body.lhc-bg {
   background-image:
     radial-gradient(ellipse 700px 400px at 50% -6%, rgba(212, 175, 55, 0.14), transparent 65%),
     radial-gradient(ellipse 500px 300px at 50% 106%, rgba(163, 33, 48, 0.12), transparent 65%),
-    url('/images/textures/bg-dark-baroque-portrait.png');
+    url('/images/textures/bg-dark-baroque-portrait.webp');
   background-size: auto, auto, cover;
   background-position: center, center, center;
   background-repeat: no-repeat;
