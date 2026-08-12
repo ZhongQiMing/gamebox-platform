@@ -49,6 +49,8 @@ loadEnvFile(envFile)
  */
 const HEALTH_URL =
   process.env.HEALTH_URL || 'http://127.0.0.1:8080/api/health'
+/* 只有 /api/health/reconcile 需要；普通 /api/health 不校验，带上也无害 */
+const RECON_TOKEN = (process.env.RECON_HEALTH_TOKEN || '').trim()
 const BOT = (process.env.TELEGRAM_BOT_TOKEN || '').trim()
 const CHAT = (process.env.TELEGRAM_CHAT_ID || '').trim()
 const COOLDOWN_SEC = Math.max(60, Number(process.env.ALERT_COOLDOWN_SEC || 1800))
@@ -74,7 +76,10 @@ async function checkHealth() {
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS)
   try {
-    const res = await fetch(HEALTH_URL, { signal: ctrl.signal })
+    const res = await fetch(HEALTH_URL, {
+      signal: ctrl.signal,
+      headers: RECON_TOKEN ? { 'X-Recon-Token': RECON_TOKEN } : undefined,
+    })
     const text = await res.text()
     let body
     try {

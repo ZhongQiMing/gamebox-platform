@@ -2,10 +2,26 @@ import { defineConfig, loadEnv, type Plugin } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import fs from 'node:fs'
 import path from 'node:path'
+import zlib from 'node:zlib'
 import { resolve } from 'path'
 
 const repoRoot = resolve(__dirname, '..')
 const gamesAssetsDir = path.join(repoRoot, 'games-assets')
+
+function originConfigError(name: string, value?: string): string | null {
+  const raw = String(value || '').trim()
+  if (!raw || /CHANGE_TO_YOUR_DOMAIN|请改成/.test(raw)) return `${name} 未配置或仍是占位符`
+  try {
+    const normalized = raw.replace(/\/$/, '')
+    const url = new URL(raw)
+    if (url.protocol !== 'https:' || url.origin !== normalized) {
+      return `${name} 必须是 HTTPS Origin（如 https://games.example.com，不能含路径、参数或认证信息）`
+    }
+    return null
+  } catch {
+    return `${name} 不是合法 URL：${raw}`
+  }
+}
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -193,40 +209,106 @@ function finalizeStaticAssets(): Plugin {
   }
 }
 
+/*
+ * 产出 .gz 兄弟文件，交给 nginx 的 gzip_static 直接发。
+ *
+ * 现压每次请求都要花 CPU，而且只能用较低的压缩等级；构建期压一次可以拉满，
+ * 文本资源通常再小 10%~15%。用 Node 自带 zlib，不引第三方插件。
+ */
+function precompressAssets(): Plugin {
+  const COMPRESSIBLE = /\.(js|mjs|css|html|json|svg|wasm)$/i
+  const MIN_BYTES = 1024
+
+  return {
+    name: 'precompress-assets',
+    apply: 'build',
+    enforce: 'post',
+    closeBundle() {
+      const dist = path.join(__dirname, 'dist')
+      if (!fs.existsSync(dist)) return
+
+      let count = 0
+      let raw = 0
+      let gz = 0
+      for (const file of walkFiles(dist)) {
+        if (!COMPRESSIBLE.test(file)) continue
+        const buf = fs.readFileSync(file)
+        if (buf.length < MIN_BYTES) continue
+        const out = zlib.gzipSync(buf, { level: zlib.constants.Z_BEST_COMPRESSION })
+        // 压完反而变大就别留了，nginx 会优先发 .gz
+        if (out.length >= buf.length) continue
+        fs.writeFileSync(`${file}.gz`, out)
+        count++
+        raw += buf.length
+        gz += out.length
+      }
+      const mb = (n: number) => (n / 1024 / 1024).toFixed(2)
+      console.log(`\n[precompress] ${count} 个文件 ${mb(raw)}MB → ${mb(gz)}MB (.gz)\n`)
+    },
+  }
+}
+
 export default defineConfig(({ command, mode }) => {
   const env = loadEnv(mode, __dirname, '')
   if (env.VITE_SLIM_APP === '1') process.env.VITE_SLIM_APP = '1'
   if (env.VITE_ASSET_ORIGIN) process.env.VITE_ASSET_ORIGIN = env.VITE_ASSET_ORIGIN
   if (env.VITE_API_ORIGIN) process.env.VITE_API_ORIGIN = env.VITE_API_ORIGIN
 
-  /*
-   * 打 APK 前先卡住占位符。
-   *
-   * 这两个域名没填对，产物是「能装、能开、但用不了」：素材下不来、接口连不上，
-   * 而构建过程一切正常、一句警告都没有。这种错只有等玩家装上才会暴露，
-   * 所以让构建直接失败，不留「先打出来再说」的余地。
-   */
-  if (command === 'build' && env.VITE_SLIM_APP === '1') {
-    const unset = (v?: string) => !v || /CHANGE_TO_YOUR_DOMAIN|请改成/.test(v)
-    const missing = [
-      unset(env.VITE_ASSET_ORIGIN) && 'VITE_ASSET_ORIGIN —— 游戏素材下载地址',
-      unset(env.VITE_API_ORIGIN) && 'VITE_API_ORIGIN —— 后端接口地址',
-    ].filter(Boolean)
-    if (missing.length) {
+  if (command === 'build') {
+    const nativeBuild = mode === 'app' || env.VITE_SLIM_APP === '1'
+    const errors = nativeBuild
+      ? [
+          originConfigError('VITE_ASSET_ORIGIN（Native 游戏素材域）', env.VITE_ASSET_ORIGIN),
+          originConfigError('VITE_API_ORIGIN（Native 后端域）', env.VITE_API_ORIGIN),
+          env.VITE_GAME_ORIGIN
+            ? originConfigError('VITE_GAME_ORIGIN（Native 独立游戏域）', env.VITE_GAME_ORIGIN)
+            : null,
+        ]
+      : [originConfigError('VITE_GAME_ORIGIN（生产 Web 独立游戏域）', env.VITE_GAME_ORIGIN)]
+    const invalid = errors.filter((error): error is string => Boolean(error))
+    if (invalid.length) {
       throw new Error(
-        '\n[slim-app] client-app/.env.app 里这些还是占位符，改成真实域名再打包：\n' +
-          missing.map((m) => `  - ${m}`).join('\n') +
-          '\n不改的话打出来的 APK 装上是白屏。\n',
+        `\n[game-origin] ${nativeBuild ? 'Native' : '生产 Web'} 构建已中止：\n`
+          + invalid.map((error) => `  - ${error}`).join('\n')
+          + '\n生产产物禁止回退到当前页面 Origin，否则 /games-assets 会统一 404。\n',
       )
     }
   }
 
   return {
-    plugins: [vue(), serveGamesAssetsDev(), finalizeStaticAssets()],
+    /* precompress 必须排在 finalizeStaticAssets 之后：games-assets 是那一步才复制进 dist 的 */
+    plugins: [vue(), serveGamesAssetsDev(), finalizeStaticAssets(), precompressAssets()],
     resolve: {
       alias: {
         '@': resolve(__dirname, 'src'),
         '@gamebox/shared': resolve(__dirname, '../packages/shared/src/index.ts'),
+      },
+    },
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks(id: string) {
+            const p = id.replace(/\\/g, '/')
+            if (!p.includes('node_modules')) return
+            /*
+             * pixi 只有奔驰宝马的龙骨动画用得上，是全站最大的依赖。
+             * 不单独拆出去，它会被并进公共 vendor，让每个首次进站的用户都白下一份。
+             */
+            if (p.includes('/pixi.js/') || p.includes('/@pixi/')) return 'pixi-vendor'
+            if (p.includes('/socket.io-client/') || p.includes('/engine.io-client/')) {
+              return 'socket-vendor'
+            }
+            if (
+              p.includes('/vue-router/')
+              || p.includes('/pinia/')
+              || /\/vue\/dist\//.test(p)
+              || p.includes('/@vue/')
+            ) {
+              return 'vue-vendor'
+            }
+            if (p.includes('/axios/')) return 'vue-vendor'
+          },
+        },
       },
     },
     server: {

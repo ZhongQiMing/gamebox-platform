@@ -1,30 +1,49 @@
 # 生产测试镜像：多阶段构建 NestJS 服务
 # 构建上下文为仓库根目录（需要访问 packages/shared 与根 lockfile）
 
-FROM node:20-slim AS builder
+ARG NODE_IMAGE=node:22-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436
+
+FROM ${NODE_IMAGE} AS build-base
 RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ openssl \
     && rm -rf /var/lib/apt/lists/*
 RUN corepack enable && corepack prepare pnpm@9.0.0 --activate
 WORKDIR /repo
+
+FROM build-base AS builder
 COPY . .
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile --filter @gamebox/server...
 RUN pnpm --filter @gamebox/shared build
 RUN pnpm --filter @gamebox/server exec prisma generate
 RUN pnpm --filter @gamebox/server build
 
-FROM node:20-slim AS runner
+# 单独安装生产依赖，避免把编译器、Jest、ESLint 等开发工具带进运行镜像。
+FROM build-base AS prod-deps
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages/shared/package.json ./packages/shared/package.json
+COPY server/package.json ./server/package.json
+COPY server/prisma ./server/prisma
+RUN pnpm install --frozen-lockfile --prod --filter @gamebox/server... \
+    && pnpm --filter @gamebox/server exec prisma generate
+
+FROM ${NODE_IMAGE} AS runner
 RUN apt-get update && apt-get install -y --no-install-recommends openssl \
     && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
 WORKDIR /repo
 
-# 只拷运行所需内容，不带 client-app/admin-panel/games-assets/docs 等
-COPY --from=builder /repo/node_modules ./node_modules
-COPY --from=builder /repo/package.json ./package.json
-COPY --from=builder /repo/pnpm-workspace.yaml ./pnpm-workspace.yaml
-COPY --from=builder /repo/packages ./packages
-COPY --from=builder /repo/server ./server
+# 只拷运行依赖、构建产物、Prisma 迁移和探针，不携带源码与开发依赖。
+COPY --from=prod-deps --chown=node:node /repo/node_modules ./node_modules
+COPY --from=prod-deps --chown=node:node /repo/server/node_modules ./server/node_modules
+COPY --from=builder --chown=node:node /repo/packages/shared/package.json ./packages/shared/package.json
+COPY --from=builder --chown=node:node /repo/packages/shared/dist ./packages/shared/dist
+COPY --from=builder --chown=node:node /repo/server/package.json ./server/package.json
+COPY --from=builder --chown=node:node /repo/server/dist ./server/dist
+COPY --from=builder --chown=node:node /repo/server/prisma ./server/prisma
+COPY --from=builder --chown=node:node /repo/server/healthcheck.js ./server/healthcheck.js
+RUN mkdir -p /repo/server/uploads /repo/server/private-uploads/cs \
+    && chown -R node:node /repo
 
 WORKDIR /repo/server
+USER node
 EXPOSE 3001
 CMD ["node", "dist/main.js"]

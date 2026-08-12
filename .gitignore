@@ -15,6 +15,7 @@ dist-images/
 !.env.example
 scripts/health-alert.env
 scripts/.health-alert-state.json
+scripts/security-artifacts/
 scripts/backup*.env
 backups/
 

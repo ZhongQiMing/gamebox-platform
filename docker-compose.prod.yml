@@ -10,7 +10,7 @@
 # .env.prod 只需提供 DB_PASSWORD，其余后端环境变量在 server/.env.production 中配置
 services:
   postgres:
-    image: postgres:15-alpine
+    image: postgres:15-alpine@sha256:3d0f7584ed7d04e27fa050d6683a74746608faf21f202be78460d679cc56461f
     container_name: gamebox-postgres
     restart: unless-stopped
     environment:
@@ -19,7 +19,7 @@ services:
       POSTGRES_DB: gamebox
     volumes:
       - gamebox_pgdata:/var/lib/postgresql/data
-    networks: [gamebox]
+    networks: [backend]
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U gamebox -d gamebox']
       interval: 5s
@@ -27,7 +27,7 @@ services:
       retries: 12
 
   redis:
-    image: redis:7-alpine
+    image: redis:7-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
     container_name: gamebox-redis
     restart: unless-stopped
     command: >
@@ -40,7 +40,7 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     volumes:
       - gamebox_redisdata:/data
-    networks: [gamebox]
+    networks: [backend]
     healthcheck:
       # 须与上面 command 的分支一致：设了 requirepass 裸 ping 返回 NOAUTH，
       # 没设时带 -a "" 又会返回 ERR no password is set，两种都会卡死健康检查
@@ -67,11 +67,21 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    networks: [gamebox]
+    networks: [frontend, backend]
     volumes:
       - gamebox_uploads:/repo/server/uploads
+      - gamebox_private_uploads:/repo/server/private-uploads
+    user: "1000:1000"
+    read_only: true
+    init: true
+    pids_limit: 256
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
     healthcheck:
-      # 运行镜像基于 node:20-slim，不含 wget/curl；探针走 Node 内置 fetch，端口跟随 PORT
+      # 运行镜像基于 node:22-slim，不含 wget/curl；探针走 Node 内置 fetch，端口跟随 PORT
       test: ['CMD', 'node', 'healthcheck.js']
       interval: 10s
       timeout: 5s
@@ -89,15 +99,42 @@ services:
       server:
         condition: service_healthy
     ports:
-      # 只开本机：TLS 由宿主机 Nginx 终止后反代到 127.0.0.1:8080，容器不直面公网
-      - "127.0.0.1:8080:80"
-    networks: [gamebox]
+      # 三个独立 Origin 均只开本机，由宿主机 TLS Nginx 分域名转发。
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:8081:8081"
+      - "127.0.0.1:8082:8082"
+    networks: [frontend]
+    user: "101:101"
+    read_only: true
+    init: true
+    pids_limit: 128
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=32m
+    healthcheck:
+      # 应急变体也必须同时验证玩家、管理、游戏三个 HTTP 入口。
+      test:
+        - CMD-SHELL
+        - >-
+          wget -q -O /dev/null http://127.0.0.1:8080/
+          && wget -q -O /dev/null http://127.0.0.1:8081/
+          && wget -q -O /dev/null http://127.0.0.1:8082/
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
 networks:
-  gamebox:
+  frontend:
     driver: bridge
+  backend:
+    driver: bridge
+    internal: true
 
 volumes:
   gamebox_pgdata:
   gamebox_redisdata:
   gamebox_uploads:
+  gamebox_private_uploads:

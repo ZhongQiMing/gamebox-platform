@@ -1,7 +1,7 @@
 /**
  * 容器健康探针：请求本进程的 /api/health，2xx 退出 0，其余退出 1。
  *
- * 用 Node 内置 fetch 而不是 wget/curl —— 运行镜像基于 node:20-slim，
+ * 用 Node 内置 fetch 而不是 wget/curl —— 运行镜像基于 node:22-slim，
  * 这两个工具都不存在，探针会永远失败并把 server 卡在 unhealthy。
  * 端口跟随 PORT，避免探针与服务实际监听端口漂移。
  */

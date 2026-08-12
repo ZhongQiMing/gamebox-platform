@@ -22,18 +22,67 @@ cd "$DEPLOY_DIR"
 
 dc() { docker compose -f "$COMPOSE_FILE" --env-file .env.prod "$@"; }
 
+wait_healthy() {
+  local attempts=$1 server_cid web_cid
+  for i in $(seq 1 "$attempts"); do
+    server_cid=$(dc ps -q server)
+    web_cid=$(dc ps -q web)
+    if [ -n "$server_cid" ] && [ -n "$web_cid" ] \
+      && [ "$(docker inspect -f '{{.State.Health.Status}}' "$server_cid" 2>/dev/null)" = healthy ] \
+      && [ "$(docker inspect -f '{{.State.Health.Status}}' "$web_cid" 2>/dev/null)" = healthy ]; then
+      echo "server + web 健康检查通过（第 ${i} 次）"
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
 if [ ! -f .env.prod ]; then
   echo "找不到 $DEPLOY_DIR/.env.prod，这台机器上还没部署过。"
   exit 1
 fi
 CURRENT=$(sed -n 's#^GAMEBOX_VERSION=##p' .env.prod | head -1)
+PLAYER_ORIGIN=$(sed -n 's#^PUBLIC_BASE_URL=##p' .env.prod | head -1)
+GAME_ORIGIN=$(sed -n 's#^GAME_BASE_URL=##p' .env.prod | head -1)
 
-# 只有两个镜像都在的版本才切得过去，缺一个切过去就是半套
+origin_compatible() {
+  local tag=$1 player game
+  player=$(docker image inspect \
+    --format '{{ index .Config.Labels "org.gamebox.player-origin" }}' \
+    "gamebox-web:$tag" 2>/dev/null || true)
+  game=$(docker image inspect \
+    --format '{{ index .Config.Labels "org.gamebox.game-origin" }}' \
+    "gamebox-web:$tag" 2>/dev/null || true)
+  [ -n "$PLAYER_ORIGIN" ] && [ "$player" = "$PLAYER_ORIGIN" ] \
+    && [ -n "$GAME_ORIGIN" ] && [ "$game" = "$GAME_ORIGIN" ]
+}
+
+[ -n "$CURRENT" ] || {
+  echo ".env.prod 缺少非空 GAMEBOX_VERSION，拒绝回滚，避免隐式落到 latest。" >&2
+  exit 1
+}
+[ "$CURRENT" != latest ] || {
+  echo "当前 GAMEBOX_VERSION=latest，不具备安全回退基线，拒绝回滚。" >&2
+  exit 1
+}
+if ! docker image inspect "gamebox-server:$CURRENT" >/dev/null 2>&1 \
+  || ! docker image inspect "gamebox-web:$CURRENT" >/dev/null 2>&1; then
+  echo "当前版本 $CURRENT 的 server/web 镜像不完整，无法保证失败后恢复，拒绝回滚。" >&2
+  exit 1
+fi
+origin_compatible "$CURRENT" || {
+  echo "当前版本 $CURRENT 与 .env.prod 的 Origin 不兼容，无法作为安全恢复基线。" >&2
+  exit 1
+}
+
+# 只有两个镜像都在且三端口/Origin 契约一致的版本才切得过去。
 available_versions() {
   docker images gamebox-server --format '{{.Tag}}' \
     | grep -vx 'latest' | grep -vx '<none>' | sort -r \
     | while read -r tag; do
-        if docker image inspect "gamebox-web:$tag" >/dev/null 2>&1; then
+        if docker image inspect "gamebox-web:$tag" >/dev/null 2>&1 \
+          && origin_compatible "$tag"; then
           echo "$tag"
         fi
       done
@@ -116,25 +165,43 @@ fi
 # ── 执行 ──────────────────────────────────────────────────
 sed -i "s#^GAMEBOX_VERSION=.*#GAMEBOX_VERSION=$TARGET#" .env.prod
 echo "==> 切换到 $TARGET..."
-dc up -d
-
-echo "==> 等待服务健康..."
-for i in $(seq 1 60); do
-  if dc exec -T server node healthcheck.js >/dev/null 2>&1; then
-    printf '%s\t%s\t%s\t%s\n' "$(date -Iseconds)" rollback "$TARGET" "回滚自=$CURRENT" \
-      >> "$HISTORY_FILE"
-    echo "健康检查通过（第 ${i} 次）"
-    echo ""
-    echo "已回滚到 $TARGET。$CURRENT 的镜像还在服务器上，修好后可以直接切回去。"
-    exit 0
+TARGET_OK=0
+TARGET_FAILURE="docker compose up -d 失败"
+if dc up -d; then
+  echo "==> 等待服务健康..."
+  if wait_healthy 60; then
+    TARGET_OK=1
+  else
+    TARGET_FAILURE="健康检查超时"
   fi
-  sleep 2
-done
+fi
+if [ "$TARGET_OK" = 1 ]; then
+  printf '%s\t%s\t%s\t%s\n' "$(date -Iseconds)" rollback "$TARGET" "回滚自=$CURRENT" \
+    >> "$HISTORY_FILE"
+  echo ""
+  echo "已回滚到 $TARGET。$CURRENT 的镜像还在服务器上，修好后可以直接切回去。"
+  exit 0
+fi
 
 echo ""
-echo "!! 回滚到 $TARGET 后健康检查仍未通过，最近 50 行日志："
-dc logs --tail 50 server || true
+echo "!! 回滚到 $TARGET 失败（$TARGET_FAILURE），最近 50 行日志："
+dc logs --tail 50 server web || true
 echo ""
-echo "旧版本也起不来，问题多半不在应用代码（数据库、Redis、迁移不兼容都有可能）。"
-echo "当前 .env.prod 已指向 $TARGET，排查完直接 dc up -d 即可，不用再改。"
+echo "==> 自动写回原版本 $CURRENT 并重启..."
+if ! sed -i "s#^GAMEBOX_VERSION=.*#GAMEBOX_VERSION=$CURRENT#" .env.prod; then
+  echo "!! 无法将 .env.prod 写回 $CURRENT；服务未继续启动，必须立即人工修复。" >&2
+  exit 1
+fi
+CURRENT_OK=0
+if dc up -d; then
+  wait_healthy 60 && CURRENT_OK=1
+else
+  echo "!! 原版本 $CURRENT 的 docker compose up 直接失败。" >&2
+fi
+if [ "$CURRENT_OK" = 1 ]; then
+  echo "原版本 $CURRENT 已恢复健康；失败目标 $TARGET 未留在 .env.prod。"
+else
+  echo "!! 原版本 $CURRENT 也未恢复健康，但 .env.prod 已安全写回 $CURRENT。" >&2
+  dc logs --tail 50 server web || true
+fi
 exit 1
