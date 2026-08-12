@@ -168,10 +168,10 @@
                 >
                   <div class="msg-bubble">
                     <p v-if="msgCaption(m.text)">{{ msgCaption(m.text) }}</p>
-                    <img
+                    <PrivateMediaImage
                       v-if="msgImage(m.text)"
                       class="msg-img"
-                      :src="msgImage(m.text)!"
+                      :src="msgImage(m.text)"
                       alt="收款码"
                     />
                     <time>{{ fmtClock(m.createdAt) }}</time>
@@ -296,7 +296,7 @@
               <div class="side-block">
                 <div class="side-title">
                   上下分申请
-                  <button type="button" class="side-refresh" @click="loadCsPlayerOrders">刷新</button>
+                  <button type="button" class="side-refresh" @click="() => loadCsPlayerOrders()">刷新</button>
                 </div>
                 <div v-loading="csOrdersLoading" class="side-orders">
                   <div v-if="!csPlayerOrders.length" class="side-empty">暂无待审申请</div>
@@ -563,7 +563,7 @@
               :key="q.id"
               class="set-qr-item"
             >
-              <img :src="q.url" alt="微信收款码" />
+              <PrivateMediaImage :src="q.url" alt="微信收款码" />
               <el-input v-model="q.name" size="small" maxlength="20" placeholder="备注，如：码1" />
               <el-button text type="danger" size="small" @click="csSettingsDraft.wechatQrs.splice(i, 1)">
                 删除
@@ -588,7 +588,7 @@
               :key="q.id"
               class="set-qr-item"
             >
-              <img :src="q.url" alt="支付宝收款码" />
+              <PrivateMediaImage :src="q.url" alt="支付宝收款码" />
               <el-input v-model="q.name" size="small" maxlength="20" placeholder="备注，如：码1" />
               <el-button text type="danger" size="small" @click="csSettingsDraft.alipayQrs.splice(i, 1)">
                 删除
@@ -614,7 +614,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import {
+  ref,
+  reactive,
+  computed,
+  onActivated,
+  onDeactivated,
+  onMounted,
+  onUnmounted,
+  nextTick,
+  watch,
+} from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   reviewApi,
@@ -627,6 +637,7 @@ import { consoleApi, type CsWageBillRow, type PlayerFlowRow } from '@/api/consol
 import { useAdminStore } from '@/stores/admin'
 import { PLAYER_DOWN_MIN, PLAYER_FUND_MAX, PLAYER_UP_MIN } from '@gamebox/shared'
 import { newFundOrderNo } from '@/utils/fundOrderNo'
+import PrivateMediaImage from '@/components/PrivateMediaImage.vue'
 
 const store = useAdminStore()
 const isCs = computed(() => store.profile?.role === 'CS')
@@ -789,7 +800,8 @@ function payChannelLabel(channel?: string | null) {
 
 function msgImage(text: string) {
   const m = String(text || '').match(/\[img\](\S+)/i)
-  return m?.[1] || ''
+  const url = String(m?.[1] || '').trim()
+  return /^\/api\/cs\/media\/[A-Za-z0-9_-]{10,64}$/.test(url) ? url : ''
 }
 
 function msgCaption(text: string) {
@@ -902,17 +914,19 @@ async function onPayQrFile(ev: Event) {
 
 async function sendQuickText(text: string) {
   const t = text.trim()
-  if (!t || !selectedPlayerId.value || replyLoading.value) return
+  const request = selectionRequest()
+  if (!t || !request || replyLoading.value) return
   replyLoading.value = true
   try {
-    const res = await csConsoleApi.reply(selectedPlayerId.value, t)
+    const res = await csConsoleApi.reply(request.playerId, t)
+    if (!isCurrentSelection(request)) return
     if (res.message) messages.value.push(res.message)
     scrollBubbles()
     void loadSessions(true)
   } catch (e: unknown) {
-    ElMessage.error((e as Error).message)
+    if (isCurrentSelection(request)) ElMessage.error((e as Error).message)
   } finally {
-    replyLoading.value = false
+    if (isCurrentSelection(request)) replyLoading.value = false
   }
 }
 
@@ -920,10 +934,9 @@ async function sendQuickText(text: string) {
 const PAY_QR_FOLLOW_UP =
   '温馨提示：每次上下分请先联系客服获取最新收款码后再付款。未按指引转账或认错收款码造成的损失，需自行承担。'
 
-async function appendPayQrFollowUp() {
-  if (!selectedPlayerId.value) return
-  const res = await csConsoleApi.reply(selectedPlayerId.value, PAY_QR_FOLLOW_UP)
-  if (res.message) messages.value.push(res.message)
+async function appendPayQrFollowUp(request: SelectionRequest) {
+  const res = await csConsoleApi.reply(request.playerId, PAY_QR_FOLLOW_UP)
+  if (isCurrentSelection(request) && res.message) messages.value.push(res.message)
 }
 
 async function sendPayQrById(kind: 'wechat' | 'alipay', id: string) {
@@ -934,23 +947,26 @@ async function sendPayQrById(kind: 'wechat' | 'alipay', id: string) {
     openCsSettings()
     return
   }
-  if (!selectedPlayerId.value || replyLoading.value) return
+  const request = selectionRequest()
+  if (!request || replyLoading.value) return
   const caption =
     kind === 'wechat'
       ? `请使用微信扫码支付${item.name ? `（${item.name}）` : ''}`
       : `请使用支付宝扫码支付${item.name ? `（${item.name}）` : ''}`
   replyLoading.value = true
   try {
-    const res = await csConsoleApi.reply(selectedPlayerId.value, `${caption}\n[img]${item.url}`)
+    const res = await csConsoleApi.reply(request.playerId, `${caption}\n[img]${item.url}`)
+    if (!isCurrentSelection(request)) return
     if (res.message) messages.value.push(res.message)
-    await appendPayQrFollowUp()
+    await appendPayQrFollowUp(request)
+    if (!isCurrentSelection(request)) return
     scrollBubbles()
     void loadSessions(true)
     ElMessage.success('已发送收款码')
   } catch (e: unknown) {
-    ElMessage.error((e as Error).message)
+    if (isCurrentSelection(request)) ElMessage.error((e as Error).message)
   } finally {
-    replyLoading.value = false
+    if (isCurrentSelection(request)) replyLoading.value = false
   }
 }
 
@@ -966,7 +982,8 @@ async function sendAllPayQr(kind: 'wechat' | 'alipay') {
     openCsSettings()
     return
   }
-  if (!selectedPlayerId.value || replyLoading.value) return
+  const request = selectionRequest()
+  if (!request || replyLoading.value) return
   replyLoading.value = true
   let ok = 0
   try {
@@ -977,18 +994,22 @@ async function sendAllPayQr(kind: 'wechat' | 'alipay') {
         kind === 'wechat'
           ? `请使用微信扫码支付（${item.name || `码${i + 1}`}）`
           : `请使用支付宝扫码支付（${item.name || `码${i + 1}`}）`
-      const res = await csConsoleApi.reply(selectedPlayerId.value, `${caption}\n[img]${item.url}`)
+      const res = await csConsoleApi.reply(request.playerId, `${caption}\n[img]${item.url}`)
+      if (!isCurrentSelection(request)) return
       if (res.message) messages.value.push(res.message)
       ok += 1
     }
-    if (ok > 0) await appendPayQrFollowUp()
+    if (ok > 0) await appendPayQrFollowUp(request)
+    if (!isCurrentSelection(request)) return
     scrollBubbles()
     void loadSessions(true)
     ElMessage.success(`已发送 ${ok} 张收款码`)
   } catch (e: unknown) {
-    ElMessage.error((e as Error).message || `已发送 ${ok} 张，后续失败`)
+    if (isCurrentSelection(request)) {
+      ElMessage.error((e as Error).message || `已发送 ${ok} 张，后续失败`)
+    }
   } finally {
-    replyLoading.value = false
+    if (isCurrentSelection(request)) replyLoading.value = false
   }
 }
 
@@ -1013,27 +1034,38 @@ const csFundOk = computed(() => {
   return !csFundHint.value
 })
 
-async function loadCsPlayerOrders() {
-  if (!isCs.value || !selectedPlayerId.value) {
+async function loadCsPlayerOrders(silent = false, fromPoll = false) {
+  const request = selectionRequest()
+  if (!isCs.value || !request) {
+    invalidateLane(csOrdersLane)
     csPlayerOrders.value = []
+    csOrdersLoading.value = false
     return
   }
-  csOrdersLoading.value = true
+  if (skipBackgroundOverlap(csOrdersLane, fromPoll)) return
+  const sequence = beginRequest(csOrdersLane)
+  if (!silent) csOrdersLoading.value = true
   try {
     const res = await reviewApi.list({
-      playerId: selectedPlayerId.value,
+      playerId: request.playerId,
       status: 'PENDING',
       page: 1,
       pageSize: 20,
     })
+    if (!isCurrentSelection(request) || !isLatestRequest(csOrdersLane, sequence)) return
     const prev = csPlayerOrders.value.map((o) => `${o.id}:${o.amount}:${o.status}`).join('|')
     csPlayerOrders.value = res.list || []
     const next = csPlayerOrders.value.map((o) => `${o.id}:${o.amount}:${o.status}`).join('|')
     if (prev !== next) syncFundFromPendingOrders()
   } catch {
-    csPlayerOrders.value = []
+    if (isCurrentSelection(request) && isLatestRequest(csOrdersLane, sequence)) {
+      csPlayerOrders.value = []
+    }
   } finally {
-    csOrdersLoading.value = false
+    finishRequest(csOrdersLane)
+    if (isCurrentSelection(request) && isLatestRequest(csOrdersLane, sequence)) {
+      csOrdersLoading.value = false
+    }
   }
 }
 
@@ -1074,7 +1106,8 @@ watch(csFundMode, (mode) => {
 })
 
 async function submitCsFund() {
-  if (!selectedPlayerId.value || !csFundOk.value) return
+  const request = selectionRequest()
+  if (!request || !csFundOk.value) return
   const amt = Number(csFundAmount.value)
   const dir = csFundMode.value === 'up' ? '充值' : '下分'
   try {
@@ -1086,9 +1119,11 @@ async function submitCsFund() {
   } catch {
     return
   }
+  if (!isCurrentSelection(request)) return
   csFundBusy.value = true
   try {
-    const detail = await consoleApi.playerDetail(selectedPlayerId.value)
+    const detail = await consoleApi.playerDetail(request.playerId)
+    if (!isCurrentSelection(request)) return
     const roomId = String(detail.roomId || detail.room?.id || '').trim()
     if (!roomId) {
       ElMessage.error('无法确定玩家房间，请稍后重试')
@@ -1096,17 +1131,19 @@ async function submitCsFund() {
     }
     const rid = newFundOrderNo(csFundMode.value === 'up' ? 'up' : 'down')
     if (csFundMode.value === 'up') {
-      const res = await consoleApi.creditPlayer(selectedPlayerId.value, amt, roomId, undefined, rid)
+      const res = await consoleApi.creditPlayer(request.playerId, amt, roomId, undefined, rid)
+      if (!isCurrentSelection(request)) return
       ElMessage.success(`充值成功 · 订单 ${res?.orderNo || rid}`)
     } else {
-      const res = await consoleApi.debitPlayer(selectedPlayerId.value, amt, roomId, undefined, rid)
+      const res = await consoleApi.debitPlayer(request.playerId, amt, roomId, undefined, rid)
+      if (!isCurrentSelection(request)) return
       ElMessage.success(`下分成功 · 订单 ${res?.orderNo || rid}`)
     }
     await Promise.all([refreshCsMe(), loadCsPlayerOrders()])
   } catch (e: unknown) {
-    ElMessage.error((e as Error).message || '操作失败')
+    if (isCurrentSelection(request)) ElMessage.error((e as Error).message || '操作失败')
   } finally {
-    csFundBusy.value = false
+    if (isCurrentSelection(request)) csFundBusy.value = false
   }
 }
 
@@ -1124,10 +1161,14 @@ function applyCsMe(me: {
 
 async function refreshCsMe() {
   if (!isCs.value) return
+  const sequence = beginRequest(csMeLane)
   try {
-    applyCsMe(await consoleApi.csStaffMe())
+    const me = await consoleApi.csStaffMe()
+    if (isLatestRequest(csMeLane, sequence)) applyCsMe(me)
   } catch {
     /* ignore */
+  } finally {
+    finishRequest(csMeLane)
   }
 }
 
@@ -1177,6 +1218,7 @@ async function loadWageMore() {
 
 async function onCsStatusChange(val: string | number | boolean) {
   if (!isCs.value || !store.profile?.id) return
+  invalidateLane(csMeLane)
   csStatusBusy.value = true
   try {
     const workStatus = val ? 'IDLE' : 'REST'
@@ -1255,6 +1297,83 @@ const avatarLetter = computed(() => {
 
 let pollTimer: ReturnType<typeof setInterval> | undefined
 let flowTimer: ReturnType<typeof setInterval> | undefined
+let selectionGeneration = 0
+let mounted = false
+let deactivated = false
+
+interface RequestLane {
+  sequence: number
+  inFlight: number
+}
+
+function requestLane(): RequestLane {
+  return { sequence: 0, inFlight: 0 }
+}
+
+const sessionsLane = requestLane()
+const flowLane = requestLane()
+const selectedFlowLane = requestLane()
+const messagesLane = requestLane()
+const ordersLane = requestLane()
+const csOrdersLane = requestLane()
+const csMeLane = requestLane()
+
+function beginRequest(lane: RequestLane): number {
+  lane.inFlight += 1
+  lane.sequence += 1
+  return lane.sequence
+}
+
+function finishRequest(lane: RequestLane) {
+  lane.inFlight = Math.max(0, lane.inFlight - 1)
+}
+
+function isLatestRequest(lane: RequestLane, sequence: number): boolean {
+  return lane.sequence === sequence
+}
+
+function invalidateLane(lane: RequestLane) {
+  lane.sequence += 1
+}
+
+function invalidateReadRequests() {
+  for (const lane of [
+    sessionsLane,
+    flowLane,
+    selectedFlowLane,
+    messagesLane,
+    ordersLane,
+    csOrdersLane,
+    csMeLane,
+  ]) {
+    invalidateLane(lane)
+  }
+  sessionsLoading.value = false
+  flowLoading.value = false
+  messagesLoading.value = false
+  ordersLoading.value = false
+  csOrdersLoading.value = false
+}
+
+function skipBackgroundOverlap(lane: RequestLane, fromPoll: boolean): boolean {
+  return fromPoll && lane.inFlight > 0
+}
+
+interface SelectionRequest {
+  playerId: string
+  generation: number
+}
+
+function selectionRequest(): SelectionRequest | null {
+  return selectedPlayerId.value
+    ? { playerId: selectedPlayerId.value, generation: selectionGeneration }
+    : null
+}
+
+function isCurrentSelection(request: SelectionRequest): boolean {
+  return request.generation === selectionGeneration
+    && selectedPlayerId.value === request.playerId
+}
 
 function previewSender(sender: string) {
   if (sender === 'PLAYER') return ''
@@ -1272,25 +1391,32 @@ function teaTemplate(amount: number) {
   return `您的早茶 ${amount}，请回复「上分${amount}」申请`
 }
 
-async function loadSessions(silent = false) {
+async function loadSessions(silent = false, fromPoll = false) {
+  if (skipBackgroundOverlap(sessionsLane, fromPoll)) return
+  const sequence = beginRequest(sessionsLane)
   if (!silent) sessionsLoading.value = true
   try {
     const res = await csConsoleApi.sessions()
+    if (!isLatestRequest(sessionsLane, sequence)) return
     sessions.value = res.list || []
   } catch (e: unknown) {
-    if (!silent) {
+    if (!silent && isLatestRequest(sessionsLane, sequence)) {
       const msg = e instanceof Error ? e.message : ''
       if (msg && msg !== 'AUTH_EXPIRED') ElMessage.error(msg)
     }
   } finally {
-    sessionsLoading.value = false
+    finishRequest(sessionsLane)
+    if (isLatestRequest(sessionsLane, sequence)) sessionsLoading.value = false
   }
 }
 
-async function loadFlowBoard(silent = false) {
+async function loadFlowBoard(silent = false, fromPoll = false) {
+  if (skipBackgroundOverlap(flowLane, fromPoll)) return
+  const sequence = beginRequest(flowLane)
   if (!silent) flowLoading.value = true
   try {
     const res = await consoleApi.playerFlow({ range: 'yesterday', limit: 100 })
+    if (!isLatestRequest(flowLane, sequence)) return
     flowList.value = res.list || []
     const map: Record<string, number> = {}
     for (const r of flowList.value) map[r.playerId] = r.validFlow
@@ -1300,67 +1426,103 @@ async function loadFlowBoard(silent = false) {
       selectedYesterdayFlow.value = map[selectedPlayerId.value]
     }
   } catch (e: unknown) {
-    if (!silent) {
+    if (!silent && isLatestRequest(flowLane, sequence)) {
       const msg = e instanceof Error ? e.message : ''
       if (msg && msg !== 'AUTH_EXPIRED') ElMessage.error(msg)
     }
   } finally {
-    flowLoading.value = false
+    finishRequest(flowLane)
+    if (isLatestRequest(flowLane, sequence)) flowLoading.value = false
   }
 }
 
 async function refreshSelectedFlow() {
-  if (!selectedPlayerId.value) {
+  const request = selectionRequest()
+  if (!request) {
+    invalidateLane(selectedFlowLane)
     selectedYesterdayFlow.value = null
     return
   }
-  const cached = flowByPlayer.value[selectedPlayerId.value]
+  const sequence = beginRequest(selectedFlowLane)
+  const cached = flowByPlayer.value[request.playerId]
   if (cached != null && Date.now() - flowLoadedAt < 60_000) {
-    selectedYesterdayFlow.value = cached
+    if (isCurrentSelection(request) && isLatestRequest(selectedFlowLane, sequence)) {
+      selectedYesterdayFlow.value = cached
+    }
+    finishRequest(selectedFlowLane)
     return
   }
   try {
     const res = await consoleApi.playerFlow({
       range: 'yesterday',
-      playerId: selectedPlayerId.value,
+      playerId: request.playerId,
     })
+    if (
+      !isCurrentSelection(request)
+      || !isLatestRequest(selectedFlowLane, sequence)
+    ) return
     const row = res.list?.[0]
     selectedYesterdayFlow.value = row ? row.validFlow : 0
     if (row) flowByPlayer.value[row.playerId] = row.validFlow
   } catch {
-    selectedYesterdayFlow.value = null
+    if (isCurrentSelection(request) && isLatestRequest(selectedFlowLane, sequence)) {
+      selectedYesterdayFlow.value = null
+    }
+  } finally {
+    finishRequest(selectedFlowLane)
   }
 }
 
-async function loadMessages(silent = false) {
-  if (!selectedPlayerId.value) {
+async function loadMessages(
+  silent = false,
+  fixedRequest?: SelectionRequest,
+  fromPoll = false,
+) {
+  const request = fixedRequest || selectionRequest()
+  if (!request) {
+    invalidateLane(messagesLane)
     messages.value = []
+    messagesLoading.value = false
     return
   }
+  if (!isCurrentSelection(request)) return
+  if (skipBackgroundOverlap(messagesLane, fromPoll)) return
+  const sequence = beginRequest(messagesLane)
   if (!silent) messagesLoading.value = true
   try {
-    const res = await csConsoleApi.messages(selectedPlayerId.value)
+    const res = await csConsoleApi.messages(request.playerId)
+    if (!isCurrentSelection(request) || !isLatestRequest(messagesLane, sequence)) return
     const next = res.list || []
     const prevLast = messages.value[messages.value.length - 1]?.id
     const nextLast = next[next.length - 1]?.id
     messages.value = next
     if (!silent || prevLast !== nextLast) scrollBubbles()
   } catch (e: unknown) {
-    if (!silent) {
+    if (
+      !silent
+      && isCurrentSelection(request)
+      && isLatestRequest(messagesLane, sequence)
+    ) {
       const msg = e instanceof Error ? e.message : ''
       if (msg && msg !== 'AUTH_EXPIRED') ElMessage.error(msg)
     }
   } finally {
-    messagesLoading.value = false
+    finishRequest(messagesLane)
+    if (isCurrentSelection(request) && isLatestRequest(messagesLane, sequence)) {
+      messagesLoading.value = false
+    }
   }
 }
 
-async function loadOrders(silent = false) {
+async function loadOrders(silent = false, fromPoll = false) {
+  if (skipBackgroundOverlap(ordersLane, fromPoll)) return
+  const scopedRequest = orderScope.value === 'player' ? selectionRequest() : null
+  const sequence = beginRequest(ordersLane)
   if (!silent) ordersLoading.value = true
   try {
     const playerId =
-      orderScope.value === 'player' && selectedPlayerId.value
-        ? selectedPlayerId.value
+      orderScope.value === 'player' && scopedRequest
+        ? scopedRequest.playerId
         : undefined
     const res = await reviewApi.list({
       ...filter,
@@ -1368,18 +1530,32 @@ async function loadOrders(silent = false) {
       status: filter.status || undefined,
       playerId,
     })
+    if (
+      !isLatestRequest(ordersLane, sequence)
+      || (scopedRequest && !isCurrentSelection(scopedRequest))
+    ) return
     list.value = res.list
     total.value = res.total
     if (!filter.status || filter.status === 'PENDING') {
       pendingHint.value = res.total
     }
   } catch (e: unknown) {
-    if (!silent) {
+    if (
+      !silent
+      && isLatestRequest(ordersLane, sequence)
+      && (!scopedRequest || isCurrentSelection(scopedRequest))
+    ) {
       const msg = e instanceof Error ? e.message : ''
       if (msg && msg !== 'AUTH_EXPIRED') ElMessage.error(msg)
     }
   } finally {
-    ordersLoading.value = false
+    finishRequest(ordersLane)
+    if (
+      isLatestRequest(ordersLane, sequence)
+      && (!scopedRequest || isCurrentSelection(scopedRequest))
+    ) {
+      ordersLoading.value = false
+    }
   }
 }
 
@@ -1405,19 +1581,35 @@ function onComposerKey(e: KeyboardEvent) {
 }
 
 async function selectPlayer(playerId: string, meta?: { uid: string; nickname: string }) {
+  selectionGeneration += 1
+  invalidateLane(messagesLane)
+  invalidateLane(selectedFlowLane)
+  invalidateLane(csOrdersLane)
+  invalidateLane(ordersLane)
   selectedPlayerId.value = playerId
   if (meta) selectedMeta.value = meta
-  if (orderScope.value === 'player') {
-    filter.page = 1
-    void loadOrders()
+  messages.value = []
+  csPlayerOrders.value = []
+  selectedYesterdayFlow.value = null
+  messagesLoading.value = false
+  csOrdersLoading.value = false
+  replyLoading.value = false
+  csFundBusy.value = false
+  const request = selectionRequest()
+  if (!request) return
+  if (!isCs.value) {
+    if (orderScope.value === 'player') filter.page = 1
+    void loadOrders(orderScope.value !== 'player')
   }
   void refreshSelectedFlow()
   if (isCs.value) {
     void loadCsPlayerOrders()
   }
-  await loadMessages()
+  await loadMessages(false, request)
+  if (!isCurrentSelection(request) || !canPollNow()) return
   try {
-    await csConsoleApi.read(playerId)
+    await csConsoleApi.read(request.playerId)
+    if (!isCurrentSelection(request) || !canPollNow()) return
     const row = sessions.value.find((x) => x.playerId === playerId)
     if (row) row.unread = 0
   } catch {
@@ -1514,10 +1706,12 @@ async function onOrderRowClick(row: ReviewOrder) {
 
 async function sendReply() {
   const text = draft.value.trim()
-  if (!text || !selectedPlayerId.value || replyLoading.value) return
+  const request = selectionRequest()
+  if (!text || !request || replyLoading.value) return
   replyLoading.value = true
   try {
-    const res = await csConsoleApi.reply(selectedPlayerId.value, text)
+    const res = await csConsoleApi.reply(request.playerId, text)
+    if (!isCurrentSelection(request)) return
     if (res.message) messages.value.push(res.message)
     draft.value = ''
     nextTick(() => {
@@ -1526,9 +1720,9 @@ async function sendReply() {
     scrollBubbles()
     void loadSessions(true)
   } catch (e: unknown) {
-    ElMessage.error((e as Error).message)
+    if (isCurrentSelection(request)) ElMessage.error((e as Error).message)
   } finally {
-    replyLoading.value = false
+    if (isCurrentSelection(request)) replyLoading.value = false
   }
 }
 
@@ -1625,22 +1819,58 @@ function stopPolling() {
   }
 }
 
-async function poll() {
-  if (!store.isLoggedIn) {
+function poll() {
+  if (!canPollNow()) {
     stopPolling()
+    invalidateReadRequests()
     return
   }
-  try {
-    await loadSessions(true)
-    if (!isCs.value) {
-      await loadOrders(true)
-    } else if (selectedPlayerId.value) {
-      await loadCsPlayerOrders()
-    }
-    if (selectedPlayerId.value) await loadMessages(true)
-  } catch (e: unknown) {
-    if ((e as Error)?.message === 'AUTH_EXPIRED') stopPolling()
+  void loadSessions(true, true)
+  if (!isCs.value) {
+    void loadOrders(true, true)
+  } else if (selectedPlayerId.value) {
+    void loadCsPlayerOrders(true, true)
   }
+  if (selectedPlayerId.value) void loadMessages(true, undefined, true)
+}
+
+function canPollNow() {
+  return mounted && !deactivated && document.visibilityState !== 'hidden' && store.isLoggedIn
+}
+
+function refreshVisibleData() {
+  void loadSessions(true)
+  if (isCs.value) {
+    void refreshCsMe()
+    if (selectedPlayerId.value) void loadCsPlayerOrders(true)
+  } else {
+    void loadOrders(true)
+    void loadFlowBoard(true)
+  }
+  if (selectedPlayerId.value) {
+    void loadMessages(true)
+    void refreshSelectedFlow()
+  }
+}
+
+function syncPollingState() {
+  if (!canPollNow()) {
+    stopPolling()
+    invalidateReadRequests()
+    return
+  }
+  if (pollTimer) return
+  refreshVisibleData()
+  pollTimer = setInterval(poll, 4000)
+  if (!isCs.value) {
+    flowTimer = setInterval(() => {
+      if (canPollNow()) void loadFlowBoard(true, true)
+    }, 30_000)
+  }
+}
+
+function onVisibilityChange() {
+  syncPollingState()
 }
 
 watch(selectedPlayerId, (id) => {
@@ -1654,29 +1884,37 @@ watch(leftTab, (tab) => {
   if (!isCs.value && tab === 'flow' && !flowList.value.length) void loadFlowBoard()
 })
 
-onMounted(async () => {
+onMounted(() => {
   leftTab.value = isCs.value ? 'sessions' : 'flow'
+  mounted = true
+  document.addEventListener('visibilitychange', onVisibilityChange)
+  syncPollingState()
   if (canDeskTools.value) {
-    try {
-      csSettings.value = await fetchCsSettingsRemote()
-    } catch {
-      csSettings.value = loadCsSettingsLocal()
-    }
-  }
-  const tasks: Promise<unknown>[] = [loadSessions(true)]
-  if (isCs.value) tasks.push(refreshCsMe())
-  if (!isCs.value) {
-    tasks.push(loadOrders(true), loadFlowBoard(true))
-  }
-  await Promise.all(tasks)
-  pollTimer = setInterval(() => void poll(), 4000)
-  if (!isCs.value) {
-    flowTimer = setInterval(() => void loadFlowBoard(true), 30_000)
+    void fetchCsSettingsRemote()
+      .then((settings) => {
+        if (mounted && !deactivated) csSettings.value = settings
+      })
+      .catch(() => {
+        if (mounted && !deactivated) csSettings.value = loadCsSettingsLocal()
+      })
   }
 })
 
+onActivated(() => {
+  deactivated = false
+  if (mounted) syncPollingState()
+})
+
+onDeactivated(() => {
+  deactivated = true
+  syncPollingState()
+})
+
 onUnmounted(() => {
+  mounted = false
+  document.removeEventListener('visibilitychange', onVisibilityChange)
   stopPolling()
+  invalidateReadRequests()
 })
 </script>
 

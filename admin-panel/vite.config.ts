@@ -7,8 +7,8 @@ import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 import compression from 'vite-plugin-compression'
 
 export default defineConfig({
-  /* 与玩家端共用一个 nginx，管理后台挂在 /admin/ 子路径下 */
-  base: '/admin/',
+  /* 管理后台使用独立 Origin，并在该 Origin 的根路径部署。 */
+  base: '/',
   plugins: [
     vue(),
     AutoImport({

@@ -74,7 +74,7 @@ async function doLogin() {
     router.push(res.user.role === 'CS' ? '/recharge' : '/')
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : ''
-    if (msg && msg !== 'AUTH_EXPIRED') ElMessage.error(msg)
+    ElMessage.error(msg && msg !== 'AUTH_EXPIRED' ? msg : '登录失败，请重试')
   } finally {
     loading.value = false
   }

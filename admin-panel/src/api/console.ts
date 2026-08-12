@@ -1,4 +1,9 @@
 import http from './http'
+import {
+  toFiniteNumber,
+  toOptionalFiniteNumber,
+  type NumericValue,
+} from './number'
 
 /** 运营控制台 API（console/...）；与 client-app staffConsole 路径对齐，并含管理端专有接口 */
 export const consoleApi = {
@@ -20,13 +25,15 @@ export const consoleApi = {
     remark: string | undefined,
     clientRequestId: string,
   ) =>
-    http.post<PlayerFundResult, PlayerFundResult>('/console/wallet/credit-player', {
-      playerId,
-      amount,
-      roomId,
-      remark,
-      clientRequestId,
-    }),
+    http
+      .post<PlayerFundResultWire, PlayerFundResultWire>('/console/wallet/credit-player', {
+        playerId,
+        amount,
+        roomId,
+        remark,
+        clientRequestId,
+      })
+      .then(normalizePlayerFundResult),
 
   /** 给玩家下分（须带房间与订单号，同号重试不重复扣分） */
   debitPlayer: (
@@ -36,13 +43,15 @@ export const consoleApi = {
     remark: string | undefined,
     clientRequestId: string,
   ) =>
-    http.post<PlayerFundResult, PlayerFundResult>('/console/wallet/debit-player', {
-      playerId,
-      amount,
-      roomId,
-      remark,
-      clientRequestId,
-    }),
+    http
+      .post<PlayerFundResultWire, PlayerFundResultWire>('/console/wallet/debit-player', {
+        playerId,
+        amount,
+        roomId,
+        remark,
+        clientRequestId,
+      })
+      .then(normalizePlayerFundResult),
 
   // ── 进房审核 ──
   joinPending: () =>
@@ -251,7 +260,9 @@ export const consoleApi = {
     http.get<PlayerPage, PlayerPage>('/console/players', { params }),
 
   playerDetail: (id: string, params?: { roomId?: string }) =>
-    http.get<PlayerDetail, PlayerDetail>(`/console/players/${id}`, { params }),
+    http
+      .get<PlayerDetailWire, PlayerDetailWire>(`/console/players/${id}`, { params })
+      .then(normalizePlayerDetail),
 
   /** 把 friendUid（下级）挂到 underUid（推荐人）名下；仅主代理；按 roomId 隔离 */
   hangPlayer: (friendUid: string, underUid: string, roomId?: string) =>
@@ -367,7 +378,10 @@ export const consoleApi = {
     http.patch(`/console/players/${id}/rebate-rate`, { rate, roomId }),
 
   // ── 客服账号 / 佣金 ──
-  csStaffMe: () => http.get<CsStaffDetail, CsStaffDetail>('/console/cs-staff/me'),
+  csStaffMe: () =>
+    http
+      .get<CsStaffDetailWire, CsStaffDetailWire>('/console/cs-staff/me')
+      .then(normalizeCsStaffDetail),
 
   csStaffList: (params?: { parentAgentUserId?: string }) =>
     http.get<CsStaffRow[], CsStaffRow[]>('/console/cs-staff', { params }),
@@ -395,7 +409,10 @@ export const consoleApi = {
   csStaffPatch: (
     id: string,
     data: { wageRate?: number; idleWeight?: number; workStatus?: string; nickname?: string },
-  ) => http.patch<CsStaffDetail, CsStaffDetail>(`/console/cs-staff/${id}`, data),
+  ) =>
+    http
+      .patch<CsStaffDetailWire, CsStaffDetailWire>(`/console/cs-staff/${id}`, data)
+      .then(normalizeCsStaffDetail),
 
   csStaffSetStatus: (id: string, status: 'ACTIVE' | 'DISABLED') =>
     http.patch<{ ok?: boolean; status?: string }, { ok?: boolean; status?: string }>(
@@ -422,7 +439,9 @@ export const consoleApi = {
     page?: number
     pageSize?: number
   }) =>
-    http.get<CsWageBillPage, CsWageBillPage>('/console/cs-staff/wage/bills', { params }),
+    http
+      .get<CsWageBillPageWire, CsWageBillPageWire>('/console/cs-staff/wage/bills', { params })
+      .then(normalizeCsWageBillPage),
 
   csWageSettle: (data: { billId?: string; csUserId?: string }) =>
     http.post<CsWageSettleResult, CsWageSettleResult>('/console/cs-staff/wage/settle', data),
@@ -525,7 +544,9 @@ export const consoleApi = {
 
   /** 代理团队玩家有效流水榜 */
   playerFlow: (params?: { range?: string; limit?: number; playerId?: string }) =>
-    http.get<PlayerFlowResult, PlayerFlowResult>('/console/reports/player-flow', { params }),
+    http
+      .get<PlayerFlowResultWire, PlayerFlowResultWire>('/console/reports/player-flow', { params })
+      .then(normalizePlayerFlowResult),
 
   reconcile: () => http.get<Reconcile, Reconcile>('/console/reports/reconcile'),
 
@@ -550,6 +571,16 @@ export const consoleApi = {
 
 // ─── 类型 ───────────────────────────────────────────────
 
+type PlayerFundResultWire = Omit<
+  PlayerFundResult,
+  'real' | 'overIssue' | 'fake' | 'wage'
+> & {
+  real?: NumericValue
+  overIssue?: NumericValue
+  fake?: NumericValue
+  wage?: NumericValue
+}
+
 /** 玩家上下分接口返回 */
 export interface PlayerFundResult {
   ok?: boolean
@@ -558,6 +589,17 @@ export interface PlayerFundResult {
   overIssue?: number
   fake?: number
   wage?: number
+}
+
+function normalizePlayerFundResult(result: PlayerFundResultWire): PlayerFundResult {
+  return {
+    ...result,
+    real: toOptionalFiniteNumber(result.real, 'PlayerFundResult.real') ?? undefined,
+    overIssue:
+      toOptionalFiniteNumber(result.overIssue, 'PlayerFundResult.overIssue') ?? undefined,
+    fake: toOptionalFiniteNumber(result.fake, 'PlayerFundResult.fake') ?? undefined,
+    wage: toOptionalFiniteNumber(result.wage, 'PlayerFundResult.wage') ?? undefined,
+  }
 }
 
 export interface WalletMe {
@@ -706,6 +748,22 @@ export interface PlayerDetail {
     balance: number
   }>
   childCount: number
+}
+
+type PlayerDetailWire = Omit<PlayerDetail, 'balance' | 'children'> & {
+  balance: NumericValue
+  children: Array<Omit<PlayerDetail['children'][number], 'balance'> & { balance: NumericValue }>
+}
+
+function normalizePlayerDetail(detail: PlayerDetailWire): PlayerDetail {
+  return {
+    ...detail,
+    balance: toFiniteNumber(detail.balance, 'PlayerDetail.balance'),
+    children: detail.children.map((child) => ({
+      ...child,
+      balance: toFiniteNumber(child.balance, 'PlayerDetail.children.balance'),
+    })),
+  }
 }
 
 export interface PlayerPage {
@@ -945,6 +1003,33 @@ export interface CsStaffDetail {
   totalWageCount?: number
 }
 
+type CsStaffDetailWire = Omit<
+  CsStaffDetail,
+  | 'balance'
+  | 'wageRate'
+  | 'pendingWage'
+  | 'todayWage'
+  | 'totalWage'
+> & {
+  balance: NumericValue
+  wageRate: NumericValue
+  pendingWage?: NumericValue
+  todayWage?: NumericValue
+  totalWage?: NumericValue
+}
+
+function normalizeCsStaffDetail(detail: CsStaffDetailWire): CsStaffDetail {
+  return {
+    ...detail,
+    balance: toFiniteNumber(detail.balance, 'CsStaffDetail.balance'),
+    wageRate: toFiniteNumber(detail.wageRate, 'CsStaffDetail.wageRate'),
+    pendingWage:
+      toOptionalFiniteNumber(detail.pendingWage, 'CsStaffDetail.pendingWage') ?? undefined,
+    todayWage: toOptionalFiniteNumber(detail.todayWage, 'CsStaffDetail.todayWage') ?? undefined,
+    totalWage: toOptionalFiniteNumber(detail.totalWage, 'CsStaffDetail.totalWage') ?? undefined,
+  }
+}
+
 export interface CsWageBillRow {
   id: string
   kind: 'UP' | 'DOWN' | string
@@ -964,6 +1049,25 @@ export interface CsWageBillPage {
   page: number
   pageSize: number
   list: CsWageBillRow[]
+}
+
+type CsWageBillRowWire = Omit<CsWageBillRow, 'fundAmount' | 'wageAmount' | 'wageRate'> & {
+  fundAmount: NumericValue
+  wageAmount: NumericValue
+  wageRate: NumericValue
+}
+type CsWageBillPageWire = Omit<CsWageBillPage, 'list'> & { list: CsWageBillRowWire[] }
+
+function normalizeCsWageBillPage(page: CsWageBillPageWire): CsWageBillPage {
+  return {
+    ...page,
+    list: (page.list || []).map((row) => ({
+      ...row,
+      fundAmount: toFiniteNumber(row.fundAmount, 'CsWageBillRow.fundAmount'),
+      wageAmount: toFiniteNumber(row.wageAmount, 'CsWageBillRow.wageAmount'),
+      wageRate: toFiniteNumber(row.wageRate, 'CsWageBillRow.wageRate'),
+    })),
+  }
 }
 
 export interface CsWageSettleResult {
@@ -1228,6 +1332,20 @@ export interface PlayerFlowResult {
   from?: string
   to?: string
   list: PlayerFlowRow[]
+}
+
+type PlayerFlowResultWire = Omit<PlayerFlowResult, 'list'> & {
+  list: Array<Omit<PlayerFlowRow, 'validFlow'> & { validFlow: NumericValue }>
+}
+
+function normalizePlayerFlowResult(result: PlayerFlowResultWire): PlayerFlowResult {
+  return {
+    ...result,
+    list: (result.list || []).map((row) => ({
+      ...row,
+      validFlow: toFiniteNumber(row.validFlow, 'PlayerFlowRow.validFlow'),
+    })),
+  }
 }
 
 export interface ReportByRoomRow {

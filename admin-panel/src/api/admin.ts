@@ -1,4 +1,5 @@
 import http from './http'
+import { toFiniteNumber, type NumericValue } from './number'
 
 /* 旧 /admin/dashboard/* 已由 /console/dashboard 替代，前端不再封装。 */
 
@@ -10,10 +11,19 @@ export const reviewApi = {
     playerId?: string
     page?: number
     pageSize?: number
-  }) => http.get<ReviewPage, ReviewPage>('/admin/recharge', { params }),
+  }) =>
+    http
+      .get<ReviewPageWire, ReviewPageWire>('/admin/recharge', { params })
+      .then(normalizeReviewPage),
   approve: (id: string) => http.patch<{ ok: boolean }, { ok: boolean }>(`/recharge/${id}/approve`),
   reject: (id: string, reason: string) =>
     http.patch<{ ok: boolean }, { ok: boolean }>(`/recharge/${id}/reject`, { reason }),
+}
+interface ReviewOrderWire extends Omit<ReviewOrder, 'amount'> {
+  amount: NumericValue
+}
+interface ReviewPageWire extends Omit<ReviewPage, 'list'> {
+  list: ReviewOrderWire[]
 }
 export interface ReviewOrder {
   id: string; orderNo: string; type: string; amount: number; status: string
@@ -22,6 +32,20 @@ export interface ReviewOrder {
   player: { uid: string; nickname: string }
 }
 export interface ReviewPage { total: number; page: number; pageSize: number; list: ReviewOrder[] }
+
+export function normalizeReviewOrder(order: ReviewOrderWire): ReviewOrder {
+  return {
+    ...order,
+    amount: toFiniteNumber(order.amount, 'ReviewOrder.amount'),
+  }
+}
+
+export function normalizeReviewPage(page: ReviewPageWire): ReviewPage {
+  return {
+    ...page,
+    list: (page.list || []).map(normalizeReviewOrder),
+  }
+}
 
 // ─── 客服会话（代理/子账号） ─────────────────────────────────
 export const csConsoleApi = {

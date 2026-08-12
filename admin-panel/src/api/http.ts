@@ -19,12 +19,27 @@ function readCsrfCookie(): string {
 let authRedirecting = false
 let lastAuthToastAt = 0
 
+/*
+ * 会话已失效。
+ *
+ * 后台多个页面挂着 4s~60s 的轮询（充值审核、风控角标、房间待审），会话一断，
+ * 这些定时器还会各自打一轮请求才 catch 到错误停下来。这里在请求出口直接短路，
+ * 不必让每个页面各写一遍停表逻辑。重新登录成功即解除。
+ */
+let sessionExpired = false
+
 function normalizeAuthMessage(raw?: string) {
   const m = String(raw || '').trim()
   if (!m || m === 'Unauthorized' || m.toLowerCase() === 'unauthorized') {
     return '登录已失效，请重新登录'
   }
   return m
+}
+
+/** 建会话接口的 401 是「密码错了」，不是「登录态失效」，不能走登出+跳转那套 */
+function isAuthSessionCall(config?: { url?: string }): boolean {
+  const url = String(config?.url || '').split('?')[0]
+  return /\/auth\/(login|logout)\/?$/.test(url)
 }
 
 /*
@@ -35,6 +50,9 @@ function normalizeAuthMessage(raw?: string) {
  * GET 不改状态，服务端也不校验，带不带都行。
  */
 http.interceptors.request.use((config) => {
+  if (sessionExpired && !isAuthSessionCall(config)) {
+    return Promise.reject(new Error('AUTH_EXPIRED'))
+  }
   const csrf = readCsrfCookie()
   if (csrf) config.headers['X-CSRF-Token'] = csrf
   return config
@@ -42,6 +60,7 @@ http.interceptors.request.use((config) => {
 
 http.interceptors.response.use(
   (res: AxiosResponse<Envelope>) => {
+    if (isAuthSessionCall(res.config)) sessionExpired = false
     const { code, data, message } = res.data
     if (code === 0) return data as never
     return Promise.reject(new Error(message ?? '请求失败'))
@@ -49,7 +68,8 @@ http.interceptors.response.use(
   (err) => {
     const status = err.response?.status
     const rawMsg = err.response?.data?.message ?? err.message
-    if (status === 401) {
+    if (status === 401 && !isAuthSessionCall(err.config)) {
+      sessionExpired = true
       const store = useAdminStore()
       const msg = normalizeAuthMessage(
         Array.isArray(rawMsg) ? rawMsg.join('; ') : String(rawMsg || ''),
