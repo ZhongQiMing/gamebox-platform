@@ -1,10 +1,12 @@
 /**
  * 玩家 / 代理大厅共用：游戏目录、期号倒计时、上期开奖底条
  */
-import { computed, ref, reactive, onMounted, onUnmounted, type Ref } from 'vue'
+import { computed, ref, reactive, onMounted, type Ref } from 'vue'
+import { useActiveInterval } from '@/composables/useActiveInterval'
 import { gamesApi } from '@/api/games'
-import { lotteryApi } from '@/api/lottery'
-import { tableApi, TABLE_SERVER_CODE } from '@/api/table'
+import { TABLE_SERVER_CODE, type TableSnapshot } from '@/api/table'
+import { lobbyApi, type LobbySnapshot } from '@/api/lobby'
+import { gameAssetUrl } from '@/utils/gameOrigin'
 import {
   formatTableRoundNo,
   shortTableRoundLabel,
@@ -41,81 +43,81 @@ const GAMES: LobbyGame[] = [
   {
     key: 'ssc', name: '快乐时时彩', type: 'lottery',
     intervalSec: LOTTERY_INTERVALS.ssc, prepSec: lotteryPrepSec('ssc'),
-    iconImg: '/images/games/ssc/ssc.png',
+    iconImg: '/images/games/ssc/ssc.webp',
     route: '/game/lottery/ssc', backendCode: 'ssc',
   },
   {
     key: 'ffc', name: '1分时时彩', type: 'lottery',
     intervalSec: LOTTERY_INTERVALS.ffc, prepSec: lotteryPrepSec('ffc'),
-    iconImg: '/images/games/ffc/ffc.png',
+    iconImg: '/images/games/ffc/ffc.webp',
     route: '/game/lottery/ffc', backendCode: 'ffc',
   },
   // —— 赛车 / 飞艇 ——
   {
     key: 'speed-racing', name: '极速赛车', type: 'lottery',
     intervalSec: LOTTERY_INTERVALS['speed-racing'], prepSec: lotteryPrepSec('speed-racing'),
-    iconImg: '/images/games/speed-racing/speed-racing.png',
+    iconImg: '/images/games/speed-racing/speed-racing.webp',
     route: '/game/lottery/speed-racing', backendCode: 'speed-racing',
   },
   {
     key: 'bjsc', name: '北京赛车', type: 'lottery',
     intervalSec: LOTTERY_INTERVALS.bjsc, prepSec: lotteryPrepSec('bjsc'),
-    iconImg: '/images/games/bjsc/bjsc.png',
+    iconImg: '/images/games/bjsc/bjsc.webp',
     route: '/game/lottery/bjsc', backendCode: 'bjsc',
   },
   {
     key: 'speed-boat', name: '幸运飞艇', type: 'lottery',
     intervalSec: LOTTERY_INTERVALS['speed-boat'], prepSec: lotteryPrepSec('speed-boat'),
-    iconImg: '/images/games/speed-boat/speed-boat.png',
+    iconImg: '/images/games/speed-boat/speed-boat.webp',
     route: '/game/lottery/speed-boat', backendCode: 'speed-boat',
   },
   // —— 快三 / 六合 ——
   {
     key: 'kuai3', name: '1分快三', type: 'lottery',
     intervalSec: LOTTERY_INTERVALS.kuai3, prepSec: lotteryPrepSec('kuai3'),
-    iconImg: '/images/games/kuai3/kuai3.png',
+    iconImg: '/images/games/kuai3/kuai3.webp',
     route: '/game/lottery/kuai3', backendCode: 'kuai3',
   },
   {
     key: 'lhc', name: '幸运六合彩', type: 'lottery',
     intervalSec: LOTTERY_INTERVALS.lhc, prepSec: lotteryPrepSec('lhc'),
-    iconImg: '/images/games/hk-mark6/hk-mark6.png',
+    iconImg: '/images/games/hk-mark6/hk-mark6.webp',
     route: '/game/lottery/lhc', backendCode: 'lhc',
   },
   // —— 牌桌（prep = 开奖流程 + 派奖；不走彩票 API） ——
   {
     key: 'zhajinhua', name: '炸金花', tag: '热 门', type: 'table',
     intervalSec: tableLobbyIntervalSec('zhajinhua'), prepSec: tableLobbyPrepSec('zhajinhua'),
-    iconImg: '/images/games/zhajinhua/zhajinhua.png',
+    iconImg: '/images/games/zhajinhua/zhajinhua.webp',
     route: '/game/table/zhajinhua', backendCode: 'zhajinhua',
   },
   {
     key: 'douniu', name: '斗牛', type: 'table',
     intervalSec: tableLobbyIntervalSec('douniu'), prepSec: tableLobbyPrepSec('douniu'),
-    iconImg: '/images/games/douniu/douniu.png',
+    iconImg: '/images/games/douniu/douniu.webp',
     route: '/game/table/douniu', backendCode: 'douniu',
   },
   {
     key: 'baccarat', name: '百家乐', tag: '热 门', type: 'table',
     intervalSec: tableLobbyIntervalSec('baccarat'), prepSec: tableLobbyPrepSec('baccarat'),
-    iconImg: '/images/games/baccarat/baccarat.png',
+    iconImg: '/images/games/baccarat/baccarat.webp',
     route: '/game/table/baccarat', backendCode: 'baccarat',
   },
   {
     key: 'longhu', name: '龙虎斗', tag: '新 品', type: 'table',
     intervalSec: tableLobbyIntervalSec('longhu'), prepSec: tableLobbyPrepSec('longhu'),
-    iconImg: '/images/games/longhu/longhu-icon.png',
+    iconImg: '/images/games/longhu/longhu-icon.webp',
     route: '/game/table/longhu', backendCode: 'dragon-tiger',
   },
   // —— 街机 / 电子 ——
   {
     key: 'slots', name: '水果机', type: 'instant',
-    iconImg: '/images/games/slots/slots.png',
+    iconImg: '/images/games/slots/slots.webp',
     route: '/game/fruit', backendCode: 'fruit-machine',
   },
   {
     key: 'bcbm', name: '奔驰宝马', tag: '新 品', type: 'instant',
-    iconImg: '/images/games/bcbm/bcbm-icon.png',
+    iconImg: '/images/games/bcbm/bcbm-icon.webp',
     route: '/game/arcade/bcbm', backendCode: 'bcbm',
   },
 ]
@@ -229,19 +231,19 @@ function isLhcGame(key: string) {
 function pk10BallUrl(gameKey: string, n: string) {
   const base = PK10_BALL_BASE[gameKey] || PK10_BALL_BASE['speed-racing']
   const num = Math.max(1, Math.min(10, Number(n) || 1))
-  return `${base}/ball-${String(num).padStart(2, '0')}.png`
+  return gameAssetUrl(`${base}/ball-${String(num).padStart(2, '0')}.png`)
 }
 
 /** 快三大厅用游戏内 xs/tbl 同款扁平骰子图标 */
 function kuai3DiceUrl(n: string) {
   const num = Math.max(1, Math.min(6, Number(n) || 1))
-  return `/games-assets/kuai3/assets/result/icon-${String(num).padStart(2, '0')}.png`
+  return gameAssetUrl(`/games-assets/kuai3/assets/result/icon-${String(num).padStart(2, '0')}.png`)
 }
 
 /** 六合彩：与游戏内 ballHtml 同路径 ball_01.png … ball_49.png */
 function lhcBallUrl(n: string) {
   const num = Math.max(1, Math.min(49, Number(n) || 1))
-  return `/games-assets/lhc/assets/balls/ball_${String(num).padStart(2, '0')}.png`
+  return gameAssetUrl(`/games-assets/lhc/assets/balls/ball_${String(num).padStart(2, '0')}.png`)
 }
 
 /** 大厅底条：正码 6 + 「+」+ 特码（接口若无加号则补上） */
@@ -465,78 +467,83 @@ function numClass(gameKey: string, n: string, index: number) {
   return 'gc-num--small'
 }
 
-async function refreshLotteryDraws() {
-  const tasks = GAMES.filter((g) => g.type === 'lottery').map(async (g) => {
-    const code = g.backendCode || g.key
-    try {
-      const [list, current] = await Promise.all([
-        lotteryApi.history(code, 1).catch(() => null),
-        lotteryApi.currentIssue(code).catch(() => null),
-      ])
-      if (current?.issueNo) {
-        apiCurrentCache[g.key] = String(current.issueNo)
-        const lockAt = new Date(current.lockAt).getTime()
-        const openAt = new Date(current.openAt).getTime()
-        if (Number.isFinite(lockAt) && Number.isFinite(openAt)) {
-          apiLotteryLive[g.key] = {
-            issueNo: String(current.issueNo),
-            lockAt,
-            openAt,
-            status: String(current.status || ''),
-            fetchedAt: Date.now(),
-          }
+  /** 把一个彩种的聚合结果写进本地缓存（倒计时相位 + 上期开奖号） */
+  function applyLotteryEntry(g: LobbyGame, entry: LobbySnapshot['lottery'][string] | undefined) {
+    if (!entry) return
+    const current = entry.current
+    if (current?.issueNo) {
+      apiCurrentCache[g.key] = String(current.issueNo)
+      const lockAt = new Date(current.lockAt).getTime()
+      const openAt = new Date(current.openAt).getTime()
+      if (Number.isFinite(lockAt) && Number.isFinite(openAt)) {
+        apiLotteryLive[g.key] = {
+          issueNo: String(current.issueNo),
+          lockAt,
+          openAt,
+          status: String(current.status || ''),
+          fetchedAt: Date.now(),
         }
       }
-      const row = list?.[0]
-      if (!row) return
-      const nums = parseApiDrawNumbers(row.drawNumbers)
-      if (!nums.length) return
-      apiDrawCache[g.key] = { issueNo: String(row.issueNo), nums }
-    } catch {
-      // 后端无此彩种或未开奖：底条显示「等待开奖」
     }
-  })
-  await Promise.all(tasks)
-}
+    const row = entry.lastDraw
+    if (!row) return
+    const nums = parseApiDrawNumbers(row.drawNumbers)
+    if (!nums.length) return
+    apiDrawCache[g.key] = { issueNo: String(row.issueNo), nums }
+  }
 
-async function refreshTableDraws() {
-  const tasks = GAMES.filter((g) => g.type === 'table').map(async (g) => {
-    const code = TABLE_SERVER_CODE[g.key] || g.key
+  /** 把一个牌桌的快照写进本地缓存（相位 + 上一局结果芯片） */
+  function applyTableSnap(g: LobbyGame, snap: TableSnapshot | null | undefined) {
+    if (!snap) return
+    apiTableLive[g.key] = {
+      phase: snap.phase,
+      secondsLeft: snap.secondsLeft,
+      roundNo: snap.roundNo,
+      fetchedAt: Date.now(),
+    }
+    if (snap.roundNo) apiCurrentCache[g.key] = String(snap.roundNo)
+
+    const hist = snap.history || []
+    /* DRAWING/SETTLED：history[0] 常=当前局；上期取 history[1]
+       BETTING：history[0] 才是真正上期 */
+    let prevIdx = 0
+    if (snap.phase === 'DRAWING' || snap.phase === 'SETTLED') {
+      if (hist[0]?.roundNo === snap.roundNo) prevIdx = 1
+    }
+    const prev = hist[prevIdx]
+    const outcome = (prev?.outcome
+      || (snap.phase !== 'BETTING' ? snap.outcome : undefined)) as Record<string, unknown> | undefined
+    const parts = outcomeToParts(g.key, outcome)
+    if (parts.length) {
+      apiDrawCache[g.key] = {
+        issueNo: String(prev?.roundNo || (snap.phase !== 'BETTING' ? snap.roundNo : '') || ''),
+        nums: [],
+        parts,
+      }
+    }
+  }
+
+  /**
+   * 大厅聚合刷新：一个请求拿齐所有可见彩种 + 牌桌的状态。
+   * 取代原先每游戏 1~2 个请求的轮询——十来个游戏原来一轮十七八个请求，现在就一个。
+   */
+  async function refreshLobbySnapshot() {
+    const lotteryGames = visibleGames.value.filter((g) => g.type === 'lottery')
+    const tableGames = visibleGames.value.filter((g) => g.type === 'table')
+    if (!lotteryGames.length && !tableGames.length) return
+
+    /* 服务端按 code 归集，这里建 code→游戏 的回填映射 */
+    const lotteryByCode = new Map(lotteryGames.map((g) => [g.backendCode || g.key, g]))
+    const tableByCode = new Map(tableGames.map((g) => [TABLE_SERVER_CODE[g.key] || g.key, g]))
+
     try {
-      const snap = await tableApi.snapshot(code)
-      if (!snap) return
-      apiTableLive[g.key] = {
-        phase: snap.phase,
-        secondsLeft: snap.secondsLeft,
-        roundNo: snap.roundNo,
-        fetchedAt: Date.now(),
-      }
-      if (snap.roundNo) apiCurrentCache[g.key] = String(snap.roundNo)
-
-      const hist = snap.history || []
-      /* DRAWING/SETTLED：history[0] 常=当前局；上期取 history[1]
-         BETTING：history[0] 才是真正上期 */
-      let prevIdx = 0
-      if (snap.phase === 'DRAWING' || snap.phase === 'SETTLED') {
-        if (hist[0]?.roundNo === snap.roundNo) prevIdx = 1
-      }
-      const prev = hist[prevIdx]
-      const outcome = (prev?.outcome
-        || (snap.phase !== 'BETTING' ? snap.outcome : undefined)) as Record<string, unknown> | undefined
-      const parts = outcomeToParts(g.key, outcome)
-      if (parts.length) {
-        apiDrawCache[g.key] = {
-          issueNo: String(prev?.roundNo || (snap.phase !== 'BETTING' ? snap.roundNo : '') || ''),
-          nums: [],
-          parts,
-        }
-      }
+      const snap = await lobbyApi.snapshot([...lotteryByCode.keys()], [...tableByCode.keys()])
+      for (const [code, g] of lotteryByCode) applyLotteryEntry(g, snap.lottery?.[code])
+      for (const [code, g] of tableByCode) applyTableSnap(g, snap.table?.[code])
     } catch {
-      // 后端不可达时保留种子结果
+      // 后端不可达：保留上一次缓存与本地种子结果，卡片不清空
     }
-  })
-  await Promise.all(tasks)
-}
+  }
 
 function tickAll() {
   for (const g of GAMES) {
@@ -663,24 +670,30 @@ function tickAll() {
 
 
 
-let timer: ReturnType<typeof setInterval>
-let drawTimer: ReturnType<typeof setInterval>
+/* 一轮就是 11 个并发请求，弱网下上一轮没回来就再发会越堆越多 */
+  let drawsInFlight = false
+  function refreshDraws() {
+    if (drawsInFlight) return
+    drawsInFlight = true
+    void refreshLobbySnapshot()
+      .then(() => tickAll())
+      .finally(() => { drawsInFlight = false })
+  }
 
-onMounted(async () => {
+  /* 倒计时纯本地计算（UTC 网格），不发请求，回到页面无需补跑 */
+  useActiveInterval(tickAll, 1000, { refreshOnResume: false })
+  /*
+   * 开奖结果/期号刷新。倒计时既然是本地算的，这里只为同步「期号 + 上期结果」，
+   * 一次聚合请求拿齐所有卡片，8s 一轮足够。
+   */
+  useActiveInterval(refreshDraws, 8000)
+
+  onMounted(async () => {
     buildMarquee()
     tickAll()
-    timer = setInterval(tickAll, 1000)
     await loadCatalog()
-    await Promise.all([refreshLotteryDraws(), refreshTableDraws()])
+    await refreshLobbySnapshot()
     tickAll()
-    drawTimer = setInterval(() => {
-      Promise.all([refreshLotteryDraws(), refreshTableDraws()]).then(() => tickAll())
-    }, 3000)
-  })
-
-  onUnmounted(() => {
-    clearInterval(timer)
-    clearInterval(drawTimer)
   })
 
   return {
@@ -701,7 +714,7 @@ onMounted(async () => {
     loadCatalog,
     refreshAll: async () => {
       await loadCatalog()
-      await Promise.all([refreshLotteryDraws(), refreshTableDraws()])
+      await refreshLobbySnapshot()
       tickAll()
     },
   }

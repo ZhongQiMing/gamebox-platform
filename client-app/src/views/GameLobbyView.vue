@@ -1,11 +1,11 @@
 <template>
   <!-- 大厅专属屏幕级装饰层（与原型一致） -->
   <div class="lobby-deco" aria-hidden="true">
-    <img class="lobby-deco-crown" src="/images/crown-emblem.png" alt="">
-    <img class="lobby-deco-corner lobby-deco-corner-tl" src="/images/corner-flourish.png" alt="">
-    <img class="lobby-deco-corner lobby-deco-corner-tr" src="/images/corner-flourish.png" alt="">
-    <img class="lobby-deco-corner lobby-deco-corner-bl" src="/images/corner-flourish.png" alt="">
-    <img class="lobby-deco-corner lobby-deco-corner-br" src="/images/corner-flourish.png" alt="">
+    <img class="lobby-deco-crown" src="/images/crown-emblem.webp" alt="">
+    <img class="lobby-deco-corner lobby-deco-corner-tl" src="/images/corner-flourish.webp" alt="">
+    <img class="lobby-deco-corner lobby-deco-corner-tr" src="/images/corner-flourish.webp" alt="">
+    <img class="lobby-deco-corner lobby-deco-corner-bl" src="/images/corner-flourish.webp" alt="">
+    <img class="lobby-deco-corner lobby-deco-corner-br" src="/images/corner-flourish.webp" alt="">
   </div>
 
   <!-- 屏幕级 fixed 顶角按钮（退出在房间页，大厅不放） -->
@@ -37,7 +37,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onActivated, onDeactivated, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useToast } from '@/composables/useToast'
 import { useBodyClass } from '@/composables/useBodyClass'
@@ -119,12 +119,23 @@ function onGameClick(g: LobbyGame) {
   router.push(g.route)
 }
 
+/* 本页进了 keep-alive，被挂起时组件不卸载，监听还在；不判激活态的话
+   用户在游戏里切回前台，后台的大厅也会跟着刷一轮 */
+let lobbyActive = true
+
 function onLobbyVisible() {
+  if (!lobbyActive) return
   if (document.visibilityState === 'visible') void listRef.value?.refreshAll()
 }
 
 onMounted(() => {
   document.addEventListener('visibilitychange', onLobbyVisible)
+})
+onActivated(() => {
+  lobbyActive = true
+})
+onDeactivated(() => {
+  lobbyActive = false
 })
 onUnmounted(() => {
   document.removeEventListener('visibilitychange', onLobbyVisible)

@@ -1,7 +1,7 @@
 <template>
   <div class="games-list">
     <div
-      v-for="g in visibleGames"
+      v-for="(g, i) in visibleGames"
       :key="g.key"
       class="game-card"
       :class="{ 'is-maint': isMaintenance(g), 'is-entering': enteringKey === g.key }"
@@ -13,7 +13,16 @@
 
       <div class="gc-main">
         <div class="gc-icon">
-          <img v-if="g.iconImg" :src="g.iconImg" alt="">
+          <!-- 首屏两三张之外的图标滚到了才拉；宽高写死避免图未到时卡片抖动 -->
+          <img
+            v-if="g.iconImg"
+            :src="g.iconImg"
+            :loading="i < 3 ? 'eager' : 'lazy'"
+            width="92"
+            height="92"
+            decoding="async"
+            alt=""
+          >
         </div>
 
         <div class="gc-name">{{ g.name }}</div>
