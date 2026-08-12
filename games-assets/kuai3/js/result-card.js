@@ -1,7 +1,7 @@
 /** 1分快三 · Canvas 合成开奖卡（PS 级 AI 素材） */
 (function (global) {
   const ASSETS = './assets/result/';
-  const VER = '37';
+  const VER = '38';
   const W = 720;
   const H = 380;
   const BG_ZOOM = 1.22;
@@ -119,7 +119,7 @@
   async function composeStage(canvas, nums, layout) {
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('no ctx');
-    const bg = await loadImg(ASSETS + 'bg.png?v=' + VER);
+    const bg = await loadImg(ASSETS + 'bg.webp?v=' + VER);
     const diceImgs = await Promise.all(nums.map(n => loadDiceImg(n)));
     canvas.width = W;
     canvas.height = H;
@@ -486,7 +486,7 @@
   async function animateRoll(canvas, finalNums, durationMs, onBounce, done) {
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('no ctx');
-    const bg = await loadImg(ASSETS + 'bg.png?v=' + VER);
+    const bg = await loadImg(ASSETS + 'bg.webp?v=' + VER);
     const diceByFace = {};
     await Promise.all([1, 2, 3, 4, 5, 6].map(async n => {
       diceByFace[n] = await loadDiceImg(n);
@@ -689,7 +689,7 @@
   }
 
   [1, 2, 3, 4, 5, 6].forEach(n => { loadDiceImg(n).catch(() => {}); });
-  loadImg(ASSETS + 'bg.png?v=' + VER).catch(() => {});
+  loadImg(ASSETS + 'bg.webp?v=' + VER).catch(() => {});
 
   global.K3ResultCard = {
     build, buildRolling, bindStage, startRoll, settle, initSettled,
