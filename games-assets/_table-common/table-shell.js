@@ -213,20 +213,44 @@
     return fallback();
   };
 
+  /*
+   * 外壳把本页 keep-alive 起来后，iframe 仍在跑但玩家已经回大厅了。
+   * iframe 内的 document.hidden 此时是 false（浏览器还在前台），游戏自己判断不出来，
+   * 只能靠父页发来的 pause/resume。不停表的话每个玩过的牌桌都会留一份 1s 轮询。
+   */
+  var shellPaused = false;
+
+  global.addEventListener('message', function (ev) {
+    var parentOrigin = (global.App && global.App.parentOrigin) || location.origin;
+    if (!ev || ev.origin !== parentOrigin || ev.source !== global.parent) return;
+    var data = ev.data;
+    if (!data || typeof data !== 'object') return;
+    if (data.type === 'assets-game-pause') shellPaused = true;
+    else if (data.type === 'assets-game-resume') shellPaused = false;
+  });
+
+  TableShell.isShellPaused = function () { return shellPaused; };
+
   /**
    * 下注期轮询 snapshot；返回 timer id（clearInterval）
    * opts.shouldPoll() 返回 false 时跳过本次
    */
   TableShell.startSnapshotPoll = function (gameCode, onSnap, opts) {
     var ms = (opts && opts.intervalMs) || 1500;
+    /* 上一枪没回来就不再发：弱网下 1s 间隔很容易堆成一串并发请求 */
+    var inFlight = false;
     function pull() {
       if (!global.App || !App.fetchTableSnapshot) return;
+      if (shellPaused || document.hidden) return;
+      if (inFlight) return;
       if (opts && typeof opts.shouldPoll === 'function' && !opts.shouldPoll()) return;
+      inFlight = true;
       App.fetchTableSnapshot(gameCode)
         .then(function (snap) {
           if (onSnap) onSnap(snap);
         })
-        .catch(function () { /* 忽略瞬时失败，保留本地兜底 */ });
+        .catch(function () { /* 忽略瞬时失败，保留本地兜底 */ })
+        .then(function () { inFlight = false; });
     }
     pull();
     return setInterval(pull, ms);
