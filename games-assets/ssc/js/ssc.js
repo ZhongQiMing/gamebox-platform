@@ -4270,12 +4270,21 @@ $(function () {
 
   updateComposerAction();
   window.addEventListener('gamebox-balance', function () { refreshStats(); });
-  /* 上分审核通过后顶栏可能仍停在旧分：定时向父页拉余额 */
+  /*
+   * 上分审核通过后顶栏可能仍停在旧分：定时向父页拉余额兜底。
+   * 主路径是上面的 gamebox-balance 事件，这里只是补漏，5s 太密；
+   * 走 adaptive 才能在切后台 / 外壳挂起时停下来。
+   */
   if (App.refreshBalance) {
-    setInterval(function () {
+    var pullBalance = function () {
       App.refreshBalance().then(function () {
         if (typeof refreshStats === 'function') refreshStats();
       });
-    }, 5000);
+    };
+    if (App.startAdaptiveInterval) {
+      App.startAdaptiveInterval(pullBalance, 15000, 60000, { runNow: false });
+    } else {
+      setInterval(pullBalance, 15000);
+    }
   }
 });
