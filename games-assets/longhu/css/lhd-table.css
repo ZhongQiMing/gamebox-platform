@@ -163,7 +163,7 @@ html.lhd-in-iframe body.lhd-body {
   flex-shrink: 0;
   transform: scale(var(--lhd-scale));
   transform-origin: center center;
-  background: url('../assets/ui/page-unified-v51.png?v=2') center top / 100% 100% no-repeat;
+  background: url('../assets/ui/page-unified-v51.webp?v=2') center top / 100% 100% no-repeat;
   overflow: hidden;
 }
 
