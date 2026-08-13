@@ -8,6 +8,7 @@
  * 禁止放：localStorage、DOM、fetch 实例、任何端特有逻辑。
  */
 export * from './enums';
+export * from './role-labels';
 export * from './validators';
 export * from './format';
 export * from './money';

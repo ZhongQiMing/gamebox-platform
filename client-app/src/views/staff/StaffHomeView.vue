@@ -120,8 +120,9 @@ const roomCount = ref(0)
 const riskUnhandled = ref(0)
 
 const roleLabel = computed(() => {
-  if (staff.role === 'ADMIN') return '管理员'
-  if (staff.role === 'BRANCH') return '房主'
+  if (staff.role === 'ADMIN') return '管理'
+  if (staff.role === 'BRANCH') return '总监'
+  if (staff.role === 'GENERAL') return '总代'
   return staff.role || ''
 })
 
@@ -184,6 +185,10 @@ onMounted(() => {
   }
   // 管理员/房主：三 Tab 壳，首页落「游戏」房间卡
   if (staff.role === 'ADMIN' || staff.role === 'BRANCH') {
+    void router.replace({ name: 'staff-game-rooms' })
+    return
+  }
+  if (staff.role === 'GENERAL') {
     void router.replace({ name: 'staff-game-rooms' })
     return
   }

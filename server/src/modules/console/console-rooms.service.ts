@@ -104,6 +104,17 @@ export class ConsoleRoomsService {
             pointsQuota: true,
             pointsUsed: true,
             flyCover: true,
+            flowRate: true,
+            shareRate: true,
+            user: { select: { uid: true, nickname: true, username: true } },
+          },
+        },
+        generalAgent: {
+          select: {
+            id: true,
+            userId: true,
+            flowRate: true,
+            shareRate: true,
             user: { select: { uid: true, nickname: true, username: true } },
           },
         },
@@ -175,6 +186,18 @@ export class ConsoleRoomsService {
         overIssueUsed: 0,
         bookMode,
         agentShareRate: Number(r.agentShareRate ?? 0),
+        generalFlyEnabled: r.generalFlyEnabled !== false,
+        general: r.generalAgent
+          ? {
+              agentId: r.generalAgent.id,
+              userId: r.generalAgent.userId,
+              uid: r.generalAgent.user.uid,
+              nickname: r.generalAgent.user.nickname,
+              username: r.generalAgent.user.username,
+              flowRate: Number(r.generalAgent.flowRate ?? 0),
+              shareRate: Number(r.generalAgent.shareRate ?? 0),
+            }
+          : null,
         creditLimit: asMoney(r.creditLimit),
         settleCycle: normalizeSettleCycle(r.settleCycle),
         settleWeekday: r.settleWeekday ?? 1,
@@ -235,7 +258,8 @@ export class ConsoleRoomsService {
       nextBillAt?: string;
       /** CASH=A 现金盘 | CREDIT=B 信用盘 */
       bookMode?: string;
-      /** 代理占成：传 0~1 或 0~100（>1 时按百分数）；0=代理不分成 */
+      generalAgentUserId?: string;
+      agentFlowRate?: number;
       agentShareRate?: number;
       /** B 信用额度 */
       creditLimit?: number;
@@ -247,7 +271,7 @@ export class ConsoleRoomsService {
     },
   ) {
     if (!this.scope.canCreateRoom(actor)) {
-      throw new ForbiddenException('仅管理员/房主可创建房间');
+      throw new ForbiddenException('仅管理/总监/总代可创建房间');
     }
     const roomName = safeDisplayName(body.name, '房间名', 40);
 
@@ -262,11 +286,42 @@ export class ConsoleRoomsService {
     const bookMode = body.bookMode === 'CREDIT' ? 'CREDIT' : 'CASH';
     const monthlyFee = Math.max(0, Math.floor(Number(body.monthlyFee ?? 0) || 0));
     const billingDay = Math.min(28, Math.max(1, Number(body.billingDay ?? 1) || 1));
+    let generalAgentRow: { id: string; userId: string; flowRate: number; shareRate: number } | null = null;
+    let generalUserId = String(body.generalAgentUserId || '').trim();
+    if (actor.role === 'GENERAL') {
+      generalUserId = actor.id;
+    }
+    if (generalUserId) {
+      const gu = await this.prisma.user.findUnique({
+        where: { id: generalUserId },
+        select: { id: true, role: true, agent: { select: { id: true, flowRate: true, shareRate: true } } },
+      });
+      if (!gu || gu.role !== 'GENERAL' || !gu.agent) {
+        throw new BadRequestException('总代账号无效');
+      }
+      generalAgentRow = {
+        id: gu.agent.id,
+        userId: gu.id,
+        flowRate: Number(gu.agent.flowRate ?? 0.07),
+        shareRate: Number(gu.agent.shareRate ?? 0.5),
+      };
+    }
+
     let agentShareRate = Number(body.agentShareRate);
-    if (!Number.isFinite(agentShareRate)) agentShareRate = 0;
+    if (!Number.isFinite(agentShareRate)) agentShareRate = 0.5;
     if (agentShareRate > 1) agentShareRate = agentShareRate / 100;
-    if (agentShareRate < 0 || agentShareRate > 0.5) {
-      throw new BadRequestException('代理占成须在 0%～50%');
+    const shareCap = generalAgentRow ? Math.min(0.7, generalAgentRow.shareRate) : 0.5;
+    if (agentShareRate < 0 || agentShareRate > shareCap + 1e-9) {
+      throw new BadRequestException(`代理占成须在 0%～${(shareCap * 100).toFixed(0)}%`);
+    }
+
+    const policy = await this.prisma.rebatePolicy.findUnique({ where: { id: 1 } });
+    let agentFlowRate = Number(body.agentFlowRate);
+    if (!Number.isFinite(agentFlowRate)) agentFlowRate = Number(policy?.agentDefaultRate ?? 0.05);
+    if (agentFlowRate > 1) agentFlowRate = agentFlowRate / 100;
+    const flowCap = generalAgentRow ? generalAgentRow.flowRate : Number(policy?.agentDefaultRate ?? 0.05);
+    if (agentFlowRate < 0.018 || agentFlowRate > flowCap + 1e-9) {
+      throw new BadRequestException(`代理流水整包须在 1.8%～${(flowCap * 100).toFixed(1)}%`);
     }
 
     let creditLimit = 0;
@@ -299,7 +354,7 @@ export class ConsoleRoomsService {
     const actorUser = await this.prisma.user.findUnique({ where: { id: actor.id } });
     if (!actorUser) throw new BadRequestException();
 
-    // 房主可见授权（RoomOwnerGrant = 真正可见范围）
+    // 总监可见授权
     let grantOwnerIds: string[] = [];
     if (actor.role === 'ADMIN') {
       const ids = Array.isArray(body.ownerUserIds) ? body.ownerUserIds.filter(Boolean) : [];
@@ -310,16 +365,30 @@ export class ConsoleRoomsService {
         });
         grantOwnerIds = branches.map((b) => b.id);
       }
-    } else if (actor.role === 'BRANCH') {
-      // 房主创建：仅自己可见；其他房主要进房须由管理员在「可见房主」里勾选
-      grantOwnerIds = [actor.id];
+    } else if (actor.role === 'BRANCH' || actor.role === 'GENERAL') {
+      /* 总监/总代开的房：所有总监可见，报表共用 */
+      const allDirectors = await this.prisma.user.findMany({
+        where: { role: 'BRANCH', status: 'ACTIVE' },
+        select: { id: true },
+      });
+      grantOwnerIds = allDirectors.map((b) => b.id);
+      if (actor.role === 'BRANCH' && !grantOwnerIds.includes(actor.id)) {
+        grantOwnerIds.push(actor.id);
+      }
     }
 
-    // 代理挂靠：超管创建时挂到第一个房主下（若有）；房主创建挂到自己
+    // 代理挂靠：有总代挂总代，否则挂创建人
     let parentId = actor.id;
     let agentPath = `${actorUser.agentPath}${actor.id}/`;
     let depth = actorUser.depth + 1;
-    if (actor.role === 'ADMIN' && grantOwnerIds.length) {
+    if (generalAgentRow) {
+      const parentG = await this.prisma.user.findUnique({ where: { id: generalAgentRow.userId } });
+      if (parentG) {
+        parentId = parentG.id;
+        agentPath = `${parentG.agentPath}${parentG.id}/`;
+        depth = parentG.depth + 1;
+      }
+    } else if (actor.role === 'ADMIN' && grantOwnerIds.length) {
       const parentBranch = await this.prisma.user.findUnique({ where: { id: grantOwnerIds[0] } });
       if (parentBranch) {
         parentId = parentBranch.id;
@@ -385,7 +454,14 @@ export class ConsoleRoomsService {
             depth,
           },
         });
-        const agent = await tx.agent.create({ data: { userId: agentUser.id } });
+        const agent = await tx.agent.create({
+          data: {
+            userId: agentUser.id,
+            flowRate: agentFlowRate,
+            shareRate: agentShareRate,
+            rebateRate: 0.018,
+          },
+        });
         // B：信用额度写入上盘额度库存；A：从 0 起，后续买入额度
         if (bookMode === 'CREDIT' && creditLimit > 0) {
           await writeAgentQuotaInTx(tx, {
@@ -408,6 +484,7 @@ export class ConsoleRoomsService {
             roomNo,
             name: roomName,
             ownerAgentId: agent.id,
+            generalAgentId: generalAgentRow?.id ?? null,
             status,
             enabledGames: JSON.stringify(games),
             monthlyFee,
@@ -879,6 +956,15 @@ export class ConsoleRoomsService {
             },
           },
         },
+        generalAgent: {
+          select: {
+            id: true,
+            userId: true,
+            flowRate: true,
+            shareRate: true,
+            user: { select: { uid: true, nickname: true, username: true } },
+          },
+        },
         ownerGrants: {
           include: {
             owner: { select: { id: true, uid: true, nickname: true, username: true } },
@@ -957,6 +1043,18 @@ export class ConsoleRoomsService {
       overIssueUsed: 0,
       bookMode,
       agentShareRate: Number(room.agentShareRate ?? 0),
+      generalFlyEnabled: room.generalFlyEnabled !== false,
+      general: room.generalAgent
+        ? {
+            agentId: room.generalAgent.id,
+            userId: room.generalAgent.userId,
+            uid: room.generalAgent.user.uid,
+            nickname: room.generalAgent.user.nickname,
+            username: room.generalAgent.user.username,
+            flowRate: Number(room.generalAgent.flowRate ?? 0),
+            shareRate: Number(room.generalAgent.shareRate ?? 0),
+          }
+        : null,
       creditLimit,
       settleCycle: normalizeSettleCycle(room.settleCycle),
       settleWeekday: room.settleWeekday ?? 1,
@@ -991,6 +1089,8 @@ export class ConsoleRoomsService {
             csBalances,
             pointsUsed: asMoney(room.ownerAgent.pointsUsed),
             rebateRate: room.ownerAgent.rebateRate,
+            flowRate: Number(room.ownerAgent.flowRate ?? 0.05),
+            shareRate: Number(room.ownerAgent.shareRate ?? 0.5),
             balance: agentBalance,
             user: room.ownerAgent.user,
           }
@@ -1135,6 +1235,35 @@ export class ConsoleRoomsService {
       pointsQuota: quotaAfter,
       excessAfter: book.excess,
       message: `合同与剩余信用各 ${sign}${amount}：合同 ${before}→${after}，剩余 ${quotaBefore}→${quotaAfter}`,
+    };
+  }
+
+  /** 总代整房飞盘：只改房间开关，不动代理的单玩家开关 */
+  async setGeneralRoomFly(actor: ConsoleActor, roomId: string, flyEnabled: boolean) {
+    if (actor.role !== 'GENERAL') {
+      throw new ForbiddenException('仅总代可调整名下房间整房飞盘');
+    }
+    await this.scope.assertRoomAccess(actor, roomId);
+    const room = await this.prisma.room.findUnique({
+      where: { id: roomId },
+      select: { id: true, generalAgent: { select: { userId: true } } },
+    });
+    if (!room) throw new NotFoundException('房间不存在');
+    if (room.generalAgent?.userId !== actor.id) {
+      throw new ForbiddenException('只能调整自己名下房间的飞盘');
+    }
+    await this.prisma.room.update({
+      where: { id: roomId },
+      data: { generalFlyEnabled: flyEnabled },
+    });
+    await this.adminLog.log(actor.id, 'ROOM_FLY', roomId, {
+      flyEnabled,
+      scope: 'general',
+    });
+    return {
+      ok: true,
+      flyEnabled,
+      message: flyEnabled ? '已整房开启飞盘（飞向平台）' : '已整房关闭飞盘（总代坐庄）',
     };
   }
 

@@ -99,6 +99,8 @@ type BetFlyMeta = {
   flying: boolean;
   roomId?: string;
   agentUserId?: string;
+  generalUserId?: string;
+  sitting?: 'PLATFORM' | 'GENERAL' | 'AGENT';
   bookMode?: string;
 };
 
@@ -146,6 +148,8 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
       flying: !!fly?.flying,
       roomId: fly?.roomId,
       agentUserId: fly?.agentUserId,
+      generalUserId: fly?.generalUserId,
+      sitting: fly?.sitting,
       bookMode: fly?.bookMode,
     };
   }
@@ -780,6 +784,8 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
                 flying: house.flying,
                 roomId: house.roomId,
                 agentUserId: house.agentUserId,
+                generalUserId: house.generalUserId,
+                sitting: house.sitting,
                 bookMode: house.bookMode,
                 roundId,
               });
@@ -1052,6 +1058,8 @@ export class TableService implements OnModuleInit, OnModuleDestroy {
       flying: house.flying,
       roomId: house.roomId,
       agentUserId: house.agentUserId,
+      generalUserId: house.generalUserId,
+      sitting: house.sitting,
       bookMode: house.bookMode,
       P,
     };

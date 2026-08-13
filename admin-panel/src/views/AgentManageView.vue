@@ -8,7 +8,12 @@
             v-if="isAdmin && roleFilter === 'BRANCH'"
             type="primary"
             @click="openCreateBranch"
-          >添加房主</el-button>
+          >添加总监</el-button>
+          <el-button
+            v-if="canCreateGeneral"
+            type="primary"
+            @click="openCreateGeneral"
+          >添加总代</el-button>
         </template>
       </PageHeader>
 
@@ -21,11 +26,15 @@
       <template v-else>
         <div v-if="isAdmin" class="rooms-summary">
           <div class="sum-chip">
-            <span class="sum-label">房主</span>
+            <span class="sum-label">总监</span>
             <span class="sum-val">{{ branchCount }}</span>
           </div>
           <div class="sum-chip">
-            <span class="sum-label">绑定代理</span>
+            <span class="sum-label">总代</span>
+            <span class="sum-val">{{ generalCount }}</span>
+          </div>
+          <div class="sum-chip">
+            <span class="sum-label">代理</span>
             <span class="sum-val">{{ agentCount }}</span>
           </div>
           <div class="sum-chip">
@@ -36,22 +45,29 @@
 
         <div class="panel-toolbar">
           <el-radio-group v-model="roleFilter" size="small" @change="onTabChange">
-            <el-radio-button v-if="isAdmin" label="BRANCH">房主</el-radio-button>
-            <el-radio-button label="AGENT">绑定代理</el-radio-button>
+            <el-radio-button v-if="isAdmin" label="BRANCH">总监</el-radio-button>
+            <el-radio-button v-if="isAdminOrBranch" label="GENERAL">总代</el-radio-button>
+            <el-radio-button label="AGENT">代理房间</el-radio-button>
           </el-radio-group>
           <el-input
             v-model="keyword"
             clearable
             size="small"
-            :placeholder="roleFilter === 'BRANCH' ? '搜昵称 / 账号' : '搜昵称 / 账号 / 房间'"
+            :placeholder="roleFilter === 'AGENT' ? '搜昵称 / 账号 / 房间' : '搜昵称 / 账号'"
             class="filter-search"
             @clear="reload"
             @keyup.enter="reload"
           />
           <el-button size="small" @click="reload">搜索</el-button>
         </div>
-        <p v-if="roleFilter === 'AGENT'" class="agents-hint">
+        <p v-if="roleFilter === 'GENERAL'" class="agents-hint">
+          总代发展房间，拿名下全部房间的流水差与占成差。创建时可调流水（默认 7%）和占成（默认 50%）；创建后只有管理能改。
+        </p>
+        <p v-else-if="roleFilter === 'AGENT'" class="agents-hint">
           给代理买额度 / 调信用：点「买额度」进入该房「绑定代理」页操作（现金=上分买盘分，信用=调整信用额度）。
+        </p>
+        <p v-else-if="roleFilter === 'BRANCH'" class="agents-hint">
+          总监与管理共用平台池、不吃流水。默认能看全部房间；管理可关掉某总监对该房的观看，该房平台利润也不计入该总监。
         </p>
 
         <div class="panel-body">
@@ -93,6 +109,12 @@
             <el-table-column v-if="roleFilter === 'AGENT'" label="上盘/剩余信用" min-width="120" align="right">
               <template #default="{ row }: { row: any }">{{ fmt(row.pointsQuota) }}</template>
             </el-table-column>
+            <el-table-column v-if="roleFilter === 'GENERAL'" label="名下房间" min-width="160">
+              <template #default="{ row }: { row: any }">
+                <div class="cell-name">{{ row.roomCount ?? row.rooms?.length ?? 0 }} 间</div>
+                <div class="cell-meta">流水 {{ pct(row.flowRate) }}% · 占成 {{ pct(row.shareRate) }}%</div>
+              </template>
+            </el-table-column>
             <el-table-column v-if="roleFilter === 'BRANCH'" label="可见房间" min-width="100" align="center">
               <template #default="{ row }: { row: any }">{{ row.roomCount ?? row.rooms?.length ?? 0 }}</template>
             </el-table-column>
@@ -110,7 +132,7 @@
             </el-table-column>
             <el-table-column
               label="操作"
-              :min-width="roleFilter === 'BRANCH' && isAdmin ? 196 : roleFilter === 'AGENT' ? 140 : 88"
+              :min-width="(roleFilter === 'BRANCH' || roleFilter === 'GENERAL') && isAdmin ? 196 : roleFilter === 'AGENT' ? 140 : 88"
               align="right"
             >
               <template #default="{ row }: { row: any }">
@@ -123,7 +145,7 @@
                     link
                     @click="goRoomOverview(row)"
                   >进房间</el-button>
-                  <template v-if="roleFilter === 'BRANCH' && isAdmin">
+                  <template v-if="(roleFilter === 'BRANCH' || roleFilter === 'GENERAL') && isAdmin">
                     <el-button link type="warning" @click="onResetPwd(row)">重置密码</el-button>
                     <el-button
                       link
@@ -151,8 +173,8 @@
       </template>
     </div>
 
-    <DeskDialog v-model="createVisible" title="添加房主" width="440px">
-      <el-form label-width="88px" class="desk-form">
+    <DeskDialog v-model="createVisible" :title="createKind === 'GENERAL' ? '添加总代' : '添加总监'" width="480px">
+      <el-form label-width="100px" class="desk-form">
         <el-form-item label="登录账号" required>
           <div class="row-inline">
             <el-input v-model="createForm.username" placeholder="8-20位小写字母数字" maxlength="20" />
@@ -168,6 +190,16 @@
         <el-form-item label="显示名">
           <el-input v-model="createForm.nickname" placeholder="可选" maxlength="24" />
         </el-form-item>
+        <template v-if="createKind === 'GENERAL'">
+          <el-form-item label="流水整包">
+            <el-input-number v-model="createForm.flowPct" :min="1.8" :max="10" :step="0.1" :precision="1" controls-position="right" />
+            <span class="unit-hint">% 默认 7，最高 10</span>
+          </el-form-item>
+          <el-form-item label="占成">
+            <el-input-number v-model="createForm.sharePct" :min="0" :max="70" :step="1" controls-position="right" />
+            <span class="unit-hint">% 默认 50，最高 70</span>
+          </el-form-item>
+        </template>
       </el-form>
       <template #footer>
         <el-button @click="createVisible = false">取消</el-button>
@@ -178,12 +210,12 @@
 
     <DeskDialog
       v-model="showCreds"
-      title="房主账号已创建"
+      title="账号已创建"
       width="420px"
       :close-on-click-modal="false"
     >
       <el-alert type="warning" :closable="false" show-icon class="cred-alert">
-        密码仅展示一次，请立即复制交给房主
+        密码仅展示一次，请立即复制交给对方
       </el-alert>
       <div v-if="createdCreds" class="cred-box">
         <div class="cred-row"><span>显示名</span><b>{{ createdCreds.nickname }}</b></div>
@@ -210,13 +242,15 @@ import { consoleApi, type AgentPage } from '@/api/console'
 import { useAdminStore } from '@/stores/admin'
 
 type Row = AgentPage['list'][number]
-type TabRole = 'AGENT' | 'BRANCH'
+type TabRole = 'AGENT' | 'BRANCH' | 'GENERAL'
+type CreateKind = 'BRANCH' | 'GENERAL'
 
 const store = useAdminStore()
 const router = useRouter()
 const role = computed(() => store.profile?.role || '')
 const isAdmin = computed(() => role.value === 'ADMIN')
 const isAdminOrBranch = computed(() => role.value === 'ADMIN' || role.value === 'BRANCH')
+const canCreateGeneral = computed(() => isAdminOrBranch.value)
 const isAgentUser = computed(() => role.value === 'AGENT')
 const isProxyUser = computed(() => role.value === 'PROXY')
 
@@ -224,9 +258,11 @@ const title = computed(() => {
   if (isAgentUser.value || isProxyUser.value) return '下级账号'
   return '账号中心'
 })
-const emptyText = computed(() =>
-  roleFilter.value === 'BRANCH' ? '暂无房主' : '暂无绑定代理',
-)
+const emptyText = computed(() => {
+  if (roleFilter.value === 'BRANCH') return '暂无总监'
+  if (roleFilter.value === 'GENERAL') return '暂无总代'
+  return '暂无代理房间'
+})
 
 const list = ref<Row[]>([])
 const total = ref(0)
@@ -236,17 +272,27 @@ const busy = ref(false)
 const roleFilter = ref<TabRole>('BRANCH')
 const keyword = ref('')
 const branchCount = ref(0)
+const generalCount = ref(0)
 const agentCount = ref(0)
 
 const createVisible = ref(false)
+const createKind = ref<CreateKind>('BRANCH')
 const createForm = reactive({
   username: '',
   password: '',
   nickname: '',
+  flowPct: 7,
+  sharePct: 50,
 })
 const showCreds = ref(false)
 const createdCreds = ref<{ nickname: string; username: string; password: string } | null>(null)
 
+function pct(n?: number | null) {
+  const v = Number(n)
+  if (!Number.isFinite(v)) return '—'
+  const x = v > 1 ? v : v * 100
+  return Number(x.toFixed(1))
+}
 function fmt(n?: number) {
   return Number(n || 0).toLocaleString('zh-CN', { maximumFractionDigits: 2 })
 }
@@ -273,10 +319,12 @@ function randHex(n: number) {
   return s
 }
 function regenUsername() {
-  createForm.username = `branch${randHex(6)}`
+  const prefix = createKind.value === 'GENERAL' ? 'general' : 'branch'
+  createForm.username = `${prefix}${randHex(6)}`
 }
 function regenPassword() {
-  createForm.password = `Br${randHex(8)}9`
+  const prefix = createKind.value === 'GENERAL' ? 'Ge' : 'Br'
+  createForm.password = `${prefix}${randHex(8)}9`
 }
 function goRoomAgent(roomId: string) {
   router.push({ name: 'room-detail', params: { id: roomId }, query: { tab: 'agent' } })
@@ -332,11 +380,13 @@ function reload() {
 async function loadCounts() {
   if (!isAdmin.value) return
   try {
-    const [b, a] = await Promise.all([
+    const [b, g, a] = await Promise.all([
       consoleApi.agents({ page: 1, pageSize: 1, role: 'BRANCH', boundOnly: false }),
+      consoleApi.agents({ page: 1, pageSize: 1, role: 'GENERAL', boundOnly: false }),
       consoleApi.agents({ page: 1, pageSize: 1, role: 'AGENT', boundOnly: true }),
     ])
     branchCount.value = b.total
+    generalCount.value = g.total
     agentCount.value = a.total
   } catch {
     /* ignore */
@@ -345,7 +395,7 @@ async function loadCounts() {
 
 async function load() {
   if (!isAdminOrBranch.value) return
-  if (!isAdmin.value) roleFilter.value = 'AGENT'
+  if (!isAdmin.value && roleFilter.value === 'BRANCH') roleFilter.value = 'GENERAL'
   loading.value = true
   try {
     const res = await consoleApi.agents({
@@ -358,6 +408,7 @@ async function load() {
     list.value = res.list
     total.value = res.total
     if (roleFilter.value === 'BRANCH') branchCount.value = res.total
+    else if (roleFilter.value === 'GENERAL') generalCount.value = res.total
     else agentCount.value = res.total
     if (isAdmin.value) void loadCounts()
   } catch (e: unknown) {
@@ -368,7 +419,19 @@ async function load() {
 }
 
 function openCreateBranch() {
+  createKind.value = 'BRANCH'
   createForm.nickname = ''
+  createForm.flowPct = 7
+  createForm.sharePct = 50
+  regenUsername()
+  regenPassword()
+  createVisible.value = true
+}
+function openCreateGeneral() {
+  createKind.value = 'GENERAL'
+  createForm.nickname = ''
+  createForm.flowPct = 7
+  createForm.sharePct = 50
   regenUsername()
   regenPassword()
   createVisible.value = true
@@ -384,15 +447,28 @@ async function doCreateBranch() {
     ElMessage.warning(createPwdErr)
     return
   }
+  if (createKind.value === 'GENERAL') {
+    if (createForm.flowPct < 1.8 || createForm.flowPct > 10) {
+      ElMessage.warning('总代流水整包须在 1.8%～10%')
+      return
+    }
+    if (createForm.sharePct < 0 || createForm.sharePct > 70) {
+      ElMessage.warning('总代占成须在 0%～70%')
+      return
+    }
+  }
   busy.value = true
   try {
     const username = createForm.username.trim().toLowerCase()
     const password = createForm.password
     const res = await consoleApi.createAgent({
-      role: 'BRANCH',
+      role: createKind.value,
       username,
       password,
       nickname: createForm.nickname.trim() || undefined,
+      ...(createKind.value === 'GENERAL'
+        ? { flowRate: createForm.flowPct / 100, shareRate: createForm.sharePct / 100 }
+        : {}),
     }) as { nickname?: string; username?: string; password?: string }
     createVisible.value = false
     createdCreds.value = {
@@ -401,7 +477,7 @@ async function doCreateBranch() {
       password: res.password || password,
     }
     showCreds.value = true
-    roleFilter.value = 'BRANCH'
+    roleFilter.value = createKind.value
     await load()
   } catch (e: unknown) {
     ElMessage.error(
@@ -427,7 +503,8 @@ async function copyCreds() {
 
 async function onResetPwd(row: Row) {
   try {
-    await ElMessageBox.confirm(`重置房主「${row.nickname}」密码？旧登录将失效。`, '重置密码', {
+    const who = roleFilter.value === 'GENERAL' ? '总代' : '总监'
+    await ElMessageBox.confirm(`重置${who}「${row.nickname}」密码？旧登录将失效。`, '重置密码', {
       type: 'warning',
       confirmButtonText: '重置',
     })
@@ -458,7 +535,8 @@ async function onToggleStatus(row: Row) {
   const next = row.status === 'ACTIVE' ? 'DISABLED' : 'ACTIVE'
   const label = next === 'DISABLED' ? '停用' : '启用'
   try {
-    await ElMessageBox.confirm(`确认${label}房主「${row.nickname}」？`, `${label}房主`, {
+    const who = roleFilter.value === 'GENERAL' ? '总代' : '总监'
+    await ElMessageBox.confirm(`确认${label}${who}「${row.nickname}」？`, `${label}${who}`, {
       type: next === 'DISABLED' ? 'warning' : 'info',
     })
   } catch {
@@ -481,8 +559,7 @@ async function onToggleStatus(row: Row) {
 }
 
 onMounted(() => {
-  if (!isAdmin.value) roleFilter.value = 'AGENT'
-  else roleFilter.value = 'BRANCH'
+  roleFilter.value = isAdmin.value ? 'BRANCH' : 'GENERAL'
   load()
 })
 </script>
@@ -495,7 +572,7 @@ onMounted(() => {
 }
 .rooms-summary {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0;
   flex-shrink: 0;
   border-bottom: 1px solid #e2e8f0;
@@ -624,4 +701,10 @@ onMounted(() => {
 }
 .row-inline .el-input { flex: 1; min-width: 0; }
 .desk-form :deep(.el-form-item:last-child) { margin-bottom: 0; }
+.unit-hint {
+  margin-left: 8px;
+  font-size: 12px;
+  color: #64748b;
+  white-space: nowrap;
+}
 </style>

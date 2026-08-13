@@ -19,8 +19,12 @@ export type FlyHouse = {
   flying: boolean;
   roomId?: string;
   agentUserId?: string;
+  /** 总代 userId（房间挂了总代时） */
+  generalUserId?: string;
   /** CASH | CREDIT；关盘结算分支用 */
   bookMode?: string;
+  /** 谁坐庄：PLATFORM=飞上台  GENERAL=总代关  AGENT=代理关 */
+  sitting?: 'PLATFORM' | 'GENERAL' | 'AGENT';
 };
 
 @Injectable()
@@ -40,8 +44,12 @@ export class FlyDiskService {
 
   private readonly roomInclude = {
     bookMode: true,
+    generalFlyEnabled: true,
     ownerAgent: {
-      select: { id: true, userId: true, flyCover: true, rebateRate: true, pointsQuota: true },
+      select: { id: true, userId: true, flyCover: true, rebateRate: true, flowRate: true, shareRate: true, pointsQuota: true },
+    },
+    generalAgent: {
+      select: { id: true, userId: true, flowRate: true, shareRate: true, pointsQuota: true },
     },
   } as const;
 
@@ -128,9 +136,29 @@ export class FlyDiskService {
       return { type: 'PLATFORM', id: PLATFORM_OWNER_ID, flying: false };
     }
     const agent = member.room.ownerAgent;
+    const general = member.room.generalAgent;
     const isCredit = member.room.bookMode === 'CREDIT';
     const bookMode = isCredit ? 'CREDIT' : 'CASH';
-    const switchOn = member.flyEnabled !== false;
+    const agentFlyOn = member.flyEnabled !== false;
+    const generalUserId = general?.userId;
+    const base = {
+      roomId: member.roomId,
+      agentUserId: agent.userId,
+      generalUserId,
+      bookMode,
+    };
+
+    /* 代理整房关或单玩家关 → 代理坐庄 */
+    if (!agentFlyOn) {
+      return { type: 'AGENT', id: agent.userId, flying: false, sitting: 'AGENT', ...base };
+    }
+
+    /* 代理开、总代整房关 → 总代坐庄 */
+    if (generalUserId && member.room.generalFlyEnabled === false) {
+      return { type: 'AGENT', id: generalUserId, flying: false, sitting: 'GENERAL', ...base };
+    }
+
+    const switchOn = true;
     const available = isCredit
       ? await creditDiskFlyAvailable(this.prisma, agent.userId)
       : await this.cashFlyAvailable(this.prisma, agent.userId);
@@ -143,19 +171,15 @@ export class FlyDiskService {
         type: 'PLATFORM',
         id: PLATFORM_OWNER_ID,
         flying: true,
-        roomId: member.roomId,
-        agentUserId: agent.userId,
-        bookMode,
+        sitting: 'PLATFORM',
+        ...base,
       };
     }
-    return {
-      type: 'AGENT',
-      id: agent.userId,
-      flying: false,
-      roomId: member.roomId,
-      agentUserId: agent.userId,
-      bookMode,
-    };
+    /* 额度不够飞平台：有总代则总代坐庄，否则代理坐庄 */
+    if (generalUserId) {
+      return { type: 'AGENT', id: generalUserId, flying: false, sitting: 'GENERAL', ...base };
+    }
+    return { type: 'AGENT', id: agent.userId, flying: false, sitting: 'AGENT', ...base };
   }
 
   /**
@@ -180,22 +204,42 @@ export class FlyDiskService {
   async getRebatePolicy() {
     const row = await this.prisma.rebatePolicy.findUnique({ where: { id: 1 } });
     return {
-      totalRate: row?.totalRate ?? 0.05,
+      totalRate: row?.generalDefaultRate ?? row?.totalRate ?? 0.07,
       playerMinRate: row?.playerMinRate ?? 0.018,
+      generalDefaultRate: row?.generalDefaultRate ?? 0.07,
+      generalMaxRate: row?.generalMaxRate ?? 0.1,
+      agentDefaultRate: row?.agentDefaultRate ?? 0.05,
     };
   }
 
-  /** 玩家 P：房间成员覆盖 → 房主代理默认 → 全局下限；并夹在 [min, T/2] */
-  async resolvePlayerRate(playerId: string, roomId?: string): Promise<{ P: number; T: number; A: number }> {
-    const { totalRate: T, playerMinRate } = await this.getRebatePolicy();
-    const maxP = T / 2;
+  /**
+   * P=玩家回水；agentPkg=代理整包；generalPkg=总代整包（无总代=0）。
+   * 飞上台时平台出 generalPkg 或 agentPkg；关盘不出上级整包。
+   */
+  async resolvePlayerRate(playerId: string, roomId?: string): Promise<{
+    P: number;
+    T: number;
+    A: number;
+    agentPkg: number;
+    generalPkg: number;
+  }> {
+    const policy = await this.getRebatePolicy();
     const member = await this.resolvePlayerRoom(playerId, roomId);
+    const agentPkg = Math.max(
+      policy.playerMinRate,
+      Number(member?.room?.ownerAgent?.flowRate ?? policy.agentDefaultRate),
+    );
+    const generalPkg = member?.room?.generalAgent
+      ? Number(member.room.generalAgent.flowRate ?? policy.generalDefaultRate)
+      : 0;
+    const maxP = agentPkg / 2;
     let P = member?.playerRebateRate
       ?? member?.room?.ownerAgent?.rebateRate
-      ?? playerMinRate;
-    if (P < playerMinRate) P = playerMinRate;
+      ?? policy.playerMinRate;
+    if (P < policy.playerMinRate) P = policy.playerMinRate;
     if (P > maxP) P = maxP;
-    return { P, T, A: roundMoney(T - P) };
+    const T = generalPkg > 0 ? generalPkg : agentPkg;
+    return { P, T, A: roundMoney(Math.max(0, agentPkg - P)), agentPkg, generalPkg };
   }
 
   clampPlayerRate(rate: number, T: number, playerMinRate: number) {

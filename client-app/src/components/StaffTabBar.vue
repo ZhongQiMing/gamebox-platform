@@ -36,7 +36,7 @@ const staff = useStaffStore()
 const show = computed(() => staff.isMobileOps && staff.isLoggedIn)
 const isProxy = computed(() => staff.role === 'PROXY')
 const isCs = computed(() => staff.isCs)
-const isBranch = computed(() => staff.isBranch)
+const isBranch = computed(() => staff.isBranch || staff.isGeneral)
 const fundBadge = ref(0)
 const csBadge = ref(0)
 /** 主代理进房待审；挂在「我的」上，入口在设置里不好找 */
@@ -106,6 +106,7 @@ const BRANCH_TABS = [
       'staff-agents',
       'staff-risk',
       'staff-home',
+      'staff-fly-query',
     ],
   },
 ] as const

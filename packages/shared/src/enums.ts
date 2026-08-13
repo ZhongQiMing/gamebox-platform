@@ -2,12 +2,12 @@
 
 /**
  * 用户角色 —— 多级盘口体系
- * 业务树：PLATFORM(平台) → BRANCH(分公司) → AGENT(代理) → PROXY(代分) → PLAYER(玩家)
- * ADMIN 为平台后台运营账号（走 admin-panel）
+ * 业务树：管理(ADMIN) = 总监(BRANCH) → 总代(GENERAL) → 代理(AGENT) → 玩家(PLAYER)
  */
 export const UserRole = {
-  ADMIN: 'ADMIN', // 平台管理员（后台）
-  BRANCH: 'BRANCH', // 分公司
+  ADMIN: 'ADMIN', // 平台唯一管理
+  BRANCH: 'BRANCH', // 总监（与管理同池，不吃流水）
+  GENERAL: 'GENERAL', // 总代
   AGENT: 'AGENT', // 代理
   PROXY: 'PROXY', // 子账号（只读）
   CS: 'CS', // 客服（上下分）

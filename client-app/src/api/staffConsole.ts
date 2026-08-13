@@ -57,6 +57,14 @@ export interface StaffRoom {
     pointsUsed?: number
     flyCover?: number
   } | null
+  generalFlyEnabled?: boolean
+  general?: {
+    agentId: string
+    userId: string
+    uid: string
+    nickname: string
+    username: string
+  } | null
 }
 
 export interface StaffRoomDetail {
@@ -367,6 +375,12 @@ export const staffConsoleApi = {
       { ok: boolean; flyEnabled: boolean; updated: number; message?: string },
       { ok: boolean; flyEnabled: boolean; updated: number; message?: string }
     >(`/console/rooms/${roomId}/fly`, { flyEnabled }),
+
+  setGeneralRoomFly: (roomId: string, flyEnabled: boolean) =>
+    staffHttp.patch<
+      { ok: boolean; flyEnabled: boolean; message?: string },
+      { ok: boolean; flyEnabled: boolean; message?: string }
+    >(`/console/rooms/${roomId}/general-fly`, { flyEnabled }),
 
   // 进房码仅创建时可设，创建后不可换——换码接口停用
   // rotateCode: (roomId: string) =>

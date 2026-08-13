@@ -34,16 +34,17 @@ export const useStaffStore = defineStore('staff', () => {
     !!profile.value && (isNativeApp() ? !!token.value : sessionKind() === 'staff'))
   const role = computed(() => profile.value?.role || '')
   const isBranch = computed(() => role.value === 'BRANCH' || role.value === 'ADMIN')
+  const isGeneral = computed(() => role.value === 'GENERAL')
   const isAgentSide = computed(() => role.value === 'AGENT' || role.value === 'PROXY')
   const isCs = computed(() => role.value === 'CS')
-  /** 手机底栏运营端：主代理 / 子账号 / 客服 / 管理员 / 房主 */
-  const isMobileOps = computed(() => isAgentSide.value || isCs.value || isBranch.value)
+  /** 手机底栏运营端：主代理 / 总代 / 子账号 / 客服 / 管理 / 总监 */
+  const isMobileOps = computed(() => isAgentSide.value || isCs.value || isBranch.value || isGeneral.value)
 
   /** 登录后默认页 */
   function homeRouteName(): string {
     if (isCs.value) return 'staff-fund'
     if (isAgentSide.value) return 'staff-lobby'
-    if (isBranch.value) return 'staff-game-rooms'
+    if (isGeneral.value || isBranch.value) return 'staff-game-rooms'
     return 'staff-home'
   }
 
@@ -155,6 +156,7 @@ export const useStaffStore = defineStore('staff', () => {
     isLoggedIn,
     role,
     isBranch,
+    isGeneral,
     isAgentSide,
     isCs,
     isMobileOps,

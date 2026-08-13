@@ -65,8 +65,8 @@ async function doLogin() {
   loading.value = true
   try {
     const res = await http.post<AuthResult, AuthResult>('/auth/login', form.value)
-    if (!['ADMIN', 'BRANCH', 'AGENT', 'PROXY', 'CS'].includes(res.user.role)) {
-      ElMessage.error('该账号无控制台权限（需管理员/房主/代理/子账号/客服）')
+    if (!['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY', 'CS'].includes(res.user.role)) {
+      ElMessage.error('该账号无控制台权限（需管理/总监/总代/代理/子账号/客服）')
       return
     }
     store.setAuth(res.user)

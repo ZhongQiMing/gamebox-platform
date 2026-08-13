@@ -24,10 +24,10 @@
         <span class="ic">♟</span><span class="lb">返回玩家登录</span><span class="arrow">›</span>
       </div>
       <div v-if="kind === 'branch'" class="menu-item" @click="goOtherLogin">
-        <span class="ic">⚜</span><span class="lb">代理 / 客服</span><span class="arrow">›</span>
+        <span class="ic">⚜</span><span class="lb">代理 / 总代 / 客服</span><span class="arrow">›</span>
       </div>
       <div v-else class="menu-item" @click="goOtherLogin">
-        <span class="ic">♛</span><span class="lb">房主登录</span><span class="arrow">›</span>
+        <span class="ic">♛</span><span class="lb">总监登录</span><span class="arrow">›</span>
       </div>
       <div class="menu-item" @click="toast('关于：金御汇 v1.0'); menuOpen = false">
         <span class="ic">ⓘ</span><span class="lb">关于</span><span class="arrow">›</span>
@@ -44,7 +44,7 @@
           <span>金</span><span>御</span><span>汇</span>
         </h1>
         <div class="luxe-divider hero-divider"><span></span>◆<span></span></div>
-        <div class="hero-en">{{ kind === 'branch' ? '房 主 登 录' : '代 理 · 客 服' }}</div>
+        <div class="hero-en">{{ kind === 'branch' ? '总 监 登 录' : '代 理 · 总 代 · 客 服' }}</div>
       </div>
 
       <form class="welcome-form" @submit.prevent>
@@ -54,7 +54,7 @@
             v-model="account"
             type="text"
             class="field"
-            :placeholder="kind === 'branch' ? '房主 / 管理员账号' : '代理 / 子账号 / 客服'"
+            :placeholder="kind === 'branch' ? '总监 / 管理账号' : '代理 / 总代 / 子账号 / 客服'"
             maxlength="20"
             autocomplete="username"
           >
@@ -177,7 +177,7 @@ function goOtherLogin() {
 
 async function doLogin() {
   if (!account.value.trim()) {
-    toastError(kind.value === 'branch' ? '请输入房主账号' : '请输入账号')
+    toastError(kind.value === 'branch' ? '请输入总监账号' : '请输入账号')
     return
   }
   if (!password.value) {
@@ -195,7 +195,7 @@ async function doLogin() {
       role,
       kind.value === 'branch'
         ? (candidate) => candidate === 'BRANCH' || candidate === 'ADMIN'
-        : (candidate) => candidate === 'AGENT' || candidate === 'PROXY' || candidate === 'CS',
+        : (candidate) => candidate === 'AGENT' || candidate === 'GENERAL' || candidate === 'PROXY' || candidate === 'CS',
       authApi.logout,
     )
     if (!accepted) {

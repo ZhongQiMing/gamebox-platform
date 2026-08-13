@@ -38,6 +38,8 @@ export class FlyRebateService {
       flying: boolean;
       roomId?: string;
       agentUserId?: string;
+      generalUserId?: string;
+      sitting?: 'PLATFORM' | 'GENERAL' | 'AGENT';
       bookMode?: string;
       agentPath?: string | null;
       roundId?: string;
@@ -48,26 +50,64 @@ export class FlyRebateService {
 
     const isCredit = opts.bookMode === 'CREDIT';
     const roomId = opts.roomId;
-    const { A } = roomId
+    const rates = roomId
       ? await this.fly.resolvePlayerRate(opts.playerId, roomId)
-      : { A: 0 };
+      : { agentPkg: 0, generalPkg: 0 };
+    const sitting =
+      opts.sitting ||
+      (opts.flying ? 'PLATFORM' : opts.generalUserId ? 'GENERAL' : 'AGENT');
+    const agentId = opts.agentUserId;
+    const generalId = opts.generalUserId;
+    const agentAmt = roundMoney(flow * (rates.agentPkg || 0));
+    const generalAmt = roundMoney(flow * (rates.generalPkg || 0));
 
-    /* 仅飞盘时平台付代理 A；玩家 P 走自助回水，不在此发放 */
-    if (opts.flying && opts.agentUserId && A > 0) {
-      const agentShare = roundMoney(flow * A);
-      if (agentShare > 0) {
+    /* 飞上台：平台出总代整包（无总代则出代理整包），总代再转代理整包 */
+    if (sitting === 'PLATFORM' && agentId) {
+      if (generalId && generalAmt > 0) {
         await this.payPlatformToAgentWageInTx(tx, {
-          agentUserId: opts.agentUserId,
-          amount: agentShare,
+          agentUserId: generalId,
+          amount: generalAmt,
           betId: opts.betId,
           isCredit,
-          ratePct: A * 100,
+          ratePct: (rates.generalPkg || 0) * 100,
+          tag: 'general',
+        });
+        if (agentAmt > 0) {
+          await this.payAgentToAgentWageInTx(tx, {
+            fromUserId: generalId,
+            toUserId: agentId,
+            amount: agentAmt,
+            betId: opts.betId,
+            isCredit,
+            ratePct: (rates.agentPkg || 0) * 100,
+          });
+        }
+      } else if (agentAmt > 0) {
+        await this.payPlatformToAgentWageInTx(tx, {
+          agentUserId: agentId,
+          amount: agentAmt,
+          betId: opts.betId,
+          isCredit,
+          ratePct: (rates.agentPkg || 0) * 100,
+          tag: 'agent',
         });
       }
     }
 
-    /* 挂靠佣金按本房 RoomPlayerHang；无 roomId / 无本房挂靠则不发 */
-    if (opts.agentUserId && roomId) {
+    /* 总代坐庄：总代出代理整包 */
+    if (sitting === 'GENERAL' && generalId && agentId && agentAmt > 0) {
+      await this.payAgentToAgentWageInTx(tx, {
+        fromUserId: generalId,
+        toUserId: agentId,
+        amount: agentAmt,
+        betId: opts.betId,
+        isCredit,
+        ratePct: (rates.agentPkg || 0) * 100,
+      });
+    }
+
+    /* 挂靠一律本房代理出 */
+    if (agentId && roomId) {
       await this.commission.distributeInTx(
         tx,
         { id: opts.playerId },
@@ -75,7 +115,7 @@ export class FlyRebateService {
         opts.roundId,
         `flow_upline_${opts.betId}`,
         {
-          payerAgentUserId: opts.agentUserId,
+          payerAgentUserId: agentId,
           bookMode: isCredit ? 'CREDIT' : 'CASH',
           roomId,
         },
@@ -101,7 +141,6 @@ export class FlyRebateService {
     return this.payBetFlowInTx(tx, opts);
   }
 
-  /** 平台 → 代理工资 A */
   private async payPlatformToAgentWageInTx(
     tx: Prisma.TransactionClient,
     opts: {
@@ -110,23 +149,17 @@ export class FlyRebateService {
       betId: string;
       isCredit: boolean;
       ratePct: number;
+      tag: string;
     },
   ) {
-    const remark = `飞盘返水代理 ${opts.ratePct.toFixed(2)}%`;
+    const remark = `流水整包 ${opts.ratePct.toFixed(2)}%`;
+    const outKey = `flow_rebate_${opts.tag}_out_${opts.betId}`;
+    const inKey = `flow_rebate_${opts.tag}_in_${opts.betId}`;
     if (opts.isCredit) {
-      /* 信用：进佣金账户（余额），结账时轧差；不动剩余信用 */
       await this.points.transferInTx(
         tx,
-        {
-          type: 'PLATFORM',
-          id: PLATFORM_OWNER_ID,
-          idempotencyKey: `flow_rebate_agent_out_${opts.betId}`,
-        },
-        {
-          type: 'AGENT',
-          id: opts.agentUserId,
-          idempotencyKey: `flow_rebate_agent_in_${opts.betId}`,
-        },
+        { type: 'PLATFORM', id: PLATFORM_OWNER_ID, idempotencyKey: outKey },
+        { type: 'AGENT', id: opts.agentUserId, idempotencyKey: inKey },
         opts.amount,
         {
           bizType: 'REBATE',
@@ -137,19 +170,13 @@ export class FlyRebateService {
       );
       return;
     }
-    /* 现金：平台出，同步加盘分（余额+上盘额度） */
     await this.points.creditInTx(
       tx,
       'PLATFORM',
       PLATFORM_OWNER_ID,
       -opts.amount,
       'REBATE',
-      {
-        remark,
-        refType: 'bet',
-        refId: opts.betId,
-        idempotencyKey: `flow_rebate_agent_out_${opts.betId}`,
-      },
+      { remark, refType: 'bet', refId: opts.betId, idempotencyKey: outKey },
     );
     await adjustCashDiskInTx(tx, this.points, {
       agentUserId: opts.agentUserId,
@@ -158,7 +185,52 @@ export class FlyRebateService {
       remark,
       refType: 'bet',
       refId: opts.betId,
-      idempotencyKey: `flow_rebate_agent_in_${opts.betId}`,
+      idempotencyKey: inKey,
+    });
+  }
+
+  private async payAgentToAgentWageInTx(
+    tx: Prisma.TransactionClient,
+    opts: {
+      fromUserId: string;
+      toUserId: string;
+      amount: number;
+      betId: string;
+      isCredit: boolean;
+      ratePct: number;
+    },
+  ) {
+    if (opts.fromUserId === opts.toUserId || opts.amount <= 0) return;
+    const remark = `流水整包下发 ${opts.ratePct.toFixed(2)}%`;
+    const outKey = `flow_rebate_down_out_${opts.betId}`;
+    const inKey = `flow_rebate_down_in_${opts.betId}`;
+    if (opts.isCredit) {
+      await this.points.transferInTx(
+        tx,
+        { type: 'AGENT', id: opts.fromUserId, idempotencyKey: outKey },
+        { type: 'AGENT', id: opts.toUserId, idempotencyKey: inKey },
+        opts.amount,
+        { bizType: 'REBATE', refType: 'bet', refId: opts.betId, remark: `${remark}(佣金账)` },
+      );
+      return;
+    }
+    await adjustCashDiskInTx(tx, this.points, {
+      agentUserId: opts.fromUserId,
+      delta: -opts.amount,
+      bizType: 'REBATE',
+      remark,
+      refType: 'bet',
+      refId: opts.betId,
+      idempotencyKey: outKey,
+    });
+    await adjustCashDiskInTx(tx, this.points, {
+      agentUserId: opts.toUserId,
+      delta: opts.amount,
+      bizType: 'REBATE',
+      remark,
+      refType: 'bet',
+      refId: opts.betId,
+      idempotencyKey: inKey,
     });
   }
 

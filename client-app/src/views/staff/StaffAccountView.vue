@@ -109,7 +109,7 @@ const fileInput = ref<HTMLInputElement | null>(null)
 const isAgent = computed(() => staff.role === 'AGENT')
 const roomIcon = ref('')
 const agentRoomId = ref('')
-const DEFAULT_ROOM_ICON = '/images/rooms/default-room.png'
+const DEFAULT_ROOM_ICON = '/images/rooms/default-room.webp'
 const uploading = ref(false)
 const busy = ref(false)
 const nickVisible = ref(false)
@@ -120,8 +120,9 @@ const avatarSrc = computed(() => {
   return staff.profile?.avatar || '/images/avatars/001.jpg'
 })
 const roleLabel = computed(() => {
-  if (staff.role === 'ADMIN') return '管理员'
-  if (staff.role === 'BRANCH') return '房主'
+  if (staff.role === 'ADMIN') return '管理'
+  if (staff.role === 'BRANCH') return '总监'
+  if (staff.role === 'GENERAL') return '总代'
   if (staff.role === 'AGENT') return '代理'
   if (staff.role === 'PROXY') return '子账号'
   if (staff.role === 'CS') return '客服'

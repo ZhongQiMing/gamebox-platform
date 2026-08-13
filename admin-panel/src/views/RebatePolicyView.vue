@@ -12,16 +12,16 @@
         <section class="sheet">
           <div class="row">
             <div class="label">
-              <div class="name">回水总额</div>
-              <div class="desc">拿去分给玩家和代理的总比例</div>
+              <div class="name">总代整包</div>
+              <div class="desc">平台付给总代的流水点。默认 7%，最高 10%。不挂总代时去掉这一截。</div>
             </div>
             <div class="ctrl">
               <el-input-number
-                v-model="form.totalPct"
-                :min="0"
-                :max="50"
+                v-model="form.generalPct"
+                :min="1.8"
+                :max="form.generalMaxPct"
                 :step="0.1"
-                :precision="2"
+                :precision="1"
                 :disabled="!isAdmin"
                 controls-position="right"
                 class="num"
@@ -32,16 +32,36 @@
 
           <div class="row">
             <div class="label">
-              <div class="name">玩家回水</div>
-              <div class="desc">房间给玩家时，最低按这个比例</div>
+              <div class="name">总代上限</div>
+              <div class="desc">开总代时流水整包不能超过这个点</div>
             </div>
             <div class="ctrl">
               <el-input-number
-                v-model="form.playerMinPct"
-                :min="0"
-                :max="25"
+                v-model="form.generalMaxPct"
+                :min="5"
+                :max="10"
                 :step="0.1"
-                :precision="2"
+                :precision="1"
+                :disabled="!isAdmin"
+                controls-position="right"
+                class="num"
+              />
+              <span class="unit">%</span>
+            </div>
+          </div>
+
+          <div class="row">
+            <div class="label">
+              <div class="name">代理整包</div>
+              <div class="desc">总代（或平台）付给代理的流水点。默认 5%，不能超过总代整包。</div>
+            </div>
+            <div class="ctrl">
+              <el-input-number
+                v-model="form.agentPct"
+                :min="1.8"
+                :max="form.generalPct"
+                :step="0.1"
+                :precision="1"
                 :disabled="!isAdmin"
                 controls-position="right"
                 class="num"
@@ -52,15 +72,35 @@
 
           <div class="row last">
             <div class="label">
-              <div class="name">代理回水</div>
-              <div class="desc">{{ form.totalPct.toFixed(2) }}% − {{ form.playerMinPct.toFixed(2) }}%</div>
+              <div class="name">玩家回水下限</div>
+              <div class="desc">本房玩家回水最低 1.8%，最高不超过本房代理整包的一半</div>
             </div>
             <div class="ctrl">
-              <b class="result">{{ agentPct.toFixed(2) }}</b>
+              <el-input-number
+                v-model="form.playerMinPct"
+                :min="0"
+                :max="Math.max(0, form.agentPct / 2)"
+                :step="0.1"
+                :precision="1"
+                :disabled="!isAdmin"
+                controls-position="right"
+                class="num"
+              />
               <span class="unit">%</span>
             </div>
           </div>
         </section>
+
+        <div class="flow-map">
+          <div class="flow-step">
+            <b>飞上台</b>
+            <span>1 万流水：平台付总代 {{ form.generalPct.toFixed(1) }}% → 总代留差、转代理 {{ form.agentPct.toFixed(1) }}% → 代理给玩家回水</span>
+          </div>
+          <div class="flow-step">
+            <b>占成差</b>
+            <span>代理拿自己成数，总代拿成数差，平台拿 100%−总代成数。代理关盘则本注占成不上交。</span>
+          </div>
+        </div>
 
         <el-alert
           v-if="formError"
@@ -74,8 +114,8 @@
         <section v-if="canEditSelfCommission" class="comm">
           <div class="comm-hd">
             <div>
-              <div class="comm-title">下级佣金</div>
-              <div class="comm-desc">从代理回水中再分给下级</div>
+            <div class="comm-title">挂靠佣金</div>
+            <div class="comm-desc">差价一律由本房代理出，默认 0.2%</div>
             </div>
             <el-button
               type="primary"
@@ -135,7 +175,9 @@ const saving = ref(false)
 const commSaving = ref(false)
 
 const form = reactive({
-  totalPct: 5,
+  generalPct: 7,
+  generalMaxPct: 10,
+  agentPct: 5,
   playerMinPct: 1.8,
 })
 const savedCommissionPct = ref(0.2)
@@ -148,14 +190,16 @@ const isCustomDraft = computed(
   () => !commissionPresets.some((p) => Math.abs(draftCommissionPct.value - p) < 1e-9),
 )
 
-const agentPct = computed(() =>
-  Number(Math.max(0, form.totalPct - form.playerMinPct).toFixed(2)),
-)
-
 const formError = computed(() => {
-  const maxP = form.totalPct / 2
+  if (form.generalPct > form.generalMaxPct + 1e-9) {
+    return `总代整包 ${form.generalPct}% 不能超过上限 ${form.generalMaxPct}%`
+  }
+  if (form.agentPct > form.generalPct + 1e-9) {
+    return `代理整包 ${form.agentPct}% 不能超过总代整包 ${form.generalPct}%`
+  }
+  const maxP = form.agentPct / 2
   if (form.playerMinPct > maxP + 1e-9) {
-    return `玩家回水 ${form.playerMinPct}% 不能超过总额的一半（${maxP.toFixed(2)}%）`
+    return `玩家回水 ${form.playerMinPct}% 不能超过代理整包的一半（${maxP.toFixed(1)}%）`
   }
   return ''
 })
@@ -164,8 +208,10 @@ async function load() {
   loading.value = true
   try {
     const p = await consoleApi.rebatePolicy()
-    form.totalPct = Number(((p.totalRate ?? 0.05) * 100).toFixed(2))
-    form.playerMinPct = Number(((p.playerMinRate ?? p.minRate ?? 0.018) * 100).toFixed(2))
+    form.generalPct = Number(((p.generalDefaultRate ?? p.totalRate ?? 0.07) * 100).toFixed(1))
+    form.generalMaxPct = Number(((p.generalMaxRate ?? 0.10) * 100).toFixed(1))
+    form.agentPct = Number(((p.agentDefaultRate ?? 0.05) * 100).toFixed(1))
+    form.playerMinPct = Number(((p.playerMinRate ?? p.minRate ?? 0.018) * 100).toFixed(1))
 
     if (canEditSelfCommission.value && store.profile?.id) {
       try {
@@ -194,7 +240,7 @@ async function save() {
   }
   try {
     await ElMessageBox.confirm(
-      `确认保存回水规则？总额 ${form.totalPct}% 、玩家下限 ${form.playerMinPct}%，将对全平台生效。`,
+      `确认保存回水规则？总代整包 ${form.generalPct}%（上限 ${form.generalMaxPct}%）、代理整包 ${form.agentPct}%、玩家下限 ${form.playerMinPct}%。`,
       '保存回水规则',
       { type: 'warning', confirmButtonText: '确认保存' },
     )
@@ -203,13 +249,17 @@ async function save() {
   }
   saving.value = true
   try {
-    const totalRateVal = form.totalPct / 100
+    const generalRate = form.generalPct / 100
+    const agentRate = form.agentPct / 100
     const playerMin = form.playerMinPct / 100
     await consoleApi.patchRebatePolicy({
-      totalRate: totalRateVal,
+      totalRate: generalRate,
+      generalDefaultRate: generalRate,
+      generalMaxRate: form.generalMaxPct / 100,
+      agentDefaultRate: agentRate,
       playerMinRate: playerMin,
       minRate: playerMin,
-      maxRate: totalRateVal / 2,
+      maxRate: agentRate / 2,
     })
     ElMessage.success('回水规则已保存')
     await load()
@@ -309,6 +359,27 @@ onMounted(load)
   border-radius: 14px;
   overflow: hidden;
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+.flow-map {
+  max-width: 720px;
+  margin-top: 12px;
+  display: grid;
+  gap: 8px;
+}
+.flow-step {
+  padding: 12px 16px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #475569;
+}
+.flow-step b {
+  display: block;
+  margin-bottom: 4px;
+  color: #0f172a;
+  font-size: 13px;
 }
 
 .row {

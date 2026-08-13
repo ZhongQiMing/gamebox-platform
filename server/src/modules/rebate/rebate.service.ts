@@ -672,47 +672,19 @@ export class RebateService {
   }
 
   /**
-   * 按本批注单飞盘拆分回水出资：飞盘流水→平台；关盘流水→房间代理。
+   * 玩家回水一律由本房代理出（整包 5% 里含给玩家的点）。
    */
   private splitRebatePayersFromBets(
     bets: Array<{ payload: Prisma.JsonValue | null; validFlow: Prisma.Decimal | number }>,
     totalAmount: number,
-    totalFlow: number,
+    _totalFlow: number,
     house: FlyHouse,
   ): Array<{ type: OwnerType; id: string; amount: number; label: string }> {
-    let flyFlow = 0;
-    let closedFlow = 0;
-    for (const b of bets) {
-      const flow = asMoney(b.validFlow);
-      const flying = !!(b.payload as { fly?: { flying?: boolean } } | null)?.fly?.flying;
-      if (flying) flyFlow += flow;
-      else closedFlow += flow;
+    if (totalAmount <= 0) return [];
+    const agentId = house.agentUserId || (house.type === 'AGENT' ? house.id : '');
+    if (agentId) {
+      return [{ type: 'AGENT', id: agentId, amount: totalAmount, label: 'agent' }];
     }
-    flyFlow = roundMoney(flyFlow);
-    closedFlow = roundMoney(closedFlow);
-    const denom = totalFlow > 0 ? totalFlow : flyFlow + closedFlow;
-    let flyAmt = 0;
-    let closedAmt: number;
-    if (denom > 0) {
-      flyAmt = roundMoney((totalAmount * flyFlow) / denom);
-      /* 用总额减去飞盘部分，保证两段相加恰好等于 totalAmount，不因分别取整漏钱 */
-      closedAmt = roundMoney(totalAmount - flyAmt);
-    } else {
-      closedAmt = totalAmount;
-    }
-
-    const parts: Array<{ type: OwnerType; id: string; amount: number; label: string }> = [];
-    if (flyAmt > 0) {
-      parts.push({ type: 'PLATFORM', id: PLATFORM_OWNER_ID, amount: flyAmt, label: 'fly' });
-    }
-    if (closedAmt > 0) {
-      const agentId = house.agentUserId || house.id;
-      if (house.type === 'AGENT' || house.agentUserId) {
-        parts.push({ type: 'AGENT', id: agentId, amount: closedAmt, label: 'closed' });
-      } else {
-        parts.push({ type: 'PLATFORM', id: PLATFORM_OWNER_ID, amount: closedAmt, label: 'closed' });
-      }
-    }
-    return parts;
+    return [{ type: 'PLATFORM', id: PLATFORM_OWNER_ID, amount: totalAmount, label: 'fly' }];
   }
 }

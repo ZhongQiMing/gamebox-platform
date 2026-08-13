@@ -5,6 +5,17 @@ import { useStaffStore } from '@/stores/staff'
 
 const router = createRouter({
   history: createWebHistory(),
+  /*
+   * 不配 scrollBehavior 时 Vue Router 完全不管滚动位置，页面切换后窗口还停在上一次的
+   * 偏移上。表现就是：从「我的」点进子菜单，返回后画面停在半空，得手动往下滑才看得到
+   * 内容——尤其这几个页在 keep-alive 里，组件不重建，更不会自己回到顶部。
+   *
+   * 浏览器/安卓返回键带来的 savedPosition 要尊重（用户期望回到离开时的位置），
+   * 其余主动跳转一律回到顶部。
+   */
+  scrollBehavior(_to, _from, savedPosition) {
+    return savedPosition ?? { left: 0, top: 0 }
+  },
   routes: [
     {
       path: '/',
@@ -51,31 +62,31 @@ const router = createRouter({
       path: '/staff/game-rooms',
       name: 'staff-game-rooms',
       component: () => import('@/views/staff/StaffGameRoomsView.vue'),
-      meta: { public: true, staff: true, staffRoles: ['ADMIN', 'BRANCH'] },
+      meta: { public: true, staff: true, staffRoles: ['ADMIN', 'BRANCH', 'GENERAL'] },
     },
     {
       path: '/staff/lobby',
       name: 'staff-lobby',
       component: () => import('@/views/staff/StaffLobbyView.vue'),
-      meta: { public: true, staff: true, staffRoles: ['ADMIN', 'BRANCH', 'AGENT', 'PROXY'] },
+      meta: { public: true, staff: true, staffRoles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'] },
     },
     {
       path: '/staff/profile',
       name: 'staff-profile',
       component: () => import('@/views/staff/StaffProfileView.vue'),
-      meta: { public: true, staff: true, staffRoles: ['ADMIN', 'BRANCH', 'AGENT', 'PROXY', 'CS'] },
+      meta: { public: true, staff: true, staffRoles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY', 'CS'] },
     },
     {
       path: '/staff/account',
       name: 'staff-account',
       component: () => import('@/views/staff/StaffAccountView.vue'),
-      meta: { public: true, staff: true, staffRoles: ['ADMIN', 'BRANCH', 'AGENT', 'PROXY', 'CS'] },
+      meta: { public: true, staff: true, staffRoles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY', 'CS'] },
     },
     {
       path: '/staff/password',
       name: 'staff-password',
       component: () => import('@/views/staff/StaffPasswordView.vue'),
-      meta: { public: true, staff: true, staffRoles: ['ADMIN', 'BRANCH', 'AGENT', 'PROXY', 'CS'] },
+      meta: { public: true, staff: true, staffRoles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY', 'CS'] },
     },
     {
       path: '/staff/players',
@@ -117,7 +128,7 @@ const router = createRouter({
       path: '/staff/fly-query',
       name: 'staff-fly-query',
       component: () => import('@/views/staff/StaffFlyQueryView.vue'),
-      meta: { public: true, staff: true, staffRoles: ['ADMIN', 'BRANCH', 'AGENT', 'PROXY'] },
+      meta: { public: true, staff: true, staffRoles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'] },
     },
     {
       path: '/staff/hang',
@@ -129,31 +140,31 @@ const router = createRouter({
       path: '/staff/rooms',
       name: 'staff-rooms',
       component: () => import('@/views/staff/StaffRoomsView.vue'),
-      meta: { public: true, staff: true, staffRoles: ['ADMIN', 'BRANCH', 'AGENT', 'PROXY'] },
+      meta: { public: true, staff: true, staffRoles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'] },
     },
     {
       path: '/staff/rooms/:id',
       name: 'staff-room-detail',
       component: () => import('@/views/staff/StaffRoomDetailView.vue'),
-      meta: { public: true, staff: true, staffRoles: ['ADMIN', 'BRANCH', 'AGENT', 'PROXY'] },
+      meta: { public: true, staff: true, staffRoles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'] },
     },
     {
       path: '/staff/audit',
       name: 'staff-audit',
       component: () => import('@/views/staff/StaffAuditView.vue'),
-      meta: { public: true, staff: true, staffRoles: ['ADMIN', 'BRANCH', 'AGENT', 'PROXY', 'CS'] },
+      meta: { public: true, staff: true, staffRoles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY', 'CS'] },
     },
     {
       path: '/staff/report',
       name: 'staff-report',
       component: () => import('@/views/staff/StaffReportView.vue'),
-      meta: { public: true, staff: true, staffRoles: ['ADMIN', 'BRANCH', 'AGENT', 'PROXY'] },
+      meta: { public: true, staff: true, staffRoles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'] },
     },
     {
       path: '/staff/agents',
       name: 'staff-agents',
       component: () => import('@/views/staff/StaffAgentsView.vue'),
-      meta: { public: true, staff: true, staffRoles: ['ADMIN', 'BRANCH', 'AGENT', 'PROXY'] },
+      meta: { public: true, staff: true, staffRoles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'] },
     },
     {
       path: '/staff/risk',

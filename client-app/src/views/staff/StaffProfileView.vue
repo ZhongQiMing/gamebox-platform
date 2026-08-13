@@ -18,7 +18,7 @@
       <button type="button" class="user-card user-bar" title="账号资料" @click="go('staff-account')">
         <span class="avatar-luxe-wrap">
           <img class="avatar-img" :src="avatarSrc" alt="">
-          <img class="avatar-frame" src="/images/avatar-ring.png" alt="">
+          <img class="avatar-frame" src="/images/avatar-ring.webp" alt="">
         </span>
         <div class="user-info">
           <div class="user-name">{{ staff.profile?.nickname || '———' }}</div>
@@ -403,12 +403,13 @@ const csStatusBusy = ref(false)
 
 const isAgent = computed(() => staff.role === 'AGENT')
 const isAgentSide = computed(() => staff.isAgentSide)
-const isLandlord = computed(() => staff.isBranch)
+const isLandlord = computed(() => staff.isBranch || staff.isGeneral)
 const isCs = computed(() => staff.isCs)
 const csIdle = computed(() => (csMe.value?.workStatus || 'REST') === 'IDLE')
 const roleLabel = computed(() => {
-  if (staff.role === 'ADMIN') return '管理员'
-  if (staff.role === 'BRANCH') return '房主'
+  if (staff.role === 'ADMIN') return '管理'
+  if (staff.role === 'BRANCH') return '总监'
+  if (staff.role === 'GENERAL') return '总代'
   if (staff.role === 'AGENT') return '代理'
   if (staff.role === 'PROXY') return '子账号'
   if (staff.role === 'CS') return '客服'
@@ -416,7 +417,7 @@ const roleLabel = computed(() => {
 })
 const isCreditBook = computed(() => wallet.value?.bookMode === 'CREDIT')
 const avatarSrc = computed(() => {
-  if (isAgent.value) return roomIcon.value || '/images/rooms/default-room.png'
+  if (isAgent.value) return roomIcon.value || '/images/rooms/default-room.webp'
   return staff.profile?.avatar || '/images/avatars/001.jpg'
 })
 
@@ -544,11 +545,11 @@ async function load() {
           .then((list) => {
             const r = list?.[0]
             agentRoomId.value = r?.id || ''
-            roomIcon.value = r?.icon || '/images/rooms/default-room.png'
+            roomIcon.value = r?.icon || '/images/rooms/default-room.webp'
           })
           .catch(() => {
             agentRoomId.value = ''
-            roomIcon.value = '/images/rooms/default-room.png'
+            roomIcon.value = '/images/rooms/default-room.webp'
           }),
       )
     } else {

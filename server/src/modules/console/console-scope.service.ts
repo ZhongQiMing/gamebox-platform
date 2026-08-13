@@ -24,7 +24,7 @@ export class ConsoleScopeService {
     if (role === 'BRANCH') return 'BRANCH';
     if (role === 'PROXY') return 'PROXY';
     if (role === 'CS') return 'CS';
-    if (role === 'AGENT') return 'AGENT';
+    if (role === 'AGENT' || role === 'GENERAL') return 'AGENT';
     return 'PLAYER';
   }
 
@@ -62,6 +62,18 @@ export class ConsoleScopeService {
         select: { roomId: true },
       });
       return grants.map((g) => g.roomId);
+    }
+    if (actor.role === 'GENERAL') {
+      const agent = await this.prisma.agent.findUnique({
+        where: { userId: actor.id },
+        select: { id: true },
+      });
+      if (!agent) return [];
+      const rooms = await this.prisma.room.findMany({
+        where: { generalAgentId: agent.id },
+        select: { id: true },
+      });
+      return rooms.map((r) => r.id);
     }
     if (actor.role === 'AGENT' || actor.role === 'PROXY' || actor.role === 'CS') {
       const rootUserId = await this.scopeRootUserId(actor);
@@ -151,8 +163,9 @@ export class ConsoleScopeService {
     });
     if (!target) throw new NotFoundException('用户不存在');
 
-    /* 房主：仅授权房间内的代理/玩家/子账号 */
+    /* 总监：总代全平台可见；代理/玩家仍按授权房间 */
     if (actor.role === 'BRANCH') {
+      if (target.role === 'GENERAL') return;
       const roomIds = await this.grantedRoomIds(actor);
       if (!roomIds?.length) throw new ForbiddenException('目标用户不在管辖范围');
       if (target.role === 'PLAYER') {
@@ -306,6 +319,6 @@ export class ConsoleScopeService {
   }
 
   canCreateRoom(actor: ConsoleActor) {
-    return actor.role === 'ADMIN' || actor.role === 'BRANCH';
+    return actor.role === 'ADMIN' || actor.role === 'BRANCH' || actor.role === 'GENERAL';
   }
 }

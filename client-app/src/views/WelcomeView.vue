@@ -24,10 +24,10 @@
     <!-- 右上角弹出菜单 -->
     <div :class="['menu-popover', menuOpen ? 'show' : '']" @click.stop>
       <div class="menu-item" @click="goStaffLogin('agent')">
-        <span class="ic">⚜</span><span class="lb">代理 / 客服</span><span class="arrow">›</span>
+        <span class="ic">⚜</span><span class="lb">代理 / 总代 / 客服</span><span class="arrow">›</span>
       </div>
       <div class="menu-item" @click="goStaffLogin('branch')">
-        <span class="ic">♛</span><span class="lb">房主登录</span><span class="arrow">›</span>
+        <span class="ic">♛</span><span class="lb">总监登录</span><span class="arrow">›</span>
       </div>
       <div class="menu-item" @click="toast('关于：金御汇 v1.0'); menuOpen=false">
         <span class="ic">ⓘ</span><span class="lb">关于</span><span class="arrow">›</span>

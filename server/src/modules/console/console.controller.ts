@@ -259,7 +259,7 @@ export class ConsoleController {
   }
 
   @Post('rooms')
-  @Roles('ADMIN', 'BRANCH')
+  @Roles('ADMIN', 'BRANCH', 'GENERAL')
   createRoom(
     @CurrentUser() u: { id: string; role: string },
     @Body() body: {
@@ -276,11 +276,12 @@ export class ConsoleController {
       billingDay?: number;
       nextBillAt?: string;
       bookMode?: string;
+      generalAgentUserId?: string;
+      agentFlowRate?: number;
       agentShareRate?: number;
       creditLimit?: number;
       overIssueLimit?: number;
       settleCycle?: string;
-      /** 建房可选：房间图标 data URL */
       iconImage?: string;
     },
   ) {
@@ -363,6 +364,16 @@ export class ConsoleController {
     @Body() body: { flyEnabled: boolean },
   ) {
     return this.rooms.setRoomFly(this.actor(u), id, !!body.flyEnabled);
+  }
+
+  @Patch('rooms/:id/general-fly')
+  @Roles('GENERAL')
+  setGeneralRoomFly(
+    @CurrentUser() u: { id: string; role: string },
+    @Param('id') id: string,
+    @Body() body: { flyEnabled: boolean },
+  ) {
+    return this.rooms.setGeneralRoomFly(this.actor(u), id, !!body.flyEnabled);
   }
 
   @Patch('rooms/:id/billing')
@@ -731,8 +742,10 @@ export class ConsoleController {
       username: string;
       password: string;
       nickname?: string;
-      role?: 'BRANCH' | 'AGENT' | 'PROXY';
+      role?: 'BRANCH' | 'AGENT' | 'PROXY' | 'GENERAL';
       parentAgentUserId?: string;
+      flowRate?: number;
+      shareRate?: number;
     },
   ) {
     return this.players.createAgent(this.actor(u), body);
@@ -1011,7 +1024,7 @@ export class ConsoleController {
 
   // ── 回水全局政策 ──
   @Get('rebate-policy')
-  @Roles('ADMIN', 'BRANCH', 'AGENT', 'PROXY')
+  @Roles('ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY')
   async getRebatePolicy() {
     const row = await this.prisma.rebatePolicy.findUnique({ where: { id: 1 } });
     return row ?? { id: 1, minRate: 0, maxRate: 0.03, defaults: {} };
@@ -1024,6 +1037,7 @@ export class ConsoleController {
     @Body() body: {
       minRate?: number; maxRate?: number; defaults?: object;
       totalRate?: number; playerMinRate?: number;
+      generalDefaultRate?: number; generalMaxRate?: number; agentDefaultRate?: number;
     },
   ) {
     /* 回水比例误配成 1（100%）会让飞盘每笔流水都从平台池往外打钱，必须有硬上限 */
@@ -1039,6 +1053,9 @@ export class ConsoleController {
     assertRate(body.maxRate, '最高回水比例');
     assertRate(body.totalRate, '回水总比例');
     assertRate(body.playerMinRate, '玩家最低回水比例');
+    assertRate(body.generalDefaultRate, '总代整包默认');
+    assertRate(body.generalMaxRate, '总代整包上限');
+    assertRate(body.agentDefaultRate, '代理整包默认');
     if (body.playerMinRate != null && body.totalRate != null
       && body.playerMinRate > body.totalRate) {
       throw new BadRequestException('玩家最低回水比例不能高于总比例');
@@ -1052,6 +1069,9 @@ export class ConsoleController {
         ...(body.defaults != null ? { defaults: body.defaults } : {}),
         ...(body.totalRate != null ? { totalRate: body.totalRate } : {}),
         ...(body.playerMinRate != null ? { playerMinRate: body.playerMinRate } : {}),
+        ...(body.generalDefaultRate != null ? { generalDefaultRate: body.generalDefaultRate } : {}),
+        ...(body.generalMaxRate != null ? { generalMaxRate: body.generalMaxRate } : {}),
+        ...(body.agentDefaultRate != null ? { agentDefaultRate: body.agentDefaultRate } : {}),
       },
       create: {
         id: 1,

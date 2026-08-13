@@ -22,8 +22,9 @@ datasource db {
 // ======================= 枚举 =======================
 
 enum UserRole {
-  ADMIN // 平台管理员（后台）
-  BRANCH // 分公司
+  ADMIN // 平台唯一管理
+  BRANCH // 总监（与管理同池）
+  GENERAL // 总代
   AGENT // 代理
   PROXY // 子账号（只读）
   CS // 客服（上下分客服）
@@ -208,6 +209,10 @@ model Agent {
   // 自营参数
   commissionRate Float @default(0.002) // 挂靠下级流水分成（默认 0.2%）
   rebateRate     Float @default(0.018) // 给玩家的默认回水比例 P
+  /// 流水整包：总代默认 7%、代理默认 5%
+  flowRate       Float @default(0.05)
+  /// 占成：总代默认 50%（上限 70%）、代理默认 50%（不能超过总代）
+  shareRate      Float @default(0.5)
 
   teamFlowTotal Decimal @default(0) @db.Decimal(18, 2)
   teamFlowMonth Decimal @default(0) @db.Decimal(18, 2)
@@ -221,7 +226,8 @@ model Agent {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  rooms Room[]
+  rooms        Room[] @relation("RoomOwnerAgent")
+  generalRooms Room[] @relation("RoomGeneralAgent")
 }
 
 /// 客服档案（role=CS）：额度在 PointsAccount；佣金点数/接单权重在此
@@ -287,7 +293,12 @@ model Room {
   title            String? // 展示标题（可选，已不在创建表单使用）
   icon             String?
   ownerAgentId     String?
-  ownerAgent       Agent?    @relation(fields: [ownerAgentId], references: [id])
+  ownerAgent       Agent?    @relation("RoomOwnerAgent", fields: [ownerAgentId], references: [id])
+  /// 可选总代（不挂则平台直对代理）
+  generalAgentId   String?
+  generalAgent     Agent?    @relation("RoomGeneralAgent", fields: [generalAgentId], references: [id])
+  /// 总代整房飞盘；关=总代坐庄（代理整房/单人飞盘仍走 RoomMember.flyEnabled）
+  generalFlyEnabled Boolean  @default(true)
   /// OPEN | MAINTENANCE | FROZEN | CLOSED
   status           String    @default("OPEN")
   enabledGames     String    @default("[]") // JSON 数组：["ssc","mahjong",...]
@@ -320,6 +331,7 @@ model Room {
   weekSettles     RoomWeekSettle[]
 
   @@index([nextBillAt, status])
+  @@index([generalAgentId])
 }
 
 /// 房间内玩家挂靠（与全局 User.parentId 组织树分离；每房独立，跨房不返挂靠佣金）
@@ -523,9 +535,14 @@ model RebatePolicy {
   /// 兼容旧字段：视作玩家比例参考带
   minRate       Float    @default(0.018)
   maxRate       Float    @default(0.05)
-  /// 飞盘流水总返水率 T（默认 5%）；玩家 P∈[playerMinRate, T/2]，代理得 T-P
-  totalRate     Float    @default(0.05)
+  /// 兼容：视作总代整包默认（7%）
+  totalRate     Float    @default(0.07)
   playerMinRate Float    @default(0.018)
+  /// 总代整包默认 / 上限
+  generalDefaultRate Float @default(0.07)
+  generalMaxRate     Float @default(0.10)
+  /// 代理整包默认
+  agentDefaultRate   Float @default(0.05)
   /// 分类默认 JSON（遗留，自助回水改按玩家 P）
   defaults      Json     @default("{}")
   updatedAt     DateTime @updatedAt

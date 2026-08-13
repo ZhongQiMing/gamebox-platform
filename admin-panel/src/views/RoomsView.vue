@@ -36,7 +36,7 @@
           v-model="keyword"
           clearable
           size="small"
-          placeholder="搜进房码 / 房间名 / 代理"
+          placeholder="搜进房码 / 房间名 / 代理 / 总代"
           class="filter-search"
         />
         <el-select v-model="statusFilter" clearable size="small" placeholder="全部状态" class="filter-status">
@@ -48,6 +48,22 @@
         <el-select v-model="bookFilter" clearable size="small" placeholder="全部盘口" class="filter-book">
           <el-option label="A 现金盘" value="CASH" />
           <el-option label="B 信用盘" value="CREDIT" />
+        </el-select>
+        <el-select
+          v-if="!isGeneralUser"
+          v-model="generalFilter"
+          clearable
+          size="small"
+          placeholder="全部总代"
+          class="filter-book"
+        >
+          <el-option label="未挂总代" value="none" />
+          <el-option
+            v-for="g in generalOptions"
+            :key="g.userId"
+            :label="g.nickname"
+            :value="g.userId"
+          />
         </el-select>
         <el-checkbox v-if="isAdminOrBranch" v-model="includeClosed" @change="load">
           显示已关闭
@@ -97,6 +113,15 @@
                   >{{ a.text }}</el-tag>
                 </div>
               </div>
+            </template>
+          </el-table-column>
+          <el-table-column v-if="!isAgentSide" label="总代" min-width="120">
+            <template #default="{ row }: { row: any }">
+              <template v-if="row.general">
+                <div class="agent-name">{{ row.general.nickname }}</div>
+                <div class="sub">占成 {{ Math.round(Number(row.general.shareRate || 0) * 100) }}%</div>
+              </template>
+              <span v-else class="muted">直挂平台</span>
             </template>
           </el-table-column>
           <el-table-column v-if="!isAgentSide" label="代理" min-width="128">
@@ -234,7 +259,28 @@
             </template>
 
             <template v-else-if="createTab === 'book'">
-              <div class="win-pane-title">盘口与占成</div>
+              <div class="win-pane-title">盘口、流水与占成</div>
+              <el-form-item v-if="!isGeneralUser" label="挂靠总代">
+                <el-select
+                  v-model="form.generalAgentUserId"
+                  clearable
+                  filterable
+                  placeholder="可不挂，直接归平台"
+                  class="field-control"
+                  style="width:100%"
+                  @change="onGeneralPicked"
+                >
+                  <el-option
+                    v-for="g in generalList"
+                    :key="g.id"
+                    :label="`${g.nickname}（流水 ${pctNum(g.flowRate)}% · 占成 ${pctNum(g.shareRate)}%）`"
+                    :value="g.id"
+                  />
+                </el-select>
+                <div class="muted" style="margin-top:6px;line-height:1.4">
+                  挂总代后，代理流水不能超过总代整包，占成不能超过总代成数。
+                </div>
+              </el-form-item>
               <el-form-item label="盘口类型" required>
                 <el-radio-group v-model="form.bookMode">
                   <el-radio-button label="CASH">A · 现金盘</el-radio-button>
@@ -242,12 +288,26 @@
                 </el-radio-group>
               </el-form-item>
               <div class="form-row2">
+                <el-form-item label="代理流水" required>
+                  <div class="row-inline">
+                    <el-input-number
+                      v-model="form.agentFlowPercent"
+                      :min="1.8"
+                      :max="agentFlowMax"
+                      :step="0.1"
+                      :precision="1"
+                      controls-position="right"
+                      class="field-control"
+                    />
+                    <span class="field-unit">%</span>
+                  </div>
+                </el-form-item>
                 <el-form-item label="代理占成" required>
                   <div class="row-inline">
                     <el-input-number
                       v-model="form.agentSharePercent"
                       :min="0"
-                      :max="50"
+                      :max="agentShareMax"
                       :precision="0"
                       controls-position="right"
                       class="field-control"
@@ -255,18 +315,18 @@
                     <span class="field-unit">%</span>
                   </div>
                 </el-form-item>
-                <el-form-item v-if="form.bookMode === 'CREDIT'" label="合同额度" required>
-                  <el-input-number
-                    v-model="form.creditLimit"
-                    :min="1"
-                    :max="100000000"
-                    :precision="0"
-                    :step="1000"
-                    controls-position="right"
-                    class="field-control"
-                  />
-                </el-form-item>
               </div>
+              <el-form-item v-if="form.bookMode === 'CREDIT'" label="合同额度" required>
+                <el-input-number
+                  v-model="form.creditLimit"
+                  :min="1"
+                  :max="100000000"
+                  :precision="0"
+                  :step="1000"
+                  controls-position="right"
+                  class="field-control"
+                />
+              </el-form-item>
               <el-form-item label="结账日" required>
                 <el-select v-model="form.settleCycle" class="field-control" style="width:100%">
                   <el-option label="礼拜一" value="WEEKLY_MON" />
@@ -296,16 +356,16 @@
                 <el-input v-model="form.agentNickname" placeholder="默认：代理+uid后四位" maxlength="24" />
               </el-form-item>
               <template v-if="isAdmin">
-                <div class="win-pane-title" style="margin-top:18px">可见房主</div>
-                <el-form-item label="授权房主">
+                <div class="win-pane-title" style="margin-top:18px">可见总监</div>
+                <el-form-item label="授权总监">
                   <el-checkbox-group v-if="branchList.length" v-model="form.ownerUserIds" class="check-grid">
                     <el-checkbox v-for="a in branchList" :key="a.id" :value="a.id">
                       {{ a.nickname }}
                     </el-checkbox>
                   </el-checkbox-group>
-                  <span v-else class="muted">暂无房主账号</span>
+                  <span v-else class="muted">暂无总监账号</span>
                   <div class="muted" style="margin-top:6px;line-height:1.4">
-                    未勾选的房主在手机端/后台都看不到该房间，经营统计也不会计入。
+                    未勾选的总监在手机端/后台都看不到该房间，该房平台利润也不计入。
                   </div>
                 </el-form-item>
               </template>
@@ -411,7 +471,7 @@ import {
   GAME_OPTIONS, roomStatusLabel, roomStatusTagType,
 } from '@/utils/labels'
 
-type StaffOpt = { id: string; uid: string; nickname: string; role: string }
+type StaffOpt = { id: string; uid: string; nickname: string; role: string; flowRate?: number; shareRate?: number }
 type CreateTabKey = 'basic' | 'book' | 'agent' | 'games' | 'billing'
 type AlertTag = { text: string; type: 'danger' | 'warning' | 'info' }
 
@@ -427,6 +487,7 @@ const saving = ref(false)
 const keyword = ref('')
 const statusFilter = ref('')
 const bookFilter = ref('')
+const generalFilter = ref('')
 const includeClosed = ref(false)
 const createTab = ref<CreateTabKey>('basic')
 const createMaxStep = ref(0)
@@ -457,6 +518,7 @@ const form = reactive({
   agentPassword: '',
   agentNickname: '',
   ownerUserIds: [] as string[],
+  generalAgentUserId: '' as string,
   enabledGames: [...allGameCodes] as string[],
   robotCount: 10,
   status: 'OPEN',
@@ -464,7 +526,8 @@ const form = reactive({
   billingDay: 1,
   billStartDate: '' as string,
   bookMode: 'CASH' as 'CASH' | 'CREDIT',
-  agentSharePercent: 0,
+  agentFlowPercent: 5,
+  agentSharePercent: 50,
   settleCycle: 'WEEKLY_MON' as 'WEEKLY_MON' | 'MONTHLY_1' | 'MONTHLY_15_30',
   creditLimit: 100000,
   iconImage: '' as string,
@@ -476,32 +539,73 @@ const isAdminOrBranch = computed(() => {
   const r = store.profile?.role
   return r === 'ADMIN' || r === 'BRANCH'
 })
+const isGeneralUser = computed(() => store.profile?.role === 'GENERAL')
 const isAgentSide = computed(() => {
   const r = store.profile?.role
   return r === 'AGENT' || r === 'PROXY'
 })
-const canCreate = computed(() => isAdminOrBranch.value)
+const canCreate = computed(() => isAdminOrBranch.value || isGeneralUser.value)
 
 const canDelete = computed(() => isAdmin.value)
 const canStatus = computed(() => {
   const r = store.profile?.role
-  return r === 'ADMIN' || r === 'BRANCH' || r === 'AGENT'
+  return r === 'ADMIN' || r === 'BRANCH' || r === 'GENERAL' || r === 'AGENT'
 })
 const branchList = computed(() => staffList.value.filter((a) => a.role === 'BRANCH'))
+const generalList = computed(() => staffList.value.filter((a) => a.role === 'GENERAL'))
+const generalOptions = computed(() => {
+  const map = new Map<string, { userId: string; nickname: string }>()
+  for (const r of list.value) {
+    if (r.general?.userId) {
+      map.set(r.general.userId, { userId: r.general.userId, nickname: r.general.nickname })
+    }
+  }
+  return [...map.values()].sort((a, b) => a.nickname.localeCompare(b.nickname, 'zh-CN'))
+})
+const pickedGeneral = computed(() =>
+  generalList.value.find((g) => g.id === form.generalAgentUserId) || null,
+)
+function pctNum(n?: number | null) {
+  const v = Number(n)
+  if (!Number.isFinite(v)) return 0
+  return Number(((v > 1 ? v : v * 100)).toFixed(1))
+}
+const agentShareMax = computed(() => {
+  if (isGeneralUser.value) return 70
+  const g = pickedGeneral.value
+  if (!g) return 50
+  return Math.min(70, Math.round(pctNum(g.shareRate) || 50))
+})
+const agentFlowMax = computed(() => {
+  const g = pickedGeneral.value
+  if (!g) return 5
+  return Math.min(10, pctNum(g.flowRate) || 7)
+})
 
 const filteredList = computed(() => {
   const q = keyword.value.trim().toLowerCase()
   const st = statusFilter.value
   const book = bookFilter.value
-  return list.value.filter((r) => {
+  const gf = generalFilter.value
+  const rows = list.value.filter((r) => {
     if (st && r.status !== st) return false
     if (book && (r.bookMode || 'CASH') !== book) return false
+    if (gf === 'none' && r.general) return false
+    if (gf && gf !== 'none' && r.general?.userId !== gf) return false
     if (!q) return true
     const hay = [
       r.roomNo, r.name,
       r.agent?.nickname, r.agent?.username, r.agent?.uid,
+      r.general?.nickname, r.general?.username,
     ].filter(Boolean).join(' ').toLowerCase()
     return hay.includes(q)
+  })
+  return [...rows].sort((a, b) => {
+    const ga = a.general?.nickname || '～未挂'
+    const gb = b.general?.nickname || '～未挂'
+    const c = ga.localeCompare(gb, 'zh-CN')
+    if (c !== 0) return c
+    return String(a.name || '').localeCompare(String(b.name || ''), 'zh-CN')
   })
 })
 
@@ -614,7 +718,12 @@ function validateCreateStep(key: CreateTabKey): string | null {
     return null
   }
   if (key === 'book') {
-    if (form.agentSharePercent < 0 || form.agentSharePercent > 50) return '代理占成须在 0%～50%'
+    if (form.agentFlowPercent < 1.8 || form.agentFlowPercent > agentFlowMax.value + 1e-9) {
+      return `代理流水须在 1.8%～${agentFlowMax.value}%`
+    }
+    if (form.agentSharePercent < 0 || form.agentSharePercent > agentShareMax.value) {
+      return `代理占成须在 0%～${agentShareMax.value}%`
+    }
     if (!['WEEKLY_MON', 'MONTHLY_1', 'MONTHLY_15_30'].includes(form.settleCycle)) {
       return '请选择结账日'
     }
@@ -680,12 +789,24 @@ async function load() {
   }
 }
 async function loadStaff() {
-  if (!isAdmin.value) return
+  if (!isAdminOrBranch.value) return
   try {
-    const res = await consoleApi.agents({ page: 1, pageSize: 200, role: 'BRANCH', boundOnly: false })
-    staffList.value = res.list.map((a) => ({
-      id: a.id, uid: a.uid, nickname: a.nickname, role: a.role,
-    }))
+    const [branches, generals] = await Promise.all([
+      isAdmin.value
+        ? consoleApi.agents({ page: 1, pageSize: 200, role: 'BRANCH', boundOnly: false })
+        : Promise.resolve({ list: [] as { id: string; uid: string; nickname: string; role: string; flowRate?: number; shareRate?: number }[] }),
+      consoleApi.agents({ page: 1, pageSize: 200, role: 'GENERAL', boundOnly: false }),
+    ])
+    staffList.value = [
+      ...branches.list.map((a) => ({
+        id: a.id, uid: a.uid, nickname: a.nickname, role: a.role,
+        flowRate: a.flowRate, shareRate: a.shareRate,
+      })),
+      ...generals.list.map((a) => ({
+        id: a.id, uid: a.uid, nickname: a.nickname, role: a.role,
+        flowRate: a.flowRate, shareRate: a.shareRate,
+      })),
+    ]
   } catch {
     staffList.value = []
   }
@@ -728,15 +849,22 @@ async function onCreateIconPicked(e: Event) {
   }
 }
 
+function onGeneralPicked() {
+  if (form.agentSharePercent > agentShareMax.value) form.agentSharePercent = agentShareMax.value
+  if (form.agentFlowPercent > agentFlowMax.value) form.agentFlowPercent = agentFlowMax.value
+}
+
 async function openCreate() {
   form.name = ''
   form.agentNickname = ''
+  form.generalAgentUserId = ''
   form.enabledGames = [...allGameCodes]
   form.robotCount = 10
   form.status = 'OPEN'
   form.monthlyFee = 0
   form.bookMode = 'CASH'
-  form.agentSharePercent = 0
+  form.agentFlowPercent = isGeneralUser.value ? 5 : 5
+  form.agentSharePercent = 50
   form.settleCycle = 'WEEKLY_MON'
   form.creditLimit = 100000
   createTab.value = 'basic'
@@ -746,10 +874,10 @@ async function openCreate() {
   regenUsername()
   regenPassword()
   showCreate.value = true
-  if (isAdmin.value) {
+  if (isAdminOrBranch.value) {
     await loadStaff()
-    // 默认不勾选：只有管理员显式授权的房主，手机端/后台才能看到该房
     form.ownerUserIds = []
+    onGeneralPicked()
   } else {
     form.ownerUserIds = []
   }
@@ -770,6 +898,7 @@ async function onCreate() {
       : undefined
     const bookMode = form.bookMode
     const sharePct = form.agentSharePercent
+    const flowPct = form.agentFlowPercent
     const res = await consoleApi.createRoom({
       name: form.name.trim(),
       roomNo: form.roomNo.trim(),
@@ -777,6 +906,9 @@ async function onCreate() {
       agentPassword: form.agentPassword.trim(),
       agentNickname: form.agentNickname.trim() || undefined,
       ownerUserIds: isAdmin.value ? form.ownerUserIds : undefined,
+      generalAgentUserId: isGeneralUser.value
+        ? undefined
+        : (form.generalAgentUserId || undefined),
       enabledGames: form.enabledGames,
       robotCount: form.robotCount,
       status: form.status,
@@ -784,6 +916,7 @@ async function onCreate() {
       billingDay: form.billingDay,
       nextBillAt: form.monthlyFee > 0 ? nextBillAt : undefined,
       bookMode,
+      agentFlowRate: flowPct,
       agentShareRate: sharePct,
       creditLimit: bookMode === 'CREDIT' ? form.creditLimit : 0,
       settleCycle: form.settleCycle,
@@ -799,10 +932,10 @@ async function onCreate() {
         password: res.agent.password,
         bookLabel: bookMode === 'CREDIT' ? 'B · 信用盘' : 'A · 现金盘',
         shareLabel: form.settleCycle === 'MONTHLY_15_30'
-          ? `半月结(15/月末) · 占成 ${sharePct}%`
+          ? `半月结(15/月末) · 流水 ${flowPct}% · 占成 ${sharePct}%`
           : form.settleCycle === 'MONTHLY_1'
-            ? `月结(1号) · 占成 ${sharePct}%`
-            : `礼拜一结 · 占成 ${sharePct}%`,
+            ? `月结(1号) · 流水 ${flowPct}% · 占成 ${sharePct}%`
+            : `礼拜一结 · 流水 ${flowPct}% · 占成 ${sharePct}%`,
       }
       showCreds.value = true
     }

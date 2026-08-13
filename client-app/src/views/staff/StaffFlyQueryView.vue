@@ -66,23 +66,23 @@
           <span class="fly-stat">开 {{ r.fly?.onCount ?? 0 }} · 关 {{ r.fly?.offCount ?? 0 }}</span>
         </div>
 
-        <div v-if="canToggle" class="fly-ops">
+        <div v-if="canToggleAgent || canToggleGeneral" class="fly-ops">
           <button
             type="button"
             class="fly-btn on"
-            :class="{ active: flyMode(r) === 'on' }"
-            :disabled="busyId === r.id || flyMode(r) === 'on'"
+            :class="{ active: toggleMode(r) === 'on' }"
+            :disabled="busyId === r.id || toggleMode(r) === 'on'"
             @click="openConfirm(r, true)"
-          >飞盘</button>
+          >{{ canToggleGeneral ? '飞平台' : '飞盘' }}</button>
           <button
             type="button"
             class="fly-btn off"
-            :class="{ active: flyMode(r) === 'off' }"
-            :disabled="busyId === r.id || flyMode(r) === 'off'"
+            :class="{ active: toggleMode(r) === 'off' }"
+            :disabled="busyId === r.id || toggleMode(r) === 'off'"
             @click="openConfirm(r, false)"
-          >关盘</button>
+          >{{ canToggleGeneral ? '总代坐庄' : '关盘' }}</button>
         </div>
-        <p v-else class="fly-tip-inline">仅主代理可整房开关飞盘</p>
+        <p v-else class="fly-tip-inline">{{ isLandlord ? '只读查看；开/关由本房代理操作' : '仅本房代理或总代可整房开关' }}</p>
       </div>
 
       <p class="fly-tip">
@@ -144,7 +144,8 @@ const confirmVisible = ref(false)
 const confirmTarget = ref<StaffRoom | null>(null)
 const confirmFlyOn = ref(false)
 
-const canToggle = computed(() => staff.role === 'AGENT')
+const canToggleAgent = computed(() => staff.role === 'AGENT')
+const canToggleGeneral = computed(() => staff.role === 'GENERAL')
 const isLandlord = computed(() => staff.role === 'ADMIN' || staff.role === 'BRANCH')
 const isCreditBook = computed(() => wallet.value?.bookMode === 'CREDIT')
 
@@ -156,6 +157,11 @@ const flyCoverHint = computed(() => {
 
 const confirmHint = computed(() => {
   const name = confirmTarget.value?.name || '本房'
+  if (canToggleGeneral.value) {
+    return confirmFlyOn.value
+      ? `将「${name}」总代飞盘设为开：代理开盘的注飞向平台。`
+      : `将「${name}」总代飞盘设为关：代理开盘的注由总代坐庄，不再飞平台。`
+  }
   const credit = confirmTarget.value?.bookMode === 'CREDIT'
   if (confirmFlyOn.value) {
     return credit
@@ -193,8 +199,13 @@ function flyModeLabel(r: StaffRoom) {
   return '暂无玩家'
 }
 
+function toggleMode(r: StaffRoom): 'on' | 'off' | 'mixed' | 'empty' {
+  if (canToggleGeneral.value) return r.generalFlyEnabled !== false ? 'on' : 'off'
+  return flyMode(r)
+}
+
 function openConfirm(r: StaffRoom, flyEnabled: boolean) {
-  if (!canToggle.value || busyId.value) return
+  if ((!canToggleAgent.value && !canToggleGeneral.value) || busyId.value) return
   confirmTarget.value = r
   confirmFlyOn.value = flyEnabled
   confirmVisible.value = true
@@ -211,7 +222,9 @@ async function doConfirm() {
   if (!r || busyId.value) return
   busyId.value = r.id
   try {
-    const res = await staffConsoleApi.setRoomFly(r.id, confirmFlyOn.value)
+    const res = canToggleGeneral.value
+      ? await staffConsoleApi.setGeneralRoomFly(r.id, confirmFlyOn.value)
+      : await staffConsoleApi.setRoomFly(r.id, confirmFlyOn.value)
     toast(res.message || (confirmFlyOn.value ? '已开启飞盘' : '已关盘'))
     confirmVisible.value = false
     confirmTarget.value = null

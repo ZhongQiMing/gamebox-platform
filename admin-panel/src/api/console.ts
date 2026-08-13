@@ -89,6 +89,8 @@ export const consoleApi = {
     billingDay?: number
     nextBillAt?: string
     bookMode?: 'CASH' | 'CREDIT' | string
+    generalAgentUserId?: string
+    agentFlowRate?: number
     agentShareRate?: number
     creditLimit?: number
     overIssueLimit?: number
@@ -176,6 +178,18 @@ export const consoleApi = {
       updated: number
       message?: string
     }>(`/console/rooms/${roomId}/fly`, { flyEnabled }),
+
+  /** 总代整房飞盘：开=飞向平台，关=总代坐庄 */
+  setGeneralRoomFly: (roomId: string, flyEnabled: boolean) =>
+    http.patch<{
+      ok: boolean
+      flyEnabled: boolean
+      message?: string
+    }, {
+      ok: boolean
+      flyEnabled: boolean
+      message?: string
+    }>(`/console/rooms/${roomId}/general-fly`, { flyEnabled }),
 
   /** 信用盘：永久加减合同额度与剩余信用 */
   bumpCreditLimit: (
@@ -366,6 +380,8 @@ export const consoleApi = {
     nickname?: string
     role?: string
     parentAgentUserId?: string
+    flowRate?: number
+    shareRate?: number
   }) => http.post('/console/agents', data),
 
   setCommissionRate: (userId: string, rate: number) =>
@@ -654,6 +670,16 @@ export interface ConsoleRoom {
   creditLimit?: number
   agentShareRate?: number
   settleCycle?: string
+  generalFlyEnabled?: boolean
+  general?: {
+    agentId: string
+    userId: string
+    uid: string
+    nickname: string
+    username: string
+    flowRate?: number
+    shareRate?: number
+  } | null
   fly?: ConsoleRoomFly
   agent: {
     agentId: string
@@ -832,6 +858,8 @@ export interface AgentPage {
     parentId?: string | null
     commissionRate?: number
     rebateRate?: number
+    flowRate?: number
+    shareRate?: number
     pointsQuota?: number
     pointsUsed?: number
     flyCover?: number
@@ -1464,6 +1492,9 @@ export interface RebatePolicy {
   defaults: unknown
   totalRate?: number
   playerMinRate?: number
+  generalDefaultRate?: number
+  generalMaxRate?: number
+  agentDefaultRate?: number
 }
 
 /** 信用盘实时账本快照 */

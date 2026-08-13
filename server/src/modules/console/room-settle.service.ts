@@ -239,6 +239,9 @@ export class RoomSettleService {
             user: { select: { uid: true, nickname: true, username: true } },
           },
         },
+        generalAgent: {
+          select: { shareRate: true, user: { select: { nickname: true } } },
+        },
       },
     });
     if (!room) throw new NotFoundException('房间不存在');
@@ -267,11 +270,21 @@ export class RoomSettleService {
     };
   }
 
-  private split(housePnl: number, agentShareRate: number) {
-    const rate = Math.min(1, Math.max(0, agentShareRate));
-    const agentShareAmount = asMoney(housePnl * rate);
-    const platformShareAmount = asMoney(housePnl - agentShareAmount);
-    return { agentShareAmount, platformShareAmount };
+  private split(housePnl: number, agentShareRate: number, generalShareRate?: number | null) {
+    const a = Math.min(1, Math.max(0, agentShareRate));
+    const g = generalShareRate == null ? a : Math.min(1, Math.max(a, generalShareRate));
+    const agentShareAmount = asMoney(housePnl * a);
+    const generalShareAmount = asMoney(housePnl * (g - a));
+    const platformShareAmount = asMoney(housePnl - agentShareAmount - generalShareAmount);
+    return { agentShareAmount, generalShareAmount, platformShareAmount };
+  }
+
+  private roomShareRates(room: Awaited<ReturnType<RoomSettleService['roomOrThrow']>>) {
+    const agentShareRate = Math.min(1, Math.max(0, Number(room.agentShareRate ?? 0)));
+    const generalShareRate = room.generalAgent
+      ? Math.min(1, Math.max(0, Number(room.generalAgent.shareRate ?? 0)))
+      : null;
+    return { agentShareRate, generalShareRate };
   }
 
   /** 账期内：飞盘返水进代理账、玩家领取回水 */
@@ -342,7 +355,7 @@ export class RoomSettleService {
   ) {
     const room = await this.roomOrThrow(actor, roomId);
     const cycle = normalizeSettleCycle(room.settleCycle);
-    const share = Math.min(1, Math.max(0, Number(room.agentShareRate ?? 0)));
+    const { agentShareRate: share, generalShareRate } = this.roomShareRates(room);
     const isCredit = room.bookMode === 'CREDIT';
     const periodKey = opts?.period === 'last' ? 'last' : opts?.period === 'early' ? 'early' : 'current';
 
@@ -394,7 +407,7 @@ export class RoomSettleService {
     ]);
     const agentBalance = asMoney(agentBalanceRaw?.balance ?? 0);
 
-    const cashSplit = this.split(agg.housePnl, share);
+    const cashSplit = this.split(agg.housePnl, share, generalShareRate);
     const settleBasis = isCredit && creditBook
       ? {
           mode: 'CREDIT_EXCESS' as const,
@@ -509,6 +522,15 @@ export class RoomSettleService {
         amount: settleBasis.agentShareAmount,
         kind: 'info',
       },
+      ...( !isCredit && cashSplit.generalShareAmount
+        ? [{
+            key: 'generalShare',
+            group: '占成',
+            label: '总代成数差',
+            amount: cashSplit.generalShareAmount,
+            kind: 'info' as const,
+          }]
+        : []),
       {
         key: 'platformSharePay',
         group: '占成',
@@ -724,7 +746,7 @@ export class RoomSettleService {
     const cycle = normalizeSettleCycle(room.settleCycle);
     const current = shanghaiSettleBounds(cycle, 0);
     const last = shanghaiSettleBounds(cycle, -1);
-    const share = Math.min(1, Math.max(0, Number(room.agentShareRate ?? 0)));
+    const { agentShareRate: share, generalShareRate } = this.roomShareRates(room);
     const isCredit = room.bookMode === 'CREDIT';
 
     const [curAgg, lastAgg, history, creditBook] = await Promise.all([
@@ -745,14 +767,14 @@ export class RoomSettleService {
           agentShareAmount: creditBook.agentShareAmount,
           platformShareAmount: creditBook.platformShareAmount,
         }
-      : { ...this.split(curAgg.housePnl, share), housePnl: curAgg.housePnl };
+      : { ...this.split(curAgg.housePnl, share, generalShareRate), housePnl: curAgg.housePnl };
     const lastSplit = isCredit && creditBook
       ? {
           housePnl: creditBook.housePnl,
           agentShareAmount: creditBook.agentShareAmount,
           platformShareAmount: creditBook.platformShareAmount,
         }
-      : { ...this.split(lastAgg.housePnl, share), housePnl: lastAgg.housePnl };
+      : { ...this.split(lastAgg.housePnl, share, generalShareRate), housePnl: lastAgg.housePnl };
 
     const lastRow = histMap.get(last.periodStart.toISOString());
     const lastStatus = lastRow?.status
@@ -929,7 +951,7 @@ export class RoomSettleService {
     early: boolean,
   ) {
     const agg = await this.sumRoomWeek(actor, roomId, weekStart, weekEnd);
-    const share = Math.min(1, Math.max(0, Number(room.agentShareRate ?? 0)));
+    const { agentShareRate: share, generalShareRate } = this.roomShareRates(room);
     const bookMode = room.bookMode === 'CREDIT' ? 'CREDIT' : 'CASH';
 
     const noteParts = [early ? '提前结账' : null, note?.trim() || null].filter(Boolean);
@@ -946,7 +968,7 @@ export class RoomSettleService {
     const creditHold: { book: CreditBookSnapshot | null } = { book: null };
 
     if (bookMode === 'CASH') {
-      const split = this.split(agg.housePnl, share);
+      const split = this.split(agg.housePnl, share, generalShareRate);
       agentShareAmount = split.agentShareAmount;
       platformShareAmount = split.platformShareAmount;
     }

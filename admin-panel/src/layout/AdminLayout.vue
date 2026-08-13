@@ -189,15 +189,15 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, markRaw, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { useAdminStore } from '@/stores/admin'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { validateOpsPassword } from '@gamebox/shared'
+import { staffRoleLabel, validateOpsPassword } from '@gamebox/shared'
 import {
   DataAnalysis, Wallet, Warning, Document, Finished,
   Trophy, OfficeBuilding, TrendCharts, Aim, Coin, Avatar, Headset,
 } from '@element-plus/icons-vue'
 import { consoleApi } from '@/api/console'
 import { riskApi, reviewApi } from '@/api/admin'
+import { useAdminStore } from '@/stores/admin'
 import http from '@/api/http'
 import DeskDialog from '@/components/DeskDialog.vue'
 
@@ -245,15 +245,7 @@ const searchAgents = ref<Array<{
   roomId?: string
 }>>([])
 
-const roleLabel = computed(() => {
-  const r = store.profile?.role
-  if (r === 'ADMIN') return '管理员'
-  if (r === 'BRANCH') return '房主'
-  if (r === 'AGENT') return '代理'
-  if (r === 'PROXY') return '子账号'
-  if (r === 'CS') return '客服'
-  return r || ''
-})
+const roleLabel = computed(() => staffRoleLabel(store.profile?.role))
 
 /** 昵称若与角色标签相同（如 seed 的「管理员」），改显示账号，避免顶栏两个一样的字 */
 const displayName = computed(() => {
@@ -264,15 +256,15 @@ const displayName = computed(() => {
 })
 
 const isCs = computed(() => store.profile?.role === 'CS')
-const isAgent = computed(() => store.profile?.role === 'AGENT' || store.profile?.role === 'PROXY')
+const isAgent = computed(() => store.profile?.role === 'AGENT' || store.profile?.role === 'PROXY' || store.profile?.role === 'GENERAL')
 /** 仅代理/客服有余额 chip（信用=佣金账户）；管理员/房主无个人余额 */
 const showWalletBalance = computed(() => {
   const r = store.profile?.role
-  return r === 'AGENT' || r === 'CS'
+  return r === 'AGENT' || r === 'GENERAL' || r === 'CS'
 })
 const canGlobalSearch = computed(() => {
   const r = store.profile?.role
-  return r === 'ADMIN' || r === 'BRANCH'
+  return r === 'ADMIN' || r === 'BRANCH' || r === 'GENERAL'
 })
 
 const envTag = computed(() => {
@@ -314,23 +306,23 @@ const creditUnusedText = computed(() => {
 type MenuItem = { name: string; title: string; icon: unknown; roles: string[] }
 
 const allMenus: MenuItem[] = [
-  { name: 'dashboard', title: '工作台', icon: markRaw(DataAnalysis), roles: ['ADMIN', 'BRANCH', 'AGENT', 'PROXY'] },
-  { name: 'rooms', title: '房间中心', icon: markRaw(OfficeBuilding), roles: ['ADMIN', 'BRANCH', 'AGENT', 'PROXY'] },
-  { name: 'reports', title: '报表中心', icon: markRaw(TrendCharts), roles: ['ADMIN', 'BRANCH', 'AGENT', 'PROXY'] },
+  { name: 'dashboard', title: '工作台', icon: markRaw(DataAnalysis), roles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'] },
+  { name: 'rooms', title: '房间中心', icon: markRaw(OfficeBuilding), roles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'] },
+  { name: 'reports', title: '报表中心', icon: markRaw(TrendCharts), roles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'] },
   { name: 'recharge', title: '客服上下分', icon: markRaw(Wallet), roles: ['AGENT', 'CS'] },
   { name: 'cs-staff', title: '客服账号', icon: markRaw(Headset), roles: ['AGENT'] },
   { name: 'games', title: '游戏管理', icon: markRaw(Trophy), roles: ['ADMIN'] },
   { name: 'control', title: '控奖中心', icon: markRaw(Aim), roles: ['ADMIN'] },
-  { name: 'agents', title: '账号中心', icon: markRaw(Avatar), roles: ['ADMIN'] },
-  { name: 'rebate', title: '回水规则', icon: markRaw(Coin), roles: ['ADMIN', 'BRANCH', 'AGENT', 'PROXY'] },
+  { name: 'agents', title: '账号中心', icon: markRaw(Avatar), roles: ['ADMIN', 'BRANCH'] },
+  { name: 'rebate', title: '回水规则', icon: markRaw(Coin), roles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'] },
   { name: 'risk', title: '风控告警', icon: markRaw(Warning), roles: ['ADMIN', 'BRANCH'] },
   { name: 'fund-recon', title: '资金对账', icon: markRaw(Finished), roles: ['ADMIN'] },
-  { name: 'logs', title: '操作日志', icon: markRaw(Document), roles: ['ADMIN', 'BRANCH', 'AGENT', 'PROXY'] },
+  { name: 'logs', title: '操作日志', icon: markRaw(Document), roles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'] },
 ]
 
 const menus = computed(() => {
   const role = store.profile?.role || ''
-  const agentSide = role === 'AGENT' || role === 'PROXY'
+  const agentSide = role === 'AGENT' || role === 'PROXY' || role === 'GENERAL'
   return allMenus
     .filter((m) => m.roles.includes(role))
     .map((m) => (m.name === 'rooms' && agentSide ? { ...m, title: '我的房间' } : m))

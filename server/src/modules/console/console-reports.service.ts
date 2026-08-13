@@ -519,7 +519,7 @@ export class ConsoleReportsService {
         const [shareRooms, settledShare] = await Promise.all([
           this.prisma.room.findMany({
             where: { id: { in: shareRoomIds } },
-            select: { id: true, agentShareRate: true },
+            select: { id: true, agentShareRate: true, generalAgent: { select: { shareRate: true } } },
           }),
           this.roomBetAgg(shareRoomIds, from, to, ['WON', 'LOST']),
         ]);
@@ -527,8 +527,11 @@ export class ConsoleReportsService {
         for (const room of shareRooms) {
           const agg = settledShare.byRoom.get(room.id);
           const roomHouse = asMoney((agg?.flow ?? 0) - (agg?.payout ?? 0));
-          const rate = Math.min(1, Math.max(0, Number(room.agentShareRate) || 0));
-          platformShare = asMoney(platformShare + (roomHouse - asMoney(roomHouse * rate)));
+          const agentRate = Math.min(1, Math.max(0, Number(room.agentShareRate) || 0));
+          const g = room.generalAgent
+            ? Math.min(1, Math.max(agentRate, Number(room.generalAgent.shareRate) || 0))
+            : agentRate;
+          platformShare = asMoney(platformShare + asMoney(roomHouse * (1 - g)));
         }
         platformShareAmount = asMoney(platformShare);
       }

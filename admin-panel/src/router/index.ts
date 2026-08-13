@@ -2,7 +2,7 @@ import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { useAdminStore } from '@/stores/admin'
 import http from '@/api/http'
 
-const staffRoles = ['ADMIN', 'BRANCH', 'AGENT', 'PROXY', 'CS'] as const
+const staffRoles = ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY', 'CS'] as const
 
 const routes: RouteRecordRaw[] = [
   { path: '/login', name: 'login', component: () => import('@/views/LoginView.vue'), meta: { public: true } },
@@ -11,9 +11,9 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/layout/AdminLayout.vue'),
     redirect: '/dashboard',
     children: [
-      { path: 'dashboard', name: 'dashboard', component: () => import('@/views/DashboardView.vue'), meta: { roles: ['ADMIN', 'BRANCH', 'AGENT', 'PROXY'] } },
-      { path: 'rooms', name: 'rooms', component: () => import('@/views/RoomsView.vue'), meta: { roles: ['ADMIN', 'BRANCH', 'AGENT', 'PROXY'] } },
-      { path: 'rooms/:id', name: 'room-detail', component: () => import('@/views/RoomDetailView.vue'), meta: { roles: ['ADMIN', 'BRANCH', 'AGENT', 'PROXY'] } },
+      { path: 'dashboard', name: 'dashboard', component: () => import('@/views/DashboardView.vue'), meta: { roles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'] } },
+      { path: 'rooms', name: 'rooms', component: () => import('@/views/RoomsView.vue'), meta: { roles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'] } },
+      { path: 'rooms/:id', name: 'room-detail', component: () => import('@/views/RoomDetailView.vue'), meta: { roles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'] } },
       {
         path: 'players',
         name: 'players',
@@ -30,18 +30,18 @@ const routes: RouteRecordRaw[] = [
           return { name: 'rooms' }
         },
       },
-      { path: 'reports', name: 'reports', component: () => import('@/views/ReportsView.vue'), meta: { roles: ['ADMIN', 'BRANCH', 'AGENT', 'PROXY'] } },
+      { path: 'reports', name: 'reports', component: () => import('@/views/ReportsView.vue'), meta: { roles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'] } },
       { path: 'recharge', name: 'recharge', component: () => import('@/views/RechargeReviewView.vue'), meta: { roles: ['AGENT', 'CS'] } },
       { path: 'cs-staff', name: 'cs-staff', component: () => import('@/views/CsStaffManageView.vue'), meta: { roles: ['AGENT'] } },
       { path: 'games', name: 'games', component: () => import('@/views/GameManageView.vue'), meta: { roles: ['ADMIN'] } },
       { path: 'control', name: 'control', component: () => import('@/views/ControlView.vue'), meta: { roles: ['ADMIN'] } },
-      { path: 'rebate', name: 'rebate', component: () => import('@/views/RebatePolicyView.vue'), meta: { roles: ['ADMIN', 'BRANCH', 'AGENT', 'PROXY'] } },
-      /* 账号列表仅超管侧栏入口；详情仍允许房主/代理从房间等深链进入 */
-      { path: 'agents', name: 'agents', component: () => import('@/views/AgentManageView.vue'), meta: { roles: ['ADMIN'] } },
-      { path: 'agents/:id', name: 'agent-detail', component: () => import('@/views/AgentDetailView.vue'), meta: { roles: ['ADMIN', 'BRANCH', 'AGENT', 'PROXY'] } },
+      { path: 'rebate', name: 'rebate', component: () => import('@/views/RebatePolicyView.vue'), meta: { roles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'] } },
+      /* 账号列表：管理/总监开总监与总代 */
+      { path: 'agents', name: 'agents', component: () => import('@/views/AgentManageView.vue'), meta: { roles: ['ADMIN', 'BRANCH'] } },
+      { path: 'agents/:id', name: 'agent-detail', component: () => import('@/views/AgentDetailView.vue'), meta: { roles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'] } },
       { path: 'risk', name: 'risk', component: () => import('@/views/RiskView.vue'), meta: { roles: ['ADMIN', 'BRANCH'] } },
       { path: 'fund-recon', name: 'fund-recon', component: () => import('@/views/FundReconView.vue'), meta: { roles: ['ADMIN'] } },
-      { path: 'logs', name: 'logs', component: () => import('@/views/LogView.vue'), meta: { roles: ['ADMIN', 'BRANCH', 'AGENT', 'PROXY'] } },
+      { path: 'logs', name: 'logs', component: () => import('@/views/LogView.vue'), meta: { roles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'] } },
     ],
   },
   { path: '/:pathMatch(.*)*', redirect: '/' },

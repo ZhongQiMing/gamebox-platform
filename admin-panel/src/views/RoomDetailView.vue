@@ -98,6 +98,10 @@
             <div class="v mono">{{ room.roomNo }}</div>
           </div>
           <div class="kv">
+            <div class="k">挂靠总代</div>
+            <div class="v">{{ generalBrief }}</div>
+          </div>
+          <div class="kv">
             <div class="k">绑定代理</div>
             <div class="v">{{ agentBrief }}</div>
           </div>
@@ -216,6 +220,30 @@
             <div class="money-card">
               <div class="money-label">玩家持分</div>
               <div class="money-val">{{ fmt(room.playerPointsTotal) }}</div>
+            </div>
+          </div>
+          <div v-if="canSetGeneralFly" class="fly-room-bar" :class="room.generalFlyEnabled !== false ? 'is-on' : 'is-off'">
+            <div class="fly-room-left">
+              <span class="fly-room-title">总代整房飞盘</span>
+              <span class="fly-room-now" :class="room.generalFlyEnabled !== false ? 'tone-on' : 'tone-off'">
+                {{ room.generalFlyEnabled !== false ? '开 · 可飞平台' : '关 · 总代坐庄' }}
+              </span>
+            </div>
+            <div class="fly-room-actions">
+              <button
+                type="button"
+                class="fly-seg fly-seg-on"
+                :class="{ active: room.generalFlyEnabled !== false }"
+                :disabled="generalFlyBusy || room.generalFlyEnabled !== false"
+                @click="setGeneralRoomFly(true)"
+              >全开</button>
+              <button
+                type="button"
+                class="fly-seg fly-seg-off"
+                :class="{ active: room.generalFlyEnabled === false }"
+                :disabled="generalFlyBusy || room.generalFlyEnabled === false"
+                @click="setGeneralRoomFly(false)"
+              >全关</button>
             </div>
           </div>
           <div v-if="canSetRoomFly" class="fly-room-bar" :class="`is-${roomFlyMode}`">
@@ -853,7 +881,7 @@
           filterable
           clearable
           size="small"
-          placeholder="选择房主账号"
+          placeholder="选择总监账号"
           class="owners-select"
         >
           <el-option
@@ -870,10 +898,10 @@
           :data="ownerRows"
           stripe
           size="small"
-          empty-text="暂无授权房主，上方选择后点「授权可见」"
+          empty-text="暂无授权总监，上方选择后点「授权可见」"
           class="owners-table"
         >
-          <el-table-column label="房主" min-width="160">
+          <el-table-column label="总监" min-width="160">
             <template #default="{ row }: { row: any }">
               <span class="cell-name">{{ row.nickname }}</span>
             </template>
@@ -1531,6 +1559,16 @@ type RoomDetail = {
   roundCount?: number
   /** 本房玩家当前余额合计 */
   playerPointsTotal?: number
+  generalFlyEnabled?: boolean
+  general?: {
+    agentId?: string
+    userId?: string
+    uid?: string
+    nickname?: string
+    username?: string
+    flowRate?: number
+    shareRate?: number
+  } | null
   fly?: {
     onCount: number
     offCount: number
@@ -1548,6 +1586,8 @@ type RoomDetail = {
     pointsUsed?: number
     flyCover?: number
     rebateRate?: number | null
+    flowRate?: number
+    shareRate?: number
     user?: {
       id?: string
       nickname?: string
@@ -1570,6 +1610,7 @@ const store = useAdminStore()
 const id = computed(() => String(route.params.id))
 const isAdmin = computed(() => store.profile?.role === 'ADMIN')
 const isBranch = computed(() => store.profile?.role === 'BRANCH')
+const isGeneral = computed(() => store.profile?.role === 'GENERAL')
 const isAgent = computed(() => store.profile?.role === 'AGENT')
 const isProxy = computed(() => store.profile?.role === 'PROXY')
 /** 代理 / 子账号：经营概况用玩家视角 */
@@ -1627,15 +1668,20 @@ const canSetRoomFly = computed(() => {
   return !!room.value?.ownerAgent?.userId
     && room.value.ownerAgent.userId === store.profile?.id
 })
+/** 总代整房飞盘：仅本房挂靠总代可改 */
+const canSetGeneralFly = computed(() => {
+  if (!isGeneral.value) return false
+  return !!room.value?.general?.userId && room.value.general.userId === store.profile?.id
+})
 /** 开盘状态：管理员/房主/代理；子账号不可改 */
 const canSetRoomStatus = computed(() => {
   const me = store.profile?.role
-  return me === 'ADMIN' || me === 'BRANCH' || me === 'AGENT'
+  return me === 'ADMIN' || me === 'BRANCH' || me === 'GENERAL' || me === 'AGENT'
 })
-/** 房间图标：管理/房主/代理可改；子账号只看 */
+/** 房间图标：管理/总监/总代/代理可改；子账号只看 */
 const canEditRoomIcon = computed(() => {
   const me = store.profile?.role
-  return me === 'ADMIN' || me === 'BRANCH' || me === 'AGENT'
+  return me === 'ADMIN' || me === 'BRANCH' || me === 'GENERAL' || me === 'AGENT'
 })
 const roomIconInput = ref<HTMLInputElement | null>(null)
 const iconBusy = ref(false)
@@ -1671,7 +1717,7 @@ async function onRoomIconPicked(e: Event) {
   try {
     const image = await readRoomIconAsDataUrl(file)
     const res = await consoleApi.uploadRoomIcon(room.value.id, image)
-    room.value = { ...room.value, icon: res.icon || '/images/rooms/default-room.png' }
+    room.value = { ...room.value, icon: res.icon || '/images/rooms/default-room.webp' }
     ElMessage.success('房间图标已更新')
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '上传失败')
@@ -1705,6 +1751,7 @@ const cashFlySoftClosed = computed(() => {
 
 const loading = ref(false)
 const flyBusy = ref(false)
+const generalFlyBusy = ref(false)
 const statusBusy = ref(false)
 const summaryLoading = ref(false)
 const betLoading = ref(false)
@@ -1733,7 +1780,7 @@ const detailTabs = computed(() => {
     { key: 'join', label: '进房审核' },
     { key: 'agent', label: '绑定代理' },
     { key: 'billing', label: '月费账单' },
-    ...(isAdmin.value ? [{ key: 'owners', label: '可见房主' }] : []),
+    ...(isAdmin.value ? [{ key: 'owners', label: '可见总监' }] : []),
     { key: 'games', label: '游戏设置' },
     { key: 'robots', label: '机器人托' },
     { key: 'settle', label: settleReadonly.value ? '占成对账' : '占成结账' },
@@ -1908,7 +1955,7 @@ const showCsCreds = ref(false)
 const csCreds = ref<CsStaffCreated | null>(null)
 const showGameDlg = ref(false)
 const savingGame = ref(false)
-const rebatePolicy = reactive({ totalRate: 0.05, playerMinRate: 0.018 })
+const rebatePolicy = reactive({ totalRate: 0.07, playerMinRate: 0.018, agentDefaultRate: 0.05 })
 
 const gameDlg = reactive({
   gameCode: '',
@@ -1931,7 +1978,10 @@ const gameRows = ref<GameRow[]>([])
 const openGameCount = computed(() => gameRows.value.filter((g) => g.enabled).length)
 
 const playerMinPct = computed(() => Number((rebatePolicy.playerMinRate * 100).toFixed(2)))
-const playerMaxPct = computed(() => Number(((rebatePolicy.totalRate / 2) * 100).toFixed(2)))
+const playerMaxPct = computed(() => {
+  const flow = Number(room.value?.ownerAgent?.flowRate ?? rebatePolicy.agentDefaultRate ?? 0.05)
+  return Number(((flow / 2) * 100).toFixed(1))
+})
 const agentDefaultRebate = computed(() => {
   const r = room.value?.ownerAgent?.rebateRate
   if (r == null || Number.isNaN(Number(r))) return rebatePolicy.playerMinRate
@@ -1983,6 +2033,13 @@ const ownerRows = computed(() =>
     uid: g.owner?.uid || '—',
   })),
 )
+
+const generalBrief = computed(() => {
+  const g = room.value?.general
+  if (!g) return '直挂平台'
+  const share = Math.round(Number(g.shareRate || 0) * 100)
+  return g.username ? `${g.nickname}（占成 ${share}%）` : `${g.nickname} · 占成 ${share}%`
+})
 
 const agentBrief = computed(() => {
   const u = room.value?.ownerAgent?.user
@@ -2513,6 +2570,38 @@ async function setRoomFly(flyEnabled: boolean) {
   }
 }
 
+async function setGeneralRoomFly(flyEnabled: boolean) {
+  try {
+    await ElMessageBox.confirm(
+      flyEnabled
+        ? '将本房总代飞盘设为「开」。代理开盘的注会飞向平台；代理关盘仍由代理坐庄。'
+        : '将本房总代飞盘设为「关」。代理开盘的注由总代坐庄，不再飞向平台。',
+      flyEnabled ? '总代整房开盘' : '总代整房关盘',
+      {
+        type: 'warning',
+        confirmButtonText: flyEnabled ? '确认开盘' : '确认关盘',
+        cancelButtonText: '取消',
+      },
+    )
+  } catch {
+    return
+  }
+  generalFlyBusy.value = true
+  try {
+    const res = await consoleApi.setGeneralRoomFly(id.value, flyEnabled)
+    ElMessage.success(res.message || (flyEnabled ? '已开启（飞向平台）' : '已关闭（总代坐庄）'))
+    await load()
+  } catch (e: unknown) {
+    ElMessage.error(
+      (e as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message
+      || (e as Error).message
+      || '操作失败',
+    )
+  } finally {
+    generalFlyBusy.value = false
+  }
+}
+
 async function setRoomStatus(status: string) {
   const label: Record<string, string> = {
     OPEN: '营业中（开盘）',
@@ -2958,8 +3047,9 @@ function syncGameRows() {
 async function loadRebatePolicy() {
   try {
     const p = await consoleApi.rebatePolicy()
-    rebatePolicy.totalRate = p.totalRate ?? 0.05
+    rebatePolicy.totalRate = p.totalRate ?? p.generalDefaultRate ?? 0.07
     rebatePolicy.playerMinRate = p.playerMinRate ?? 0.018
+    rebatePolicy.agentDefaultRate = p.agentDefaultRate ?? 0.05
   } catch {
     rebatePolicy.totalRate = 0.05
     rebatePolicy.playerMinRate = 0.018
@@ -3034,7 +3124,7 @@ async function saveGameDetail() {
 }
 
 async function onGrant() {
-  if (!ownerUserId.value.trim()) return ElMessage.warning('请选择房主')
+  if (!ownerUserId.value.trim()) return ElMessage.warning('请选择总监')
   try {
     await consoleApi.grantOwner(id.value, ownerUserId.value.trim())
     ElMessage.success('已授权可见')

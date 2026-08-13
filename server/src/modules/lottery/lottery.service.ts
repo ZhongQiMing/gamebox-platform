@@ -460,7 +460,9 @@ export class LotteryService {
         }
 
         const flyMeta = (bet.payload as { fly?: {
-          type?: string; id?: string; flying?: boolean; agentUserId?: string; roomId?: string; bookMode?: string;
+          type?: string; id?: string; flying?: boolean; agentUserId?: string;
+          generalUserId?: string; sitting?: 'PLATFORM' | 'GENERAL' | 'AGENT';
+          roomId?: string; bookMode?: string;
         } } | null)?.fly;
         const touchRoomId = String(flyMeta?.roomId || '').trim();
         if (touchRoomId && !isRefund) {
@@ -532,6 +534,8 @@ export class LotteryService {
             flying,
             roomId: flyMeta?.roomId,
             agentUserId: flyMeta?.agentUserId,
+            generalUserId: flyMeta?.generalUserId,
+            sitting: flyMeta?.sitting,
             bookMode: flyMeta?.bookMode,
           });
         }
@@ -703,6 +707,7 @@ export class LotteryService {
           fly: {
             type: house.type, id: house.id, flying: house.flying,
             roomId: house.roomId, agentUserId: house.agentUserId,
+            generalUserId: house.generalUserId, sitting: house.sitting,
             bookMode: house.bookMode, P,
           },
         };
@@ -971,6 +976,8 @@ export class LotteryService {
           flying: house.flying,
           roomId: house.roomId,
           agentUserId: house.agentUserId,
+          generalUserId: house.generalUserId,
+          sitting: house.sitting,
           bookMode: house.bookMode,
           P,
         },

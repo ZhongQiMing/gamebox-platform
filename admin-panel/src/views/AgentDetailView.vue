@@ -11,8 +11,8 @@
       <div class="empty-box">暂未绑定房间</div>
     </template>
 
-    <template v-else-if="detail && detail.role === 'BRANCH'">
-      <PageHeader :title="detail.nickname || '房主详情'">
+    <template v-else-if="detail && (detail.role === 'BRANCH' || detail.role === 'GENERAL')">
+      <PageHeader :title="detail.nickname || (detail.role === 'GENERAL' ? '总代详情' : '总监详情')">
         <template #actions>
           <el-button @click="goBack">返回</el-button>
           <el-button v-if="isAdmin" type="warning" :loading="busy" @click="onResetPwd">重置密码</el-button>
@@ -37,7 +37,7 @@
 
       <div class="cards">
         <div class="card">
-          <div class="k">授权可见房间</div>
+          <div class="k">{{ detail.role === 'GENERAL' ? '名下房间' : '授权可见房间' }}</div>
           <div class="v">{{ detail.roomTotal ?? detail.rooms.length }}</div>
         </div>
         <div class="card">
@@ -142,7 +142,7 @@
         :close-on-click-modal="false"
       >
         <el-alert type="warning" :closable="false" show-icon class="cred-alert">
-          密码仅展示一次，请立即复制交给房主
+          密码仅展示一次，请立即复制交给对方
         </el-alert>
         <div v-if="creds" class="cred-box">
           <div class="cred-row"><span>用户名</span><b>{{ creds.username }}</b></div>
@@ -172,6 +172,7 @@ import {
   type AgentAuditRow,
   type AgentDetail,
 } from '@/api/console'
+import { staffRoleLabel } from '@gamebox/shared'
 import { useAdminStore } from '@/stores/admin'
 
 const route = useRoute()
@@ -201,9 +202,7 @@ function statusLabel(s: string) {
   return ({ OPEN: '营业', CLOSED: '关闭', MAINTENANCE: '维护', FROZEN: '冻结' } as Record<string, string>)[s] || s
 }
 function roleShort(r?: string) {
-  return ({
-    ADMIN: '管理员', BRANCH: '房主', AGENT: '代理', PROXY: '子账号', PLAYER: '玩家', ROOM: '房间',
-  } as Record<string, string>)[r || ''] || r || ''
+  return staffRoleLabel(r) || r || ''
 }
 function fmt(n?: number | null) {
   return Number(n || 0).toLocaleString('zh-CN', { maximumFractionDigits: 2 })
@@ -308,7 +307,8 @@ async function load() {
 async function onResetPwd() {
   if (!detail.value) return
   try {
-    await ElMessageBox.confirm(`重置房主「${detail.value.nickname}」密码？`, '重置密码', {
+    const who = detail.value.role === 'GENERAL' ? '总代' : '总监'
+    await ElMessageBox.confirm(`重置${who}「${detail.value.nickname}」密码？`, '重置密码', {
       type: 'warning',
       confirmButtonText: '重置',
     })
@@ -332,7 +332,8 @@ async function onToggleStatus() {
   const next = detail.value.status === 'ACTIVE' ? 'DISABLED' : 'ACTIVE'
   const label = next === 'DISABLED' ? '停用' : '启用'
   try {
-    await ElMessageBox.confirm(`确认${label}房主「${detail.value.nickname}」？`, `${label}房主`, {
+    const who = detail.value.role === 'GENERAL' ? '总代' : '总监'
+    await ElMessageBox.confirm(`确认${label}${who}「${detail.value.nickname}」？`, `${label}${who}`, {
       type: next === 'DISABLED' ? 'warning' : 'info',
     })
   } catch {

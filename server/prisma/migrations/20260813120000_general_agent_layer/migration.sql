@@ -1,0 +1,29 @@
+-- 总代层级：角色 GENERAL + 流水整包/占成 + 房间挂总代
+
+ALTER TYPE "UserRole" ADD VALUE IF NOT EXISTS 'GENERAL';
+
+ALTER TABLE "Agent" ADD COLUMN IF NOT EXISTS "flowRate" DOUBLE PRECISION NOT NULL DEFAULT 0.05;
+ALTER TABLE "Agent" ADD COLUMN IF NOT EXISTS "shareRate" DOUBLE PRECISION NOT NULL DEFAULT 0.5;
+
+ALTER TABLE "Room" ADD COLUMN IF NOT EXISTS "generalAgentId" TEXT;
+ALTER TABLE "Room" ADD COLUMN IF NOT EXISTS "generalFlyEnabled" BOOLEAN NOT NULL DEFAULT true;
+
+CREATE INDEX IF NOT EXISTS "Room_generalAgentId_idx" ON "Room"("generalAgentId");
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'Room_generalAgentId_fkey'
+  ) THEN
+    ALTER TABLE "Room"
+      ADD CONSTRAINT "Room_generalAgentId_fkey"
+      FOREIGN KEY ("generalAgentId") REFERENCES "Agent"("id")
+      ON DELETE SET NULL ON UPDATE CASCADE;
+  END IF;
+END $$;
+
+ALTER TABLE "RebatePolicy" ADD COLUMN IF NOT EXISTS "generalDefaultRate" DOUBLE PRECISION NOT NULL DEFAULT 0.07;
+ALTER TABLE "RebatePolicy" ADD COLUMN IF NOT EXISTS "generalMaxRate" DOUBLE PRECISION NOT NULL DEFAULT 0.10;
+ALTER TABLE "RebatePolicy" ADD COLUMN IF NOT EXISTS "agentDefaultRate" DOUBLE PRECISION NOT NULL DEFAULT 0.05;
+
+UPDATE "RebatePolicy" SET "totalRate" = 0.07, "generalDefaultRate" = 0.07 WHERE "id" = 1;
