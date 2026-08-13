@@ -242,7 +242,7 @@
 
       <div class="rb-metrics">
         <div class="rb-card">
-          <div class="rb-k">总额 T</div>
+          <div class="rb-k">代理整包 T</div>
           <div class="rb-v">{{ pctText(rebateTotal) }}%</div>
         </div>
         <div class="rb-card main">
@@ -470,6 +470,8 @@ const props = defineProps<{
   initialQ?: string
   /** CASH | CREDIT；CREDIT 保留飞盘开关（对手盘），上分改为扣信用 */
   bookMode?: 'CASH' | 'CREDIT' | string
+  /** 本房代理流水整包；玩家回水上限＝它的一半，与发放口径一致 */
+  agentFlowRate?: number | null
 }>()
 const store = useAdminStore()
 const isCreditBook = computed(() => props.bookMode === 'CREDIT')
@@ -784,12 +786,15 @@ async function editRebate(row: {
   playerRebateRate?: number | null
 }) {
   rebateTarget.value = row
+  const roomFlow = Number(props.agentFlowRate)
   try {
     const policy = await consoleApi.rebatePolicy()
-    rebateTotal.value = Number(policy.totalRate ?? 0.05)
     rebateMinRate.value = Number(policy.playerMinRate ?? 0.018)
+    rebateTotal.value = Number.isFinite(roomFlow) && roomFlow > 0
+      ? roomFlow
+      : Number(policy.agentDefaultRate ?? 0.05)
   } catch {
-    rebateTotal.value = 0.05
+    rebateTotal.value = Number.isFinite(roomFlow) && roomFlow > 0 ? roomFlow : 0.05
     rebateMinRate.value = 0.018
   }
   rebatePct.value = row.playerRebateRate != null

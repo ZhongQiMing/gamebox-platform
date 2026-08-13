@@ -595,6 +595,7 @@
         v-if="room"
         :room-id="room.id"
         :book-mode="room.bookMode"
+        :agent-flow-rate="room.ownerAgent?.flowRate ?? null"
         :initial-q="playersInitialQ"
       />
     </div>

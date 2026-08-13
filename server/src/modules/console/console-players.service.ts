@@ -469,13 +469,6 @@ export class ConsolePlayersService {
     roomId?: string,
   ) {
     if (actor.role !== 'ADMIN') await this.scope.assertUserInScope(actor, playerId);
-    const policy = await this.prisma.rebatePolicy.findUnique({ where: { id: 1 } });
-    const T = policy?.totalRate ?? 0.05;
-    const min = policy?.playerMinRate ?? 0.018;
-    const max = T / 2;
-    if (rate < min || rate > max) {
-      throw new BadRequestException(`玩家回水须在 ${min}~${max}`);
-    }
     const member = await this.prisma.roomMember.findFirst({
       where: {
         playerId,
@@ -483,8 +476,25 @@ export class ConsolePlayersService {
         ...(roomId ? { roomId } : {}),
       },
       orderBy: { updatedAt: 'desc' },
+      include: {
+        room: { select: { ownerAgent: { select: { flowRate: true } } } },
+      },
     });
     if (!member) throw new BadRequestException('玩家未绑定房间');
+
+    const policy = await this.prisma.rebatePolicy.findUnique({ where: { id: 1 } });
+    const min = policy?.playerMinRate ?? 0.018;
+    /* 上限跟发放口径对齐：本房代理整包的一半，超了会在发放时被静默截断 */
+    const agentPkg = Math.max(
+      min,
+      Number(member.room?.ownerAgent?.flowRate ?? policy?.agentDefaultRate ?? 0.05),
+    );
+    const max = agentPkg / 2;
+    if (rate < min || rate > max) {
+      throw new BadRequestException(
+        `玩家回水须在 ${(min * 100).toFixed(1)}%～${(max * 100).toFixed(2)}%（本房代理整包 ${(agentPkg * 100).toFixed(1)}% 的一半）`,
+      );
+    }
     const row = await this.prisma.roomMember.update({
       where: { id: member.id },
       data: { playerRebateRate: rate },
