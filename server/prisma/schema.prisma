@@ -399,9 +399,13 @@ model RoomWeekSettle {
   weekEnd             DateTime
   bookMode            String
   agentShareRate      Float
+  /// 房间挂靠总代的成数；未挂总代与代理成数相同
+  generalShareRate    Float     @default(0)
   betFlow             Decimal   @default(0) @db.Decimal(18, 2)
   housePnl            Decimal   @default(0) @db.Decimal(18, 2)
   agentShareAmount    Decimal   @default(0) @db.Decimal(18, 2)
+  /// 总代成数差 = 庄家盈亏 × (总代成数 − 代理成数)，由总代与平台交割
+  generalShareAmount  Decimal   @default(0) @db.Decimal(18, 2)
   platformShareAmount Decimal   @default(0) @db.Decimal(18, 2)
   /// 信用盘：占成应付（平台→代理，可负）
   grossPay            Decimal   @default(0) @db.Decimal(18, 2)

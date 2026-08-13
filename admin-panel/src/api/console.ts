@@ -1558,9 +1558,11 @@ export interface RoomWeekSettleOverview {
     toText: string
     bookMode: string
     agentShareRate: number
+    generalShareRate?: number
     betFlow: number
     housePnl: number
     agentShareAmount: number
+    generalShareAmount?: number
     platformShareAmount: number
     settlePay?: number
     agentPocketAtSettle?: number
@@ -1642,6 +1644,8 @@ export interface RoomSettleStatement {
     label: string
     housePnl: number
     agentShareAmount: number
+    /** 总代成数差；由总代与平台单独交割，不进代理应付 */
+    generalShareAmount?: number
     platformShareAmount: number
     platformPayToAgent: number
   }

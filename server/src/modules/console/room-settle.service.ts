@@ -270,13 +270,25 @@ export class RoomSettleService {
     };
   }
 
+  /**
+   * 庄家盈亏三段拆：代理拿自己成数，总代拿成数差，平台拿剩下的。
+   * 未挂总代时成数差为 0，与两方口径完全一致。
+   * agentPayBase 是代理该跟「直接上家」交割的数，不能因为中间多了总代就少收。
+   */
   private split(housePnl: number, agentShareRate: number, generalShareRate?: number | null) {
     const a = Math.min(1, Math.max(0, agentShareRate));
     const g = generalShareRate == null ? a : Math.min(1, Math.max(a, generalShareRate));
     const agentShareAmount = asMoney(housePnl * a);
     const generalShareAmount = asMoney(housePnl * (g - a));
     const platformShareAmount = asMoney(housePnl - agentShareAmount - generalShareAmount);
-    return { agentShareAmount, generalShareAmount, platformShareAmount };
+    const agentPayBase = asMoney(housePnl - agentShareAmount);
+    return {
+      agentShareAmount,
+      generalShareAmount,
+      platformShareAmount,
+      agentPayBase,
+      generalShareRate: g,
+    };
   }
 
   private roomShareRates(room: Awaited<ReturnType<RoomSettleService['roomOrThrow']>>) {
@@ -414,6 +426,8 @@ export class RoomSettleService {
           label: '信用账本超出轧差（剩余信用+玩家持分+客服额度 − 合同额度）',
           housePnl: creditBook.housePnl,
           agentShareAmount: creditBook.agentShareAmount,
+          /* 信用盘暂未按总代拆三方，成数差固定 0 */
+          generalShareAmount: 0,
           platformShareAmount: creditBook.platformShareAmount,
           platformPayToAgent: creditBook.platformPayToAgent,
         }
@@ -422,8 +436,10 @@ export class RoomSettleService {
           label: '注单庄家盈亏 × 占成（记账；现金盘结账时按此对账）',
           housePnl: agg.housePnl,
           agentShareAmount: cashSplit.agentShareAmount,
+          generalShareAmount: cashSplit.generalShareAmount,
           platformShareAmount: cashSplit.platformShareAmount,
-          platformPayToAgent: roundMoney(-cashSplit.platformShareAmount),
+          /* 代理只扣自己那一成，成数差由总代另行与平台结，不能从代理这里免掉 */
+          platformPayToAgent: roundMoney(-cashSplit.agentPayBase),
         };
 
     type Line = {
@@ -529,6 +545,7 @@ export class RoomSettleService {
             label: '总代成数差',
             amount: cashSplit.generalShareAmount,
             kind: 'info' as const,
+            note: '代理按本行上方的份额与总代结；这一截由总代与平台单独交割，不影响代理应付',
           }]
         : []),
       {
@@ -834,6 +851,7 @@ export class RoomSettleService {
         ...(lastRow
           ? {
               agentShareAmount: Number(lastRow.agentShareAmount),
+              generalShareAmount: Number(lastRow.generalShareAmount ?? 0),
               platformShareAmount: Number(lastRow.platformShareAmount),
               housePnl: Number(lastRow.housePnl),
             }
@@ -854,9 +872,11 @@ export class RoomSettleService {
         toText: fmtSh(h.weekEnd),
         bookMode: h.bookMode,
         agentShareRate: h.agentShareRate,
+        generalShareRate: h.generalShareRate ?? h.agentShareRate,
         betFlow: Number(h.betFlow),
         housePnl: Number(h.housePnl),
         agentShareAmount: Number(h.agentShareAmount),
+        generalShareAmount: Number(h.generalShareAmount ?? 0),
         platformShareAmount: Number(h.platformShareAmount),
         settlePay: Number(h.settlePay ?? 0),
         agentPocketAtSettle: Number(h.agentPocketAtSettle ?? 0),
@@ -959,6 +979,8 @@ export class RoomSettleService {
     let creditRestored = false;
     let settledHousePnl = agg.housePnl;
     let agentShareAmount = 0;
+    let generalShareAmount = 0;
+    let settledGeneralShareRate = generalShareRate ?? share;
     let platformShareAmount = 0;
     let settleGrossPay = 0;
     let settlePocket = 0;
@@ -970,6 +992,8 @@ export class RoomSettleService {
     if (bookMode === 'CASH') {
       const split = this.split(agg.housePnl, share, generalShareRate);
       agentShareAmount = split.agentShareAmount;
+      generalShareAmount = split.generalShareAmount;
+      settledGeneralShareRate = split.generalShareRate;
       platformShareAmount = split.platformShareAmount;
     }
 
@@ -1183,9 +1207,11 @@ export class RoomSettleService {
           weekEnd,
           bookMode,
           agentShareRate: share,
+          generalShareRate: settledGeneralShareRate,
           betFlow: new Prisma.Decimal(roundMoney(agg.betFlow)),
           housePnl: new Prisma.Decimal(roundMoney(settledHousePnl)),
           agentShareAmount: new Prisma.Decimal(roundMoney(agentShareAmount)),
+          generalShareAmount: new Prisma.Decimal(roundMoney(generalShareAmount)),
           platformShareAmount: new Prisma.Decimal(roundMoney(platformShareAmount)),
           ...settleFields,
           status: 'SETTLED',
@@ -1198,10 +1224,12 @@ export class RoomSettleService {
           betFlow: new Prisma.Decimal(roundMoney(agg.betFlow)),
           housePnl: new Prisma.Decimal(roundMoney(settledHousePnl)),
           agentShareAmount: new Prisma.Decimal(roundMoney(agentShareAmount)),
+          generalShareAmount: new Prisma.Decimal(roundMoney(generalShareAmount)),
           platformShareAmount: new Prisma.Decimal(roundMoney(platformShareAmount)),
           ...settleFields,
           bookMode,
           agentShareRate: share,
+          generalShareRate: settledGeneralShareRate,
           status: 'SETTLED',
           settledAt: new Date(),
           settledById: actor.id,
@@ -1219,6 +1247,7 @@ export class RoomSettleService {
       bookMode,
       housePnl: settledHousePnl,
       agentShareAmount,
+      generalShareAmount,
       platformShareAmount,
       settlePay,
       settlePocket,

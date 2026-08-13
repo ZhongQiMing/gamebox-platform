@@ -46,6 +46,10 @@
             <span class="bill-label">代理份额</span>
             <span class="bill-amt">{{ fmt(calc.agentShare) }}</span>
           </div>
+          <div v-if="calc.generalShare" class="bill-row" :class="tone(calc.generalShare)">
+            <span class="bill-label">总代成数差</span>
+            <span class="bill-amt">{{ fmt(calc.generalShare) }}</span>
+          </div>
           <div class="bill-row settle-amt">
             <span class="bill-label">{{ calc.balanceLabel }}</span>
             <span class="bill-amt">{{ calc.balanceText }}</span>
@@ -101,6 +105,9 @@
           </div>
           <div class="hist-right">
             <span>代占 {{ fmt(row.agentShareAmount) }}</span>
+            <span v-if="row.generalShareAmount" class="hist-plat">
+              总代 {{ fmt(row.generalShareAmount) }}
+            </span>
             <span class="hist-plat">平占 {{ fmt(row.platformShareAmount) }}</span>
             <span v-if="row.bookMode === 'CREDIT'" class="hist-plat">
               实付 {{ fmt(Math.abs(Number(row.settlePay || 0))) }}
@@ -205,6 +212,8 @@ const calc = computed(() => {
       ? Number(s!.creditBook!.excess || 0)
       : Number(s?.share?.housePnl ?? s?.ops?.housePnl ?? 0),
     agentShare: Number(s?.share?.agentShareAmount ?? 0),
+    /** 总代与平台单独结，不进代理实付 */
+    generalShare: Number(s?.share?.generalShareAmount ?? 0),
     balance: bal,
     balanceLabel: bal >= 0 ? '加：佣金账户' : '减：佣金欠款',
     balanceText: bal >= 0 ? `+${fmt(balAbs)}` : `−${fmt(balAbs)}`,
