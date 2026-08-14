@@ -424,6 +424,19 @@ model RoomWeekSettle {
   monthlyFeePeriod    Decimal   @default(0) @db.Decimal(18, 2)
   /// 信用盘：实付（平台→代理，可负）= grossPay + pocket − fee
   settlePay           Decimal   @default(0) @db.Decimal(18, 2)
+
+  // ── 封账快照（信用盘）──
+  // 账期一到就把账本定格，之后到实际对接之间的输赢留给下一期。
+  // 补额度按「当前剩余 − 封账超出」算，而不是补回合同值，否则那段时间的输赢会被抹掉。
+  /// 封账时的剩余信用
+  quotaAtClose          Decimal @default(0) @db.Decimal(18, 2)
+  /// 封账时的玩家持分合计
+  playerBalancesAtClose Decimal @default(0) @db.Decimal(18, 2)
+  /// 封账时的客服额度合计
+  csBalancesAtClose     Decimal @default(0) @db.Decimal(18, 2)
+  /// 封账时的超出（合计 − 合同额度）；账单金额锁的就是它
+  excessAtClose         Decimal @default(0) @db.Decimal(18, 2)
+  closedAt              DateTime?
   /// NONE=现金盘/无交割 | EVEN=互不找补 | UNPAID=待线下交割 | PAID=已确认收款
   paymentStatus       String    @default("NONE")
   paidAt              DateTime?

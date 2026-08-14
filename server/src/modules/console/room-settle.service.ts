@@ -1,6 +1,7 @@
 import {
-  BadRequestException, ForbiddenException, Injectable, NotFoundException,
+  BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException,
 } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
 import { asMoney, roundMoney } from '@gamebox/shared';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -189,6 +190,9 @@ function toShanghaiOffsetIso(d: Date) {
 
 @Injectable()
 export class RoomSettleService {
+  private readonly logger = new Logger(RoomSettleService.name);
+  private closing = false;
+
   constructor(
     private prisma: PrismaService,
     private adminLog: AdminLogService,
@@ -743,6 +747,79 @@ export class RoomSettleService {
     };
   }
 
+  /**
+   * 账期一到就把信用盘账本定格：记下当时的剩余信用、玩家持分、客服额度与超出。
+   * 之后到实际对接之间的输赢留给下一期——账单数字不会因为对接晚了几小时而变。
+   * 幂等：同一账期只封一次；已结清的不动。
+   */
+  @Cron('7 * * * *', { timeZone: 'Asia/Shanghai' })
+  async cronCloseDuePeriods() {
+    if (this.closing) return;
+    this.closing = true;
+    try {
+      const rooms = await this.prisma.room.findMany({
+        where: { bookMode: 'CREDIT', creditLimit: { gt: 0 }, status: { not: 'CLOSED' } },
+        select: {
+          id: true,
+          settleCycle: true,
+          creditLimit: true,
+          ownerAgent: { select: { userId: true, pointsQuota: true } },
+        },
+        take: 500,
+      });
+      let closed = 0;
+      for (const room of rooms) {
+        if (!room.ownerAgent) continue;
+        const cycle = normalizeSettleCycle(room.settleCycle);
+        /* 刚结束的那一期 */
+        const last = shanghaiSettleBounds(cycle, -1);
+        const existing = await this.prisma.roomWeekSettle.findUnique({
+          where: { roomId_weekStart: { roomId: room.id, weekStart: last.periodStart } },
+          select: { id: true, status: true, closedAt: true },
+        });
+        if (existing?.closedAt || existing?.status === 'SETTLED') continue;
+
+        const [playerBalances, csBalances] = await Promise.all([
+          sumRoomPlayerBalances(this.prisma, room.id),
+          sumAgentCsBalances(this.prisma, room.ownerAgent.userId),
+        ]);
+        const book = computeCreditBook({
+          creditLimit: Number(room.creditLimit),
+          pointsQuota: asMoney(room.ownerAgent.pointsQuota),
+          playerBalances,
+          csBalances,
+          agentShareRate: 0,
+        });
+        const snapshot = {
+          quotaAtClose: new Prisma.Decimal(book.pointsQuota.toFixed(2)),
+          playerBalancesAtClose: new Prisma.Decimal(book.playerBalances.toFixed(2)),
+          csBalancesAtClose: new Prisma.Decimal(book.csBalances.toFixed(2)),
+          excessAtClose: new Prisma.Decimal(book.excess.toFixed(2)),
+          closedAt: new Date(),
+        };
+        await this.prisma.roomWeekSettle.upsert({
+          where: { roomId_weekStart: { roomId: room.id, weekStart: last.periodStart } },
+          create: {
+            roomId: room.id,
+            weekStart: last.periodStart,
+            weekEnd: last.periodEnd,
+            bookMode: 'CREDIT',
+            agentShareRate: 0,
+            status: 'CLOSED',
+            ...snapshot,
+          },
+          update: { status: existing?.status === 'OPEN' ? 'CLOSED' : undefined, ...snapshot },
+        });
+        closed++;
+      }
+      if (closed) this.logger.log(`credit period closed: ${closed} room(s)`);
+    } catch (e) {
+      this.logger.error(`cronCloseDuePeriods failed: ${(e as Error).message}`);
+    } finally {
+      this.closing = false;
+    }
+  }
+
   async overview(actor: ConsoleActor, roomId: string) {
     const room = await this.roomOrThrow(actor, roomId);
     const cycle = normalizeSettleCycle(room.settleCycle);
@@ -1029,11 +1106,24 @@ export class RoomSettleService {
           sumRoomPlayerBalances(tx, roomId),
           sumAgentCsBalances(tx, agent.userId),
         ]);
+        const quotaNow = asMoney(agent.pointsQuota);
+        /*
+         * 账期到点若已封账，账单金额锁在那一刻，不吃封账到现在这段的输赢。
+         * 提前结账没有封账线，就地封。
+         */
+        const closed = !early && existing?.closedAt
+          ? {
+              quota: asMoney(existing.quotaAtClose),
+              playerBalances: asMoney(existing.playerBalancesAtClose),
+              csBalances: asMoney(existing.csBalancesAtClose),
+              excess: asMoney(existing.excessAtClose),
+            }
+          : null;
         const book = computeCreditBook({
           creditLimit: Number(roomLocked.creditLimit),
-          pointsQuota: asMoney(agent.pointsQuota),
-          playerBalances,
-          csBalances,
+          pointsQuota: closed ? closed.quota : quotaNow,
+          playerBalances: closed ? closed.playerBalances : playerBalances,
+          csBalances: closed ? closed.csBalances : csBalances,
           agentShareRate: share,
         });
         creditHold.book = book;
@@ -1041,13 +1131,21 @@ export class RoomSettleService {
         agentShareAmount = book.agentShareAmount;
         platformShareAmount = book.platformShareAmount;
 
+        /*
+         * 补额度按「当前剩余 − 本期超出」，不是补回合同值：
+         * 封账后玩家又输赢的部分留在池子里，下期结算时才算，两边都不会被抹掉。
+         * 没有封账线时，当前值就等于封账值，结果与补回合同额度一致。
+         */
+        const quotaAfterSettle = roundMoney(quotaNow - book.excess);
         await writeAgentQuotaInTx(tx, {
           agentUserId: agent.userId,
           bookMode: 'CREDIT',
-          quotaTo: book.newQuota,
-          usedTo: roundMoney(book.playerBalances + book.csBalances),
+          quotaTo: quotaAfterSettle,
+          usedTo: roundMoney(playerBalances + csBalances),
           bizType: 'SETTLE',
-          remark: `信用盘结账校准剩余信用（合同 ${book.creditLimit}）`,
+          remark: closed
+            ? `信用盘结账按封账快照校准（合同 ${book.creditLimit}，封账超出 ${book.excess}）`
+            : `信用盘结账校准剩余信用（合同 ${book.creditLimit}）`,
           refType: 'credit_settle',
           refId: roomId,
           idempotencyKey: `credit_settle_${roomId}_${weekStart.toISOString()}:QUOTA`,
