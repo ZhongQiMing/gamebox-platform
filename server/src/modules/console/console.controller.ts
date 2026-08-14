@@ -13,6 +13,7 @@ import { ConsoleReportsService } from './console-reports.service';
 import { ConsolePlayersService } from './console-players.service';
 import { CsStaffService } from './cs-staff.service';
 import { RoomSettleService } from './room-settle.service';
+import { GeneralSettleService } from './general-settle.service';
 import type { ConsoleActor } from './console-scope.service';
 import { ConsoleScopeService } from './console-scope.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -134,6 +135,7 @@ export class ConsoleController {
     private players: ConsolePlayersService,
     private csStaff: CsStaffService,
     private settle: RoomSettleService,
+    private generalSettle: GeneralSettleService,
     private prisma: PrismaService,
     private adminLog: AdminLogService,
     private scope: ConsoleScopeService,
@@ -661,6 +663,47 @@ export class ConsoleController {
     @Body() body: PasswordDto,
   ) {
     return this.players.resetPlayerPassword(this.actor(u), id, body?.password);
+  }
+
+  // ── 总代账期结算（平台 ↔ 总代，按总代自己的周期汇总名下所有房间）──
+  /** 汇总对账单：一行总代、下面每房一行 */
+  @Get('general-settle/statement')
+  @Roles('ADMIN', 'BRANCH', 'GENERAL')
+  generalSettleStatement(
+    @CurrentUser() u: { id: string; role: string },
+    @Query('generalUserId') generalUserId?: string,
+    @Query('period') period?: 'current' | 'last',
+    @Query('periodStart') periodStart?: string,
+  ) {
+    return this.generalSettle.statement(this.actor(u), {
+      generalUserId,
+      period: period === 'current' ? 'current' : 'last',
+      periodStart,
+    });
+  }
+
+  @Get('general-settle/history')
+  @Roles('ADMIN', 'BRANCH', 'GENERAL')
+  generalSettleHistory(
+    @CurrentUser() u: { id: string; role: string },
+    @Query('generalUserId') generalUserId?: string,
+    @Query('take', new DefaultValuePipe(20), ParseIntPipe) take = 20,
+  ) {
+    return this.generalSettle.history(this.actor(u), generalUserId, take);
+  }
+
+  /** 结清一个账期：汇总与每房明细定格成快照 */
+  @Post('general-settle/:generalUserId/settle')
+  @Roles('ADMIN', 'BRANCH')
+  settleGeneralPeriod(
+    @CurrentUser() u: { id: string; role: string },
+    @Param('generalUserId') generalUserId: string,
+    @Body() body: { period?: 'current' | 'last'; note?: string },
+  ) {
+    return this.generalSettle.settle(this.actor(u), generalUserId, {
+      period: body?.period === 'current' ? 'current' : 'last',
+      note: body?.note,
+    });
   }
 
   /** 调整总代与平台的合同信用额度：合同与剩余信用同增同减 */

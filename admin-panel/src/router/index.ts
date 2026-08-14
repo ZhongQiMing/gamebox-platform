@@ -36,6 +36,8 @@ const routes: RouteRecordRaw[] = [
       { path: 'games', name: 'games', component: () => import('@/views/GameManageView.vue'), meta: { roles: ['ADMIN'] } },
       { path: 'control', name: 'control', component: () => import('@/views/ControlView.vue'), meta: { roles: ['ADMIN'] } },
       { path: 'rebate', name: 'rebate', component: () => import('@/views/RebatePolicyView.vue'), meta: { roles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'] } },
+      /* 总代结算：管理/总监看全部总代，总代只看自己 */
+      { path: 'general-settle', name: 'general-settle', component: () => import('@/views/GeneralSettleView.vue'), meta: { roles: ['ADMIN', 'BRANCH', 'GENERAL'] } },
       /* 账号列表：管理/总监开总监与总代 */
       { path: 'agents', name: 'agents', component: () => import('@/views/AgentManageView.vue'), meta: { roles: ['ADMIN', 'BRANCH'] } },
       { path: 'agents/:id', name: 'agent-detail', component: () => import('@/views/AgentDetailView.vue'), meta: { roles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'] } },

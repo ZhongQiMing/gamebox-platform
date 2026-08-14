@@ -15,6 +15,7 @@ import { FlyDiskService } from './fly-disk.service';
 import { FlyRebateService } from './fly-rebate.service';
 import { RoomBillingService } from './room-billing.service';
 import { RoomSettleService } from './room-settle.service';
+import { GeneralSettleService } from './general-settle.service';
 import { CsStaffService } from './cs-staff.service';
 
 @Module({
@@ -37,6 +38,7 @@ import { CsStaffService } from './cs-staff.service';
     FlyRebateService,
     RoomBillingService,
     RoomSettleService,
+    GeneralSettleService,
     CsStaffService,
   ],
   exports: [

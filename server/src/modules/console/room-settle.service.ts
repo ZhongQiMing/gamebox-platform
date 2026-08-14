@@ -16,6 +16,7 @@ import {
   type CreditBookSnapshot,
 } from './credit-settle.helper';
 import { lockAgentRowInTx, writeAgentQuotaInTx } from './player-fund.helper';
+import { splitHouseShare } from './share-split.helper';
 
 const SH_MS = 8 * 3600 * 1000;
 const DAY_MS = 86400000;
@@ -270,25 +271,9 @@ export class RoomSettleService {
     };
   }
 
-  /**
-   * 庄家盈亏三段拆：代理拿自己成数，总代拿成数差，平台拿剩下的。
-   * 未挂总代时成数差为 0，与两方口径完全一致。
-   * agentPayBase 是代理该跟「直接上家」交割的数，不能因为中间多了总代就少收。
-   */
+  /** 与总代账期共用同一套三段拆，见 share-split.helper */
   private split(housePnl: number, agentShareRate: number, generalShareRate?: number | null) {
-    const a = Math.min(1, Math.max(0, agentShareRate));
-    const g = generalShareRate == null ? a : Math.min(1, Math.max(a, generalShareRate));
-    const agentShareAmount = asMoney(housePnl * a);
-    const generalShareAmount = asMoney(housePnl * (g - a));
-    const platformShareAmount = asMoney(housePnl - agentShareAmount - generalShareAmount);
-    const agentPayBase = asMoney(housePnl - agentShareAmount);
-    return {
-      agentShareAmount,
-      generalShareAmount,
-      platformShareAmount,
-      agentPayBase,
-      generalShareRate: g,
-    };
+    return splitHouseShare(housePnl, agentShareRate, generalShareRate);
   }
 
   private roomShareRates(room: Awaited<ReturnType<RoomSettleService['roomOrThrow']>>) {

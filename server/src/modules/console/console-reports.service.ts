@@ -64,6 +64,15 @@ export class ConsoleReportsService {
    * 房间注单归因：优先 payload.fly.roomId；无标记旧单按 APPROVED 成员兜底。
    * 经营 KPI 仅计 WON/LOST；PENDING 另计。
    */
+  /**
+   * 已结算注单按房间聚合，供总代账期汇总用。
+   * 与报表、结账共用同一口径，四次周结加起来才等于代理那次月结里平台该得的部分。
+   */
+  async settledRoomAgg(roomIds: string[], from: Date, to: Date) {
+    const { byRoom } = await this.roomBetAgg(roomIds, from, to, ['WON', 'LOST']);
+    return byRoom;
+  }
+
   private async roomBetAgg(
     roomIds: string[],
     from: Date,

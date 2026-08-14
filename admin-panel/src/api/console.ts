@@ -582,6 +582,33 @@ export const consoleApi = {
       { params },
     ),
 
+  // ── 总代账期结算（平台 ↔ 总代）──
+  generalSettleStatement: (params?: {
+    generalUserId?: string
+    period?: 'current' | 'last'
+    periodStart?: string
+  }) =>
+    http.get<GeneralSettleStatement, GeneralSettleStatement>(
+      '/console/general-settle/statement',
+      { params },
+    ),
+
+  generalSettleHistory: (params?: { generalUserId?: string; take?: number }) =>
+    http.get<{ list: GeneralSettleHistoryRow[] }, { list: GeneralSettleHistoryRow[] }>(
+      '/console/general-settle/history',
+      { params },
+    ),
+
+  settleGeneralPeriod: (
+    generalUserId: string,
+    data: { period?: 'current' | 'last'; note?: string },
+  ) => http.post(`/console/general-settle/${generalUserId}/settle`, data),
+
+  bumpGeneralCreditLimit: (
+    userId: string,
+    data: { amount: number; direction: 'up' | 'down'; remark?: string },
+  ) => http.post(`/console/agents/${userId}/credit-limit/bump`, data),
+
   // ── 回水策略 ──
   rebatePolicy: () => http.get<RebatePolicy, RebatePolicy>('/console/rebate-policy'),
 
@@ -1494,6 +1521,82 @@ export interface Reconcile {
   closingCheck?: number
   drift?: number
   formula?: string
+}
+
+/** 总代账期里的单房明细 */
+export interface GeneralSettleRoomLine {
+  roomId: string
+  roomNo: string
+  name: string
+  status: string
+  bookMode: string
+  agentNickname: string | null
+  agentUsername: string | null
+  settleCycle: string
+  settleLabel: string
+  betFlow: number
+  payout: number
+  housePnl: number
+  agentShareRate: number
+  agentShareAmount: number
+  generalShareAmount: number
+  platformShareAmount: number
+  agentSettleStatus: 'SETTLED' | 'PENDING'
+  agentSettledAt: string | null
+}
+
+export interface GeneralSettleStatement {
+  general: {
+    userId: string
+    uid: string
+    nickname: string
+    username: string
+    bookMode: string
+    creditLimit: number
+    pointsQuota: number
+    shareRate: number
+    flowRate: number
+    settleCycle: string
+    settleLabel: string
+  }
+  period: {
+    key: string
+    periodStart: string
+    periodEnd: string
+    status: string
+    settledAt: string | null
+  }
+  totals: {
+    roomCount: number
+    betFlow: number
+    payout: number
+    housePnl: number
+    agentShareAmount: number
+    generalShareAmount: number
+    platformShareAmount: number
+  }
+  rooms: GeneralSettleRoomLine[]
+  /** 平台应得里还没从代理收上来的部分，总代先垫 */
+  pendingFromAgents: number
+  canSettle: boolean
+  note?: string | null
+}
+
+export interface GeneralSettleHistoryRow {
+  id: string
+  periodStart: string
+  periodEnd: string
+  bookMode: string
+  roomCount: number
+  betFlow: number
+  housePnl: number
+  agentShareAmount: number
+  generalShareAmount: number
+  platformShareAmount: number
+  settlePay: number
+  status: string
+  settledAt: string | null
+  note: string | null
 }
 
 export interface RebatePolicy {

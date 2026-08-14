@@ -174,6 +174,7 @@ model User {
   roomHangsAsPlayer        RoomPlayerHang[]        @relation("RoomHangPlayer")
   roomHangsAsParent        RoomPlayerHang[]        @relation("RoomHangParent")
   riskHandled              RiskEvent[]             @relation("RiskHandledBy")
+  generalSettles           GeneralPeriodSettle[]   @relation("GeneralSettleOwner")
 
   @@index([role, status])
   @@index([role, createdAt]) // 报表按周期统计新增玩家
@@ -441,6 +442,54 @@ model RoomWeekSettle {
   @@index([roomId, status])
   @@index([weekStart])
   @@index([paymentStatus])
+}
+
+/// 总代与平台的账期结算。
+///
+/// 与 RoomWeekSettle 是两个粒度，故意不共用：房间那张是总代跟代理按各房自谈的周期交割，
+/// 这张是平台跟总代按总代自己的周期结，口径统一走注单（流水−派彩），
+/// 因此不依赖名下房间有没有跟代理结完账——收不回来是总代垫。
+model GeneralPeriodSettle {
+  id            String   @id @default(cuid())
+  generalUserId String
+  general       User     @relation("GeneralSettleOwner", fields: [generalUserId], references: [id], onDelete: Restrict)
+  periodStart   DateTime
+  periodEnd     DateTime
+  /// 结算时刻的盘口与成数快照，后续改档不影响已结账期
+  bookMode         String
+  generalShareRate Float
+
+  betFlow  Decimal @default(0) @db.Decimal(18, 2)
+  payout   Decimal @default(0) @db.Decimal(18, 2)
+  housePnl Decimal @default(0) @db.Decimal(18, 2)
+
+  /// 三段拆：代理各自那成 / 总代成数差 / 平台应得
+  agentShareAmount    Decimal @default(0) @db.Decimal(18, 2)
+  generalShareAmount  Decimal @default(0) @db.Decimal(18, 2)
+  platformShareAmount Decimal @default(0) @db.Decimal(18, 2)
+
+  /// 信用盘：按封账快照应收的钱（正=总代付平台）
+  settlePay Decimal @default(0) @db.Decimal(18, 2)
+  /// 封账时的剩余信用与合同额度，供对接时补额度用
+  quotaAtClose  Decimal @default(0) @db.Decimal(18, 2)
+  creditLimit   Decimal @default(0) @db.Decimal(18, 2)
+
+  /// 每房明细快照（JSON 数组）：结完就固定，不随房间改档变化
+  roomsSnapshot String @default("[]")
+  roomCount     Int    @default(0)
+
+  /// OPEN=进行中 | CLOSED=已封账待结 | SETTLED=已结清
+  status      String    @default("OPEN")
+  closedAt    DateTime?
+  settledAt   DateTime?
+  settledById String?
+  note        String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([generalUserId, periodStart])
+  @@index([generalUserId, status])
+  @@index([periodStart])
 }
 
 /// 超管控奖策略（房主/代理不可见参数细节）
