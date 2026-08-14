@@ -71,6 +71,30 @@ export class ConsoleWalletService {
       ownerId,
       balance: asMoney(acc?.balance ?? 0),
     };
+    /* 总代：可用额度、合同额度与自己的费率——建房时代理的上限就是按这两个费率卡的 */
+    if (actor.role === 'GENERAL') {
+      const agent = await this.prisma.agent.findUnique({
+        where: { userId: actor.id },
+        select: {
+          pointsQuota: true,
+          creditLimit: true,
+          bookMode: true,
+          flowRate: true,
+          shareRate: true,
+          settleCycle: true,
+        },
+      });
+      return {
+        ...base,
+        bookMode: agent?.bookMode === 'CREDIT' ? 'CREDIT' : 'CASH',
+        creditLimit: asMoney(agent?.creditLimit ?? 0),
+        pointsQuota: asMoney(agent?.pointsQuota ?? 0),
+        flowRate: Number(agent?.flowRate ?? 0.07),
+        shareRate: Number(agent?.shareRate ?? 0.5),
+        settleCycle: agent?.settleCycle ?? 'WEEKLY_MON',
+      };
+    }
+
     if (!['AGENT', 'PROXY', 'CS'].includes(actor.role)) return base;
 
     // PROXY 上盘额度/飞盘在主代理账上；自己钱包余额仍用 walletOwnerId
@@ -198,10 +222,21 @@ export class ConsoleWalletService {
       throw new BadRequestException('玩家上分请使用 credit-player 并指定 roomId');
     }
 
-    if (await this.agentHasCreditRoom(toUserId)) {
+    if (target.role === 'GENERAL') {
+      /* 信用盘总代的额度由合同额度决定，改合同才是唯一入口，避免两个口径打架 */
+      if ((await this.generalBookMode(target.id)) === 'CREDIT') {
+        throw new BadRequestException(
+          '信用盘总代不能用上分加款；请在账号中心用「调整信用额度」同步改合同与剩余信用',
+        );
+      }
+    } else if (await this.agentHasCreditRoom(toUserId)) {
       throw new BadRequestException(
         '信用盘代理不能用上下分加款；请在房间详情用「调整信用额度」同步增加合同与剩余信用',
       );
+    }
+
+    if (actor.role === 'GENERAL') {
+      await this.assertGeneralQuotaEnough(actor.id, amount);
     }
 
     return this.sellQuotaToStaff(
@@ -209,7 +244,11 @@ export class ConsoleWalletService {
       target.id,
       target.role,
       amount,
-      withOrderRemark(orderNo, remark, '控制台给代理上分'),
+      withOrderRemark(
+        orderNo,
+        remark,
+        target.role === 'GENERAL' ? '控制台给总代上分' : '控制台给代理上分',
+      ),
       orderNo,
     );
   }
@@ -240,11 +279,11 @@ export class ConsoleWalletService {
     if (!target || target.status === 'DISABLED') {
       throw new NotFoundException('目标用户不存在或已停用');
     }
-    if (target.role !== 'AGENT') {
+    if (target.role !== 'AGENT' && target.role !== 'GENERAL') {
       throw new BadRequestException(
         target.role === 'PROXY'
           ? '子账号与主代理共用额度，请从主代理回收'
-          : '只能从代理回收额度（管理员与房主同级，无上下分关系）',
+          : '只能从总代或代理回收额度（管理员与房主同级，无上下分关系）',
       );
     }
 
@@ -253,7 +292,13 @@ export class ConsoleWalletService {
       await this.scope.assertUserInScope(actor, fromUserId);
     }
 
-    if (await this.agentHasCreditRoom(fromUserId)) {
+    if (target.role === 'GENERAL') {
+      if ((await this.generalBookMode(target.id)) === 'CREDIT') {
+        throw new BadRequestException(
+          '信用盘总代不能用下分回收；请用「调整信用额度」下调合同额度',
+        );
+      }
+    } else if (await this.agentHasCreditRoom(fromUserId)) {
       throw new BadRequestException(
         '信用盘代理不能用下分回收；信用只随玩家下分买回 / 收回客服额度回升',
       );
@@ -282,7 +327,11 @@ export class ConsoleWalletService {
     return n > 0;
   }
 
-  /** 管理/房主同级：从平台盘口池给代理上分（记账），加代理余额 + 上盘额度 */
+  /**
+   * 下发额度：加接收方余额 + 上盘额度。
+   * 出资方：管理/总监走平台池；现金盘总代走自己钱包（那是他真金买来的分）；
+   * 信用盘总代手上只是平台给的信用，真钱仍从平台池出，另扣他的额度记这笔欠。
+   */
   private async sellQuotaToStaff(
     actor: ConsoleActor,
     toUserId: string,
@@ -291,11 +340,13 @@ export class ConsoleWalletService {
     remark: string,
     orderNo: string,
   ) {
-    if (toRole !== 'AGENT' && toRole !== 'PROXY') {
-      throw new BadRequestException('只能给代理或子账号上分');
+    if (toRole !== 'AGENT' && toRole !== 'PROXY' && toRole !== 'GENERAL') {
+      throw new BadRequestException('只能给总代、代理或子账号上分');
     }
+    const payerBook = actor.role === 'GENERAL' ? await this.generalBookMode(actor.id) : null;
     /* 超管、房主共用平台池，不扣各自小金库 */
-    const fromPool = actor.role === 'ADMIN' || actor.role === 'BRANCH';
+    const fromPool =
+      actor.role === 'ADMIN' || actor.role === 'BRANCH' || payerBook === 'CREDIT';
     const fromType = (fromPool ? 'PLATFORM' : this.scope.ownerTypeOf(actor.role)) as OwnerType;
     const fromId = fromPool ? PLATFORM_OWNER_ID : actor.id;
     const toType = this.scope.ownerTypeOf(toRole) as OwnerType;
@@ -344,6 +395,22 @@ export class ConsoleWalletService {
         /* 子账号首次买分时 Agent 行还不存在 */
         createIfMissing: true,
       });
+      /*
+       * 总代出资：额度从他手上划走。现金盘的余额已由上面的转账扣过，
+       * 信用盘没动余额，这一笔就是他欠平台的凭据。
+       */
+      if (actor.role === 'GENERAL') {
+        await writeAgentQuotaInTx(tx, {
+          agentUserId: actor.id,
+          bookMode: payerBook === 'CREDIT' ? 'CREDIT' : 'CASH',
+          delta: -amount,
+          bizType: 'TRANSFER_OUT',
+          remark: `${remark}（下发给代理）`,
+          refType: 'console_quota',
+          refId: toUserId,
+          idempotencyKey: `${idemBase}:PAYER_QUOTA`,
+        });
+      }
       await this.adminLog.logInTx(tx, actor.id, 'QUOTA_SELL', toUserId, {
         amount,
         fromType,
@@ -353,6 +420,7 @@ export class ConsoleWalletService {
         remark,
         direction: 'IN',
         pool: fromPool ? 'PLATFORM' : 'SELF',
+        ...(payerBook ? { payerBookMode: payerBook } : {}),
       });
     });
 
@@ -362,7 +430,7 @@ export class ConsoleWalletService {
     return { ok: true, ...(await this.myBalance(actor)) };
   }
 
-  /** 从代理/子账号回收额度，退回平台池（超管/房主操作时）或操作方钱包 */
+  /** 从总代/代理/子账号回收额度，退回平台池（超管/房主操作时）或操作方钱包 */
   private async recallQuotaFromStaff(
     actor: ConsoleActor,
     fromUserId: string,
@@ -371,10 +439,13 @@ export class ConsoleWalletService {
     remark: string,
     orderNo: string,
   ) {
-    if (fromRole !== 'AGENT' && fromRole !== 'PROXY') {
-      throw new BadRequestException('只能从代理或子账号回收');
+    if (fromRole !== 'AGENT' && fromRole !== 'PROXY' && fromRole !== 'GENERAL') {
+      throw new BadRequestException('只能从总代、代理或子账号回收');
     }
-    const toPool = actor.role === 'ADMIN' || actor.role === 'BRANCH';
+    const payerBook = actor.role === 'GENERAL' ? await this.generalBookMode(actor.id) : null;
+    /* 与下发对称：信用盘总代的真钱本来就没经他手，退也退回平台池 */
+    const toPool =
+      actor.role === 'ADMIN' || actor.role === 'BRANCH' || payerBook === 'CREDIT';
     const toType = (toPool ? 'PLATFORM' : this.scope.ownerTypeOf(actor.role)) as OwnerType;
     const toId = toPool ? PLATFORM_OWNER_ID : actor.id;
     const staffType = this.scope.ownerTypeOf(fromRole) as OwnerType;
@@ -434,6 +505,19 @@ export class ConsoleWalletService {
         refId: fromUserId,
         idempotencyKey: `${idemBase}:QUOTA`,
       });
+      /* 总代收回：额度回到他自己名下，与下发那一笔对称 */
+      if (actor.role === 'GENERAL') {
+        await writeAgentQuotaInTx(tx, {
+          agentUserId: actor.id,
+          bookMode: payerBook === 'CREDIT' ? 'CREDIT' : 'CASH',
+          delta: amount,
+          bizType: 'TRANSFER_IN',
+          remark: `${remark}（从代理收回）`,
+          refType: 'console_quota_recall',
+          refId: fromUserId,
+          idempotencyKey: `${idemBase}:PAYER_QUOTA`,
+        });
+      }
       await this.adminLog.logInTx(tx, actor.id, 'QUOTA_RECALL', fromUserId, {
         amount,
         toType,
@@ -757,12 +841,41 @@ export class ConsoleWalletService {
   }
 
   private assertIssueHierarchy(fromRole: string, toRole: string) {
-    /* 额度只给主代理；子账号共用主代理额度；玩家上下分仅代理/子账号 */
+    /*
+     * 额度只给主代理与总代；子账号共用主代理额度；玩家上下分仅代理/子账号。
+     * 挂了总代的房间，代理的分找总代买，平台不再直接对这个代理下发——
+     * 那层限制在 issue 里按房间判断，这里只管角色组合是否成立。
+     */
     const ok =
-      (fromRole === 'ADMIN' && toRole === 'AGENT') ||
-      (fromRole === 'BRANCH' && toRole === 'AGENT') ||
+      (fromRole === 'ADMIN' && (toRole === 'AGENT' || toRole === 'GENERAL')) ||
+      (fromRole === 'BRANCH' && (toRole === 'AGENT' || toRole === 'GENERAL')) ||
+      (fromRole === 'GENERAL' && toRole === 'AGENT') ||
       (fromRole === 'AGENT' && toRole === 'PLAYER') ||
       (fromRole === 'PROXY' && toRole === 'PLAYER');
     if (!ok) throw new ForbiddenException(`不允许 ${fromRole} → ${toRole} 下发`);
+  }
+
+  /** 总代与平台的盘口；非总代返回 null */
+  private async generalBookMode(userId: string): Promise<'CASH' | 'CREDIT' | null> {
+    const agent = await this.prisma.agent.findUnique({
+      where: { userId },
+      select: { bookMode: true, user: { select: { role: true } } },
+    });
+    if (!agent || agent.user.role !== 'GENERAL') return null;
+    return agent.bookMode === 'CREDIT' ? 'CREDIT' : 'CASH';
+  }
+
+  /** 总代可用额度：现金盘是买来的分，信用盘是平台给的剩余信用，都记在 pointsQuota */
+  private async assertGeneralQuotaEnough(generalUserId: string, amount: number) {
+    const agent = await this.prisma.agent.findUnique({
+      where: { userId: generalUserId },
+      select: { pointsQuota: true },
+    });
+    const avail = asMoney(agent?.pointsQuota ?? 0);
+    if (avail + 1e-9 < amount) {
+      throw new BadRequestException(
+        `额度不足：当前可用 ${avail}，本次需要 ${amount}。请先向平台补额度`,
+      );
+    }
   }
 }

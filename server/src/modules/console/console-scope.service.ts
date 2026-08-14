@@ -2,6 +2,7 @@
  * 控制台数据隔离：
  *   ADMIN   全部房间
  *   BRANCH  仅 RoomOwnerGrant 授权可见的房间（创建/授权时勾选）
+ *   GENERAL 仅挂在自己名下的房间（Room.generalAgentId）
  *   AGENT   仅绑定为自己主账号的房间
  *   PROXY   与上级代理同范围；写操作另行收紧
  */
@@ -98,13 +99,13 @@ export class ConsoleScopeService {
   }
 
   /**
-   * 房主可见用户集合：本人 + 授权房间内的代理/子账号/在房玩家。
+   * 房主 / 总代可见用户集合：本人 + 管辖房间内的代理/子账号/在房玩家。
    * 用于风控、操作日志等「按目标人隔离」的查询。
    */
   async scopedUserIds(actor: ConsoleActor): Promise<string[] | null> {
     if (actor.role === 'ADMIN') return null;
-    if (actor.role !== 'BRANCH') {
-      /* 非房主场景暂不走此聚合，调用方应自行处理 */
+    if (actor.role !== 'BRANCH' && actor.role !== 'GENERAL') {
+      /* 代理侧不走此聚合，调用方应自行处理 */
       return [actor.id];
     }
     const roomIds = await this.grantedRoomIds(actor);
@@ -199,6 +200,19 @@ export class ConsoleScopeService {
       throw new ForbiddenException('目标用户不在管辖范围');
     }
 
+    /*
+     * 总代：只认挂在自己名下的房间。
+     * 不能退回 agentPath 树判断——代理是建房时挂到总代下的，房间若改挂他人，
+     * 树还留着旧关系，会让总代继续看到已经不归他的玩家。
+     */
+    if (actor.role === 'GENERAL') {
+      const roomIds = await this.grantedRoomIds(actor);
+      if (!roomIds?.length) throw new ForbiddenException('目标用户不在管辖范围');
+      const ok = await this.targetInRooms(roomIds, target);
+      if (!ok) throw new ForbiddenException('目标用户不在管辖范围');
+      return;
+    }
+
     /* 代理/代分：玩家在管辖房间内即可；客服只能操作系统派给自己的玩家 */
     if (
       (actor.role === 'AGENT' || actor.role === 'PROXY' || actor.role === 'CS') &&
@@ -240,6 +254,34 @@ export class ConsoleScopeService {
     if (!inTree) throw new ForbiddenException('目标用户不在管辖范围');
   }
 
+  /** 目标用户是否落在这批房间里：玩家看在房记录，代理/子账号/客服看房间绑定的主代理 */
+  private async targetInRooms(
+    roomIds: string[],
+    target: { id: string; role: string; parentId: string | null },
+  ): Promise<boolean> {
+    if (target.role === 'PLAYER') {
+      const hit = await this.prisma.roomMember.findFirst({
+        where: { playerId: target.id, status: 'APPROVED', roomId: { in: roomIds } },
+        select: { id: true },
+      });
+      return !!hit;
+    }
+    if (target.role === 'AGENT' || target.role === 'PROXY' || target.role === 'CS') {
+      const agentUserId = target.role === 'AGENT' ? target.id : (target.parentId || target.id);
+      const agent = await this.prisma.agent.findUnique({
+        where: { userId: agentUserId },
+        select: { id: true },
+      });
+      if (!agent) return false;
+      const hit = await this.prisma.room.findFirst({
+        where: { ownerAgentId: agent.id, id: { in: roomIds } },
+        select: { id: true },
+      });
+      return !!hit;
+    }
+    return false;
+  }
+
   /** 客服粘性指派人（与会话派单口径一致） */
   async currentCsAssignee(playerId: string): Promise<string | null> {
     const last = await this.prisma.csMessage.findFirst({
@@ -277,9 +319,10 @@ export class ConsoleScopeService {
       return { role: 'PLAYER', id: { in: ids.length ? ids : ['__none__'] } };
     }
 
-    /* 房主 / 代理 / 代分：仅管辖房间内的在房玩家 */
+    /* 房主 / 总代 / 代理 / 代分：仅管辖房间内的在房玩家 */
     if (
       actor.role === 'BRANCH' ||
+      actor.role === 'GENERAL' ||
       actor.role === 'AGENT' ||
       actor.role === 'PROXY'
     ) {

@@ -382,6 +382,10 @@ export const consoleApi = {
     parentAgentUserId?: string
     flowRate?: number
     shareRate?: number
+    /** 以下三项仅总代：与平台的盘口、合同额度、结算周期 */
+    bookMode?: 'CASH' | 'CREDIT'
+    creditLimit?: number
+    settleCycle?: string
   }) => http.post('/console/agents', data),
 
   setCommissionRate: (userId: string, rate: number) =>
@@ -638,12 +642,15 @@ export interface WalletMe {
   overIssueUsed?: number
   overIssueLimit?: number
   fakeExposure?: number
-  /** 主房账本：CASH=现金盘 | CREDIT=信用盘 */
+  /** 主房账本：CASH=现金盘 | CREDIT=信用盘；总代则是他与平台的盘口 */
   bookMode?: 'CASH' | 'CREDIT' | string
   creditLimit?: number
   agentShareRate?: number
   settleCycle?: string
   primaryRoomId?: string
+  /** 总代自己的费率：建房时代理的流水/占成上限就是这两个值 */
+  flowRate?: number
+  shareRate?: number
 }
 
 export interface ConsoleRoomFly {
@@ -860,6 +867,10 @@ export interface AgentPage {
     rebateRate?: number
     flowRate?: number
     shareRate?: number
+    /** 仅总代：与平台的盘口、合同额度、结算周期 */
+    bookMode?: 'CASH' | 'CREDIT'
+    creditLimit?: number
+    settleCycle?: string
     pointsQuota?: number
     pointsUsed?: number
     flyCover?: number

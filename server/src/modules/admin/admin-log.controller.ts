@@ -13,7 +13,7 @@ import {
 import { ConsoleScopeService } from '../console/console-scope.service';
 
 @Controller('admin/logs')
-@Roles('ADMIN', 'BRANCH', 'AGENT', 'PROXY')
+@Roles('ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY')
 export class AdminLogController {
   constructor(
     private prisma: PrismaService,
@@ -25,7 +25,7 @@ export class AdminLogController {
     return { actions: listActionOptions() };
   }
 
-  /** ADMIN 全量；BRANCH 仅本人操作 + 授权房间相关；AGENT/PROXY 仅本人 */
+  /** ADMIN 全量；BRANCH/GENERAL 本人操作 + 管辖房间相关；AGENT/PROXY 仅本人 */
   @Get()
   async list(
     @CurrentUser() user: { id: string; role: string },
@@ -39,9 +39,10 @@ export class AdminLogController {
     let where: Prisma.AdminLogWhereInput = { operatorId: user.id };
     if (user.role === 'ADMIN') {
       where = {};
-    } else if (user.role === 'BRANCH') {
-      const roomIds = await this.scope.branchRoomIds({ id: user.id, role: 'BRANCH' });
-      const userIds = await this.scope.scopedUserIds({ id: user.id, role: 'BRANCH' });
+    } else if (user.role === 'BRANCH' || user.role === 'GENERAL') {
+      const scopeActor = { id: user.id, role: user.role };
+      const roomIds = (await this.scope.grantedRoomIds(scopeActor)) ?? [];
+      const userIds = await this.scope.scopedUserIds(scopeActor);
       const targets = [
         ...roomIds,
         ...(userIds || []).filter((id) => id !== user.id),

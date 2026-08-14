@@ -464,7 +464,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { validateOpsPassword } from '@gamebox/shared'
 import PageHeader from '@/components/PageHeader.vue'
 import DeskDialog from '@/components/DeskDialog.vue'
-import { consoleApi, type ConsoleRoom } from '@/api/console'
+import { consoleApi, type ConsoleRoom, type WalletMe } from '@/api/console'
 import { useAdminStore } from '@/stores/admin'
 import { roomIconUrl } from '@/utils/roomIcon'
 import {
@@ -479,6 +479,8 @@ const store = useAdminStore()
 const router = useRouter()
 const list = ref<ConsoleRoom[]>([])
 const staffList = ref<StaffOpt[]>([])
+/** 总代登录时的自身档案：费率决定建房表单上限，额度用于提示 */
+const myGeneral = ref<WalletMe | null>(null)
 const loading = ref(false)
 const redirecting = ref(false)
 const showCreate = ref(false)
@@ -570,13 +572,19 @@ function pctNum(n?: number | null) {
   if (!Number.isFinite(v)) return 0
   return Number(((v > 1 ? v : v * 100)).toFixed(1))
 }
+/* 总代自己建房时，上限是他自己的成数与整包；后端也按这两个值卡 */
 const agentShareMax = computed(() => {
-  if (isGeneralUser.value) return 70
+  if (isGeneralUser.value) {
+    return Math.min(70, Math.round(pctNum(myGeneral.value?.shareRate) || 50))
+  }
   const g = pickedGeneral.value
   if (!g) return 50
   return Math.min(70, Math.round(pctNum(g.shareRate) || 50))
 })
 const agentFlowMax = computed(() => {
+  if (isGeneralUser.value) {
+    return Math.min(10, pctNum(myGeneral.value?.flowRate) || 7)
+  }
   const g = pickedGeneral.value
   if (!g) return 5
   return Math.min(10, pctNum(g.flowRate) || 7)
@@ -788,6 +796,15 @@ async function load() {
     loading.value = false
   }
 }
+/** 总代登录时读自己的费率与可用额度，作为建房表单的上限 */
+async function loadMyGeneral() {
+  if (!isGeneralUser.value) return
+  try {
+    myGeneral.value = await consoleApi.walletMe()
+  } catch {
+    myGeneral.value = null
+  }
+}
 async function loadStaff() {
   if (!isAdminOrBranch.value) return
   try {
@@ -880,6 +897,10 @@ async function openCreate() {
     onGeneralPicked()
   } else {
     form.ownerUserIds = []
+    /* 总代：上限跟着自己的费率，开窗前先取一次，免得停在默认值 */
+    await loadMyGeneral()
+    form.agentFlowPercent = Math.min(form.agentFlowPercent, agentFlowMax.value)
+    form.agentSharePercent = Math.min(form.agentSharePercent, agentShareMax.value)
   }
 }
 
@@ -1031,7 +1052,7 @@ async function onDelete(row: ConsoleRoom) {
 
 onMounted(async () => {
   await load()
-  await loadStaff()
+  await Promise.all([loadStaff(), loadMyGeneral()])
 })
 </script>
 

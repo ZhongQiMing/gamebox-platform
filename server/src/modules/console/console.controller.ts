@@ -40,8 +40,12 @@ import { Type } from 'class-transformer';
  * 需要什么就在方法上单独写 @Roles(..., 'CS')，别再放进这个默认集合。
  *
  * 客服实际可达的接口集合被 console.controller.cs-scope.spec.ts 钉死，改动会被测试拦下。
+ *
+ * 总代（GENERAL）在里面：它是范围收窄版的管理端，工作台/房间/报表/日志都要看，
+ * 数据由 ConsoleScopeService 按 Room.generalAgentId 收到自己名下。
+ * 新增**写**接口时务必单独写 @Roles，别让总代顺着兜底拿到不该有的操作。
  */
-const OPS = ['ADMIN', 'BRANCH', 'AGENT', 'PROXY'] as const;
+const OPS = ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'] as const;
 
 /** 回水比例硬上限（20%）：超过这个量级只可能是误配 */
 const REBATE_RATE_MAX = 0.2;
@@ -159,7 +163,7 @@ export class ConsoleController {
   }
 
   @Post('wallet/issue')
-  @Roles('ADMIN', 'BRANCH', 'AGENT')
+  @Roles('ADMIN', 'BRANCH', 'GENERAL', 'AGENT')
   issue(
     @CurrentUser() u: { id: string; role: string },
     @Body() body: WalletIssueDto,
@@ -173,9 +177,9 @@ export class ConsoleController {
     );
   }
 
-  /** 回收代理/子账号额度（下分） */
+  /** 回收总代/代理/子账号额度（下分） */
   @Post('wallet/recall')
-  @Roles('ADMIN', 'BRANCH', 'AGENT')
+  @Roles('ADMIN', 'BRANCH', 'GENERAL', 'AGENT')
   recall(
     @CurrentUser() u: { id: string; role: string },
     @Body() body: WalletRecallDto,
@@ -293,9 +297,9 @@ export class ConsoleController {
     return this.rooms.detail(this.actor(u), id);
   }
 
-  /** PATCH /api/console/rooms/:id/icon — 上传房间图标（管理/房主/代理） */
+  /** PATCH /api/console/rooms/:id/icon — 上传房间图标（管理/总监/总代/代理） */
   @Patch('rooms/:id/icon')
-  @Roles('ADMIN', 'BRANCH', 'AGENT')
+  @Roles('ADMIN', 'BRANCH', 'GENERAL', 'AGENT')
   updateRoomIcon(
     @CurrentUser() u: { id: string; role: string },
     @Param('id') id: string,
@@ -346,7 +350,7 @@ export class ConsoleController {
   }
 
   @Patch('rooms/:id/status')
-  @Roles('ADMIN', 'BRANCH', 'AGENT')
+  @Roles('ADMIN', 'BRANCH', 'GENERAL', 'AGENT')
   setRoomStatus(
     @CurrentUser() u: { id: string; role: string },
     @Param('id') id: string,
@@ -659,6 +663,23 @@ export class ConsoleController {
     return this.players.resetPlayerPassword(this.actor(u), id, body?.password);
   }
 
+  /** 调整总代与平台的合同信用额度：合同与剩余信用同增同减 */
+  @Post('agents/:userId/credit-limit/bump')
+  @Roles('ADMIN', 'BRANCH')
+  bumpGeneralCreditLimit(
+    @CurrentUser() u: { id: string; role: string },
+    @Param('userId') userId: string,
+    @Body() body: { amount?: number; direction?: 'up' | 'down'; remark?: string },
+  ) {
+    return this.players.bumpGeneralCreditLimit(
+      this.actor(u),
+      userId,
+      Number(body?.amount ?? 0),
+      body?.direction === 'down' ? 'down' : 'up',
+      body?.remark,
+    );
+  }
+
   @Patch('agents/:userId/commission-rate')
   @Roles('ADMIN', 'BRANCH', 'AGENT')
   setCommission(
@@ -746,6 +767,10 @@ export class ConsoleController {
       parentAgentUserId?: string;
       flowRate?: number;
       shareRate?: number;
+      /** 以下三项仅总代：与平台的盘口、合同额度、结算周期 */
+      bookMode?: string;
+      creditLimit?: number;
+      settleCycle?: string;
     },
   ) {
     return this.players.createAgent(this.actor(u), body);

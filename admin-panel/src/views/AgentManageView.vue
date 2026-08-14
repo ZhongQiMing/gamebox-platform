@@ -115,6 +115,19 @@
                 <div class="cell-meta">流水 {{ pct(row.flowRate) }}% · 占成 {{ pct(row.shareRate) }}%</div>
               </template>
             </el-table-column>
+            <el-table-column v-if="roleFilter === 'GENERAL'" label="与平台" min-width="150">
+              <template #default="{ row }: { row: any }">
+                <el-tag :type="row.bookMode === 'CREDIT' ? 'warning' : 'success'" size="small" effect="plain">
+                  {{ row.bookMode === 'CREDIT' ? 'B · 信用盘' : 'A · 现金盘' }}
+                </el-tag>
+                <div class="cell-meta">
+                  {{ row.bookMode === 'CREDIT' ? `额度 ${fmt(row.creditLimit)} · ` : '' }}{{ cycleLabel(row.settleCycle) }}
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column v-if="roleFilter === 'GENERAL'" label="可用额度" min-width="110" align="right">
+              <template #default="{ row }: { row: any }">{{ fmt(row.pointsQuota) }}</template>
+            </el-table-column>
             <el-table-column v-if="roleFilter === 'BRANCH'" label="可见房间" min-width="100" align="center">
               <template #default="{ row }: { row: any }">{{ row.roomCount ?? row.rooms?.length ?? 0 }}</template>
             </el-table-column>
@@ -198,6 +211,24 @@
           <el-form-item label="占成">
             <el-input-number v-model="createForm.sharePct" :min="0" :max="70" :step="1" controls-position="right" />
             <span class="unit-hint">% 默认 50，最高 70</span>
+          </el-form-item>
+          <el-form-item label="与平台盘口">
+            <el-radio-group v-model="createForm.bookMode">
+              <el-radio-button label="CASH">A · 现金盘</el-radio-button>
+              <el-radio-button label="CREDIT">B · 信用盘</el-radio-button>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item v-if="createForm.bookMode === 'CREDIT'" label="信用额度" required>
+            <el-input-number v-model="createForm.creditLimit" :min="1" :step="10000" :precision="0" controls-position="right" />
+            <span class="unit-hint">先给额度、事后结账；结算按此值校准</span>
+          </el-form-item>
+          <el-form-item label="结算周期">
+            <el-select v-model="createForm.settleCycle" style="width:180px">
+              <el-option label="每周一" value="WEEKLY_MON" />
+              <el-option label="每月 1 号" value="MONTHLY_1" />
+              <el-option label="每月 15 号与月末" value="MONTHLY_15_30" />
+            </el-select>
+            <span class="unit-hint">总代跟平台的周期，名下房间各自不受影响</span>
           </el-form-item>
         </template>
       </el-form>
@@ -283,6 +314,9 @@ const createForm = reactive({
   nickname: '',
   flowPct: 7,
   sharePct: 50,
+  bookMode: 'CASH' as 'CASH' | 'CREDIT',
+  creditLimit: 100000,
+  settleCycle: 'WEEKLY_MON',
 })
 const showCreds = ref(false)
 const createdCreds = ref<{ nickname: string; username: string; password: string } | null>(null)
@@ -295,6 +329,11 @@ function pct(n?: number | null) {
 }
 function fmt(n?: number) {
   return Number(n || 0).toLocaleString('zh-CN', { maximumFractionDigits: 2 })
+}
+function cycleLabel(c?: string) {
+  if (c === 'MONTHLY_1') return '每月 1 号结'
+  if (c === 'MONTHLY_15_30') return '每月 15 号与月末结'
+  return '每周一结'
 }
 function fmtTime(v?: string | null) {
   if (!v) return '—'
@@ -456,6 +495,10 @@ async function doCreateBranch() {
       ElMessage.warning('总代占成须在 0%～70%')
       return
     }
+    if (createForm.bookMode === 'CREDIT' && !(createForm.creditLimit > 0)) {
+      ElMessage.warning('信用盘总代须设置合同额度')
+      return
+    }
   }
   busy.value = true
   try {
@@ -467,7 +510,15 @@ async function doCreateBranch() {
       password,
       nickname: createForm.nickname.trim() || undefined,
       ...(createKind.value === 'GENERAL'
-        ? { flowRate: createForm.flowPct / 100, shareRate: createForm.sharePct / 100 }
+        ? {
+            flowRate: createForm.flowPct / 100,
+            shareRate: createForm.sharePct / 100,
+            bookMode: createForm.bookMode,
+            settleCycle: createForm.settleCycle,
+            ...(createForm.bookMode === 'CREDIT'
+              ? { creditLimit: createForm.creditLimit }
+              : {}),
+          }
         : {}),
     }) as { nickname?: string; username?: string; password?: string }
     createVisible.value = false

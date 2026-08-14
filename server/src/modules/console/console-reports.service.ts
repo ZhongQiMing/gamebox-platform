@@ -1182,7 +1182,8 @@ export class ConsoleReportsService {
     const [from, to] = shanghaiRangeBounds('today');
     const [weekFrom, weekTo] = shanghaiRangeBounds('thisweek');
     const [lastWeekFrom, lastWeekTo] = shanghaiRangeBounds('lastweek');
-    const isAgentSide = actor.role === 'AGENT' || actor.role === 'PROXY';
+    /* 经营方视角：工作台多给一块本周汇总，平台侧看当日即可 */
+    const isAgentSide = actor.role === 'AGENT' || actor.role === 'PROXY' || actor.role === 'GENERAL';
 
     const [summary, weekSummary, reconcile] = await Promise.all([
       this.summary(actor),

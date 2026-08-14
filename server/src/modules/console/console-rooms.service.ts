@@ -464,6 +464,33 @@ export class ConsoleRoomsService {
         });
         // B：信用额度写入上盘额度库存；A：从 0 起，后续买入额度
         if (bookMode === 'CREDIT' && creditLimit > 0) {
+          /*
+           * 挂了总代的房，这笔期初额度是总代给的分，要从他手上划走；
+           * 没挂总代才由平台直接出。锁在事务里读，避免并发建房把额度用超。
+           */
+          if (generalAgentRow) {
+            await tx.$queryRaw`SELECT id FROM "Agent" WHERE "id" = ${generalAgentRow.id} FOR UPDATE`;
+            const gq = await tx.agent.findUnique({
+              where: { id: generalAgentRow.id },
+              select: { pointsQuota: true },
+            });
+            const avail = asMoney(gq?.pointsQuota ?? 0);
+            if (avail + 1e-9 < creditLimit) {
+              throw new BadRequestException(
+                `总代额度不足：当前可用 ${avail}，本房期初需要 ${creditLimit}`,
+              );
+            }
+            await writeAgentQuotaInTx(tx, {
+              agentUserId: generalAgentRow.userId,
+              bookMode: 'CREDIT',
+              delta: -creditLimit,
+              bizType: 'TRANSFER_OUT',
+              remark: `开房拨给代理期初额度 ${creditLimit}`,
+              refType: 'agent_open',
+              refId: agentUser.id,
+              idempotencyKey: `agent_open_general:${agentUser.id}`,
+            });
+          }
           await writeAgentQuotaInTx(tx, {
             agentUserId: agentUser.id,
             bookMode: 'CREDIT',
@@ -672,7 +699,7 @@ export class ConsoleRoomsService {
 
   /** 上传/更换房间图标（管理/房主/本房代理）；禁止外链 */
   async updateIcon(actor: ConsoleActor, roomId: string, dataUrl: string) {
-    if (!['ADMIN', 'BRANCH', 'AGENT'].includes(actor.role)) {
+    if (!['ADMIN', 'BRANCH', 'GENERAL', 'AGENT'].includes(actor.role)) {
       throw new ForbiddenException('无权修改房间图标');
     }
     await this.scope.assertRoomAccess(actor, roomId);
@@ -686,8 +713,8 @@ export class ConsoleRoomsService {
     if (!['OPEN', 'MAINTENANCE', 'FROZEN', 'CLOSED'].includes(status)) {
       throw new BadRequestException('非法状态');
     }
-    if (actor.role === 'AGENT' && status === 'CLOSED') {
-      throw new ForbiddenException('代理不能关闭房间');
+    if ((actor.role === 'AGENT' || actor.role === 'GENERAL') && status === 'CLOSED') {
+      throw new ForbiddenException('关闭房间需要管理或总监操作');
     }
     await this.scope.assertRoomAccess(actor, roomId);
     const room = await this.prisma.room.update({ where: { id: roomId }, data: { status } });

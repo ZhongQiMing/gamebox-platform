@@ -1,7 +1,7 @@
 import {
   BadRequestException, ForbiddenException, Injectable, NotFoundException,
 } from '@nestjs/common';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { asMoney, validateOpsPassword, validatePassword } from '@gamebox/shared';
 import * as bcrypt from 'bcrypt';
 import { PASSWORD_SALT_ROUNDS } from '../../common/security.constants';
@@ -12,6 +12,8 @@ import { HangService } from '../agents/hang.service';
 import { ConsoleScopeService, type ConsoleActor } from './console-scope.service';
 import { rethrowUserUniqueConflict, throwUsernameTaken } from '../../common/utils/user-unique';
 import { pickAvatarUniqueInTx } from '../users/avatar-assign';
+import { writeAgentQuotaInTx } from './player-fund.helper';
+import { normalizeSettleCycle } from './room-settle.service';
 
 const csDutyKey = (agentUserId: string) => `gamebox:cs-duty:${agentUserId}`;
 
@@ -632,6 +634,9 @@ export class ConsolePlayersService {
           pointsQuota: true,
           pointsUsed: true,
           flyCover: true,
+          bookMode: true,
+          creditLimit: true,
+          settleCycle: true,
         },
       }),
       parentIds.length
@@ -804,6 +809,10 @@ export class ConsolePlayersService {
           rebateRate: quotaAg ? asMoney(quotaAg.rebateRate) : 0.018,
           flowRate: quotaAg ? Number(quotaAg.flowRate ?? 0.05) : 0.05,
           shareRate: quotaAg ? Number(quotaAg.shareRate ?? 0.5) : 0.5,
+          /* 盘口与合同额度只有总代自己这一层有意义，代理侧不返回免得误读 */
+          bookMode: r.role === 'GENERAL' ? (ag?.bookMode ?? 'CASH') : undefined,
+          creditLimit: r.role === 'GENERAL' ? asMoney(ag?.creditLimit ?? 0) : undefined,
+          settleCycle: r.role === 'GENERAL' ? (ag?.settleCycle ?? 'WEEKLY_MON') : undefined,
           pointsQuota: r.role === 'BRANCH' ? 0 : quotaAg ? asMoney(quotaAg.pointsQuota) : 0,
           pointsUsed: r.role === 'BRANCH' ? 0 : quotaAg ? asMoney(quotaAg.pointsUsed) : 0,
           flyCover: quotaAg ? asMoney(quotaAg.flyCover) : 0,
@@ -1841,6 +1850,12 @@ export class ConsolePlayersService {
       parentAgentUserId?: string;
       flowRate?: number;
       shareRate?: number;
+      /** 总代与平台的结算方式 CASH | CREDIT */
+      bookMode?: string;
+      /** 总代信用盘合同额度 */
+      creditLimit?: number;
+      /** 总代与平台的结算周期 */
+      settleCycle?: string;
     },
   ) {
     const role = body.role ?? 'PROXY';
@@ -1875,6 +1890,9 @@ export class ConsolePlayersService {
     const generalDef = Number(policy?.generalDefaultRate ?? 0.07);
     let flowRate = generalDef;
     let shareRate = 0.5;
+    let bookMode = 'CASH';
+    let creditLimit = 0;
+    let settleCycle = 'WEEKLY_MON';
     if (role === 'GENERAL') {
       flowRate = Number(body.flowRate);
       if (!Number.isFinite(flowRate)) flowRate = generalDef;
@@ -1887,6 +1905,14 @@ export class ConsolePlayersService {
       if (shareRate > 1) shareRate = shareRate / 100;
       if (shareRate < 0 || shareRate > 0.7 + 1e-9) {
         throw new BadRequestException('总代占成须在 0%～70%');
+      }
+      bookMode = body.bookMode === 'CREDIT' ? 'CREDIT' : 'CASH';
+      settleCycle = normalizeSettleCycle(body.settleCycle);
+      if (bookMode === 'CREDIT') {
+        creditLimit = Math.max(0, Math.floor(Number(body.creditLimit ?? 0) || 0));
+        if (creditLimit <= 0) {
+          throw new BadRequestException('信用盘总代须设置合同额度（大于 0）');
+        }
       }
     }
 
@@ -1942,9 +1968,31 @@ export class ConsolePlayersService {
         await tx.agent.create({
           data: {
             userId: created.id,
-            ...(role === 'GENERAL' ? { flowRate, shareRate, rebateRate: 0.018 } : {}),
+            ...(role === 'GENERAL'
+              ? {
+                  flowRate,
+                  shareRate,
+                  rebateRate: 0.018,
+                  bookMode,
+                  creditLimit,
+                  settleCycle,
+                }
+              : {}),
           },
         });
+        /* 信用盘总代：合同额度即刻计入可用盘分，结算时再校准回这个值 */
+        if (role === 'GENERAL' && bookMode === 'CREDIT' && creditLimit > 0) {
+          await writeAgentQuotaInTx(tx, {
+            agentUserId: created.id,
+            bookMode: 'CREDIT',
+            delta: creditLimit,
+            bizType: 'OPEN',
+            remark: `建号期初信用额度 ${creditLimit}`,
+            refType: 'general_open',
+            refId: created.id,
+            idempotencyKey: `general_open:${created.id}`,
+          });
+        }
         await tx.pointsAccount.create({
           data: {
             ownerType: role === 'BRANCH' ? 'BRANCH' : role === 'PROXY' ? 'PROXY' : 'AGENT',
@@ -1959,6 +2007,7 @@ export class ConsolePlayersService {
 
     await this.adminLog.log(actor.id, 'AGENT_CREATE', user.id, {
       role, username, parentId, flowRate, shareRate,
+      ...(role === 'GENERAL' ? { bookMode, creditLimit, settleCycle } : {}),
     });
     return {
       id: user.id,
@@ -1969,7 +2018,98 @@ export class ConsolePlayersService {
       parentId,
       flowRate: role === 'GENERAL' ? flowRate : undefined,
       shareRate: role === 'GENERAL' ? shareRate : undefined,
+      bookMode: role === 'GENERAL' ? bookMode : undefined,
+      creditLimit: role === 'GENERAL' ? creditLimit : undefined,
+      settleCycle: role === 'GENERAL' ? settleCycle : undefined,
       password: body.password,
+    };
+  }
+
+  /**
+   * 调整总代与平台的合同信用额度：合同与剩余信用同增同减。
+   * 结算把额度校准回合同值，所以两者必须一起动，否则下期结算会凭空多出或吃掉一笔。
+   */
+  async bumpGeneralCreditLimit(
+    actor: ConsoleActor,
+    generalUserId: string,
+    amountRaw: number,
+    direction: 'up' | 'down',
+    remark?: string,
+  ) {
+    if (actor.role !== 'ADMIN' && actor.role !== 'BRANCH') {
+      throw new ForbiddenException('仅管理或总监可调整总代信用额度');
+    }
+    const amount = Math.floor(Number(amountRaw) || 0);
+    if (!(amount > 0)) throw new BadRequestException('金额须大于 0');
+
+    const target = await this.prisma.user.findUnique({
+      where: { id: generalUserId },
+      select: { id: true, role: true, nickname: true, agent: { select: { bookMode: true } } },
+    });
+    if (!target || target.role !== 'GENERAL') {
+      throw new BadRequestException('总代账号无效');
+    }
+    if (target.agent?.bookMode !== 'CREDIT') {
+      throw new BadRequestException('现金盘总代请用「上分 / 下分」增减额度');
+    }
+
+    const delta = direction === 'down' ? -amount : amount;
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Agent" WHERE "userId" = ${generalUserId} FOR UPDATE`;
+      const locked = await tx.agent.findUnique({
+        where: { userId: generalUserId },
+        select: { creditLimit: true, pointsQuota: true },
+      });
+      if (!locked) throw new BadRequestException('总代账户不存在');
+
+      const before = asMoney(locked.creditLimit);
+      const quotaBefore = asMoney(locked.pointsQuota);
+      const after = Math.round((before + delta) * 100) / 100;
+      const quotaAfter = Math.round((quotaBefore + delta) * 100) / 100;
+
+      if (direction === 'down') {
+        if (quotaBefore + 1e-9 < amount) {
+          throw new BadRequestException(
+            `剩余信用不足，最多可减 ${Math.max(0, quotaBefore)}（已发给代理的不能从这里扣）`,
+          );
+        }
+        if (after <= 0) throw new BadRequestException('合同额度须大于 0');
+      }
+
+      await tx.agent.update({
+        where: { userId: generalUserId },
+        data: { creditLimit: after },
+      });
+      /* 无前端订单号，随机键只为占住流水唯一约束 */
+      await writeAgentQuotaInTx(tx, {
+        agentUserId: generalUserId,
+        bookMode: 'CREDIT',
+        quotaTo: quotaAfter,
+        bizType: 'ADJUST',
+        remark: `总代合同额度 ${before}→${after}${remark?.trim() ? `｜${remark.trim()}` : ''}`,
+        refType: 'general_credit_limit',
+        refId: generalUserId,
+        idempotencyKey: `general_credit_bump:${generalUserId}:${randomUUID()}`,
+      });
+      return { before, after, quotaBefore, quotaAfter };
+    });
+
+    await this.adminLog.log(actor.id, 'GENERAL_CREDIT_LIMIT_BUMP', generalUserId, {
+      ...result,
+      amount,
+      direction,
+      remark: remark?.trim() || null,
+    });
+
+    const sign = direction === 'down' ? '-' : '+';
+    return {
+      ok: true,
+      creditLimitBefore: result.before,
+      creditLimit: result.after,
+      pointsQuotaBefore: result.quotaBefore,
+      pointsQuota: result.quotaAfter,
+      message: `合同与剩余信用各 ${sign}${amount}：合同 ${result.before}→${result.after}，剩余 ${result.quotaBefore}→${result.quotaAfter}`,
     };
   }
 
