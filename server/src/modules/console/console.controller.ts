@@ -548,7 +548,7 @@ export class ConsoleController {
   }
 
   @Get('agents')
-  @Roles('ADMIN', 'BRANCH', 'AGENT', 'PROXY')
+  @Roles('ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY')
   listAgents(
     @CurrentUser() u: { id: string; role: string },
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page = 1,
@@ -567,7 +567,7 @@ export class ConsoleController {
   }
 
   @Get('agents/:userId')
-  @Roles('ADMIN', 'BRANCH', 'AGENT', 'PROXY')
+  @Roles('ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY')
   agentDetail(
     @CurrentUser() u: { id: string; role: string },
     @Param('userId') userId: string,
@@ -799,7 +799,7 @@ export class ConsoleController {
   }
 
   @Post('agents')
-  @Roles('ADMIN', 'BRANCH')
+  @Roles('ADMIN', 'BRANCH', 'GENERAL')
   createAgent(
     @CurrentUser() u: { id: string; role: string },
     @Body() body: {

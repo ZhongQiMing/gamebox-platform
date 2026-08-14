@@ -14,6 +14,10 @@
             type="primary"
             @click="openCreateGeneral"
           >添加总代</el-button>
+          <template v-if="isGeneralUser">
+            <el-button :loading="loading" @click="load">刷新</el-button>
+            <el-button type="primary" @click="openCreateProxy">添加子账号</el-button>
+          </template>
         </template>
       </PageHeader>
 
@@ -47,7 +51,8 @@
           <el-radio-group v-model="roleFilter" size="small" @change="onTabChange">
             <el-radio-button v-if="isAdmin" label="BRANCH">总监</el-radio-button>
             <el-radio-button v-if="isAdminOrBranch" label="GENERAL">总代</el-radio-button>
-            <el-radio-button label="AGENT">代理房间</el-radio-button>
+            <el-radio-button v-if="isGeneralUser" label="GENERAL">我的子账号</el-radio-button>
+            <el-radio-button label="AGENT">{{ isGeneralUser ? '名下代理' : '代理房间' }}</el-radio-button>
           </el-radio-group>
           <el-input
             v-model="keyword"
@@ -186,7 +191,7 @@
       </template>
     </div>
 
-    <DeskDialog v-model="createVisible" :title="createKind === 'GENERAL' ? '添加总代' : '添加总监'" width="480px">
+    <DeskDialog v-model="createVisible" :title="createDialogTitle" width="480px">
       <el-form label-width="100px" class="desk-form">
         <el-form-item label="登录账号" required>
           <div class="row-inline">
@@ -274,7 +279,7 @@ import { useAdminStore } from '@/stores/admin'
 
 type Row = AgentPage['list'][number]
 type TabRole = 'AGENT' | 'BRANCH' | 'GENERAL'
-type CreateKind = 'BRANCH' | 'GENERAL'
+type CreateKind = 'BRANCH' | 'GENERAL' | 'PROXY'
 
 const store = useAdminStore()
 const router = useRouter()
@@ -284,15 +289,17 @@ const isAdminOrBranch = computed(() => role.value === 'ADMIN' || role.value === 
 const canCreateGeneral = computed(() => isAdminOrBranch.value)
 const isAgentUser = computed(() => role.value === 'AGENT')
 const isProxyUser = computed(() => role.value === 'PROXY')
+const isGeneralUser = computed(() => role.value === 'GENERAL')
 
 const title = computed(() => {
   if (isAgentUser.value || isProxyUser.value) return '下级账号'
+  if (isGeneralUser.value) return '我的账号'
   return '账号中心'
 })
 const emptyText = computed(() => {
   if (roleFilter.value === 'BRANCH') return '暂无总监'
-  if (roleFilter.value === 'GENERAL') return '暂无总代'
-  return '暂无代理房间'
+  if (roleFilter.value === 'GENERAL') return isGeneralUser.value ? '暂无子账号' : '暂无总代'
+  return isGeneralUser.value ? '名下暂无房间代理' : '暂无代理房间'
 })
 
 const list = ref<Row[]>([])
@@ -320,6 +327,11 @@ const createForm = reactive({
 })
 const showCreds = ref(false)
 const createdCreds = ref<{ nickname: string; username: string; password: string } | null>(null)
+const createDialogTitle = computed(() => {
+  if (createKind.value === 'GENERAL') return '添加总代'
+  if (createKind.value === 'PROXY') return '添加子账号'
+  return '添加总监'
+})
 
 function pct(n?: number | null) {
   const v = Number(n)
@@ -433,7 +445,7 @@ async function loadCounts() {
 }
 
 async function load() {
-  if (!isAdminOrBranch.value) return
+  if (!isAdminOrBranch.value && !isGeneralUser.value) return
   if (!isAdmin.value && roleFilter.value === 'BRANCH') roleFilter.value = 'GENERAL'
   loading.value = true
   try {
@@ -442,7 +454,8 @@ async function load() {
       pageSize: 20,
       role: roleFilter.value,
       q: keyword.value.trim() || undefined,
-      boundOnly: roleFilter.value === 'AGENT',
+      /* 总代看名下代理时不能只筛「已绑房」，那个条件是给平台侧用的 */
+      boundOnly: !isGeneralUser.value && roleFilter.value === 'AGENT',
     })
     list.value = res.list
     total.value = res.total
@@ -471,6 +484,14 @@ function openCreateGeneral() {
   createForm.nickname = ''
   createForm.flowPct = 7
   createForm.sharePct = 50
+  regenUsername()
+  regenPassword()
+  createVisible.value = true
+}
+/** 总代给自己开助手：只填账号密码，权限跟着总代走 */
+function openCreateProxy() {
+  createKind.value = 'PROXY'
+  createForm.nickname = ''
   regenUsername()
   regenPassword()
   createVisible.value = true
@@ -528,7 +549,8 @@ async function doCreateBranch() {
       password: res.password || password,
     }
     showCreds.value = true
-    roleFilter.value = createKind.value
+    /* 总代开的子账号列在「我的子账号」那个 Tab 下 */
+    roleFilter.value = createKind.value === 'PROXY' ? 'GENERAL' : createKind.value
     await load()
   } catch (e: unknown) {
     ElMessage.error(

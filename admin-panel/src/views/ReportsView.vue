@@ -305,7 +305,7 @@
                 </template>
               </el-table-column>
               <el-table-column
-                label="平台占成"
+                :label="shareLabel"
                 min-width="90"
                 align="center"
                 header-align="center"
@@ -853,9 +853,19 @@ const agentCashKpis = computed(() => [
   },
 ])
 
-/** 管理/房主：核心指标（净盈亏已扣占成与佣金） */
+/** 总代看自己的成数差，管理/总监看平台那份 */
+const shareLabel = computed(() =>
+  summary.value?.shareBasis === 'GENERAL_DIFF' ? '我的成数差' : '平台占成',
+)
+
+/** 管理/房主/总代：核心指标（净盈亏已扣占成与佣金） */
 const adminCoreKpis = computed(() => [
   { label: '净盈亏', value: fmt(netPnl.value), color: pnlColor(netPnl.value) },
+  {
+    label: shareLabel.value,
+    value: fmt(summary.value?.platformShareAmount),
+    color: pnlColor(summary.value?.platformShareAmount),
+  },
   { label: '庄家盈亏', value: fmt(summary.value?.housePnl), color: pnlColor(summary.value?.housePnl) },
   { label: '玩家盈亏', value: fmt(summary.value?.playerPnl), color: pnlColor(summary.value?.playerPnl) },
   { label: '流水', value: fmt(summary.value?.betFlow), color: 'var(--desk-accent, #38bdf8)' },

@@ -35,23 +35,30 @@ export class ConsoleScopeService {
   }
 
   /**
-   * 业务归属根用户：PROXY/CS → 上级 AGENT；其余为自己。
+   * 业务归属根用户：PROXY/CS → 上级；其余为自己。
+   * 子账号可以挂在代理下（管这一间房），也可以挂在总代下（管名下所有房）。
    */
   async scopeRootUserId(actor: ConsoleActor): Promise<string> {
-    if (actor.role !== 'PROXY' && actor.role !== 'CS') return actor.id;
+    return (await this.scopeRoot(actor)).id;
+  }
+
+  private async scopeRoot(actor: ConsoleActor): Promise<{ id: string; role: string }> {
+    if (actor.role !== 'PROXY' && actor.role !== 'CS') {
+      return { id: actor.id, role: actor.role };
+    }
     const me = await this.prisma.user.findUnique({
       where: { id: actor.id },
       select: { parentId: true },
     });
-    if (!me?.parentId) throw new ForbiddenException('未绑定上级代理');
+    if (!me?.parentId) throw new ForbiddenException('未绑定上级');
     const parent = await this.prisma.user.findUnique({
       where: { id: me.parentId },
       select: { id: true, role: true },
     });
-    if (!parent || parent.role !== 'AGENT') {
-      throw new ForbiddenException('须挂在代理账号下');
+    if (!parent || (parent.role !== 'AGENT' && parent.role !== 'GENERAL')) {
+      throw new ForbiddenException('须挂在代理或总代账号下');
     }
-    return parent.id;
+    return { id: parent.id, role: parent.role };
   }
 
   async grantedRoomIds(actor: ConsoleActor): Promise<string[] | null> {
@@ -64,27 +71,23 @@ export class ConsoleScopeService {
       });
       return grants.map((g) => g.roomId);
     }
-    if (actor.role === 'GENERAL') {
+    if (
+      actor.role === 'GENERAL'
+      || actor.role === 'AGENT'
+      || actor.role === 'PROXY'
+      || actor.role === 'CS'
+    ) {
+      const root = await this.scopeRoot(actor);
       const agent = await this.prisma.agent.findUnique({
-        where: { userId: actor.id },
+        where: { userId: root.id },
         select: { id: true },
       });
       if (!agent) return [];
+      /* 总代按名下房间，代理按绑定房间；子账号跟着自己挂的那一层 */
       const rooms = await this.prisma.room.findMany({
-        where: { generalAgentId: agent.id },
-        select: { id: true },
-      });
-      return rooms.map((r) => r.id);
-    }
-    if (actor.role === 'AGENT' || actor.role === 'PROXY' || actor.role === 'CS') {
-      const rootUserId = await this.scopeRootUserId(actor);
-      const agent = await this.prisma.agent.findUnique({
-        where: { userId: rootUserId },
-        select: { id: true },
-      });
-      if (!agent) return [];
-      const rooms = await this.prisma.room.findMany({
-        where: { ownerAgentId: agent.id },
+        where: root.role === 'GENERAL'
+          ? { generalAgentId: agent.id }
+          : { ownerAgentId: agent.id },
         select: { id: true },
       });
       return rooms.map((r) => r.id);
@@ -206,6 +209,8 @@ export class ConsoleScopeService {
      * 树还留着旧关系，会让总代继续看到已经不归他的玩家。
      */
     if (actor.role === 'GENERAL') {
+      /* 自己开的子账号/客服 */
+      if (target.parentId === actor.id) return;
       const roomIds = await this.grantedRoomIds(actor);
       if (!roomIds?.length) throw new ForbiddenException('目标用户不在管辖范围');
       const ok = await this.targetInRooms(roomIds, target);

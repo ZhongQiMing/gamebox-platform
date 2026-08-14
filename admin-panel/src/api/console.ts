@@ -1337,7 +1337,9 @@ export interface ReportSummary {
   roomPoolTotal?: number
   commissionAmount?: number
   commissionCount?: number
+  /** 按 shareBasis 变含义：平台那份 / 总代成数差 / 整房庄家盈亏 */
   platformShareAmount?: number
+  shareBasis?: 'PLATFORM' | 'GENERAL_DIFF' | 'HOUSE'
   netChange?: number
   netPnl?: number
   rangeKey?: string

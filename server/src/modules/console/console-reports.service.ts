@@ -10,6 +10,7 @@ import {
 } from '../../common/shanghai-range';
 import { csvRow } from '../../common/utils/csv';
 import { ConsoleScopeService, type ConsoleActor } from './console-scope.service';
+import { splitHouseShare } from './share-split.helper';
 
 function formatShanghaiDt(d: Date): string {
   const sh = new Date(d.getTime() + SHANGHAI_TZ_OFFSET_MS);
@@ -510,10 +511,16 @@ export class ConsoleReportsService {
     const playerPnl = payout - betFlow;
     const commissionAmount = asMoney(commissionAgg._sum.amount ?? 0);
 
-    // 管理/房主：按房间占成拆平台占成；代理端仍按庄家盈亏口径
+    /*
+     * 占成拆分：
+     * - 管理/总监看平台那份（100% − 总代成数）
+     * - 总代看自己的成数差（总代成数 − 代理成数），不是整房盈亏，否则数字比实收大一截
+     * - 代理端仍按庄家盈亏口径
+     */
     let platformShareAmount = asMoney(housePnl);
     let netPnl = asMoney(housePnl - commissionAmount);
-    if (actor.role === 'ADMIN' || actor.role === 'BRANCH') {
+    const isPlatformSide = actor.role === 'ADMIN' || actor.role === 'BRANCH';
+    if (isPlatformSide || actor.role === 'GENERAL') {
       const shareRoomIds =
         roomScopedIds ??
         (grantedRoomIds === null
@@ -532,17 +539,22 @@ export class ConsoleReportsService {
           }),
           this.roomBetAgg(shareRoomIds, from, to, ['WON', 'LOST']),
         ]);
-        let platformShare = 0;
+        let share = 0;
         for (const room of shareRooms) {
           const agg = settledShare.byRoom.get(room.id);
           const roomHouse = asMoney((agg?.flow ?? 0) - (agg?.payout ?? 0));
-          const agentRate = Math.min(1, Math.max(0, Number(room.agentShareRate) || 0));
-          const g = room.generalAgent
-            ? Math.min(1, Math.max(agentRate, Number(room.generalAgent.shareRate) || 0))
-            : agentRate;
-          platformShare = asMoney(platformShare + asMoney(roomHouse * (1 - g)));
+          const split = splitHouseShare(
+            roomHouse,
+            Number(room.agentShareRate) || 0,
+            room.generalAgent ? Number(room.generalAgent.shareRate) || 0 : null,
+          );
+          share = asMoney(
+            share + (isPlatformSide ? split.platformShareAmount : split.generalShareAmount),
+          );
         }
-        platformShareAmount = asMoney(platformShare);
+        platformShareAmount = asMoney(share);
+      } else if (!isPlatformSide) {
+        platformShareAmount = 0;
       }
       netPnl = asMoney(platformShareAmount - commissionAmount);
     }
@@ -568,10 +580,17 @@ export class ConsoleReportsService {
       playerCount: playerIds?.length ?? null,
       commissionAmount,
       commissionCount: commissionAgg._count,
+      /** 管理/总监=平台那份；总代=自己的成数差；代理=整房庄家盈亏 */
       platformShareAmount,
+      shareBasis:
+        actor.role === 'ADMIN' || actor.role === 'BRANCH'
+          ? ('PLATFORM' as const)
+          : actor.role === 'GENERAL'
+            ? ('GENERAL_DIFF' as const)
+            : ('HOUSE' as const),
       /** 资金净变动 ≈ 上分 - 下分 + 玩家盈亏 */
       netChange: asMoney(upAmount - downAmount + playerPnl),
-      /** 管理/房主：平台占成 − 代理佣金；代理：庄家盈亏 − 代理佣金 */
+      /** 各自口径的占成 − 代理佣金 */
       netPnl,
       byGame,
     };

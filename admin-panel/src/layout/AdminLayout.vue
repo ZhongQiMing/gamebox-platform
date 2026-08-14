@@ -313,7 +313,7 @@ const allMenus: MenuItem[] = [
   { name: 'cs-staff', title: '客服账号', icon: markRaw(Headset), roles: ['AGENT'] },
   { name: 'games', title: '游戏管理', icon: markRaw(Trophy), roles: ['ADMIN'] },
   { name: 'control', title: '控奖中心', icon: markRaw(Aim), roles: ['ADMIN'] },
-  { name: 'agents', title: '账号中心', icon: markRaw(Avatar), roles: ['ADMIN', 'BRANCH'] },
+  { name: 'agents', title: '账号中心', icon: markRaw(Avatar), roles: ['ADMIN', 'BRANCH', 'GENERAL'] },
   { name: 'general-settle', title: '总代结算', icon: markRaw(Tickets), roles: ['ADMIN', 'BRANCH', 'GENERAL'] },
   { name: 'rebate', title: '回水规则', icon: markRaw(Coin), roles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'] },
   { name: 'risk', title: '风控告警', icon: markRaw(Warning), roles: ['ADMIN', 'BRANCH'] },

@@ -542,6 +542,14 @@ export class ConsolePlayersService {
     } else if (actor.role === 'PROXY') {
       const rootId = await this.scope.scopeRootUserId(actor);
       where = { role: 'PROXY', parentId: rootId };
+    } else if (actor.role === 'GENERAL') {
+      /* 总代：自己的子账号，以及名下房间绑定的代理 */
+      const roomIds = (await this.scope.grantedRoomIds(actor)) ?? [];
+      where = opts.role === 'AGENT'
+        ? roomIds.length
+          ? { role: 'AGENT', agent: { is: { rooms: { some: { id: { in: roomIds } } } } } }
+          : { role: 'AGENT', id: { in: ['__none__'] } }
+        : { role: 'PROXY', parentId: actor.id };
     } else {
       /* ADMIN / BRANCH：默认已绑房代理；可筛子账号 / 房主 */
       const role = ['BRANCH', 'AGENT', 'PROXY', 'GENERAL'].includes(opts.role || '')
@@ -1865,8 +1873,12 @@ export class ConsolePlayersService {
     if (role === 'AGENT') {
       throw new BadRequestException('代理账号请在「房间中心」创建房间时生成，不可在此单独添加');
     }
-    if (actor.role === 'AGENT' || actor.role === 'PROXY' || actor.role === 'GENERAL') {
-      throw new BadRequestException('总代/代理/子账号不能在此开号');
+    if (actor.role === 'AGENT' || actor.role === 'PROXY') {
+      throw new BadRequestException('代理/子账号不能在此开号');
+    }
+    /* 总代只能给自己开助手，帮他管名下房间与额度；不能开总代、总监 */
+    if (actor.role === 'GENERAL' && role !== 'PROXY') {
+      throw new BadRequestException('总代只能开自己的子账号');
     }
     if (actor.role === 'BRANCH' && role !== 'PROXY' && role !== 'GENERAL') {
       throw new BadRequestException('总监只能开总代或给代理开子账号');
@@ -1925,20 +1937,25 @@ export class ConsolePlayersService {
     } else if (role === 'GENERAL') {
       parentId = actor.id;
     } else if (role === 'PROXY') {
-      const pid = body.parentAgentUserId?.trim();
-      if (!pid) throw new BadRequestException('开子账号须指定所属代理');
-      await this.scope.assertUserInScope(actor, pid);
-      const agentUser = await this.prisma.user.findUnique({ where: { id: pid } });
-      if (!agentUser || agentUser.role !== 'AGENT') {
-        throw new BadRequestException('所属账号必须是房间绑定代理');
+      /* 总代开的子账号直接挂自己名下，范围跟着总代走 */
+      if (actor.role === 'GENERAL') {
+        parentId = actor.id;
+      } else {
+        const pid = body.parentAgentUserId?.trim();
+        if (!pid) throw new BadRequestException('开子账号须指定所属代理');
+        await this.scope.assertUserInScope(actor, pid);
+        const agentUser = await this.prisma.user.findUnique({ where: { id: pid } });
+        if (!agentUser || agentUser.role !== 'AGENT') {
+          throw new BadRequestException('所属账号必须是房间绑定代理');
+        }
+        const hasRoom = await this.prisma.room.findFirst({
+          where: { ownerAgent: { userId: pid } },
+          select: { id: true },
+        });
+        if (!hasRoom) throw new BadRequestException('该代理尚未绑定房间');
+        parentId = pid;
+        parent = agentUser;
       }
-      const hasRoom = await this.prisma.room.findFirst({
-        where: { ownerAgent: { userId: pid } },
-        select: { id: true },
-      });
-      if (!hasRoom) throw new BadRequestException('该代理尚未绑定房间');
-      parentId = pid;
-      parent = agentUser;
     }
 
     const passwordHash = await bcrypt.hash(body.password, PASSWORD_SALT_ROUNDS);
