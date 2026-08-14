@@ -84,11 +84,14 @@ export class ConsoleWalletService {
           settleCycle: true,
         },
       });
+      const quota = asMoney(agent?.pointsQuota ?? 0);
       return {
         ...base,
         bookMode: agent?.bookMode === 'CREDIT' ? 'CREDIT' : 'CASH',
         creditLimit: asMoney(agent?.creditLimit ?? 0),
-        pointsQuota: asMoney(agent?.pointsQuota ?? 0),
+        pointsQuota: quota,
+        /* 额度发超了就是欠平台的，负数在这里翻成正的欠额 */
+        overIssueUsed: roundMoney(Math.max(0, -quota)),
         flowRate: Number(agent?.flowRate ?? 0.07),
         shareRate: Number(agent?.shareRate ?? 0.5),
         settleCycle: agent?.settleCycle ?? 'WEEKLY_MON',
@@ -235,11 +238,11 @@ export class ConsoleWalletService {
       );
     }
 
-    if (actor.role === 'GENERAL') {
-      await this.assertGeneralQuotaEnough(actor.id, amount);
-    }
+    const overIssue = actor.role === 'GENERAL'
+      ? await this.generalOverIssue(actor.id, amount)
+      : 0;
 
-    return this.sellQuotaToStaff(
+    const res = await this.sellQuotaToStaff(
       actor,
       target.id,
       target.role,
@@ -251,6 +254,8 @@ export class ConsoleWalletService {
       ),
       orderNo,
     );
+    /* 超发不拦，但要让操作方看见自己这一笔垫了多少 */
+    return overIssue > 0 ? { ...res, overIssue } : res;
   }
 
   /**
@@ -865,17 +870,16 @@ export class ConsoleWalletService {
     return agent.bookMode === 'CREDIT' ? 'CREDIT' : 'CASH';
   }
 
-  /** 总代可用额度：现金盘是买来的分，信用盘是平台给的剩余信用，都记在 pointsQuota */
-  private async assertGeneralQuotaEnough(generalUserId: string, amount: number) {
+  /**
+   * 总代额度不够也照发，超出部分算他欠平台的——与代理给玩家上分同一套规矩：
+   * 盘分账允许变负，负数就是欠账，结算时一并算。这里只把超发额算出来供提示与留痕。
+   */
+  private async generalOverIssue(generalUserId: string, amount: number): Promise<number> {
     const agent = await this.prisma.agent.findUnique({
       where: { userId: generalUserId },
       select: { pointsQuota: true },
     });
     const avail = asMoney(agent?.pointsQuota ?? 0);
-    if (avail + 1e-9 < amount) {
-      throw new BadRequestException(
-        `额度不足：当前可用 ${avail}，本次需要 ${amount}。请先向平台补额度`,
-      );
-    }
+    return roundMoney(Math.max(0, amount - Math.max(0, avail)));
   }
 }

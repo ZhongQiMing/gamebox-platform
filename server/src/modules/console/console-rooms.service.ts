@@ -465,21 +465,12 @@ export class ConsoleRoomsService {
         // B：信用额度写入上盘额度库存；A：从 0 起，后续买入额度
         if (bookMode === 'CREDIT' && creditLimit > 0) {
           /*
-           * 挂了总代的房，这笔期初额度是总代给的分，要从他手上划走；
-           * 没挂总代才由平台直接出。锁在事务里读，避免并发建房把额度用超。
+           * 挂了总代的房，这笔期初额度是总代给的分，要从他手上划走；没挂总代才由平台直接出。
+           * 额度不够也照给，超出部分记成他欠平台的——与代理给玩家超分同一套规矩，
+           * 收不回来是总代自己垫。锁行只为并发时额度扣减不丢。
            */
           if (generalAgentRow) {
             await tx.$queryRaw`SELECT id FROM "Agent" WHERE "id" = ${generalAgentRow.id} FOR UPDATE`;
-            const gq = await tx.agent.findUnique({
-              where: { id: generalAgentRow.id },
-              select: { pointsQuota: true },
-            });
-            const avail = asMoney(gq?.pointsQuota ?? 0);
-            if (avail + 1e-9 < creditLimit) {
-              throw new BadRequestException(
-                `总代额度不足：当前可用 ${avail}，本房期初需要 ${creditLimit}`,
-              );
-            }
             await writeAgentQuotaInTx(tx, {
               agentUserId: generalAgentRow.userId,
               bookMode: 'CREDIT',

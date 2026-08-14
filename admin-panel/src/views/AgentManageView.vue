@@ -130,8 +130,13 @@
                 </div>
               </template>
             </el-table-column>
-            <el-table-column v-if="roleFilter === 'GENERAL'" label="可用额度" min-width="110" align="right">
-              <template #default="{ row }: { row: any }">{{ fmt(row.pointsQuota) }}</template>
+            <el-table-column v-if="roleFilter === 'GENERAL'" label="可用额度" min-width="120" align="right">
+              <template #default="{ row }: { row: any }">
+                <template v-if="Number(row.pointsQuota) < 0">
+                  <span class="over-issue">超发 {{ fmt(-Number(row.pointsQuota)) }}</span>
+                </template>
+                <template v-else>{{ fmt(row.pointsQuota) }}</template>
+              </template>
             </el-table-column>
             <el-table-column v-if="roleFilter === 'BRANCH'" label="可见房间" min-width="100" align="center">
               <template #default="{ row }: { row: any }">{{ row.roomCount ?? row.rooms?.length ?? 0 }}</template>
@@ -758,6 +763,8 @@ onMounted(() => {
 }
 .gold { color: var(--ops-gold, #f59e0b); font-weight: 600; }
 .muted { color: #94a3b8; }
+/* 额度发超了不是错误状态，只是欠着，用暖色提示而非报警红 */
+.over-issue { color: #d97706; font-weight: 600; }
 .ops {
   display: inline-flex;
   align-items: center;
