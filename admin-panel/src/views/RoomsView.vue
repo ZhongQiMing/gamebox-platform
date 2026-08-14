@@ -76,7 +76,7 @@
 
       <div v-else-if="!redirecting" class="panel-body">
         <el-table
-          :data="filteredList"
+          :data="displayList"
           v-loading="loading"
           class="rooms-table"
           empty-text="暂无房间"
@@ -84,11 +84,21 @@
           border
           size="small"
           height="100%"
-          @row-click="(row: ConsoleRoom) => goDetail(row.id)"
+          row-key="_key"
+          :tree-props="{ children: 'children' }"
+          default-expand-all
+          @row-click="onRowClick"
         >
-          <el-table-column label="房间" min-width="188">
+          <el-table-column label="房间" min-width="200">
             <template #default="{ row }: { row: any }">
-              <div class="room-cell">
+              <div v-if="row._group" class="group-cell">
+                <span class="group-name">{{ row.nickname }}</span>
+                <el-tag size="small" effect="plain" :type="row.userId ? 'warning' : 'info'">
+                  {{ row.userId ? '总代' : '直挂平台' }}
+                </el-tag>
+                <span class="sub">{{ row.children.length }} 间</span>
+              </div>
+              <div v-else class="room-cell">
                 <div class="room-name">{{ row.name }}</div>
                 <div class="room-code">
                   <span class="mono">{{ row.roomNo }}</span>
@@ -99,7 +109,8 @@
           </el-table-column>
           <el-table-column label="状态" min-width="118">
             <template #default="{ row }: { row: any }">
-              <div class="status-cell">
+              <span v-if="row._group" class="muted">营业 {{ row.openCount }} / {{ row.children.length }}</span>
+              <div v-else class="status-cell">
                 <el-tag size="small" :type="roomStatusTagType(row.status)" effect="light">
                   {{ roomStatusLabel(row.status) }}
                 </el-tag>
@@ -115,7 +126,7 @@
               </div>
             </template>
           </el-table-column>
-          <el-table-column v-if="!isAgentSide" label="总代" min-width="120">
+          <el-table-column v-if="!isAgentSide && !grouped" label="总代" min-width="120">
             <template #default="{ row }: { row: any }">
               <template v-if="row.general">
                 <div class="agent-name">{{ row.general.nickname }}</div>
@@ -126,7 +137,8 @@
           </el-table-column>
           <el-table-column v-if="!isAgentSide" label="代理" min-width="128">
             <template #default="{ row }: { row: any }">
-              <template v-if="row.agent">
+              <span v-if="row._group" class="muted">—</span>
+              <template v-else-if="row.agent">
                 <div class="agent-name">{{ row.agent.nickname }}</div>
                 <div class="sub">{{ row.agent.username }}</div>
               </template>
@@ -135,7 +147,16 @@
           </el-table-column>
           <el-table-column label="盘口合同" min-width="148">
             <template #default="{ row }: { row: any }">
-              <div class="book-cell">
+              <div v-if="row._group" class="book-cell">
+                <template v-if="row.userId">
+                  <el-tag size="small" :type="row.bookMode === 'CREDIT' ? 'warning' : 'success'" effect="plain">
+                    {{ row.bookMode === 'CREDIT' ? 'B · 信用盘' : 'A · 现金盘' }}
+                  </el-tag>
+                  <div class="sub">占成 {{ Math.round(Number(row.shareRate || 0) * 100) }}%</div>
+                </template>
+                <span v-else class="muted">—</span>
+              </div>
+              <div v-else class="book-cell">
                 <el-tag size="small" :type="row.bookMode === 'CREDIT' ? 'warning' : 'success'" effect="plain">
                   {{ row.bookMode === 'CREDIT' ? 'B · 信用盘' : 'A · 现金盘' }}
                 </el-tag>
@@ -146,7 +167,8 @@
           </el-table-column>
           <el-table-column label="月费" min-width="120">
             <template #default="{ row }: { row: any }">
-              <template v-if="row.monthlyFee > 0">
+              <span v-if="row._group" class="muted">—</span>
+              <template v-else-if="row.monthlyFee > 0">
                 <div :class="billDueSoon(row) ? 'warn-text' : 'fee'">{{ Math.floor(row.monthlyFee) }}/月</div>
                 <div class="sub">{{ formatDate(row.nextBillAt) }}</div>
               </template>
@@ -155,7 +177,12 @@
           </el-table-column>
           <el-table-column label="操作" :width="canStatus || canDelete ? 168 : 72" fixed="right">
             <template #default="{ row }: { row: any }">
-              <div class="ops" @click.stop>
+              <div v-if="row._group" class="ops" @click.stop>
+                <el-button v-if="row.userId" link type="primary" @click="goGeneral(row.userId)">
+                  总代详情
+                </el-button>
+              </div>
+              <div v-else class="ops" @click.stop>
                 <el-button link type="primary" @click="goDetail(row.id)">详情</el-button>
                 <el-dropdown v-if="canStatus && row.status !== 'CLOSED'" trigger="click">
                   <el-button link type="primary">状态</el-button>
@@ -471,7 +498,15 @@ import {
   GAME_OPTIONS, roomStatusLabel, roomStatusTagType,
 } from '@/utils/labels'
 
-type StaffOpt = { id: string; uid: string; nickname: string; role: string; flowRate?: number; shareRate?: number }
+type StaffOpt = {
+  id: string
+  uid: string
+  nickname: string
+  role: string
+  flowRate?: number
+  shareRate?: number
+  bookMode?: string
+}
 type CreateTabKey = 'basic' | 'book' | 'agent' | 'games' | 'billing'
 type AlertTag = { text: string; type: 'danger' | 'warning' | 'info' }
 
@@ -616,6 +651,73 @@ const filteredList = computed(() => {
     return String(a.name || '').localeCompare(String(b.name || ''), 'zh-CN')
   })
 })
+
+/*
+ * 平台侧按总代分组成两级：父节点是总代，展开是他名下的房。
+ * 代理侧只有自己那几间，分组反而多一层，保持平铺。
+ */
+const grouped = computed(() => !isAgentSide.value && !isGeneralUser.value)
+
+type GroupRow = {
+  _key: string
+  _group: true
+  userId: string | null
+  nickname: string
+  bookMode?: string
+  shareRate?: number
+  openCount: number
+  children: (ConsoleRoom & { _key: string })[]
+}
+
+const displayList = computed((): Array<GroupRow | (ConsoleRoom & { _key: string })> => {
+  const rows = filteredList.value.map((r) => ({ ...r, _key: `room:${r.id}` }))
+  if (!grouped.value) return rows
+
+  const groups = new Map<string, GroupRow>()
+  for (const r of rows) {
+    const key = r.general?.userId || '__none__'
+    let g = groups.get(key)
+    if (!g) {
+      g = {
+        _key: `general:${key}`,
+        _group: true,
+        userId: r.general?.userId ?? null,
+        nickname: r.general?.nickname || '直挂平台（未挂总代）',
+        bookMode: generalBookOf(r.general?.userId),
+        shareRate: r.general?.shareRate,
+        openCount: 0,
+        children: [],
+      }
+      groups.set(key, g)
+    }
+    g.children.push(r)
+    if (r.status === 'OPEN') g.openCount += 1
+  }
+  /* 未挂总代的那一组固定排最后 */
+  return [...groups.values()].sort((a, b) => {
+    if (!a.userId) return 1
+    if (!b.userId) return -1
+    return a.nickname.localeCompare(b.nickname, 'zh-CN')
+  })
+})
+
+function generalBookOf(userId?: string | null) {
+  if (!userId) return undefined
+  return staffList.value.find((s) => s.id === userId)?.bookMode
+}
+
+function onRowClick(row: GroupRow | ConsoleRoom) {
+  if ((row as GroupRow)._group) {
+    const uid = (row as GroupRow).userId
+    if (uid) goGeneral(uid)
+    return
+  }
+  goDetail((row as ConsoleRoom).id)
+}
+
+function goGeneral(userId: string) {
+  router.push({ name: 'agent-detail', params: { id: userId } })
+}
 
 const roomStats = computed(() => {
   const rows = list.value.filter((r) => includeClosed.value || r.status !== 'CLOSED')
@@ -821,7 +923,7 @@ async function loadStaff() {
       })),
       ...generals.list.map((a) => ({
         id: a.id, uid: a.uid, nickname: a.nickname, role: a.role,
-        flowRate: a.flowRate, shareRate: a.shareRate,
+        flowRate: a.flowRate, shareRate: a.shareRate, bookMode: a.bookMode,
       })),
     ]
   } catch {
@@ -1118,6 +1220,8 @@ onMounted(async () => {
 .rooms-table { width: 100%; }
 .rooms-table :deep(.el-table__cell) { padding: 14px 16px; }
 .rooms-table :deep(.el-table__row) { cursor: pointer; }
+.group-cell { display: flex; align-items: center; gap: 8px; }
+.group-name { font-weight: 700; }
 .agent-empty {
   margin: 48px 0;
   text-align: center;
