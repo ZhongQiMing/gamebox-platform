@@ -22,6 +22,9 @@ export interface UserProfileDTO {
   status: string;
   promoCode: string | null;
   createdAt: string;
+  /** PROXY / CS 挂靠上级；其它角色为 null */
+  parentId?: string | null;
+  parentRole?: string | null;
 }
 
 /** 登录/注册返回 */

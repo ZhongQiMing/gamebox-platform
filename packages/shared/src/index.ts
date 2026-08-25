@@ -21,3 +21,6 @@ export * from './max-win';
 export * from './table-paytable';
 export * from './table-round';
 export * from './table-timing';
+export * from './rebate-templates';
+export * from './draw-display';
+export * from './play-limits';

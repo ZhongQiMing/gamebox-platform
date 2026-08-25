@@ -27,6 +27,8 @@ export const PASSWORD_MIN_LEN = 8;
 /** 运营账号（代理/客服/子账号）由后台创建，可以要求更长 */
 export const OPS_PASSWORD_MIN_LEN = 10;
 export const PASSWORD_MAX_LEN = 30;
+export const PLAYER_PASSWORD_HINT = `至少 ${PASSWORD_MIN_LEN} 位，须含字母和数字`;
+export const OPS_PASSWORD_HINT = `至少 ${OPS_PASSWORD_MIN_LEN} 位，须含字母和数字`;
 
 function checkPassword(password: string, min: number, label: string): string | null {
   if (!password) return '请输入密码';
