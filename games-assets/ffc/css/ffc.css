@@ -65,8 +65,8 @@ html:not(.ffc-in-iframe) .ffc-room {
   margin: 0;
   position: relative;
   overflow: hidden;
-  background: rgba(8, 6, 4, 0.82);
-  backdrop-filter: blur(2px);
+  /* 与六合彩一致：罩层放淡且不做模糊，否则会把底图那层皇冠花纹压掉 */
+  background: rgba(13, 10, 8, 0.72);
   box-sizing: border-box;
 }
 
@@ -83,16 +83,19 @@ html:not(.ffc-in-iframe) .ffc-room {
 .ffc-draw-panel[hidden] {
   display: none !important;
 }
+/*
+ * 底图与其它彩票房一致：顶部金光晕 + 底部酒红微光 + 巴洛克竖屏底图（带皇冠花纹）。
+ * 原先这里是一套纯渐变，最后一层是不透明的 linear-gradient，把 legacy/common.css 里
+ * 那张底图整张盖掉了 —— 于是只有六合彩看得见皇冠，其它房都是纯黑底。七个房现在用同一份。
+ */
 body.ffc-bg {
-  background-color: #080604;
+  background-color: var(--bg-dark);
   background-image:
-    radial-gradient(ellipse 120% 55% at 50% -8%, rgba(212, 175, 55, 0.18), transparent 58%),
-    radial-gradient(ellipse 90% 45% at 50% 108%, rgba(163, 33, 48, 0.14), transparent 62%),
-    radial-gradient(circle at 20% 30%, rgba(212, 175, 55, 0.04), transparent 28%),
-    radial-gradient(circle at 80% 70%, rgba(80, 140, 220, 0.05), transparent 24%),
-    linear-gradient(180deg, #0f0c08 0%, #080604 45%, #0a0705 100%);
-  background-size: auto;
-  background-position: center;
+    radial-gradient(ellipse 700px 400px at 50% -6%, rgba(212, 175, 55, 0.14), transparent 65%),
+    radial-gradient(ellipse 500px 300px at 50% 106%, rgba(163, 33, 48, 0.12), transparent 65%),
+    url('/images/textures/bg-dark-baroque-portrait.webp');
+  background-size: auto, auto, cover;
+  background-position: center, center, center;
   background-repeat: no-repeat;
 }
 body.ffc-bg::before {
@@ -162,7 +165,7 @@ body.ffc-bg::after {
   margin-left: auto;
   flex: 1 1 auto;
   min-width: 0;
-  max-width: min(100%, 248px);
+  max-width: min(100%, 300px);
   display: grid;
   grid-auto-flow: column;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -175,7 +178,7 @@ body.ffc-bg::after {
 }
 .ffc-stat {
   display: grid;
-  grid-template-columns: 2.1em minmax(0, 1fr);
+  grid-template-columns: 2.1em 13ch;
   column-gap: 4px;
   align-items: baseline;
   line-height: 1.3;
@@ -198,8 +201,8 @@ body.ffc-bg::after {
   text-align: right;
   white-space: nowrap;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* 数值列已按 13ch 留足（+9,999,999.99），不再裁剪，避免边界上吃掉末位 */
+  overflow: visible;
 }
 .ffc-stat .v.is-plus { color: #8ee8a8; }
 .ffc-stat .v.is-minus { color: #ff9aaa; }
@@ -2452,7 +2455,7 @@ body.ffc-bg::after {
   position: absolute;
   inset: -10px;
   z-index: 0;
-  background: url('/images/chips/chip-select-glow.png?v=1') center / contain no-repeat;
+  background: url('/images/chips/chip-select-glow.webp?v=1') center / contain no-repeat;
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.12s ease;
@@ -3402,12 +3405,12 @@ body.ffc-bg::after {
     font-size: 14px;
   }
   .ffc-stats {
-    max-width: min(100%, 220px);
+    max-width: min(100%, 252px);
     column-gap: 8px;
     row-gap: 3px;
   }
   .ffc-stat {
-    grid-template-columns: 2em minmax(0, 1fr);
+    grid-template-columns: 2em 13ch;
     column-gap: 3px;
   }
 
