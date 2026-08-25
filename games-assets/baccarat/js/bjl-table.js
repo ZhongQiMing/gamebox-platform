@@ -13,36 +13,51 @@
   var PAYOUT_SECS = 4;
   var ROUND_SEC = BETTING_SEC + DRAW_EST_SEC + PAYOUT_SECS;
   var TOTAL = BETTING_SEC;
-  var alignWaitTimer = null;
-  /* 与服务端 alignedBettingEndsAt 一致：Unix epoch 60s 网格 */
-  function getAlignedBetRemain() {
-    var cycleMs = ROUND_SEC * 1000;
-    var bettingMs = TOTAL * 1000;
-    var now = Date.now();
-    var cycleStart = Math.floor(now / cycleMs) * cycleMs;
-    var end = cycleStart + bettingMs;
-    if (now >= end) return 0;
-    return (end - now) / 1000;
-  }
-  function getAlignedWaitRemain() {
-    var cycleMs = ROUND_SEC * 1000;
-    var bettingMs = TOTAL * 1000;
-    var now = Date.now();
-    var cycleStart = Math.floor(now / cycleMs) * cycleMs;
-    var end = cycleStart + bettingMs;
-    if (now < end) return 0;
-    return (cycleStart + cycleMs - now) / 1000;
-  }
-  function clearAlignWait() {
-    if (alignWaitTimer) {
-      clearTimeout(alignWaitTimer);
-      alignWaitTimer = null;
-    }
-  }
-
   var serverClock = (window.TableShell && TableShell.createServerClock)
     ? TableShell.createServerClock()
     : { phase: '', secondsLeft: 0, syncedAt: 0, roundNo: '', timing: null };
+
+  /*
+   * ───────── 时间基准 ─────────
+   *
+   * 整局时序只认服务端的钟：每一局的绝对起点由局号唯一确定，界面永远只回答
+   * 「按服务端的钟，现在走到本局第几毫秒」，本地不再自己累加倒计时。
+   * 这样丢包、慢网、切后台、机器卡顿都只影响画面追赶的快慢，不会让流程错乱。
+   *
+   * 本游戏整局 61s（下注 45 + 开奖 12 + 派奖 4），具体数值以服务端 timing 为准。
+   */
+  function localFallbackPosition() {
+    var cycleMs = ROUND_SEC * 1000;
+    var bettingMs = TOTAL * 1000;
+    var now = Date.now();
+    var startAt = Math.floor(now / cycleMs) * cycleMs;
+    var tIn = now - startAt;
+    var drawMs = DRAW_EST_SEC * 1000;
+    var ph = tIn < bettingMs
+      ? 'BETTING'
+      : (tIn < bettingMs + drawMs ? 'DRAWING' : 'SETTLED');
+    return {
+      startAt: startAt,
+      tIn: tIn,
+      cycleMs: cycleMs,
+      phase: ph,
+      betLeftMs: ph === 'BETTING' ? bettingMs - tIn : 0,
+      drawElapsedMs: ph === 'BETTING' ? 0 : tIn - bettingMs,
+    };
+  }
+
+  function roundPosition() {
+    if (window.TableShell && TableShell.roundPositionOf) {
+      var pos = TableShell.roundPositionOf(serverClock);
+      if (pos) return pos;
+    }
+    return localFallbackPosition();
+  }
+
+  /** 下注剩余秒（只给 UI 用；流程判断一律用 roundPosition） */
+  function getBetRemainSec() {
+    return roundPosition().betLeftMs / 1000;
+  }
 
   var atmosphereRobotCount = 14;
 
@@ -59,7 +74,10 @@
     }
   }
 
-  function applyServerSnap(snap) {
+  /**
+   * @param meta 轮询给的 { sentAt, recvAt }，用来扣掉半个往返再校时
+   */
+  function applyServerSnap(snap, meta) {
     if (!snap) return;
     if (window.TableShell && TableShell.applyServerSnap) {
       TableShell.applyServerSnap(serverClock, snap);
@@ -77,16 +95,13 @@
       ROUND_SEC = BETTING_SEC + DRAW_EST_SEC + PAYOUT_SECS;
       TOTAL = BETTING_SEC;
     }
+    /* 校时要在 timing 落定之后：整局时长是反推开局时刻的前提 */
+    if (window.TableShell && TableShell.syncClock) {
+      TableShell.syncClock(serverClock, snap, meta && meta.sentAt, meta && meta.recvAt);
+    }
     if (snap.roundNo && typeof setRoundNoLabel === 'function') {
       setRoundNoLabel(snap.roundNo);
     }
-  }
-
-  function getBetRemainSec() {
-    if (window.TableShell && TableShell.bettingLeftSec) {
-      return TableShell.bettingLeftSec(serverClock, getAlignedBetRemain);
-    }
-    return getAlignedBetRemain();
   }
   var BANNER_MS = 1500;
   var FLY_MS = 360;
@@ -94,23 +109,21 @@
   var FLIP_MS = 420;
   var FLIP_GAP_MS = 80;
   var DEAL_HOLD_MS = 240;
-  var CARD_BACK = './assets/cards/card-back.png?v=6';
+  var CARD_BACK = './assets/cards/card-back.webp?v=6';
   var DECKS = 8;
-  var phase = 'bet'; /* bet | draw | payout */
+  var phase = 'bet'; /* bet | draw | payout | paused */
   var left = TOTAL;
-  var betDeadline = 0;
+  /** 派奖倒计时的截止时刻，仅用于派奖动画自身节奏；换局由时间基准决定 */
   var payoutDeadline = 0;
   var lastBeatSec = -1;
   var roundBusy = false;
   var roundSeq = 0;
-  /** 进房时正逢大厅封盘：等待下一周期，UI 显示「准备中」而非「派奖中」 */
-  var alignWaiting = false;
   var selectedChip = 1;
   var chipPage = 0;
   var betTotals = { banker: 0, player: 0, tie: 0, bankerPair: 0, playerPair: 0 };
   var roundPlacements = [];
   var lastRoundPlacements = [];
-  var usedUndo = false;
+  var undoing = false; /* 撤销请求在途，避免连点重复提交 */
   var usedRebet = false;
   var roadHistory = [];
   var roadStats = { banker: 0, player: 0, tie: 0 };
@@ -121,18 +134,18 @@
   var SUITS = ['spade', 'heart', 'club', 'diamond'];
   var RANKS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
   var CHIP_SRC = {
-    1: './assets/ui/chips/chip-1.png?v=4',
-    5: './assets/ui/chips/chip-5.png?v=4',
-    10: './assets/ui/chips/chip-10.png?v=4',
-    50: './assets/ui/chips/chip-50.png?v=4',
-    100: './assets/ui/chips/chip-100.png?v=4',
-    500: './assets/ui/chips/chip-500.png?v=4',
-    1000: './assets/ui/chips/chip-1000.png?v=1',
-    2000: './assets/ui/chips/chip-2000.png?v=1',
-    3000: './assets/ui/chips/chip-3000.png?v=1',
-    4000: './assets/ui/chips/chip-4000.png?v=1',
-    5000: './assets/ui/chips/chip-5000.png?v=1',
-    10000: './assets/ui/chips/chip-10000.png?v=1'
+    1: './assets/ui/chips/chip-1.webp?v=4',
+    5: './assets/ui/chips/chip-5.webp?v=4',
+    10: './assets/ui/chips/chip-10.webp?v=4',
+    50: './assets/ui/chips/chip-50.webp?v=4',
+    100: './assets/ui/chips/chip-100.webp?v=4',
+    500: './assets/ui/chips/chip-500.webp?v=4',
+    1000: './assets/ui/chips/chip-1000.webp?v=1',
+    2000: './assets/ui/chips/chip-2000.webp?v=1',
+    3000: './assets/ui/chips/chip-3000.webp?v=1',
+    4000: './assets/ui/chips/chip-4000.webp?v=1',
+    5000: './assets/ui/chips/chip-5000.webp?v=1',
+    10000: './assets/ui/chips/chip-10000.webp?v=1'
   };
   var CHIP_PAGES = [
     [1, 5, 10, 50, 100, 500],
@@ -140,8 +153,15 @@
   ];
   /* 赔率按「押 1 赔 X」利润倍率；与 @gamebox/shared 同源，启动后 TableShell 覆盖并同步 DOM */
   var ODDS = { banker: 0.95, player: 1, tie: 8, bankerPair: 11, playerPair: 11 };
+  /* 本桌当前没有单边限红，仍接上限额器：后台给 sideMaxBet 就立刻生效 */
+  var sideLimits = window.TableShell
+    ? TableShell.createSideLimits({
+        banker: '庄', player: '闲', tie: '和', bankerPair: '庄对', playerPair: '闲对',
+      })
+    : null;
   if (window.TableShell) {
-    TableShell.loadPayTable(SERVER_GAME, { odds: ODDS, domRoot: document.getElementById('betArea') });
+    TableShell.loadPayTable(SERVER_GAME, { odds: ODDS, domRoot: document.getElementById('betArea') })
+      .then(function (pt) { if (sideLimits) sideLimits.apply(pt); });
   }
   var DEAL_ORDER = ['p1', 'b1', 'p2', 'b2'];
 
@@ -481,26 +501,71 @@
   function saveStats(s) {
     localStorage.setItem('bjl_stats_' + uid(), JSON.stringify(s));
   }
+  var statsFitter = window.TableShell
+    ? TableShell.createStatsFitter({
+        head: qs('.bjl-head'),
+        stats: qs('#statsBar'),
+        brand: qs('.bjl-head__brand'),
+      })
+    : { refit: function () {} };
+
   function refreshBalance() {
     var el = qs('#statBalance');
     if (!el || !window.App || !App.getBalance) return;
-    try { el.textContent = Number(App.getBalance(uid())).toLocaleString('en-US'); } catch (e) {}
+    try { el.textContent = TableShell.fmtMoney2(App.getBalance(uid())); } catch (e) {}
     var s = getStats();
     var wl = qs('#statWinloss');
     var to = qs('#statTurnover');
     var rb = qs('#statRebate');
     if (wl) {
-      wl.textContent = (s.winloss >= 0 ? '+' : '') + Math.round(s.winloss).toLocaleString('en-US');
-      wl.classList.toggle('is-plus', s.winloss > 0);
-      wl.classList.toggle('is-minus', s.winloss < 0);
+      var w = Math.round((Number(s.winloss) || 0) * 100) / 100;
+      /* fmtMoney2 自带负号，只有非负才补 + */
+      wl.textContent = (w >= 0 ? '+' : '') + TableShell.fmtMoney2(w);
+      wl.classList.toggle('is-plus', w > 0);
+      wl.classList.toggle('is-minus', w < 0);
     }
-    if (to) to.textContent = Math.round(s.turnover).toLocaleString('en-US');
-    if (rb) rb.textContent = Math.round(s.rebate || 0).toLocaleString('en-US');
+    if (to) to.textContent = TableShell.fmtMoney2(s.turnover);
+    if (rb) rb.textContent = TableShell.fmtMoney2(s.rebate);
+    statsFitter.refit();
   }
 
   function canAfford(amount) {
     if (!(amount > 0) || !window.App || !App.getBalance) return false;
     return App.getBalance(uid()) >= amount;
+  }
+
+  /* 已发出但未回执的下注额，连点时不能重复占用同一笔余额 */
+  var inFlightStake = 0;
+
+  function availableBalance() {
+    if (!window.App || !App.getBalance) return 0;
+    var bal = App.getBalance(uid());
+    if (typeof bal !== 'number' || !isFinite(bal)) return 0;
+    return bal - inFlightStake;
+  }
+
+  function largestAffordableChip(bal) {
+    return window.TableShell ? TableShell.affordableChip(CHIP_PAGES, bal) : 0;
+  }
+
+  function selectChipValue(val) {
+    if (!val || val === selectedChip) return;
+    for (var p = 0; p < CHIP_PAGES.length; p++) {
+      if (CHIP_PAGES[p].indexOf(val) >= 0) {
+        chipPage = p;
+        break;
+      }
+    }
+    selectedChip = val;
+    applyChipPage();
+  }
+
+  /** 余额跌破当前筹码时自动降档，只降不升 */
+  function syncChipToBalance() {
+    var bal = availableBalance();
+    if (selectedChip <= bal) return;
+    var next = largestAffordableChip(bal);
+    if (next) selectChipValue(next);
   }
 
   /** 真账禁止本地加减；仅刷新展示 */
@@ -703,7 +768,7 @@
     qsa('.bjl-card').forEach(function (el) {
       el.classList.remove('is-dealt', 'is-flipped');
       var front = qs('.bjl-card__face--front img', el);
-      if (front) front.src = './assets/cards/card-back.png?v=6';
+      if (front) front.src = './assets/cards/card-back.webp?v=6';
     });
     if (flyLayer) flyLayer.innerHTML = '';
     if (payoutFlyLayer) payoutFlyLayer.innerHTML = '';
@@ -781,21 +846,48 @@
     setTimeout(function () { if (pop.parentNode) pop.parentNode.removeChild(pop); }, 1450);
   }
 
+  var bannerStartImg = document.getElementById('phaseBannerStart');
+  var bannerStopImg = document.getElementById('phaseBannerStop');
+  if (window.TableShell && TableShell.warmBannerImages) {
+    TableShell.warmBannerImages([bannerStartImg, bannerStopImg]);
+  }
+
+  /** 立刻收掉横幅（进维护、异常复位时用），不走淡出动画 */
+  function hidePhaseBanner() {
+    var box = document.getElementById('phaseBanner');
+    if (!box) return;
+    if (box._bannerTimer) { clearTimeout(box._bannerTimer); box._bannerTimer = null; }
+    if (box._bannerHideTimer) { clearTimeout(box._bannerHideTimer); box._bannerHideTimer = null; }
+    box.classList.remove('is-show', 'is-hide');
+    box.setAttribute('aria-hidden', 'true');
+    if (bannerStartImg) bannerStartImg.hidden = true;
+    if (bannerStopImg) bannerStopImg.hidden = true;
+  }
+
+  /**
+   * 两张横幅图各自常驻一个 <img>，这里只切换哪个可见，绝不改 src。
+   * 改 src 是异步的，新图解码完成前元素还在画上一张，会出现「报开始下注、显示停止下注」。
+   * 提示音与语音也一并在这里播，保证跟图片同时出现。
+   */
   function showPhaseBanner(kind) {
     var box = document.getElementById('phaseBanner');
-    var img = document.getElementById('phaseBannerImg');
-    if (!box || !img) return Promise.resolve();
+    if (!box || !bannerStartImg || !bannerStopImg) return Promise.resolve();
     var isStop = kind === 'stop';
-    img.src = isStop
-      ? './assets/ui/banners/bet-stop.png?v=1'
-      : './assets/ui/banners/bet-start.png?v=1';
-    img.alt = isStop ? '停止下注' : '开始下注';
     if (box._bannerTimer) clearTimeout(box._bannerTimer);
     if (box._bannerHideTimer) clearTimeout(box._bannerHideTimer);
+    bannerStartImg.hidden = isStop;
+    bannerStopImg.hidden = !isStop;
     box.classList.remove('is-show', 'is-hide');
     void box.offsetWidth;
     box.classList.add('is-show');
     box.setAttribute('aria-hidden', 'false');
+    if (isStop) {
+      sfx('stop-bet', { vol: 0.7 });
+      if (!document.hidden) playVoice('voice/stop-bet');
+    } else {
+      sfx('start-bet', { vol: 0.65 });
+      if (!document.hidden) playVoice('voice/start-bet');
+    }
     return new Promise(function (resolve) {
       box._bannerTimer = setTimeout(function () {
         box.classList.remove('is-show');
@@ -824,12 +916,10 @@
     if (!timerBox || !timeEl) return;
     timerBox.classList.remove('is-urgent', 'is-critical', 'is-draw', 'is-payout');
     timeEl.classList.remove('is-beat');
-    var uiPhase = phase;
-    if (alignWaiting) {
+    if (phase === 'paused') {
       timerBox.classList.add('is-payout');
-      timeEl.textContent = '准备中';
-      uiPhase = 'payout';
-      if (window.TableShell && TableShell.syncFocusUi) TableShell.syncFocusUi(roomEl, uiPhase);
+      timeEl.textContent = '维护中';
+      if (window.TableShell && TableShell.syncFocusUi) TableShell.syncFocusUi(roomEl, 'payout');
       return;
     }
     if (phase === 'draw') {
@@ -977,7 +1067,7 @@
     var s = getStats();
     s.turnover = (s.turnover || 0) + (settlement.stakeTotal || 0);
     s.winloss = (s.winloss || 0) + (settlement.profit || 0);
-    s.rebate = (s.rebate || 0) + Math.floor((settlement.stakeTotal || 0) * 0.005);
+    s.rebate = (s.rebate || 0) + ((window.App && App.calcRebate) ? App.calcRebate(settlement.stakeTotal || 0) : 0);
     saveStats(s);
     if (window.App && App.refreshBalance) {
       App.refreshBalance().then(function () { refreshBalance(); });
@@ -1188,15 +1278,31 @@
     var value = selectedChip;
     var btn = betBtn(key);
     if (!btn) return;
-    if (!canAfford(value)) {
-      if (window.App && App.toast) App.toast('积分不足');
-      return;
+    /* 余额不够就降到能下的最大一档，这一手即按新筹码下注 */
+    var bal = availableBalance();
+    if (value > bal) {
+      var fallback = largestAffordableChip(bal);
+      if (!fallback) {
+        if (window.App && App.toast) App.toast('积分不足');
+        return;
+      }
+      selectChipValue(fallback);
+      value = fallback;
+    }
+    if (sideLimits) {
+      var capMsg = sideLimits.reject(key, (betTotals[key] || 0) + value);
+      if (capMsg) {
+        if (window.App && App.toast) App.toast(capMsg);
+        return;
+      }
     }
     if (!window.App || !App.placeTableBet) {
       if (window.App && App.toast) App.toast('请从大厅进入游戏');
       return;
     }
+    inFlightStake += value;
     App.placeTableBet(SERVER_GAME, key, value).then(function (res) {
+      inFlightStake = Math.max(0, inFlightStake - value);
       if (res && res.roundNo) {
         currentBetIssue = String(res.roundNo);
         setRoundNoLabel(currentBetIssue);
@@ -1210,14 +1316,50 @@
       updateStakeLabel(key);
       sfx('bet', { vol: 0.9 });
       refreshBalance();
+      syncChipToBalance();
       syncActions();
     }).catch(function (e) {
+      inFlightStake = Math.max(0, inFlightStake - value);
       if (window.App && App.toast) App.toast((e && e.message) || '下注失败');
     });
   }
 
+  function canUndo() {
+    return !isClosed() && roundPlacements.length > 0;
+  }
+
+  /** 撤销本局我的全部下注：服务端只在封盘前受理，退款由服务端原路退回 */
   function undoAllBets() {
-    if (window.App && App.toast) App.toast('已提交真账，不可撤销');
+    if (undoing || !canUndo()) return;
+    if (!window.App || !App.cancelTableBets) {
+      if (window.App && App.toast) App.toast('请从大厅进入游戏');
+      return;
+    }
+    undoing = true;
+    syncActions();
+    App.cancelTableBets(SERVER_GAME).then(function (res) {
+      undoing = false;
+      /* 只清自己的筹码，别人的气氛筹码留在桌上 */
+      if (window.TableShell) {
+        TableShell.removeMyChipVisuals(document.getElementById('betArea'), '.bjl-bet-btn__chips');
+      }
+      roundPlacements = [];
+      Object.keys(betTotals).forEach(function (k) {
+        betTotals[k] = 0;
+        updateStakeLabel(k);
+      });
+      slotStacks = {};
+      refreshBalance();
+      syncChipToBalance();
+      syncActions();
+      if (window.App && App.toast) {
+        App.toast('已撤销本局下注，退回 ' + Number(res && res.refunded || 0).toLocaleString('en-US'));
+      }
+    }).catch(function (e) {
+      undoing = false;
+      syncActions();
+      if (window.App && App.toast) App.toast((e && e.message) || '撤销失败');
+    });
   }
 
   function rebetLastRound() {
@@ -1231,6 +1373,18 @@
       if (p.key === 'player') hasP = true;
     });
     if (hasB && hasP) return;
+    /* 续押是往本局已有筹码上再加一轮，可能把某一边顶过限红 */
+    if (sideLimits) {
+      var after = {};
+      lastRoundPlacements.forEach(function (p) {
+        after[p.key] = (after[p.key] || betTotals[p.key] || 0) + p.value;
+      });
+      var overKey = Object.keys(after).find(function (k) { return !!sideLimits.reject(k, after[k]); });
+      if (overKey) {
+        if (window.App && App.toast) App.toast(sideLimits.reject(overKey, after[overKey]));
+        return;
+      }
+    }
     if (!canAfford(need)) {
       if (window.App && App.toast) App.toast('积分不足');
       return;
@@ -1274,12 +1428,10 @@
     var rebetBtn = qs('[data-action="rebet"]', actionBar);
     var canRebet = !isClosed() && !usedRebet && lastRoundPlacements.length > 0 && roundPlacements.length === 0;
     if (undoBtn) {
-      if (window.TableShell && TableShell.disableUndoButton) TableShell.disableUndoButton(undoBtn);
+      if (window.TableShell) TableShell.syncUndoButton(undoBtn, canUndo(), undoing);
       else {
         undoBtn.classList.add('is-disabled');
         undoBtn.setAttribute('aria-disabled', 'true');
-        undoBtn.setAttribute('aria-label', '真账已锁，不可撤销');
-        undoBtn.setAttribute('title', '真账已提交，不可撤销');
       }
     }
     if (rebetBtn) {
@@ -1534,7 +1686,40 @@
   var chipsHydratePromise = Promise.resolve();
   var persistChipsTimer = null;
   var restoringChips = false;
-  var VOICE_EST_MS = 2200;
+  /*
+   * 报牌音真实时长（毫秒），必须与 assets/audio 下的 mp3 对得上。
+   *
+   * 原先只有一个 VOICE_EST_MS=2200 的粗估，报牌段按「每句 2.2 秒 × 3 句」排期，
+   * 真实语音链只有 2.4 秒左右。不补牌时还塞得下，庄闲都补第三张牌就会拖过整局，
+   * 派奖只能走强制分支跳过动画，收尾又把下一局挤晚，导致「开始下注」的横幅和提示音
+   * 被 isFresh 判断吞掉（时有时无）。改成按本局实际要播的几句累加。
+   */
+  var VOICE_MS = {
+    'voice/banker': 420,
+    'voice/player': 530,
+    'voice/banker-win': 810,
+    'voice/player-win': 920,
+    'voice/tie': 550,
+    'voice/banker-draw': 1130,
+    'voice/player-draw': 1260,
+    'voice/point-0': 720,
+    'voice/point-1': 690,
+    'voice/point-2': 710,
+    'voice/point-3': 790,
+    'voice/point-4': 790,
+    'voice/point-5': 680,
+    'voice/point-6': 710,
+    'voice/point-7': 790,
+    'voice/point-8': 680,
+    'voice/point-9': 760,
+    'voice/start-bet': 1100,
+    'voice/stop-bet': 1130
+  };
+  /** 每句之间留的间隔，避免上一句尾音被下一句掐掉 */
+  var VOICE_GAP_MS = 260;
+  function voiceSlotMs(key) {
+    return (VOICE_MS[key] || 1000) + VOICE_GAP_MS;
+  }
 
   function dealAnimTotalMs(n) {
     n = typeof n === 'number' ? n : DEAL_ORDER.length;
@@ -1544,13 +1729,15 @@
     n = typeof n === 'number' ? n : DEAL_ORDER.length;
     return n * FLIP_MS + Math.max(0, n - 1) * FLIP_GAP_MS;
   }
-  function thirdCardPhaseMs(drew) {
-    if (!drew) return 0;
-    return VOICE_EST_MS + (FLY_MS + GAP_MS) + (FLIP_MS + FLIP_GAP_MS);
-  }
-  function announcePhaseMs() {
-    /* 闲点 + 庄点 + 结果 */
-    return VOICE_EST_MS * 3;
+  /** 闲点 + 庄点 + 结果，按本局真实要播的几句累加 */
+  function announcePhaseMs(outcome) {
+    if (!outcome) return voiceSlotMs('voice/point-0') * 3;
+    var resultKey = outcome.result === 'banker'
+      ? 'voice/banker-win'
+      : outcome.result === 'player' ? 'voice/player-win' : 'voice/tie';
+    return voiceSlotMs('voice/point-' + outcome.playerPoint)
+      + voiceSlotMs('voice/point-' + outcome.bankerPoint)
+      + voiceSlotMs(resultKey);
   }
   function drawElapsedMsFromSnap(snap) {
     if (!snap) return 0;
@@ -1785,82 +1972,6 @@
     return hydrateTableChips({ roundNo: rn, betSummary: {} });
   }
 
-  function joinOrSeekDraw(snap) {
-    if (!snap || !snap.outcome) return false;
-    if (snap.phase !== 'DRAWING' && snap.phase !== 'SETTLED') return false;
-    var rn = snap.roundNo ? String(snap.roundNo) : '';
-    var elapsed = drawElapsedMsFromSnap(snap);
-    clearAlignWait();
-    alignWaiting = false;
-    stopOtherBetting();
-
-    var same =
-      drawClock &&
-      phase === 'draw' &&
-      drawClock.outcome &&
-      (!rn || !drawClock.roundNo || drawClock.roundNo === rn);
-
-    if (!same) {
-      roundSeq += 1;
-      roundBusy = true;
-      phase = 'draw';
-      resetCards();
-      drawClock = {
-        seq: roundSeq,
-        anchorAt: Date.now() - elapsed,
-        lastAdvAt: 0,
-        roundNo: rn,
-        outcome: null,
-        dealBaseAt: 0,
-        voiceMs: announcePhaseMs(),
-        dealStarted: {},
-        flipStarted: {},
-        flags: {
-          thirdP: false, thirdB: false,
-          compared: false, road: false, voice: false, payout: false, finished: false
-        }
-      };
-    } else {
-      drawClock.anchorAt = Date.now() - elapsed;
-      if (drawClock.dealBaseAt) drawClock.dealBaseAt = drawClock.anchorAt + BANNER_MS;
-    }
-
-    bindDrawOutcome(snap);
-    if (!drawClock.dealBaseAt) drawClock.dealBaseAt = drawClock.anchorAt + BANNER_MS;
-    drawClock.dealStarted = {};
-    drawClock.flipStarted = {};
-    var seqAtJoin = drawClock.seq;
-    hydrateTableChips(snap).then(function () {
-      if (!drawClock || drawClock.seq !== seqAtJoin) return;
-      requestAnimationFrame(function () {
-        requestAnimationFrame(function () {
-          if (!drawClock || drawClock.seq !== seqAtJoin) return;
-          if (!tableHasChipVisuals()) {
-            chipsHydratedRound = '';
-            hydrateTableChips(snap).then(function () {
-              if (!drawClock || drawClock.seq !== seqAtJoin) return;
-              drawClock.forceSeek = true;
-              advanceDrawClock();
-            });
-            return;
-          }
-          drawClock.forceSeek = true;
-          advanceDrawClock();
-        });
-      });
-    });
-    return true;
-  }
-
-  function abortDrawAndRealign() {
-    roundSeq += 1;
-    drawClock = null;
-    roundBusy = false;
-    try { if (flyLayer) flyLayer.innerHTML = ''; } catch (e0) { /* ignore */ }
-    resetCards();
-    startBet();
-  }
-
   function bindDrawOutcome(snap) {
     if (!drawClock || !snap || !snap.outcome) return false;
     if (drawClock.outcome) return true;
@@ -1977,7 +2088,7 @@
 
   function syncThirdCard(slotId, card, tBase, t, jumping, flagKey, voiceName) {
     if (!drawClock || !card) return tBase;
-    var voiceEnd = tBase + VOICE_EST_MS;
+    var voiceEnd = tBase + voiceSlotMs(voiceName);
     var dealEnd = voiceEnd + FLY_MS + GAP_MS;
     var flipEnd = dealEnd + FLIP_MS + FLIP_GAP_MS;
     if (t < tBase) return flipEnd;
@@ -2034,7 +2145,7 @@
       else if (typeof refreshBalance === 'function') refreshBalance();
       lastRoundPlacements = roundPlacements.slice();
       roundPlacements = [];
-      usedUndo = false;
+      undoing = false;
       usedRebet = false;
       Object.keys(betTotals).forEach(function (k) { betTotals[k] = 0; });
       slotStacks = {};
@@ -2044,13 +2155,14 @@
       });
       clearPersistedTableChips();
       chipsHydratedRound = '';
+      /*
+       * 派奖完只收桌面，不自己开新局：换局统一由时间基准在整点触发。
+       * 以前这里 setTimeout 到点就 startBet，跟心跳、轮询抢着开局，网络一抖就打架。
+       */
       var remain = Math.max(0.2, (dc.payoutDeadline || Date.now()) - Date.now());
       setTimeout(function () {
         if (!drawClock || drawClock.seq !== dc.seq) return;
         resetCards();
-        drawClock = null;
-        roundBusy = false;
-        startBet();
       }, remain);
     }
 
@@ -2103,26 +2215,19 @@
   function advanceDrawClock() {
     if (!drawClock || drawClock.seq !== roundSeq) return;
     if (drawClock.flags.finished) return;
-    var now = Date.now();
-    var elapsed = now - drawClock.anchorAt;
+    /*
+     * 时间一律取服务端的钟。仪式的每一步都是「本局第几毫秒该发生什么」，
+     * 所以慢一帧、卡一下、切后台回来，都只是下一帧直接跳到正确位置，
+     * 不会像以前那样把整条时间轴往后推。
+     */
+    var now = (window.TableShell && TableShell.serverNow)
+      ? TableShell.serverNow(serverClock)
+      : Date.now();
+    /* 跳点：主动 seek，或两帧间隔过大（后台/卡顿），此时略过动画直接落位 */
     var jumping = !!drawClock.forceSeek ||
       (!!drawClock.lastAdvAt && (now - drawClock.lastAdvAt) > 420);
     drawClock.forceSeek = false;
     drawClock.lastAdvAt = now;
-
-    if (elapsed > (DRAW_EST_SEC + PAYOUT_SECS + 12) * 1000) {
-      abortDrawAndRealign();
-      return;
-    }
-
-    if (
-      drawClock.outcome &&
-      serverClock.phase === 'BETTING' &&
-      Number(serverClock.secondsLeft) > 0 &&
-      elapsed > BANNER_MS + dealAnimTotalMs() + 500
-    ) {
-      if (!drawClock.flags.payout) beginDrawPayout(drawClock, true);
-    }
 
     if (!drawClock.outcome) {
       paint(false);
@@ -2161,7 +2266,7 @@
       drawClock.flags.compared = true;
     }
 
-    var voiceEnd = revealEnd + announcePhaseMs();
+    var voiceEnd = revealEnd + announcePhaseMs(outcome);
     if (t >= revealEnd && drawClock.flags.compared && !drawClock.flags.voice) {
       drawClock.flags.voice = true;
       if (!jumping && !document.hidden) {
@@ -2188,144 +2293,177 @@
     syncActions();
   }
 
-  function tick() {
-    var now = Date.now();
-    if (phase === 'draw') {
-      advanceDrawClock();
-      return;
+  /* ───────── 单一驱动：换局只由时间基准触发 ───────── */
+
+  /** 当前这一局的绝对起点（服务端钟）；靠它识别换局，不靠倒计时归零 */
+  var curRoundStartAt = 0;
+
+  /**
+   * 本局局号。服务端给的那个必须确认属于当前这一局才用，
+   * 否则迟到的快照会把上一局号带进来。
+   */
+  function roundNoAt(pos) {
+    var rn = (serverClock && serverClock.roundNo) ? String(serverClock.roundNo) : '';
+    if (!rn) return '';
+    if (window.TableShell && TableShell.roundStartAtOf) {
+      var startAt = TableShell.roundStartAtOf(rn, pos.cycleMs);
+      if (startAt != null && startAt !== pos.startAt) return '';
     }
-    if (alignWaiting) {
-      if (now >= payoutDeadline || getBetRemainSec() > 0) {
-        startBet();
-        return;
-      }
-      paint(false);
-      return;
-    }
-    if (phase === 'bet') {
-      left = Math.max(0, Math.ceil(getBetRemainSec()));
-      var doBeat = left !== lastBeatSec;
-      lastBeatSec = left;
-      paint(doBeat && left <= 5 && left > 0);
-      if (left <= 0) startDraw();
-      return;
-    }
-    if (phase === 'payout') {
-      paint(false);
-      return;
-    }
-    paint(false);
+    return rn;
   }
 
-  function startDraw() {
-    if (roundBusy || phase !== 'bet') return;
-    roundBusy = true;
-    var seq = ++roundSeq;
-    var roundIssue = currentBetIssue || '';
+  /**
+   * 进入新的一局。
+   *
+   * 这是整局唯一的复位入口：以前下注开始有三条路能进（本地倒计时、快照轮询、
+   * 切回前台），三方各按各的时间判断，网络一抖就互相打架。现在只认时间基准。
+   */
+  function enterRound(pos) {
+    curRoundStartAt = pos.startAt;
+    roundSeq += 1;
+    drawClock = null;
+    roundBusy = false;
+    payoutDeadline = 0;
+    lastBeatSec = -1;
+    currentBetIssue = roundNoAt(pos);
+    resetCards();
+    clearWinBets();
+    /* 同局刷新保留假筹；换局清缓存 */
+    var keepPersist = !!(currentBetIssue && peekPersistedChipRound() === currentBetIssue);
+    if (!keepPersist) {
+      clearPersistedTableChips();
+      chipsHydratedRound = '';
+    }
+    setPhase('bet');
+    if (currentBetIssue) {
+      setRoundNoLabel(currentBetIssue);
+      ensureChipsHydrated(currentBetIssue);
+    }
+    if (pos.phase === 'BETTING') {
+      startOtherBetting();
+      /*
+       * 只有真从头开始下注才弹「开始下注」：中途进房、切回前台不该看到这块牌子。
+       * 这一局是刚开始还是进行中，由时间基准直接给出，不需要再猜。
+       */
+      if (pos.tIn < 1200) showPhaseBanner('start');
+    }
+  }
+
+  /** 下注期每帧刷新：倒计时纯粹是「服务端还剩多少」的显示 */
+  function runBetting(pos) {
+    if (phase !== 'bet') {
+      roundBusy = false;
+      setPhase('bet');
+    }
+    left = Math.max(0, Math.ceil(pos.betLeftMs / 1000));
+    var doBeat = left !== lastBeatSec;
+    lastBeatSec = left;
+    paint(doBeat && left <= 5 && left > 0);
+  }
+
+  /**
+   * 建立本局的开奖时间轴。
+   *
+   * 关键：仪式锚在服务端的开奖起点（开局时刻 + 下注时长），跟客户端什么时候
+   * 察觉到封盘完全无关。以前锚的是「本地发现的那一刻」，于是发现得早晚不同，
+   * 整段发牌翻牌补牌报点就整体漂移，跟服务端对不上。
+   */
+  function ensureDrawClock(pos) {
+    if (drawClock && drawClock.startAt === pos.startAt) return;
     stopOtherBetting();
-    persistTableChips(roundIssue || currentChipRoundNo());
+    /* 封盘瞬间落盘（含气氛假筹），开奖中刷新也能还原 */
+    persistTableChips(currentBetIssue || currentChipRoundNo());
+    roundBusy = true;
     setPhase('draw');
     resetCards();
-
+    var drawStartAt = pos.startAt + Number(BETTING_SEC) * 1000;
     drawClock = {
-      seq: seq,
-      anchorAt: Date.now(),
+      seq: ++roundSeq,
+      startAt: pos.startAt,
+      /* 仪式基准：开奖起点之后先亮横幅，再开始发牌 */
+      anchorAt: drawStartAt,
+      dealBaseAt: drawStartAt + BANNER_MS,
       lastAdvAt: 0,
-      roundNo: roundIssue,
+      roundNo: currentBetIssue || '',
       outcome: null,
-      dealBaseAt: 0,
       voiceMs: announcePhaseMs(),
       dealStarted: {},
       flipStarted: {},
+      outcomeAsked: false,
       flags: {
         thirdP: false, thirdB: false,
         compared: false, road: false, voice: false, payout: false, finished: false
       }
     };
+    /* 刚封盘才亮牌子；中途进来牌都发一半了就别弹 */
+    if (pos.drawElapsedMs < BANNER_MS) showPhaseBanner('stop');
+    requestOutcome(drawClock);
+  }
 
-    showPhaseBanner('stop');
-    sfx('stop-bet', { vol: 0.7 });
-    if (!document.hidden) playVoice('voice/stop-bet');
-
-    if (!window.App || !App.waitTableOutcome) {
-      if (window.App && App.toast) App.toast('请从大厅进入游戏');
-      abortDrawAndRealign();
-      return;
-    }
-
-    var expectedRound = roundIssue;
-    var prep = expectedRound
-      ? Promise.resolve(expectedRound)
-      : (App.fetchTableSnapshot
-        ? App.fetchTableSnapshot(SERVER_GAME).then(function (pre) {
-            return pre && pre.roundNo ? String(pre.roundNo) : '';
-          }).catch(function () { return ''; })
-        : Promise.resolve(''));
-
-    prep.then(function (rn) {
-      if (!drawClock || drawClock.seq !== seq) return null;
-      expectedRound = rn || expectedRound;
-      if (expectedRound) drawClock.roundNo = expectedRound;
-      return App.waitTableOutcome(SERVER_GAME, {
-        timeoutMs: 25000,
-        roundNo: expectedRound || undefined,
-      });
+  /** 取本局开奖结果。失败不改流程，只是让下一帧重试 */
+  function requestOutcome(dc) {
+    if (!dc || dc.outcomeAsked) return;
+    if (!window.App || !App.waitTableOutcome) return;
+    dc.outcomeAsked = true;
+    var seq = dc.seq;
+    App.waitTableOutcome(SERVER_GAME, {
+      timeoutMs: 25000,
+      roundNo: dc.roundNo || undefined,
     }).then(function (snap) {
       if (!drawClock || drawClock.seq !== seq) return;
       if (!snap || !snap.outcome) throw new Error('开奖结果缺失');
       bindDrawOutcome(snap);
       advanceDrawClock();
-    }).catch(function (err) {
-      console.error(err);
+    }).catch(function () {
       if (!drawClock || drawClock.seq !== seq) return;
-      if (window.App && App.toast) App.toast((err && err.message) || '开奖失败，请稍候');
-      clearBetsVisual();
-      currentBetIssue = '';
-      if (window.App && App.refreshBalance) App.refreshBalance();
-      abortDrawAndRealign();
+      /*
+       * 拿不到就下一帧再要，轮询那边拿到同样能补上，本局时间轴不受影响。
+       * 这里不报错：开奖结果晚到几百毫秒是正常的，刷日志反而盖住真问题。
+       */
+      drawClock.outcomeAsked = false;
     });
   }
 
-  function startBet() {
-    clearAlignWait();
-    var remain = getBetRemainSec();
-    if (remain <= 0) {
-      alignWaiting = true;
-      setPhase('payout');
-      currentBetIssue = '';
-      left = 0;
-      lastBeatSec = -1;
-      var wait = Math.max(0.05, getAlignedWaitRemain());
-      payoutDeadline = Date.now() + wait * 1000;
-      if (typeof stopOtherBetting === 'function') stopOtherBetting();
-      paint(false);
-      syncActions();
-      alignWaitTimer = setTimeout(startBet, Math.ceil(wait * 1000));
+  /**
+   * 牌桌维护（每天 04:00–06:01，或管理端手动下架）。
+   *
+   * 维护期服务端不开局，但时间基准照样一轮轮往前走。不拦住的话画面会每 61 秒
+   * 空转一次「开奖中」，牌却永远发不出来，玩家只能干看两个小时。
+   */
+  function enterPaused() {
+    if (phase === 'paused') return;
+    roundBusy = false;
+    drawClock = null;
+    /* 清掉本局标记：维护结束后要当作全新一局重新进入 */
+    curRoundStartAt = 0;
+    stopOtherBetting();
+    resetCards();
+    clearWinBets();
+    hidePhaseBanner();
+    setPhase('paused');
+  }
+
+  /**
+   * 唯一的心跳。
+   *
+   * 每一帧只做三件事：问时间基准现在是本局第几毫秒、必要时换局、
+   * 然后照着这个位置渲染。没有任何「等某个 setTimeout 到点再切相位」的逻辑，
+   * 所以丢包、卡顿、切后台回来都只是画面追赶，不会把流程带偏。
+   */
+  function tick() {
+    if (serverClock && serverClock.phase === 'PAUSED') {
+      enterPaused();
       return;
     }
-    alignWaiting = false;
-    setPhase('bet');
-    var rn = (serverClock && serverClock.roundNo) ? String(serverClock.roundNo) : '';
-    currentBetIssue = rn || '';
-    betDeadline = Date.now() + remain * 1000;
-    left = Math.max(1, Math.ceil(remain));
-    lastBeatSec = -1;
-    /* 同局刷新保留假筹；换局清缓存 */
-    var keepPersist = !!(rn && peekPersistedChipRound() === rn);
-    if (!keepPersist) {
-      clearPersistedTableChips();
-      chipsHydratedRound = '';
+    var pos = roundPosition();
+    if (pos.startAt !== curRoundStartAt) enterRound(pos);
+    if (pos.phase === 'BETTING') {
+      runBetting(pos);
+      return;
     }
-    paint(false);
-    if (rn) ensureChipsHydrated(rn);
-    var isFresh = remain >= TOTAL - 1.5;
-    if (isFresh) {
-      showPhaseBanner('start');
-      sfx('start-bet', { vol: 0.65 });
-      playVoice('voice/start-bet');
-    }
-    startOtherBetting();
-    syncActions();
+    ensureDrawClock(pos);
+    if (drawClock && !drawClock.outcome) requestOutcome(drawClock);
+    advanceDrawClock();
   }
 
   /* events */
@@ -2390,100 +2528,62 @@
   resetCards();
   refreshBalance();
   setInterval(refreshBalance, 2000);
+  /*
+   * 先拉一份快照把时钟对上，再让心跳接管。
+   * 对不上也不要紧：roundPosition 会先用本地墙钟顶着，下一份快照到手自动切回来。
+   */
   function bootFromServer() {
-    if (!window.App || !App.fetchTableSnapshot) {
-      startBet();
-      return;
-    }
+    if (!window.App || !App.fetchTableSnapshot) return;
+    var sentAt = Date.now();
     App.fetchTableSnapshot(SERVER_GAME).then(function (snap) {
-      if (!snap) {
-        startBet();
-        return;
-      }
-      applyServerSnap(snap);
-      if (joinOrSeekDraw(snap)) return;
-      startBet();
-    }).catch(function () {
-      startBet();
-    });
+      if (!snap) return;
+      applyServerSnap(snap, { sentAt: sentAt, recvAt: Date.now() });
+      if (snap.outcome && drawClock && !drawClock.outcome) bindDrawOutcome(snap);
+      tick();
+    }).catch(function () { /* 忽略：心跳会继续尝试 */ });
   }
   bootFromServer();
   window.__bjlTickTimer = setInterval(function () {
     tick();
   }, 200);
   if (window.TableShell && TableShell.startSnapshotPoll) {
-    window.__bjlSnapTimer = TableShell.startSnapshotPoll(SERVER_GAME, function (snap) {
-      applyServerSnap(snap);
-      if (alignWaiting) {
-        if (joinOrSeekDraw(snap)) return;
-        if (snap.phase === 'BETTING' && Number(snap.secondsLeft) > 0) {
-          startBet();
-          return;
-        }
-      }
-      if (phase === 'draw' && drawClock) {
-        if (snap.phase === 'BETTING' && Number(snap.secondsLeft) > 0) {
-          if (drawClock.outcome && !drawClock.flags.payout) beginDrawPayout(drawClock, true);
-          else {
-            drawClock = null;
-            roundBusy = false;
-            startBet();
-          }
-          return;
-        }
-        if (snap && snap.outcome) bindDrawOutcome(snap);
+    /*
+     * 轮询只干两件事：给时钟校时、把开奖结果补进来。
+     * 它不再有权切换相位——以前它和心跳各自判断「该开奖了/该下注了」，
+     * 两边抢着切，网络一抖就打架。
+     */
+    window.__bjlSnapTimer = TableShell.startSnapshotPoll(SERVER_GAME, function (snap, meta) {
+      applyServerSnap(snap, meta);
+      if (snap && snap.outcome && drawClock && !drawClock.outcome) {
+        bindDrawOutcome(snap);
         advanceDrawClock();
-        return;
-      }
-      if (phase === 'bet' && !roundBusy && joinOrSeekDraw(snap)) return;
-      if (phase === 'bet' && !roundBusy) {
-        left = Math.max(0, Math.ceil(getBetRemainSec()));
-        paint(false);
       }
     }, {
       intervalMs: 1000,
-      shouldPoll: function () {
-        return (phase === 'bet' && !roundBusy) || alignWaiting || phase === 'draw';
-      },
+      shouldPoll: function () { return true; },
     });
   }
 
+  /** 切回前台：重新对时并把画面跳到当前应有的位置 */
   function onShellResume() {
     try { if (flyLayer) flyLayer.innerHTML = ''; } catch (eR) { /* ignore */ }
+    if (drawClock) {
+      drawClock.dealStarted = {};
+      drawClock.flipStarted = {};
+      drawClock.forceSeek = true;
+    }
     if (!window.App || !App.fetchTableSnapshot) {
-      if (phase === 'draw' && drawClock) {
-        drawClock.dealStarted = {};
-        drawClock.flipStarted = {};
-        drawClock.forceSeek = true;
-        advanceDrawClock();
-      }
+      tick();
       return;
     }
+    var sentAt = Date.now();
     App.fetchTableSnapshot(SERVER_GAME).then(function (snap) {
-      if (!snap) return;
-      applyServerSnap(snap);
-      if (snap.phase === 'BETTING' && Number(snap.secondsLeft) > 0) {
-        if (phase === 'draw' || alignWaiting || (phase === 'payout' && drawClock)) {
-          if (drawClock && drawClock.outcome && !drawClock.flags.payout) {
-            beginDrawPayout(drawClock, true);
-          }
-          drawClock = null;
-          roundBusy = false;
-          startBet();
-          return;
-        }
+      if (snap) {
+        applyServerSnap(snap, { sentAt: sentAt, recvAt: Date.now() });
+        if (snap.outcome && drawClock && !drawClock.outcome) bindDrawOutcome(snap);
       }
-      if (joinOrSeekDraw(snap)) return;
-      if (phase === 'draw' && drawClock) {
-        if (snap.outcome) bindDrawOutcome(snap);
-        drawClock.dealStarted = {};
-        drawClock.flipStarted = {};
-        drawClock.forceSeek = true;
-        advanceDrawClock();
-      } else if (alignWaiting && snap.phase === 'BETTING' && Number(snap.secondsLeft) > 0) {
-        startBet();
-      }
-    }).catch(function () { /* ignore */ });
+      tick();
+    }).catch(function () { tick(); });
   }
 
   window.addEventListener('message', function (ev) {
@@ -2694,7 +2794,10 @@
     })();
   })();
 
-  window.addEventListener('gamebox-balance', function () { refreshBalance(); });
+  window.addEventListener('gamebox-balance', function () {
+    refreshBalance();
+    syncChipToBalance();
+  });
   window.__bjlBooted = true;
 
 })();

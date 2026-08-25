@@ -2,10 +2,12 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <link rel="stylesheet" href="/fonts/gamebox-fonts.css">
+  <link rel="preload" as="style" href="/fonts/gamebox-fonts.css"
+        onload="this.onload=null;this.rel='stylesheet'">
+  <noscript><link rel="stylesheet" href="/fonts/gamebox-fonts.css"></noscript>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>百家乐</title>
-<link rel="stylesheet" href="./css/bjl-table.css?v=29">
+<link rel="stylesheet" href="./css/bjl-table.css?v=35">
   <link rel="stylesheet" href="/games-assets/_table-common/table-ui.css?v=7">
   <script>
     (function () {
@@ -50,8 +52,8 @@
   <div class="bjl-stage">
     <div class="bjl-room tb-room">
       <div class="bjl-shoe" id="shoeBox" aria-hidden="true">
-        <img class="bjl-shoe__body" src="./assets/ui/shoe-dealer-live.png?v=1" alt="" draggable="false">
-        <img class="bjl-shoe__cards" src="./assets/ui/shoe-cards-live.png?v=3" alt="" draggable="false">
+        <img class="bjl-shoe__body" src="./assets/ui/shoe-dealer-live.webp?v=1" alt="" draggable="false">
+        <img class="bjl-shoe__cards" src="./assets/ui/shoe-cards-live.webp?v=3" alt="" draggable="false">
       </div>
 
       <div class="bjl-timer" id="timerBox" aria-label="倒计时">
@@ -62,20 +64,20 @@
         <div class="bjl-hand bjl-hand--banker" id="bankerHand">
           <div class="bjl-card" data-slot="b3">
             <div class="bjl-card__inner">
-              <div class="bjl-card__face bjl-card__face--back"><img src="./assets/cards/card-back.png?v=6" alt="" draggable="false"></div>
-              <div class="bjl-card__face bjl-card__face--front"><img src="./assets/cards/card-back.png?v=6" alt="" draggable="false"></div>
+              <div class="bjl-card__face bjl-card__face--back"><img src="./assets/cards/card-back.webp?v=6" alt="" draggable="false"></div>
+              <div class="bjl-card__face bjl-card__face--front"><img src="./assets/cards/card-back.webp?v=6" alt="" draggable="false"></div>
             </div>
           </div>
           <div class="bjl-card" data-slot="b1">
             <div class="bjl-card__inner">
-              <div class="bjl-card__face bjl-card__face--back"><img src="./assets/cards/card-back.png?v=6" alt="" draggable="false"></div>
-              <div class="bjl-card__face bjl-card__face--front"><img src="./assets/cards/card-back.png?v=6" alt="" draggable="false"></div>
+              <div class="bjl-card__face bjl-card__face--back"><img src="./assets/cards/card-back.webp?v=6" alt="" draggable="false"></div>
+              <div class="bjl-card__face bjl-card__face--front"><img src="./assets/cards/card-back.webp?v=6" alt="" draggable="false"></div>
             </div>
           </div>
           <div class="bjl-card" data-slot="b2">
             <div class="bjl-card__inner">
-              <div class="bjl-card__face bjl-card__face--back"><img src="./assets/cards/card-back.png?v=6" alt="" draggable="false"></div>
-              <div class="bjl-card__face bjl-card__face--front"><img src="./assets/cards/card-back.png?v=6" alt="" draggable="false"></div>
+              <div class="bjl-card__face bjl-card__face--back"><img src="./assets/cards/card-back.webp?v=6" alt="" draggable="false"></div>
+              <div class="bjl-card__face bjl-card__face--front"><img src="./assets/cards/card-back.webp?v=6" alt="" draggable="false"></div>
             </div>
           </div>
           <div class="bjl-hand-type" id="bankerType" hidden></div>
@@ -83,20 +85,20 @@
         <div class="bjl-hand bjl-hand--player" id="playerHand">
           <div class="bjl-card" data-slot="p1">
             <div class="bjl-card__inner">
-              <div class="bjl-card__face bjl-card__face--back"><img src="./assets/cards/card-back.png?v=6" alt="" draggable="false"></div>
-              <div class="bjl-card__face bjl-card__face--front"><img src="./assets/cards/card-back.png?v=6" alt="" draggable="false"></div>
+              <div class="bjl-card__face bjl-card__face--back"><img src="./assets/cards/card-back.webp?v=6" alt="" draggable="false"></div>
+              <div class="bjl-card__face bjl-card__face--front"><img src="./assets/cards/card-back.webp?v=6" alt="" draggable="false"></div>
             </div>
           </div>
           <div class="bjl-card" data-slot="p2">
             <div class="bjl-card__inner">
-              <div class="bjl-card__face bjl-card__face--back"><img src="./assets/cards/card-back.png?v=6" alt="" draggable="false"></div>
-              <div class="bjl-card__face bjl-card__face--front"><img src="./assets/cards/card-back.png?v=6" alt="" draggable="false"></div>
+              <div class="bjl-card__face bjl-card__face--back"><img src="./assets/cards/card-back.webp?v=6" alt="" draggable="false"></div>
+              <div class="bjl-card__face bjl-card__face--front"><img src="./assets/cards/card-back.webp?v=6" alt="" draggable="false"></div>
             </div>
           </div>
           <div class="bjl-card" data-slot="p3">
             <div class="bjl-card__inner">
-              <div class="bjl-card__face bjl-card__face--back"><img src="./assets/cards/card-back.png?v=6" alt="" draggable="false"></div>
-              <div class="bjl-card__face bjl-card__face--front"><img src="./assets/cards/card-back.png?v=6" alt="" draggable="false"></div>
+              <div class="bjl-card__face bjl-card__face--back"><img src="./assets/cards/card-back.webp?v=6" alt="" draggable="false"></div>
+              <div class="bjl-card__face bjl-card__face--front"><img src="./assets/cards/card-back.webp?v=6" alt="" draggable="false"></div>
             </div>
           </div>
           <div class="bjl-hand-type" id="playerType" hidden></div>
@@ -107,35 +109,35 @@
 
       <div class="bjl-bet tb-bet" id="betArea" aria-label="下注区">
         <button type="button" class="bjl-bet-btn" data-bet="banker">
-          <img class="bjl-bet-btn__frame" src="./assets/ui/bet-btns/banker.png?v=1" alt="" draggable="false">
+          <img class="bjl-bet-btn__frame" src="./assets/ui/bet-btns/banker.webp?v=1" alt="" draggable="false">
           <span class="bjl-bet-btn__name">庄</span>
           <span class="bjl-bet-btn__odds">1:0.95</span>
           <span class="bjl-bet-btn__chips" aria-hidden="true"></span>
           <span class="bjl-bet-btn__stake" hidden>0</span>
         </button>
         <button type="button" class="bjl-bet-btn" data-bet="tie">
-          <img class="bjl-bet-btn__frame" src="./assets/ui/bet-btns/tie.png?v=1" alt="" draggable="false">
+          <img class="bjl-bet-btn__frame" src="./assets/ui/bet-btns/tie.webp?v=1" alt="" draggable="false">
           <span class="bjl-bet-btn__name">和</span>
           <span class="bjl-bet-btn__odds">1:8</span>
           <span class="bjl-bet-btn__chips" aria-hidden="true"></span>
           <span class="bjl-bet-btn__stake" hidden>0</span>
         </button>
         <button type="button" class="bjl-bet-btn" data-bet="player">
-          <img class="bjl-bet-btn__frame" src="./assets/ui/bet-btns/player.png?v=1" alt="" draggable="false">
+          <img class="bjl-bet-btn__frame" src="./assets/ui/bet-btns/player.webp?v=1" alt="" draggable="false">
           <span class="bjl-bet-btn__name">闲</span>
           <span class="bjl-bet-btn__odds">1:1</span>
           <span class="bjl-bet-btn__chips" aria-hidden="true"></span>
           <span class="bjl-bet-btn__stake" hidden>0</span>
         </button>
         <button type="button" class="bjl-bet-btn" data-bet="bankerPair">
-          <img class="bjl-bet-btn__frame" src="./assets/ui/bet-btns/banker-pair.png?v=1" alt="" draggable="false">
+          <img class="bjl-bet-btn__frame" src="./assets/ui/bet-btns/banker-pair.webp?v=1" alt="" draggable="false">
           <span class="bjl-bet-btn__name">庄对</span>
           <span class="bjl-bet-btn__odds">1:11</span>
           <span class="bjl-bet-btn__chips" aria-hidden="true"></span>
           <span class="bjl-bet-btn__stake" hidden>0</span>
         </button>
         <button type="button" class="bjl-bet-btn" data-bet="playerPair">
-          <img class="bjl-bet-btn__frame" src="./assets/ui/bet-btns/player-pair.png?v=1" alt="" draggable="false">
+          <img class="bjl-bet-btn__frame" src="./assets/ui/bet-btns/player-pair.webp?v=1" alt="" draggable="false">
           <span class="bjl-bet-btn__name">闲对</span>
           <span class="bjl-bet-btn__odds">1:11</span>
           <span class="bjl-bet-btn__chips" aria-hidden="true"></span>
@@ -195,42 +197,42 @@
 
       <div class="bjl-actions" id="actionBar" aria-label="操作">
         <button type="button" class="bjl-action bjl-action--undo" data-action="undo" aria-label="撤销">
-          <img src="./assets/ui/action-btns/undo.png?v=4" alt="撤销" draggable="false">
+          <img src="./assets/ui/action-btns/undo.webp?v=4" alt="撤销" draggable="false">
         </button>
         <button type="button" class="bjl-action bjl-action--rebet" data-action="rebet" aria-label="续押">
-          <img src="./assets/ui/action-btns/rebet.png?v=4" alt="续押" draggable="false">
+          <img src="./assets/ui/action-btns/rebet.webp?v=4" alt="续押" draggable="false">
         </button>
       </div>
 
       <div class="bjl-players tb-players" id="playersBox" aria-label="气氛人数（非实时在线）" title="桌面气氛人数，非实时在线">
-        <img class="bjl-players__icon" src="./assets/ui/action-btns/players.png?v=2" alt="" draggable="false">
+        <img class="bjl-players__icon" src="./assets/ui/action-btns/players.webp?v=2" alt="" draggable="false">
         <span class="bjl-players__count" id="playersCount">36</span>
       </div>
 
       <div class="bjl-chips" id="chipBar" aria-label="筹码">
         <button type="button" class="bjl-chip is-selected" data-chip="1" aria-label="1">
           <span class="bjl-chip__glow" aria-hidden="true"></span>
-          <img src="./assets/ui/chips/chip-1.png?v=4" alt="1" draggable="false">
+          <img src="./assets/ui/chips/chip-1.webp?v=4" alt="1" draggable="false">
         </button>
         <button type="button" class="bjl-chip" data-chip="5" aria-label="5">
           <span class="bjl-chip__glow" aria-hidden="true"></span>
-          <img src="./assets/ui/chips/chip-5.png?v=4" alt="5" draggable="false">
+          <img src="./assets/ui/chips/chip-5.webp?v=4" alt="5" draggable="false">
         </button>
         <button type="button" class="bjl-chip" data-chip="10" aria-label="10">
           <span class="bjl-chip__glow" aria-hidden="true"></span>
-          <img src="./assets/ui/chips/chip-10.png?v=4" alt="10" draggable="false">
+          <img src="./assets/ui/chips/chip-10.webp?v=4" alt="10" draggable="false">
         </button>
         <button type="button" class="bjl-chip" data-chip="50" aria-label="50">
           <span class="bjl-chip__glow" aria-hidden="true"></span>
-          <img src="./assets/ui/chips/chip-50.png?v=4" alt="50" draggable="false">
+          <img src="./assets/ui/chips/chip-50.webp?v=4" alt="50" draggable="false">
         </button>
         <button type="button" class="bjl-chip" data-chip="100" aria-label="100">
           <span class="bjl-chip__glow" aria-hidden="true"></span>
-          <img src="./assets/ui/chips/chip-100.png?v=4" alt="100" draggable="false">
+          <img src="./assets/ui/chips/chip-100.webp?v=4" alt="100" draggable="false">
         </button>
         <button type="button" class="bjl-chip" data-chip="500" aria-label="500">
           <span class="bjl-chip__glow" aria-hidden="true"></span>
-          <img src="./assets/ui/chips/chip-500.png?v=4" alt="500" draggable="false">
+          <img src="./assets/ui/chips/chip-500.webp?v=4" alt="500" draggable="false">
         </button>
         <button type="button" class="bjl-chip-more tb-chip-more" id="chipPageBtn" aria-label="切换筹码页" title="切换筹码">
           <span class="bjl-chip-more__dot"></span>
@@ -253,31 +255,35 @@
     </button>
     <div class="bjl-rail-stack" id="bjlRailStack">
       <button type="button" class="bjl-rail-btn" id="railCs" title="客服">
-        <img class="bjl-rail-ic" src="/images/table-rail/rail-cs.png?v=3" alt="" draggable="false">
+        <img class="bjl-rail-ic" src="/images/table-rail/rail-cs.webp?v=3" alt="" draggable="false">
         <span class="bjl-rail-lb">客服</span>
       </button>
       <button type="button" class="bjl-rail-btn" id="railHistory" title="历史记录">
-        <img class="bjl-rail-ic" src="/images/table-rail/rail-history.png?v=3" alt="" draggable="false">
+        <img class="bjl-rail-ic" src="/images/table-rail/rail-history.webp?v=3" alt="" draggable="false">
         <span class="bjl-rail-lb">历史</span>
       </button>
       <button type="button" class="bjl-rail-btn" id="railRecords" title="下注记录">
-        <img class="bjl-rail-ic" src="/images/table-rail/rail-records.png?v=3" alt="" draggable="false">
+        <img class="bjl-rail-ic" src="/images/table-rail/rail-records.webp?v=3" alt="" draggable="false">
         <span class="bjl-rail-lb">记录</span>
       </button>
       <button type="button" class="bjl-rail-btn" id="railRules" title="玩法规则">
-        <img class="bjl-rail-ic" src="/images/table-rail/rail-rules.png?v=3" alt="" draggable="false">
+        <img class="bjl-rail-ic" src="/images/table-rail/rail-rules.webp?v=3" alt="" draggable="false">
         <span class="bjl-rail-lb">玩法</span>
       </button>
       <button type="button" class="bjl-rail-btn" id="railSettings" title="设置">
-        <img class="bjl-rail-ic" src="/images/table-rail/rail-settings.png?v=3" alt="" draggable="false">
+        <img class="bjl-rail-ic" src="/images/table-rail/rail-settings.webp?v=3" alt="" draggable="false">
         <span class="bjl-rail-lb">设置</span>
       </button>
     </div>
   </aside>
   </div><!-- /.bjl-stage -->
   <div class="bjl-payout-fly" id="payoutFlyLayer" aria-hidden="true"></div>
+  <!-- 两张图各自常驻：显示时只切换哪个可见，绝不改 src（改 src 会出现声画错位） -->
   <div class="bjl-phase-banner" id="phaseBanner" aria-hidden="true">
-    <img class="bjl-phase-banner__img" id="phaseBannerImg" alt="" draggable="false">
+    <img class="bjl-phase-banner__img" id="phaseBannerStart"
+         src="./assets/ui/banners/bet-start.webp?v=1" alt="开始下注" draggable="false" hidden>
+    <img class="bjl-phase-banner__img" id="phaseBannerStop"
+         src="./assets/ui/banners/bet-stop.webp?v=1" alt="停止下注" draggable="false" hidden>
   </div>
 
   <div class="bjl-sheet-mask" id="bjlSheetMask" hidden></div>
@@ -290,10 +296,10 @@
   </section>
 </div>
 
-  <script src="/legacy/js/games-common.js?v=33"></script>
-  <script src="/games-assets/_table-common/table-shell.js?v=12"></script>
+  <script src="/legacy/js/games-common.js?v=36"></script>
+  <script src="/games-assets/_table-common/table-shell.js?v=24"></script>
   <script src="/games-assets/_lottery-common/app-audio-level.js?v=1"></script>
 <script src="/games-assets/_table-common/table-audio.js?v=3"></script>
-  <script src="./js/bjl-table.js?v=33"></script>
+  <script src="./js/bjl-table.js?v=44"></script>
 </body>
 </html>
