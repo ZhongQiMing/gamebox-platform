@@ -2,11 +2,13 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <link rel="stylesheet" href="/fonts/gamebox-fonts.css">
+  <link rel="preload" as="style" href="/fonts/gamebox-fonts.css"
+        onload="this.onload=null;this.rel='stylesheet'">
+  <noscript><link rel="stylesheet" href="/fonts/gamebox-fonts.css"></noscript>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>1分快三</title>
   <link rel="stylesheet" href="/legacy/css/common.css">
-<link rel="stylesheet" href="./css/k3.css?v=46">
+<link rel="stylesheet" href="./css/k3.css?v=49">
   <script>
     (function () {
       if (window.parent !== window) {
@@ -111,19 +113,19 @@
     </button>
     <div class="k3-rail-stack" id="k3RailStack">
       <button type="button" class="k3-rail-btn" id="btnCs" title="客服">
-        <img class="k3-rail-ic" src="/images/chat-rail/cs.png?v=1" alt="" draggable="false">
+        <img class="k3-rail-ic" src="/images/chat-rail/cs.webp?v=1" alt="" draggable="false">
         <span class="k3-rail-lb">客服</span>
       </button>
       <button type="button" class="k3-rail-btn" id="btnRules" title="规则">
-        <img class="k3-rail-ic" src="/images/chat-rail/rules.png?v=1" alt="" draggable="false">
+        <img class="k3-rail-ic" src="/images/chat-rail/rules.webp?v=1" alt="" draggable="false">
         <span class="k3-rail-lb">规则</span>
       </button>
       <button type="button" class="k3-rail-btn" id="btnRecords" title="记录">
-        <img class="k3-rail-ic" src="/images/chat-rail/records.png?v=1" alt="" draggable="false">
+        <img class="k3-rail-ic" src="/images/chat-rail/records.webp?v=1" alt="" draggable="false">
         <span class="k3-rail-lb">记录</span>
       </button>
       <button type="button" class="k3-rail-btn k3-rail-btn--play" id="btnExpand" title="玩法">
-        <img class="k3-rail-ic k3-rail-ic--play" src="/images/chat-rail/play.png?v=1" alt="" draggable="false">
+        <img class="k3-rail-ic k3-rail-ic--play" src="/images/chat-rail/play.webp?v=1" alt="" draggable="false">
         <span class="k3-rail-lb">玩法</span>
       </button>
     </div>
@@ -133,10 +135,10 @@
   <footer class="k3-composer">
     <input type="text" class="k3-input" id="chatInput" placeholder="输入玩法/金额，如 大/100、二同3/50、长牌12/100" autocomplete="off" enterkeyhint="send">
     <button type="button" class="k3-composer-btn" id="plusBtn" aria-label="更多">
-      <img class="k3-composer-btn__img" id="plusBtnImg" src="/images/chat-rail/plus.png?v=1" alt="" draggable="false">
+      <img class="k3-composer-btn__img" id="plusBtnImg" src="/images/chat-rail/plus.webp?v=1" alt="" draggable="false">
     </button>
     <button type="button" class="k3-composer-btn k3-composer-btn--play" id="btnComposerPlay" title="玩法" aria-label="玩法">
-      <img class="k3-composer-btn__img k3-composer-btn__img--play" src="/images/chat-rail/play.png?v=1" alt="" draggable="false">
+      <img class="k3-composer-btn__img k3-composer-btn__img--play" src="/images/chat-rail/play.webp?v=1" alt="" draggable="false">
     </button>
   </footer>
 
@@ -249,16 +251,17 @@
 </div>
 
 <script src="/legacy/js/jquery-3.7.1.min.js"></script>
-<script src="/legacy/js/games-common.js?v=33"></script>
-<script src="/games-assets/_lottery-common/room-chat.js?v=29"></script>
+<script src="/legacy/js/games-common.js?v=35"></script>
+<script src="/games-assets/_lottery-common/room-chat.js?v=30"></script>
 <link rel="stylesheet" href="/games-assets/_lottery-common/hold-drawing-tip.css?v=4">
 <script src="/games-assets/_lottery-common/hold-drawing-tip.js?v=4"></script>
 <link rel="stylesheet" href="/games-assets/_lottery-common/card-sfx-toggle.css?v=8">
 <script src="/games-assets/_lottery-common/app-audio-level.js?v=1"></script>
-<script src="/games-assets/_lottery-common/card-sfx-toggle.js?v=4"></script>
+<script src="/games-assets/_lottery-common/card-sfx-toggle.js?v=5"></script>
+<script src="/games-assets/_lottery-common/server-clock.js?v=1"></script>
 <script src="./js/result-card.js?v=11"></script>
-<script src="./js/k3-audio.js?v=5"></script>
-<script src="./js/k3.js?v=143"></script>
+<script src="./js/k3-audio.js?v=6"></script>
+<script src="./js/k3.js?v=147"></script>
 <script>
 (function () {
   function boot() {

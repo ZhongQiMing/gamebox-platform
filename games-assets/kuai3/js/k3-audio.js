@@ -2,7 +2,7 @@
  * 1分快三 · 三路音频（互不混控）
  *
  * 1) music  房间 BGM：bg.mp3
- * 2) sfx    房间音效：顶栏末 3 秒 RING_01
+ * 2) sfx    房间音效：封盘前 3 秒读秒 countdown-3..1 + 封盘双声 countdown-final
  * 3) drawSfx 开奖动画：卡内 tick 嘀声 + 摇骰 run（父页播，iframe 静音）
  *    - 仅开奖卡喇叭 → setDrawSfxOn
  */
@@ -10,8 +10,14 @@
   var BASE = '/audio/kuai3/';
   var VER = '4';
   var LS_KEY = 'k3_audio_v1';
-  var RING_LEAD_MS = 3000;
-  var RING_FADE_MS = 160;
+  /**
+   * 封盘前几秒开始读秒：每秒一声「嘀」，到 00:00 是双声的 countdown-final。
+   *
+   * 原先这里放的是 rings/RING_01.wav —— 一段 4.4 秒的闹铃，从 T-3 秒一直响到封盘，
+   * 听着完全不是读秒。countdown-1..3 / countdown-final 是从时时彩那份复制到本游戏目录的，
+   * 与时时彩 / 分分彩 / 三个赛车统一成同一种读秒。
+   */
+  var CD_LEAD_SEC = 3;
 
   function isAppBgmOn() {
     try { return localStorage.getItem('app_bgm_off') !== '1'; } catch (e) { return true; }
@@ -43,14 +49,17 @@
         bgm.volume = duck ? baseVol * 0.15 : baseVol;
       } catch (e3) {}
     }
-    if (typeof ringNode !== 'undefined' && ringNode) {
-      try { ringNode.volume = sfxVol(); } catch (e4) {}
-    }
     if (typeof liveSfx !== 'undefined' && liveSfx && liveSfx.forEach) {
       liveSfx.forEach(function (n) { try { n.volume = sfxVol(); } catch (e5) {} });
     }
+    /* 仪式音轨要认「开奖音效」这一路的开关：关着时它们静音待命，别在这里被拉回音量 */
     if (typeof drawNodes !== 'undefined' && drawNodes && drawNodes.forEach) {
-      drawNodes.forEach(function (n) { try { n.volume = sfxVol(); } catch (e6) {} });
+      drawNodes.forEach(function (n) {
+        try {
+          n.muted = !pref.drawSfx;
+          n.volume = pref.drawSfx ? sfxVol() : 0;
+        } catch (e6) { /* ignore */ }
+      });
     }
   }
 
@@ -84,7 +93,6 @@
     }
     if (!pref.sfx) {
       try { if (typeof clearCountdownArm === 'function') clearCountdownArm(); } catch (e6) { /* ignore */ }
-      try { if (typeof stopRing === 'function') stopRing(); } catch (e7) { /* ignore */ }
       try { if (typeof stopLiveSfx === 'function') stopLiveSfx(); } catch (e8) { /* ignore */ }
     }
     if (!pref.drawSfx) {
@@ -112,12 +120,9 @@
   var cdTimers = [];
   var drawTimers = [];
   var drawNodes = [];
-  var ringNode = null;
-  var ringStopTimer = 0;
-  var ringFadeTimer = 0;
   var cdArmedLockAt = 0;
-  var ringPlayedForLock = 0;
-  var ringPlayedThisDraw = false;
+  /** 本期已播过的读秒键（t3/t2/t1/t0），避免定时器与 onCountdownSec 重复触发 */
+  var cdPlayed = {};
   var baseVol = musicVol();
   var drawActive = false;
   var runNode = null;
@@ -134,7 +139,7 @@
     if (unlocked) return;
     unlocked = true;
     try {
-      var silent = new Audio(url('rings/RING_01'));
+      var silent = new Audio(url('countdown-1'));
       silent.volume = 0;
       silent.play().then(function () { silent.pause(); }).catch(function () {});
     } catch (e) { /* ignore */ }
@@ -181,7 +186,6 @@
     savePref();
     if (!pref.sfx) {
       clearCountdownArm();
-      stopRing();
       stopLiveSfx();
     }
   }
@@ -206,78 +210,24 @@
     }
   }
 
-  function clearRingFade() {
-    if (ringFadeTimer) {
-      clearInterval(ringFadeTimer);
-      ringFadeTimer = 0;
-    }
-  }
-
-  function stopRing() {
-    if (ringStopTimer) {
-      clearTimeout(ringStopTimer);
-      ringStopTimer = 0;
-    }
-    clearRingFade();
-    if (ringNode) {
-      try { ringNode.pause(); ringNode.src = ''; } catch (e) { /* ignore */ }
-      ringNode = null;
-    }
-  }
-
-  function fadeStopRing() {
-    var n = ringNode;
-    if (!n) return;
-    clearRingFade();
-    var from = typeof n.volume === 'number' ? n.volume : sfxVol();
-    var steps = 5;
-    var i = 0;
-    ringFadeTimer = setInterval(function () {
-      i += 1;
-      try { n.volume = Math.max(0, from * (1 - i / steps)); } catch (e) { /* ignore */ }
-      if (i >= steps) {
-        clearRingFade();
-        try { n.pause(); n.src = ''; } catch (e2) { /* ignore */ }
-        if (ringNode === n) ringNode = null;
-      }
-    }, Math.max(24, Math.floor(RING_FADE_MS / steps)));
-  }
-
   function clearCountdownArm() {
     cdTimers.forEach(function (id) { clearTimeout(id); });
     cdTimers = [];
     cdArmedLockAt = 0;
+    cdPlayed = {};
   }
 
-  function playCountdownRing(lockAtMs) {
+  /** 读秒每声只播一次：定时器与顶栏秒数回调可能同时打到同一秒 */
+  function playCd(key, name) {
     if (!pref.sfx || !unlocked) return;
-    var lockAt = Number(lockAtMs) || 0;
-    if (lockAt && ringPlayedForLock === lockAt) return;
-    if (ringPlayedThisDraw) return;
-    if (lockAt) ringPlayedForLock = lockAt;
-    ringPlayedThisDraw = true;
-
-    stopRing();
-    try {
-      var node = new Audio(url('rings/RING_01'));
-      node.volume = sfxVol();
-      ringNode = node;
-      var p = node.play();
-      if (p && p.catch) p.catch(function () {});
-    } catch (e) {
-      return;
-    }
-
-    var now = Date.now();
-    var remain = lockAt ? Math.max(280, lockAt - now) : RING_LEAD_MS;
-    var playMs = Math.min(Math.max(remain, 280), RING_LEAD_MS + 250);
-    ringStopTimer = setTimeout(function () {
-      ringStopTimer = 0;
-      fadeStopRing();
-    }, playMs);
+    if (cdPlayed[key]) return;
+    cdPlayed[key] = true;
+    sfx(name, { dedupeMs: 0 });
   }
 
+  /** 封盘前 CD_LEAD_SEC 秒起每秒一声，封盘那一刻是双声 */
   function armCountdown(lockAtMs) {
+    if (drawActive) return;
     var lockAt = Number(lockAtMs) || 0;
     if (!lockAt || !isFinite(lockAt)) return;
     if (cdArmedLockAt === lockAt) return;
@@ -285,30 +235,44 @@
     cdArmedLockAt = lockAt;
 
     var now = Date.now();
-    if (now >= lockAt) return;
+    function schedule(at, fn) {
+      var delay = at - now;
+      /* 已经过去太久的那一声就不补了，免得进场时一串补播 */
+      if (delay < -80) return;
+      if (delay <= 0) {
+        fn();
+        return;
+      }
+      cdTimers.push(setTimeout(fn, delay));
+    }
 
-    var startAt = lockAt - RING_LEAD_MS;
-    var delay = startAt - now;
-    var fire = function () { playCountdownRing(lockAt); };
-    if (delay <= 0) fire();
-    else cdTimers.push(setTimeout(fire, delay));
+    for (var s = CD_LEAD_SEC; s >= 1; s--) {
+      (function (sec) {
+        schedule(lockAt - sec * 1000, function () {
+          playCd('t' + sec, 'countdown-' + sec);
+        });
+      })(s);
+    }
+    schedule(lockAt, function () { playCd('t0', 'countdown-final'); });
   }
 
+  /** 顶栏秒数回调：定时器被后台节流时的兜底 */
   function onCountdownSec(sec) {
     var s = Math.ceil(Number(sec));
-    if (!(s <= 3) || s < 0) return;
-    if (ringPlayedThisDraw) return;
-    if (cdArmedLockAt) playCountdownRing(cdArmedLockAt);
+    if (!(s >= 0 && s <= CD_LEAD_SEC)) return;
+    if (!cdArmedLockAt) return;
+    if (s === 0) playCd('t0', 'countdown-final');
+    else playCd('t' + s, 'countdown-' + s);
   }
 
   function onDrawing() {
+    /* 封盘瞬间没赶上定时器时补那声双响，再清 */
+    if (cdArmedLockAt && !cdPlayed.t0) playCd('t0', 'countdown-final');
     clearCountdownArm();
   }
 
   function onBetting() {
-    ringPlayedThisDraw = false;
-    ringPlayedForLock = 0;
-    stopRing();
+    clearCountdownArm();
     endDrawCeremony();
     ensureBgm(true);
   }
@@ -331,12 +295,18 @@
     stopRun();
   }
 
+  /** 仪式音轨目标音量：关掉这一路时为 0（节点仍在，见 setDrawSfxOn） */
+  function drawTrackVol() {
+    return pref.drawSfx ? sfxVol() : 0;
+  }
+
   function playDrawSfx(name, opt) {
-    if (!pref.drawSfx || !unlocked) return null;
+    if (!unlocked) return null;
     opt = opt || {};
     try {
       var node = new Audio(url(name, opt.ext || 'wav'));
-      node.volume = sfxVol();
+      node.muted = !pref.drawSfx;
+      node.volume = drawTrackVol();
       drawNodes.push(node);
       var p = node.play();
       if (p && p.catch) p.catch(function () {});
@@ -346,16 +316,30 @@
     }
   }
 
+  /** 把开关状态应用到进行中的仪式音轨 */
+  function applyDrawSfxLevel() {
+    var v = drawTrackVol();
+    drawNodes.forEach(function (node) {
+      try {
+        node.muted = !pref.drawSfx;
+        node.volume = v;
+      } catch (e) { /* ignore */ }
+    });
+  }
+
+  /**
+   * 关掉这一路时不销毁节点、也不撤定时器，只就地静音。
+   * 原先是 stopDrawSfx() 一刀切：嘀声、摇骰循环轨和切歌定时器一起没了，再打开只是把开关
+   * 置回 true，这一整段仪式就再也出不了声，得等下一期。保留下来只压音量，中途重开能接着响。
+   */
   function setDrawSfxOn(on) {
     pref.drawSfx = !!on;
     savePref();
-    if (!pref.drawSfx) {
-      stopDrawSfx();
-      drawActive = false;
-      if (bgm && pref.music) {
-        try { bgm.volume = baseVol; } catch (e) { /* ignore */ }
-        ensureBgm(true);
-      }
+    applyDrawSfxLevel();
+    /* 仪式仍在跑时 BGM 该压的继续压，别因为切了开关就把音乐顶回来 */
+    if (bgm && pref.music) {
+      try { bgm.volume = drawActive ? baseVol * 0.12 : baseVol; } catch (e) { /* ignore */ }
+      ensureBgm(true);
     }
   }
 
@@ -373,12 +357,13 @@
   }
 
   function startRunLoop(midMs) {
-    if (!pref.drawSfx || !unlocked) return;
+    if (!unlocked) return;
     stopRun();
     try {
       runNode = new Audio(url('run', 'mp3'));
       runNode.loop = true;
-      runNode.volume = sfxVol();
+      runNode.muted = !pref.drawSfx;
+      runNode.volume = drawTrackVol();
       drawNodes.push(runNode);
       var p = runNode.play();
       if (p && p.catch) p.catch(function () {});
@@ -398,10 +383,9 @@
     var mid = opts.midMs != null ? Number(opts.midMs) : 5000;
     if (!(mid >= 0)) mid = 5000;
 
-    stopRing();
+    clearCountdownArm();
     stopDrawSfx();
     drawActive = true;
-    ringPlayedThisDraw = true;
     if (bgm && pref.music) {
       try { bgm.volume = baseVol * 0.18; } catch (e) { /* ignore */ }
     }
@@ -438,7 +422,6 @@
     if (document.hidden) {
       if (bgm) try { bgm.pause(); } catch (e) { /* ignore */ }
       clearCountdownArm();
-      stopRing();
       stopDrawSfx();
       drawActive = false;
     } else if (pref.music && unlocked) {

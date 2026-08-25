@@ -479,7 +479,7 @@
     }
   });
 
-  /** 等底图 bj.jpg 解码完再揭开，避免下半截先黑一下 */
+  /** 等底图 bj.webp 解码完再揭开，避免下半截先黑一下 */
   function whenBgReady(cb) {
     var finished = false;
     var finish = function () {

@@ -1,7 +1,7 @@
 {
   "version": 18,
   "canvas": { "width": 720, "height": 380 },
-  "bg": "bg.png",
+  "bg": "bg.webp",
   "dice": "dice-{n}.png",
   "icon": "icon-{n}.png",
   "layout": {
