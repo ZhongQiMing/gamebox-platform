@@ -20,9 +20,9 @@
   const LAUREL_DISK_Y = 0.592;
   const LAUREL_DISK_W = 0.341;
   const LAURELS = {
-    1: { file: 'laurel-gold.png', yCenter: 0.220, num: '#ffffff', stroke: 'rgba(0,0,0,0.45)' },
-    2: { file: 'laurel-silver.png', yCenter: 0.315, num: '#ffffff', stroke: 'rgba(0,0,0,0.4)' },
-    3: { file: 'laurel-bronze.png', yCenter: 0.315, num: '#ffffff', stroke: 'rgba(0,0,0,0.4)' }
+    1: { file: 'laurel-gold.webp', yCenter: 0.220, num: '#ffffff', stroke: 'rgba(0,0,0,0.45)' },
+    2: { file: 'laurel-silver.webp', yCenter: 0.315, num: '#ffffff', stroke: 'rgba(0,0,0,0.4)' },
+    3: { file: 'laurel-bronze.webp', yCenter: 0.315, num: '#ffffff', stroke: 'rgba(0,0,0,0.4)' }
   };
   const SLOTS = [
     { rank: 2, label: '亚军', x: 0.24, sc: 0.69, y: 0.93, flip: false, view: 'side', dim: 0.96 },
@@ -262,7 +262,7 @@
       { n: nums[0], rank: 1 },
       { n: nums[2], rank: 3 }
     ];
-    const bg = await loadImg(ASSETS + 'bg.png');
+    const bg = await loadImg(ASSETS + 'bg.webp');
     const laurelByRank = {};
     await Promise.all([1, 2, 3].map(async r => {
       laurelByRank[r] = await loadImg(ASSETS + LAURELS[r].file + '?v=' + LAUREL_VER);

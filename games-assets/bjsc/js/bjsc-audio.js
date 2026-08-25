@@ -44,11 +44,17 @@
     if (typeof liveSfx !== 'undefined' && liveSfx && liveSfx.forEach) {
       liveSfx.forEach(function (n) { try { n.volume = sfxVol(); } catch (e5) {} });
     }
+    /* 仪式音轨要认「开奖音效」这一路的开关：关着时它们静音待命，别在这里被拉回音量 */
+    var dv = pref.drawSfx ? sfxVol() : 0;
+    var dm = !pref.drawSfx;
     if (typeof liveDrawSfx !== 'undefined' && liveDrawSfx && liveDrawSfx.forEach) {
-      liveDrawSfx.forEach(function (n) { try { n.volume = sfxVol(); } catch (e6) {} });
+      liveDrawSfx.forEach(function (n) { try { n.muted = dm; n.volume = dv; } catch (e6) {} });
+    }
+    if (typeof raceOneShots !== 'undefined' && raceOneShots && raceOneShots.forEach) {
+      raceOneShots.forEach(function (n) { try { n.muted = dm; n.volume = dv; } catch (e8) {} });
     }
     if (typeof raceMid !== 'undefined' && raceMid) {
-      try { raceMid.volume = sfxVol(); } catch (e7) {}
+      try { raceMid.muted = dm; raceMid.volume = dv; } catch (e7) {}
     }
   }
 
@@ -84,13 +90,7 @@
       try { if (typeof clearCountdownArm === 'function') clearCountdownArm(); } catch (e6) { /* ignore */ }
       try { if (typeof stopLiveSfx === 'function') stopLiveSfx(); } catch (e7) { /* ignore */ }
     }
-    if (!pref.drawSfx) {
-      try { if (typeof stopRaceSfx === 'function') stopRaceSfx(); } catch (e9) { /* ignore */ }
-      raceActive = false;
-      if (bgm && pref.music) {
-        try { bgm.volume = baseVol; } catch (e10) { /* ignore */ }
-      }
-    }
+    /* 关掉这一路只静音、不销毁（见 setDrawSfxOn）；raceActive 交给仪式自己收尾 */
     applyLevels();
   }
   window.addEventListener('storage', function (ev) {
@@ -108,6 +108,8 @@
   var lastSfxAt = {};
   var liveSfx = [];
   var liveDrawSfx = [];
+  /** 一次性号角：开盘时不掐，让它自然播完（见 playDrawSfx） */
+  var raceOneShots = [];
   var cdTimers = [];
   var raceTimers = [];
   var cdArmedLockAt = 0;
@@ -257,7 +259,8 @@
       }
       return;
     }
-    stopRaceSfx();
+    /* 只收循环轨：冲线号角常常正好压在开盘这一下，硬停就把它掐半声 */
+    stopRaceLoops();
     ensureBgm(true);
   }
 
@@ -274,7 +277,15 @@
     raceTimers = [];
   }
 
-  function stopRaceSfx() {
+  function stopRaceOneShots() {
+    raceOneShots.forEach(function (node) {
+      try { node.pause(); node.src = ''; } catch (e) { /* ignore */ }
+    });
+    raceOneShots = [];
+  }
+
+  /** 开盘用：只收循环轨与待触发定时器，正在响的号角留着播完 */
+  function stopRaceLoops() {
     clearRaceTimers();
     if (raceMid) {
       try { raceMid.pause(); raceMid.currentTime = 0; } catch (e) { /* ignore */ }
@@ -283,14 +294,42 @@
     stopLiveDrawSfx();
   }
 
+  /** 硬停：离页 / 关掉这一路 / 新一期仪式顶掉上一期，号角也一并掐 */
+  function stopRaceSfx() {
+    stopRaceLoops();
+    stopRaceOneShots();
+  }
+
+  /** 仪式音轨目标音量：关掉这一路时为 0（节点仍在，见 setDrawSfxOn） */
+  function drawTrackVol() {
+    return pref.drawSfx ? sfxVol() : 0;
+  }
+
   function playDrawSfx(name, opt) {
-    if (!pref.drawSfx || !unlocked) return null;
+    if (!unlocked) return null;
     opt = opt || {};
     try {
       var node = new Audio(url(name, opt.ext || 'mp3'));
-      node.volume = sfxVol();
-      if (opt.loop) node.loop = true;
-      liveDrawSfx.push(node);
+      node.muted = !pref.drawSfx;
+      node.volume = drawTrackVol();
+      if (opt.loop) {
+        node.loop = true;
+        liveDrawSfx.push(node);
+      } else {
+        /*
+         * 一次性号角（发车 race-countdown / 冲线 race-finish）单独存放。
+         * 原先与循环轨混在 liveDrawSfx 里，而 race-finish 正好排在动画结束那一刻起头，
+         * 紧接着开盘走 onBetting → stopRaceSfx，把刚响半声的号角连 src 一起清掉，
+         * 听着就是「开奖动画的声音没播完」。开盘只该收循环轨，这些让它自然播完。
+         */
+        raceOneShots.push(node);
+        var drop = function () {
+          var i = raceOneShots.indexOf(node);
+          if (i >= 0) raceOneShots.splice(i, 1);
+        };
+        node.addEventListener('ended', drop, { once: true });
+        node.addEventListener('error', drop, { once: true });
+      }
       var p = node.play();
       if (p && p.catch) p.catch(function () {});
       return node;
@@ -299,16 +338,19 @@
     }
   }
 
+  /**
+   * 关掉这一路时不销毁节点、也不撤定时器，只就地静音。
+   * 原先是 stopRaceSfx() 一刀切：音轨和发车→冲线的定时器一起没了，再打开只是把开关置回
+   * true，这一整段仪式就再也出不了声，得等下一期。保留下来只压音量，中途重开能接着响。
+   */
   function setDrawSfxOn(on) {
     pref.drawSfx = !!on;
     savePref();
-    if (!pref.drawSfx) {
-      stopRaceSfx();
-      raceActive = false;
-      if (bgm && pref.music) {
-        try { bgm.volume = baseVol; } catch (e) { /* ignore */ }
-        ensureBgm(true);
-      }
+    applyLevels();
+    /* 仪式仍在跑时 BGM 该压的继续压，别因为切了开关就把音乐顶回来 */
+    if (bgm && pref.music) {
+      try { bgm.volume = raceActive ? baseVol * 0.2 : baseVol; } catch (e) { /* ignore */ }
+      ensureBgm(true);
     }
   }
 
@@ -336,11 +378,12 @@
     });
 
     later(cd * 1000 + 1000, function () {
-      if (!pref.drawSfx || !unlocked) return;
+      if (!unlocked) return;
       try {
         raceMid = new Audio(url('race-mid', 'mp3'));
         raceMid.loop = true;
-        raceMid.volume = sfxVol();
+        raceMid.muted = !pref.drawSfx;
+        raceMid.volume = drawTrackVol();
         liveDrawSfx.push(raceMid);
         var p = raceMid.play();
         if (p && p.catch) p.catch(function () {});

@@ -22,7 +22,7 @@ body {
 }
 .header {
 	height: 114px;
-	background-image:url(../images/top_header.jpg);
+	background-image:url(../images/top_header.webp);
 	position:relative;
 }
 
@@ -44,7 +44,7 @@ body {
 	margin-right: 5px;
 }
 
-.positm { background: url('../images/numbersprite.png') no-repeat top left; width: 64px; height: 64px;  } 
+.positm { background: url('../images/numbersprite.webp') no-repeat top left; width: 64px; height: 64px;  } 
 
 .num1 { background-position: 0 0; } 
 .num2 { background-position: 0 -64px; } 
@@ -303,7 +303,7 @@ body {
 	position: absolute;
 	top: 145px;
 	left: 340px;
-	background-image: url(../images/trafficlight.png);
+	background-image: url(../images/trafficlight.webp);
 	width: 636px;
 	height: 128px;
 }
@@ -503,7 +503,7 @@ body {
 	height: 639px;
 	display: none;	
 	position: relative;
-	background-image:url(../images/resultbg.jpg);
+	background-image:url(../images/resultbg.webp);
 }
 
 .resultitm {
@@ -554,7 +554,7 @@ button{
 	display: inline-block;
 	height: 100%;
 	width:22%;
-	background: url(../images/vulebtn.png) no-repeat 0 8%;
+	background: url(../images/vulebtn.webp) no-repeat 0 8%;
 	background-size: 90%;
 	cursor: pointer;
 }
