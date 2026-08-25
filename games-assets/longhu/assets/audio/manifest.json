@@ -1,0 +1,42 @@
+{
+  "source": "龙虎斗桌台音频",
+  "note": "文件名即 TableAudio 的 name（不含 .mp3）；voice/ 下为荷官口播。未列出的文件视为多余，可删。",
+  "files": {
+    "bgm.mp3": "背景音乐（循环）",
+    "bet.mp3": "下注落筹",
+    "start-bet.mp3": "开始下注提示音",
+    "stop-bet.mp3": "停止下注提示音",
+    "countdown.mp3": "倒计时最后几秒",
+    "deal.mp3": "发牌",
+    "open.mp3": "翻牌",
+    "vs.mp3": "龙虎对决",
+    "rebet.mp3": "续押",
+    "win.mp3": "中奖",
+    "credit-loop-in.mp3": "派彩入账",
+    "dragon-win-sfx.mp3": "龙赢音效",
+    "tiger-win-sfx.mp3": "虎赢音效",
+    "voice/start-bet.mp3": "语音：开始下注",
+    "voice/stop-bet.mp3": "语音：停止下注",
+    "voice/dragon.mp3": "语音：龙",
+    "voice/tiger.mp3": "语音：虎",
+    "voice/dragon-win.mp3": "语音：龙赢",
+    "voice/tiger-win.mp3": "语音：虎赢",
+    "voice/tie.mp3": "语音：和",
+    "voice/point-1.mp3": "语音：牌点 1",
+    "voice/point-2.mp3": "语音：牌点 2",
+    "voice/point-3.mp3": "语音：牌点 3",
+    "voice/point-4.mp3": "语音：牌点 4",
+    "voice/point-5.mp3": "语音：牌点 5",
+    "voice/point-6.mp3": "语音：牌点 6",
+    "voice/point-7.mp3": "语音：牌点 7",
+    "voice/point-8.mp3": "语音：牌点 8",
+    "voice/point-9.mp3": "语音：牌点 9",
+    "voice/point-10.mp3": "语音：牌点 10",
+    "voice/point-11.mp3": "语音：牌点 J",
+    "voice/point-12.mp3": "语音：牌点 Q",
+    "voice/point-13.mp3": "语音：牌点 K"
+  },
+  "unused": {
+    "cancel.mp3": "撤销音；本桌下注即提交真账，撤销按钮固定禁用，故不播"
+  }
+}

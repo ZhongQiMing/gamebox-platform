@@ -2,10 +2,12 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <link rel="stylesheet" href="/fonts/gamebox-fonts.css">
+  <link rel="preload" as="style" href="/fonts/gamebox-fonts.css"
+        onload="this.onload=null;this.rel='stylesheet'">
+  <noscript><link rel="stylesheet" href="/fonts/gamebox-fonts.css"></noscript>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>龙虎斗</title>
-<link rel="stylesheet" href="./css/lhd-table.css?v=27">
+<link rel="stylesheet" href="./css/lhd-table.css?v=32">
   <link rel="stylesheet" href="/games-assets/_table-common/table-ui.css?v=7">
   <script>
     (function () {
@@ -50,8 +52,8 @@
   <div class="lhd-stage">
     <div class="lhd-room tb-room">
       <div class="lhd-shoe" id="shoeBox" aria-hidden="true">
-        <img class="lhd-shoe__body" src="./assets/ui/shoe-dealer-live.png?v=1" alt="" draggable="false">
-        <img class="lhd-shoe__cards" src="./assets/ui/shoe-cards-live.png?v=4" alt="" draggable="false">
+        <img class="lhd-shoe__body" src="./assets/ui/shoe-dealer-live.webp?v=1" alt="" draggable="false">
+        <img class="lhd-shoe__cards" src="./assets/ui/shoe-cards-live.webp?v=4" alt="" draggable="false">
       </div>
 
       <div class="lhd-timer" id="timerBox" aria-label="倒计时">
@@ -62,8 +64,8 @@
         <div class="lhd-hand lhd-hand--dragon" id="dragonHand">
           <div class="lhd-card" data-slot="d1">
             <div class="lhd-card__inner">
-              <div class="lhd-card__face lhd-card__face--back"><img src="./assets/cards/card-back.png?v=9" alt="" draggable="false"></div>
-              <div class="lhd-card__face lhd-card__face--front"><img src="./assets/cards/card-back.png?v=9" alt="" draggable="false"></div>
+              <div class="lhd-card__face lhd-card__face--back"><img src="./assets/cards/card-back.webp?v=9" alt="" draggable="false"></div>
+              <div class="lhd-card__face lhd-card__face--front"><img src="./assets/cards/card-back.webp?v=9" alt="" draggable="false"></div>
             </div>
           </div>
           <div class="lhd-hand-type" id="dragonType" hidden></div>
@@ -71,8 +73,8 @@
         <div class="lhd-hand lhd-hand--tiger" id="tigerHand">
           <div class="lhd-card" data-slot="t1">
             <div class="lhd-card__inner">
-              <div class="lhd-card__face lhd-card__face--back"><img src="./assets/cards/card-back.png?v=9" alt="" draggable="false"></div>
-              <div class="lhd-card__face lhd-card__face--front"><img src="./assets/cards/card-back.png?v=9" alt="" draggable="false"></div>
+              <div class="lhd-card__face lhd-card__face--back"><img src="./assets/cards/card-back.webp?v=9" alt="" draggable="false"></div>
+              <div class="lhd-card__face lhd-card__face--front"><img src="./assets/cards/card-back.webp?v=9" alt="" draggable="false"></div>
             </div>
           </div>
           <div class="lhd-hand-type" id="tigerType" hidden></div>
@@ -83,21 +85,21 @@
 
       <div class="lhd-bet tb-bet" id="betArea" aria-label="下注区">
         <button type="button" class="lhd-bet-btn" data-bet="dragon">
-          <img class="lhd-bet-btn__frame" src="./assets/ui/bet-btns/dragon.png?v=4" alt="" draggable="false">
+          <img class="lhd-bet-btn__frame" src="./assets/ui/bet-btns/dragon.webp?v=4" alt="" draggable="false">
           <span class="lhd-bet-btn__name">龙</span>
           <span class="lhd-bet-btn__odds">1:0.95</span>
           <span class="lhd-bet-btn__chips" aria-hidden="true"></span>
           <span class="lhd-bet-btn__stake" hidden>0</span>
         </button>
         <button type="button" class="lhd-bet-btn" data-bet="tie">
-          <img class="lhd-bet-btn__frame" src="./assets/ui/bet-btns/tie.png?v=4" alt="" draggable="false">
+          <img class="lhd-bet-btn__frame" src="./assets/ui/bet-btns/tie.webp?v=4" alt="" draggable="false">
           <span class="lhd-bet-btn__name">和</span>
           <span class="lhd-bet-btn__odds">1:8</span>
           <span class="lhd-bet-btn__chips" aria-hidden="true"></span>
           <span class="lhd-bet-btn__stake" hidden>0</span>
         </button>
         <button type="button" class="lhd-bet-btn" data-bet="tiger">
-          <img class="lhd-bet-btn__frame" src="./assets/ui/bet-btns/tiger.png?v=4" alt="" draggable="false">
+          <img class="lhd-bet-btn__frame" src="./assets/ui/bet-btns/tiger.webp?v=4" alt="" draggable="false">
           <span class="lhd-bet-btn__name">虎</span>
           <span class="lhd-bet-btn__odds">1:1</span>
           <span class="lhd-bet-btn__chips" aria-hidden="true"></span>
@@ -157,42 +159,42 @@
 
       <div class="lhd-actions" id="actionBar" aria-label="操作">
         <button type="button" class="lhd-action lhd-action--undo" data-action="undo" aria-label="撤销">
-          <img src="./assets/ui/action-btns/undo.png?v=4" alt="撤销" draggable="false">
+          <img src="./assets/ui/action-btns/undo.webp?v=4" alt="撤销" draggable="false">
         </button>
         <button type="button" class="lhd-action lhd-action--rebet" data-action="rebet" aria-label="续押">
-          <img src="./assets/ui/action-btns/rebet.png?v=4" alt="续押" draggable="false">
+          <img src="./assets/ui/action-btns/rebet.webp?v=4" alt="续押" draggable="false">
         </button>
       </div>
 
       <div class="lhd-players tb-players" id="playersBox" aria-label="气氛人数（非实时在线）" title="桌面气氛人数，非实时在线">
-        <img class="lhd-players__icon" src="./assets/ui/action-btns/players.png?v=2" alt="" draggable="false">
+        <img class="lhd-players__icon" src="./assets/ui/action-btns/players.webp?v=2" alt="" draggable="false">
         <span class="lhd-players__count" id="playersCount">36</span>
       </div>
 
       <div class="lhd-chips" id="chipBar" aria-label="筹码">
         <button type="button" class="lhd-chip is-selected" data-chip="1" aria-label="1">
           <span class="lhd-chip__glow" aria-hidden="true"></span>
-          <img src="./assets/ui/chips/chip-1.png?v=4" alt="1" draggable="false">
+          <img src="./assets/ui/chips/chip-1.webp?v=4" alt="1" draggable="false">
         </button>
         <button type="button" class="lhd-chip" data-chip="5" aria-label="5">
           <span class="lhd-chip__glow" aria-hidden="true"></span>
-          <img src="./assets/ui/chips/chip-5.png?v=4" alt="5" draggable="false">
+          <img src="./assets/ui/chips/chip-5.webp?v=4" alt="5" draggable="false">
         </button>
         <button type="button" class="lhd-chip" data-chip="10" aria-label="10">
           <span class="lhd-chip__glow" aria-hidden="true"></span>
-          <img src="./assets/ui/chips/chip-10.png?v=4" alt="10" draggable="false">
+          <img src="./assets/ui/chips/chip-10.webp?v=4" alt="10" draggable="false">
         </button>
         <button type="button" class="lhd-chip" data-chip="50" aria-label="50">
           <span class="lhd-chip__glow" aria-hidden="true"></span>
-          <img src="./assets/ui/chips/chip-50.png?v=4" alt="50" draggable="false">
+          <img src="./assets/ui/chips/chip-50.webp?v=4" alt="50" draggable="false">
         </button>
         <button type="button" class="lhd-chip" data-chip="100" aria-label="100">
           <span class="lhd-chip__glow" aria-hidden="true"></span>
-          <img src="./assets/ui/chips/chip-100.png?v=4" alt="100" draggable="false">
+          <img src="./assets/ui/chips/chip-100.webp?v=4" alt="100" draggable="false">
         </button>
         <button type="button" class="lhd-chip" data-chip="500" aria-label="500">
           <span class="lhd-chip__glow" aria-hidden="true"></span>
-          <img src="./assets/ui/chips/chip-500.png?v=4" alt="500" draggable="false">
+          <img src="./assets/ui/chips/chip-500.webp?v=4" alt="500" draggable="false">
         </button>
         <button type="button" class="lhd-chip-more tb-chip-more" id="chipPageBtn" aria-label="切换筹码页" title="切换筹码">
           <span class="lhd-chip-more__dot"></span>
@@ -215,31 +217,35 @@
     </button>
     <div class="lhd-rail-stack" id="lhdRailStack">
       <button type="button" class="lhd-rail-btn" id="railCs" title="客服">
-        <img class="lhd-rail-ic" src="/images/table-rail/rail-cs.png?v=3" alt="" draggable="false">
+        <img class="lhd-rail-ic" src="/images/table-rail/rail-cs.webp?v=3" alt="" draggable="false">
         <span class="lhd-rail-lb">客服</span>
       </button>
       <button type="button" class="lhd-rail-btn" id="railHistory" title="历史记录">
-        <img class="lhd-rail-ic" src="/images/table-rail/rail-history.png?v=3" alt="" draggable="false">
+        <img class="lhd-rail-ic" src="/images/table-rail/rail-history.webp?v=3" alt="" draggable="false">
         <span class="lhd-rail-lb">历史</span>
       </button>
       <button type="button" class="lhd-rail-btn" id="railRecords" title="下注记录">
-        <img class="lhd-rail-ic" src="/images/table-rail/rail-records.png?v=3" alt="" draggable="false">
+        <img class="lhd-rail-ic" src="/images/table-rail/rail-records.webp?v=3" alt="" draggable="false">
         <span class="lhd-rail-lb">记录</span>
       </button>
       <button type="button" class="lhd-rail-btn" id="railRules" title="玩法规则">
-        <img class="lhd-rail-ic" src="/images/table-rail/rail-rules.png?v=3" alt="" draggable="false">
+        <img class="lhd-rail-ic" src="/images/table-rail/rail-rules.webp?v=3" alt="" draggable="false">
         <span class="lhd-rail-lb">玩法</span>
       </button>
       <button type="button" class="lhd-rail-btn" id="railSettings" title="设置">
-        <img class="lhd-rail-ic" src="/images/table-rail/rail-settings.png?v=3" alt="" draggable="false">
+        <img class="lhd-rail-ic" src="/images/table-rail/rail-settings.webp?v=3" alt="" draggable="false">
         <span class="lhd-rail-lb">设置</span>
       </button>
     </div>
   </aside>
   </div><!-- /.lhd-stage -->
   <div class="lhd-payout-fly" id="payoutFlyLayer" aria-hidden="true"></div>
+  <!-- 两张图各自常驻：显示时只切换哪个可见，绝不改 src（改 src 会出现声画错位） -->
   <div class="lhd-phase-banner" id="phaseBanner" aria-hidden="true">
-    <img class="lhd-phase-banner__img" id="phaseBannerImg" alt="" draggable="false">
+    <img class="lhd-phase-banner__img" id="phaseBannerStart"
+         src="./assets/ui/banners/bet-start.webp?v=1" alt="开始下注" draggable="false" hidden>
+    <img class="lhd-phase-banner__img" id="phaseBannerStop"
+         src="./assets/ui/banners/bet-stop.webp?v=1" alt="停止下注" draggable="false" hidden>
   </div>
 
   <div class="lhd-sheet-mask" id="lhdSheetMask" hidden></div>
@@ -252,10 +258,10 @@
   </section>
 </div>
 
-<script src="/legacy/js/games-common.js?v=33"></script>
-<script src="/games-assets/_table-common/table-shell.js?v=12"></script>
+<script src="/legacy/js/games-common.js?v=36"></script>
+<script src="/games-assets/_table-common/table-shell.js?v=24"></script>
 <script src="/games-assets/_lottery-common/app-audio-level.js?v=1"></script>
 <script src="/games-assets/_table-common/table-audio.js?v=3"></script>
-<script src="./js/lhd-table.js?v=27"></script>
+<script src="./js/lhd-table.js?v=38"></script>
 </body>
 </html>
