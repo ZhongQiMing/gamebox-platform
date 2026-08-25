@@ -6,16 +6,15 @@
     <img class="cd cd-br" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
   </div>
 
-  <div class="page ar-page">
+  <div class="page ar-page has-page-title">
     <div class="app-bar">
       <div class="back" @click="goBack">‹</div>
       <div class="title">申请记录</div>
       <div class="right"></div>
     </div>
+    <h1 class="page-title">申 请 记 录</h1>
 
     <div class="page-body">
-      <h1 class="ar-title">申 请 记 录</h1>
-
       <div class="time-tabs">
         <button
           v-for="t in TIME_RANGES"
@@ -102,6 +101,7 @@ import {
 } from '@/api/recharge'
 import { useBodyClass } from '@/composables/useBodyClass'
 import { TIME_RANGES, rangeBounds, formatRangeDateText, type TimeRangeKey } from '@/composables/timeRange'
+import { formatDateTime, formatMoney } from '@gamebox/shared'
 import TabBar from '@/components/TabBar.vue'
 import '@/assets/apply-records.css'
 
@@ -133,15 +133,10 @@ function statusLabel(s: RechargeOrder['status']) {
   return { PENDING: '审核中', APPROVED: '已通过', REJECTED: '失败' }[s] ?? s
 }
 function fmtAmount(n: number) {
-  return Math.abs(Number(n) || 0).toLocaleString('en-US', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })
+  return formatMoney(Math.abs(Number(n) || 0))
 }
 function fmtTime(iso: string) {
-  const d = new Date(iso)
-  const pad = (n: number) => (n < 10 ? '0' + n : '' + n)
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+  return formatDateTime(iso)
 }
 
 async function loadOrders() {

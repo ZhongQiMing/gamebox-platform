@@ -6,16 +6,15 @@
     <img class="cd cd-br" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
   </div>
 
-  <div class="page pl-page">
+  <div class="page pl-page has-page-title">
     <div class="app-bar">
       <div class="back" @click="goBack">‹</div>
       <div class="title">账变明细</div>
       <div class="right"></div>
     </div>
+    <h1 class="page-title">积 分 账 变</h1>
 
     <div class="page-body">
-      <h1 class="pl-title">积 分 账 变</h1>
-
       <div class="time-tabs">
         <button
           v-for="t in TIME_RANGES"
@@ -111,6 +110,7 @@ import { walletApi, type LedgerItem, type LedgerSummary } from '@/api/wallet'
 import { useRoomStore } from '@/stores/room'
 import { useBodyClass } from '@/composables/useBodyClass'
 import { TIME_RANGES, rangeBounds, formatRangeDateText, type TimeRangeKey } from '@/composables/timeRange'
+import { formatDateTime, formatMoney, formatSignedMoney } from '@gamebox/shared'
 import TabBar from '@/components/TabBar.vue'
 import '@/assets/points-log.css'
 
@@ -203,22 +203,13 @@ function rowMethod(r: LedgerItem) {
   return kindText(r.bizType)
 }
 function fmtSigned(n: number) {
-  const v = Number(n) || 0
-  return (v >= 0 ? '+' : '-') + Math.abs(v).toLocaleString('en-US', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })
+  return formatSignedMoney(n)
 }
 function fmtBal(n: number) {
-  return Number(n || 0).toLocaleString('en-US', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })
+  return formatMoney(n)
 }
 function fmtTime(iso: string) {
-  const d = new Date(iso)
-  const pad = (n: number) => (n < 10 ? '0' + n : '' + n)
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+  return formatDateTime(iso)
 }
 
 async function fetchPage(p: number, append: boolean) {

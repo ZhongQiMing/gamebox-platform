@@ -16,7 +16,7 @@
     <div class="page-body">
       <p class="rb-tip">
         待领回水含今日流水预计；主代理可提前帮玩家领到账户（等同玩家自助领，不必等早 6 点自动发）。
-        <template v-if="!canEdit">子账号仅可查看。</template>
+        <template v-if="!canEdit">代理子账号仅可查看。</template>
       </p>
 
       <div class="sp-search">
@@ -86,6 +86,16 @@
         </div>
       </div>
     </div>
+    <AppModal
+      :visible="claimVisible"
+      title="代领回水"
+      :message="claimMessage"
+      ok-text="确认领取"
+      cancel-text="取消"
+      @ok="doClaim"
+      @cancel="closeClaim"
+    />
+
     <StaffTabBar />
   </div>
 </template>
@@ -93,7 +103,9 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { formatMoney } from '@gamebox/shared'
 import { staffConsoleApi, type StaffPlayerRow } from '@/api/staffConsole'
+import AppModal from '@/components/AppModal.vue'
 import StaffTabBar from '@/components/StaffTabBar.vue'
 import { useStaffStore } from '@/stores/staff'
 import { useToast } from '@/composables/useToast'
@@ -130,10 +142,7 @@ function pct(rate?: number | null) {
 }
 
 function fmt(n?: number | null) {
-  return Number(n || 0).toLocaleString('zh-CN', {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 2,
-  })
+  return formatMoney(n ?? 0)
 }
 
 function pendingOf(p: StaffPlayerRow) {
@@ -176,17 +185,37 @@ async function save() {
   }
 }
 
-async function claim(p: StaffPlayerRow) {
+/* 代领是直接打钱给玩家，用跟审核同一套确认弹窗 */
+const claimVisible = ref(false)
+const claimTarget = ref<StaffPlayerRow | null>(null)
+const claimMessage = computed(() => {
+  const p = claimTarget.value
+  if (!p) return ''
+  return `确认帮「${p.nickname}」提前领取待领回水 ${fmt(pendingOf(p))}？\n将直接打入玩家账户。`
+})
+
+function claim(p: StaffPlayerRow) {
   if (!canEdit.value || busyId.value) return
-  const amt = pendingOf(p)
-  if (amt <= 0) return
-  if (!window.confirm(`确认帮「${p.nickname}」提前领取待领回水 ${fmt(amt)}？将直接打入玩家账户。`)) {
-    return
-  }
+  if (pendingOf(p) <= 0) return
+  claimTarget.value = p
+  claimVisible.value = true
+}
+
+function closeClaim() {
+  if (busyId.value) return
+  claimVisible.value = false
+  claimTarget.value = null
+}
+
+async function doClaim() {
+  const p = claimTarget.value
+  if (!p || busyId.value) return
+  claimVisible.value = false
   busyId.value = p.id
   try {
     const res = await staffConsoleApi.claimPlayerRebate(p.id)
     toast(res.message || `已领取 ${fmt(res.amount)}`)
+    claimTarget.value = null
     await loadBriefs(list.value.map((x) => x.id))
   } catch (e: unknown) {
     toast(e instanceof Error ? e.message : '领取失败')

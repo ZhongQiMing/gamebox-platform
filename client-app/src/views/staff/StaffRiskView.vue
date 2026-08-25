@@ -65,6 +65,7 @@ import {
 } from '@/api/staffConsole'
 import StaffTabBar from '@/components/StaffTabBar.vue'
 import { useToast } from '@/composables/useToast'
+import { formatDateTime } from '@gamebox/shared'
 import { useBodyClass } from '@/composables/useBodyClass'
 import '@/assets/staff-console.css'
 
@@ -85,14 +86,7 @@ function levelLabel(l: string) {
   return ({ CRITICAL: '严重', WARN: '警告', INFO: '提示' } as Record<string, string>)[l] || l
 }
 function fmtTime(v?: string) {
-  if (!v) return '—'
-  const d = new Date(v)
-  if (Number.isNaN(d.getTime())) return '—'
-  const mm = String(d.getMonth() + 1).padStart(2, '0')
-  const dd = String(d.getDate()).padStart(2, '0')
-  const hh = String(d.getHours()).padStart(2, '0')
-  const mi = String(d.getMinutes()).padStart(2, '0')
-  return `${mm}-${dd} ${hh}:${mi}`
+  return formatDateTime(v)
 }
 
 async function loadSummary() {

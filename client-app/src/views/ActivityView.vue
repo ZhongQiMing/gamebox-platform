@@ -6,16 +6,15 @@
     <img class="cd cd-br" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
   </div>
 
-  <div class="page act-page">
+  <div class="page act-page has-page-title">
     <div class="app-bar">
       <div class="back" @click="goBack">‹</div>
       <div class="title">活动中心</div>
       <div class="right"></div>
     </div>
+    <h1 class="page-title">活 动 中 心</h1>
 
     <div class="page-body">
-      <h1 class="act-hero-title">活 动 中 心</h1>
-
       <div class="act-balance-card">
         <span class="act-balance-label">当 前 积 分</span>
         <span class="act-balance-num">{{ balanceNum }}</span>
@@ -92,8 +91,10 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useWalletStore } from '@/stores/wallet'
 import { useToast } from '@/composables/useToast'
+import { leaveGameToLobby } from '@/composables/lobbyAfterGame'
 import { useBodyClass } from '@/composables/useBodyClass'
 import { activityApi, type ActivityItem } from '@/api/activity'
+import { formatMoney } from '@gamebox/shared'
 import TabBar from '@/components/TabBar.vue'
 import '@/assets/activity.css'
 
@@ -103,13 +104,11 @@ const router = useRouter()
 const walletStore = useWalletStore()
 const { success: toastOk, error: toastErr } = useToast()
 
-const balanceNum = computed(() =>
-  walletStore.balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-)
+const balanceNum = computed(() => formatMoney(walletStore.balance))
 
 function goBack() {
   if (window.history.length > 1) router.back()
-  else router.push('/lobby')
+  else void leaveGameToLobby(router, 'push')
 }
 
 const loading = ref(true)

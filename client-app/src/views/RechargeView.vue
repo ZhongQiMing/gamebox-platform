@@ -6,7 +6,7 @@
     <img class="cd cd-br" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
   </div>
 
-  <div class="page recharge-page">
+  <div class="page recharge-page has-page-title">
 
     <div class="app-bar">
       <div class="back" @click="goBack">‹</div>
@@ -14,7 +14,7 @@
       <div class="right"></div>
     </div>
 
-    <h1 class="recharge-title">线 上 支 付</h1>
+    <h1 class="page-title">线 上 支 付</h1>
 
     <div class="page-body">
 
@@ -30,7 +30,7 @@
           </div>
           <div class="ra-balance">
             <div class="rb-label">当 前 积 分</div>
-            <div class="rb-num">{{ walletStore.balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}</div>
+            <div class="rb-num">{{ formatMoney(walletStore.balance) }}</div>
           </div>
         </div>
       </div>
@@ -79,7 +79,7 @@
               type="button"
               :class="['rq-item', quickActive === q ? 'active' : '']"
               @click="pickQuick(q)"
-            >{{ q.toLocaleString('en-US') }}</button>
+            >{{ formatMoney(q) }}</button>
           </div>
         </div>
 
@@ -162,12 +162,13 @@ import { useWalletStore } from '@/stores/wallet'
 import { useRoomStore } from '@/stores/room'
 import { rechargeApi } from '@/api/recharge'
 import { useToast } from '@/composables/useToast'
+import { leaveGameToLobby } from '@/composables/lobbyAfterGame'
 import { useBodyClass } from '@/composables/useBodyClass'
 import { pushCsScoreApply } from '@/composables/csLocalChat'
 import { newFundOrderNo } from '@/utils/fundOrderNo'
 import { fundRequestIntentKey } from '@/utils/fundRequestIntent'
 import TabBar from '@/components/TabBar.vue'
-import { PLAYER_DOWN_MIN, PLAYER_FUND_MAX, PLAYER_UP_MIN } from '@gamebox/shared'
+import { formatMoney, PLAYER_DOWN_MIN, PLAYER_FUND_MAX, PLAYER_UP_MIN } from '@gamebox/shared'
 import '@/assets/recharge.css'
 
 useBodyClass('deco-bg')
@@ -201,8 +202,8 @@ const QUICK = computed(() => (curType.value === 'up' ? QUICK_UP : QUICK_DOWN))
 
 const amountHint = computed(() =>
   curType.value === 'up'
-    ? `（最低 ${PLAYER_UP_MIN}，最高 ${PLAYER_FUND_MAX}）`
-    : `（最低 ${PLAYER_DOWN_MIN}，最高 ${PLAYER_FUND_MAX}，且不超过余额 ${walletStore.balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}）`
+    ? `（最低 ${formatMoney(PLAYER_UP_MIN)}，最高 ${formatMoney(PLAYER_FUND_MAX)}）`
+    : `（最低 ${formatMoney(PLAYER_DOWN_MIN)}，最高 ${formatMoney(PLAYER_FUND_MAX)}，且不超过余额 ${formatMoney(walletStore.balance)}）`
 )
 
 function switchType(t: 'up' | 'down') {
@@ -322,7 +323,7 @@ function goCs() {
 
 function goBack() {
   if (window.history.length > 1) router.back()
-  else router.push('/lobby')
+  else void leaveGameToLobby(router, 'push')
 }
 
 onMounted(() => walletStore.fetchBalance())

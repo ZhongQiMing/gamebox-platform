@@ -1,21 +1,7 @@
 /* 账号管理页 */
 .am-page .page-body { padding: 8px 16px 0; }
 
-.am-title {
-  height: 40px;
-  margin: 0 64px 14px;
-  font-family: 'Noto Serif SC', 'Songti SC', serif;
-  font-size: 22px;
-  font-weight: 900;
-  letter-spacing: 8px;
-  text-align: center;
-  background: linear-gradient(180deg, #fff5c8 0%, #f4d36b 35%, var(--gold) 65%, #8a6f1f 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-  text-shadow: 0 0 16px rgba(212, 175, 55, 0.35);
-  line-height: 40px;
-}
+/* 页面标题走 common.css 的公共 .page-title */
 
 .am-list {
   background: linear-gradient(180deg, var(--bg-card) 0%, var(--bg-card-2) 100%);

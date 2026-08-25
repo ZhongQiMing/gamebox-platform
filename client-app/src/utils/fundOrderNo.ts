@@ -1,6 +1,9 @@
-/** 生成上下分订单号（兼作防重复键 clientRequestId） */
-export function newFundOrderNo(mode: 'up' | 'down'): string {
-  const prefix = mode === 'up' ? 'SF' : 'XF'
+/**
+ * 生成资金操作订单号（兼作防重复键 clientRequestId）。
+ * bump=调信用额度，跟上下分共用一套，重放时后端凭它整笔跳过。
+ */
+export function newFundOrderNo(mode: 'up' | 'down' | 'bump'): string {
+  const prefix = mode === 'up' ? 'SF' : mode === 'down' ? 'XF' : 'ED'
   const d = new Date()
   const pad = (n: number, w = 2) => String(n).padStart(w, '0')
   const ts =

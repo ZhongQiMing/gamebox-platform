@@ -12,9 +12,18 @@ import {
  *   现在偷不走，脚本最多借当前页面发几个请求，关掉页面就没了。
  *   写操作另有 gb_csrf 双提交挡跨站伪造，两条路互不替代。
  *
- * App：继续用 Authorization: Bearer。App 的页面从安装包本地加载，来源是
+ * App：用 Authorization: Bearer。App 的页面从安装包本地加载，来源是
  *   capacitor://localhost，跟接口天然跨站，iOS 的 WKWebView 对跨站 Cookie
  *   卡得很死，硬上会变成「安卓能用、iOS 登不上」。
+ *
+ * **App 的 token 只存内存，不落盘。**
+ * 以前存在 Keystore 里，重开自动登录；但这是给人上下分的账号，
+ * 手机借人一用、丢了、被拿去修，谁拿到手机谁就是客服。
+ * 现在从最近任务里划掉 App＝进程结束＝凭证一起没，重开必须重新输密码。
+ * 只是切到后台（进程还活着）不受影响，回来接着用。
+ *
+ * 注意：划掉的那一刻代码根本跑不了，安卓直接杀进程。所以「划掉即退出」
+ * 不可能靠「划掉时清理」实现，只能靠「凭证本来就不落盘」。
  *
  * 服务端两条都认（先看 Authorization 头，没有再看 Cookie），所以这里只是
  * 决定「本端用哪条」，不需要后端配合改动。
@@ -75,35 +84,26 @@ export function saveToken(key: TokenKey, token: string): Promise<void> {
   tokenGeneration[key] += 1
   if (!isNativeApp()) return Promise.resolve()
   tokenCache[key] = token
-  /* 防止升级/异常路径重新留下 WebView 明文副本。 */
+  /* 只放内存。同时清掉历史版本可能留下的落盘副本，升级上来的机器不该还能自动登录 */
   localStorage.removeItem(key)
-  const write = enqueueSecureWrite(async () => {
-      if (token) await SecureStorage.setItem(key, token)
-      else await SecureStorage.removeItem(key)
-    })
-  void write.catch((error) => {
-    console.error('[session] secure token write failed', error)
-  })
-  return write
+  return enqueueSecureWrite(() => purgeStoredToken(key))
 }
 
 export function removeToken(key: TokenKey): Promise<void> {
-  const generation = ++tokenGeneration[key]
+  tokenGeneration[key] += 1
   tokenCache[key] = ''
   localStorage.removeItem(key)
   if (!isNativeApp()) return Promise.resolve()
-  const removal = enqueueSecureWrite(async () => {
-    /*
-     * 删除排队期间若同一 key 已被新登录覆盖，就跳过旧删除。队列本身保证顺序，
-     * generation 再防止底层实现延迟完成时把新会话当成旧会话删掉。
-     */
-    if (tokenGeneration[key] !== generation) return
+  return enqueueSecureWrite(() => purgeStoredToken(key))
+}
+
+/** 抹掉旧版本写进安全存储的凭证；本身不存在时静默通过 */
+async function purgeStoredToken(key: TokenKey): Promise<void> {
+  try {
     await SecureStorage.removeItem(key)
-  })
-  void removal.catch((error) => {
-    console.error('[session] secure token removal failed', error)
-  })
-  return removal
+  } catch {
+    /* 没有这一项、或安全存储不可用，都不影响内存里的会话 */
+  }
 }
 
 export function markSession(kind: SessionKind) {
@@ -134,8 +134,11 @@ function migrateWebLegacyTokens() {
 }
 
 /**
- * 必须在 Vue/路由启动前调用：Native 从 Keystore/Keychain 恢复 token，并把旧版
- * localStorage 凭证一次性迁入后立即删除。安全存储不可用时 fail closed，不回退明文。
+ * 必须在 Vue/路由启动前调用。
+ *
+ * App 不再恢复任何登录态：进程是新起的，就必须重新登录。
+ * 这里只做一件事——把历史版本写进 Keystore / localStorage 的旧凭证抹掉，
+ * 否则从老版本升上来的手机第一次打开还会自动登进去。
  */
 export function initializeSessionStorage(): Promise<void> {
   if (initializePromise) return initializePromise
@@ -145,29 +148,28 @@ export function initializeSessionStorage(): Promise<void> {
       return
     }
 
+    for (const key of TOKEN_KEYS) {
+      tokenCache[key] = ''
+      localStorage.removeItem(key)
+    }
+    /*
+     * 这些标记在 localStorage 里，进程被杀也还在。凭证既然没了，
+     * 它们留着只会让路由以为「上次还在运营台 / 还在试玩中」，一并抹掉。
+     */
+    localStorage.removeItem(SESSION_KIND_KEY)
+    localStorage.removeItem('staff_play')
+    localStorage.removeItem('staff_play_room')
+
     try {
       await SecureStorage.setSynchronize(false)
       await SecureStorage.setDefaultKeychainAccess(
         KeychainAccess.whenUnlockedThisDeviceOnly,
       )
       await SecureStorage.setKeyPrefix('gamebox_')
-
-      for (const key of TOKEN_KEYS) {
-        const legacy = localStorage.getItem(key) || ''
-        let secure = (await SecureStorage.getItem(key)) || ''
-        if (!secure && legacy) {
-          await SecureStorage.setItem(key, legacy)
-          secure = legacy
-        }
-        tokenCache[key] = secure
-        localStorage.removeItem(key)
-      }
+      for (const key of TOKEN_KEYS) await purgeStoredToken(key)
     } catch (error) {
-      for (const key of TOKEN_KEYS) {
-        tokenCache[key] = ''
-        localStorage.removeItem(key)
-      }
-      console.error('[session] secure storage unavailable; local session cleared', error)
+      /* 安全存储不可用不影响本次会话——反正也不打算从它那里读回什么 */
+      console.warn('[session] secure storage unavailable while purging legacy token', error)
     }
   })()
   return initializePromise

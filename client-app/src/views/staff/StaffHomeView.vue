@@ -8,10 +8,7 @@
 
   <div class="page staff-console-page home-page">
     <div class="app-bar">
-      <div class="title">
-        <span class="brand-dot"></span>
-        <span class="brand-wordmark">管理中心</span>
-      </div>
+      <div class="title">管理中心</div>
       <div class="right sc-bar-act" @click="load">{{ loading ? '…' : '刷新' }}</div>
     </div>
 
@@ -105,6 +102,7 @@ import {
 } from '@/api/staffConsole'
 import { useToast } from '@/composables/useToast'
 import { useBodyClass } from '@/composables/useBodyClass'
+import { formatMoney, formatSignedMoney, staffRoleLabel } from '@gamebox/shared'
 import '@/assets/staff-console.css'
 
 useBodyClass('deco-bg')
@@ -119,12 +117,7 @@ const weekSummary = ref<StaffReportSummary | null>(null)
 const roomCount = ref(0)
 const riskUnhandled = ref(0)
 
-const roleLabel = computed(() => {
-  if (staff.role === 'ADMIN') return '管理'
-  if (staff.role === 'BRANCH') return '总监'
-  if (staff.role === 'GENERAL') return '总代'
-  return staff.role || ''
-})
+const roleLabel = computed(() => staffRoleLabel(staff.role, staff.parentRole))
 
 const heroPnl = computed(() => Number(summary.value?.housePnl || 0))
 const weekPnl = computed(() => Number(weekSummary.value?.housePnl || 0))
@@ -134,16 +127,11 @@ function go(name: string) {
 }
 
 function fmt(n?: number | null) {
-  if (n == null || Number.isNaN(Number(n))) return '0'
-  return Number(n).toLocaleString('zh-CN', { maximumFractionDigits: 0 })
+  return formatMoney(n ?? 0)
 }
 
 function fmtSigned(n?: number | null) {
-  const v = Number(n || 0)
-  const s = fmt(Math.abs(v))
-  if (v > 0) return `+${s}`
-  if (v < 0) return `-${s}`
-  return s
+  return formatSignedMoney(n ?? 0)
 }
 
 function pnlClass(n?: number | null) {
@@ -175,24 +163,7 @@ async function load() {
 }
 
 onMounted(() => {
-  if (staff.role === 'CS') {
-    void router.replace({ name: 'staff-fund' })
-    return
-  }
-  if (staff.role === 'AGENT' || staff.role === 'PROXY') {
-    void router.replace({ name: 'staff-lobby' })
-    return
-  }
-  // 管理员/房主：三 Tab 壳，首页落「游戏」房间卡
-  if (staff.role === 'ADMIN' || staff.role === 'BRANCH') {
-    void router.replace({ name: 'staff-game-rooms' })
-    return
-  }
-  if (staff.role === 'GENERAL') {
-    void router.replace({ name: 'staff-game-rooms' })
-    return
-  }
-  void load()
+  void router.replace({ name: staff.homeRouteName() })
 })
 </script>
 

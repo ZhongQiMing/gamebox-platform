@@ -6,7 +6,7 @@
     <img class="cd cd-br" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
   </div>
 
-  <div class="page br-page">
+  <div class="page br-page has-page-title">
     <div class="app-bar">
       <div class="back" @click="goBack">‹</div>
       <div class="title">{{ pageTitle }}</div>
@@ -14,7 +14,7 @@
     </div>
 
     <div class="page-body">
-      <h1 class="br-title">{{ listHeading }}</h1>
+      <h1 class="page-title">{{ listHeading }}</h1>
 
       <div class="time-tabs">
         <button
@@ -142,12 +142,17 @@ import { lotteryApi, type LotteryBet } from '@/api/lottery'
 import {
   BCBM_AWARD_LABELS,
   FRUIT_AWARD_LABELS,
+  FRUIT_BET_SYMBOLS,
+  FRUIT_RING,
   bcbmBetSlot,
   isBcbmBetId,
   type BcbmAwardType,
   type FruitAwardType,
+  formatMoney,
+  formatSignedMoney,
 } from '@gamebox/shared'
 import { useBodyClass } from '@/composables/useBodyClass'
+import { leaveGameToLobby } from '@/composables/lobbyAfterGame'
 import { TIME_RANGES, rangeBounds, formatRangeDateText, formatDay, type TimeRangeKey } from '@/composables/timeRange'
 import TabBar from '@/components/TabBar.vue'
 import '@/assets/bet-records.css'
@@ -409,16 +414,22 @@ function groupsFromServerBets(gameCode: string, list: LotteryBet[]): SscBetGroup
       map.set(issueNo, g)
     }
     const pending = b.status === 'PENDING'
-    const profit = pending ? 0 : b.payout - b.amount
+    /*
+     * 金额一律先归一成数字再算：接口若把 Decimal 回成字符串，
+     * `sum += amount` 会变成字符串拼接，汇总金额会越滚越长。
+     */
+    const amount = Number(b.amount) || 0
+    const payout = Number(b.payout) || 0
+    const profit = pending ? 0 : payout - amount
     g.bets.push({
       play: formatServerPlay(b.betType, b.payload, gameCode),
-      amount: b.amount,
+      amount,
       status: b.status,
       profit,
-      winAmount: b.payout,
+      winAmount: payout,
       hit: b.status === 'WON' ? '中奖' : '',
     })
-    g.totalAmount += b.amount
+    g.totalAmount += amount
     g.totalProfit += profit
     if (b.settledAt && (!g.settledAt || b.settledAt > g.settledAt)) g.settledAt = b.settledAt
     if (new Date(b.createdAt).getTime() < new Date(g.createdAt).getTime()) g.createdAt = b.createdAt
@@ -464,6 +475,46 @@ function formatFruitPlay(outcome: unknown): string {
   return o.awardType || '投注'
 }
 
+/** 水果机押注仓位 → 图案名；再赌局的仓位是 GAMBLE_BIG / GAMBLE_SMALL */
+const FRUIT_SYMBOL_LABELS: Record<string, string> = Object.fromEntries(
+  FRUIT_BET_SYMBOLS.map((s) => [s.id, s.label]),
+)
+
+function formatFruitPosition(pos: string): string {
+  if (pos === 'GAMBLE_BIG') return '再赌·押大'
+  if (pos === 'GAMBLE_SMALL') return '再赌·押小'
+  return FRUIT_SYMBOL_LABELS[pos] || pos || '仓位'
+}
+
+/**
+ * 水果机开奖摘要：转盘停在哪一格 + 奖型。
+ * 原先注单只显示奖型（如「普通中奖」），看不出押了什么、开出什么。
+ */
+function formatFruitDraw(outcome: unknown): string {
+  const o = (outcome ?? {}) as {
+    awardType?: string
+    stopIndex?: number
+    choice?: string
+    result?: string
+    roll?: number
+  }
+  if (o.choice === 'big' || o.choice === 'small') {
+    const pick = o.choice === 'big' ? '押大' : '押小'
+    const res = o.result === 'win' ? '赢' : o.result === 'lose' ? '输' : '和'
+    const roll = typeof o.roll === 'number' ? `开 ${o.roll} · ` : ''
+    return `${pick} · ${roll}${res}`
+  }
+  const cell = typeof o.stopIndex === 'number' ? FRUIT_RING[o.stopIndex] : undefined
+  const stop = cell ? `停在 ${cell.label}${cell.mult > 0 ? ` ×${cell.mult}` : ''}` : ''
+  const award =
+    o.awardType && o.awardType in FRUIT_AWARD_LABELS
+      ? FRUIT_AWARD_LABELS[o.awardType as FruitAwardType]
+      : ''
+  /* 普通中奖已由「停在 X」表达，不再重复；特殊奖型才值得单独点出来 */
+  if (stop && award && o.awardType !== 'normal') return `${stop} · ${award}`
+  return stop || award || '开奖'
+}
+
 function formatBcbmPlay(outcome: unknown): string {
   const o = (outcome ?? {}) as { awardType?: string }
   if (o.awardType && o.awardType in BCBM_AWARD_LABELS) {
@@ -505,18 +556,26 @@ function groupsFromArcadeRecords(gameCode: string, list: BetRecord[]): SscBetGro
       const pending = r.status === 'PENDING'
       const profit = pending ? 0 : r.payout - r.amount
       const play = formatArcadePlay(gameCode, r.outcome)
-      /** 奔驰宝马：展开各仓位明细，开奖结果放 drawSummary */
+      /**
+       * 奔驰宝马与水果机都是「一局押多个仓位」，展开逐仓位明细，
+       * 开奖结果放 drawSummary —— 否则只看到一个奖型名，既不知道押了什么，
+       * 也不知道开出什么。
+       */
+      const perPosition = gameCode === 'bcbm' || gameCode === 'fruit-machine'
       const bets: SscBetItem[] =
-        gameCode === 'bcbm' && r.details?.length
+        perPosition && r.details?.length
           ? r.details.map((d) => {
               const dProfit = pending ? 0 : d.payout - d.amount
               return {
-                play: formatBcbmPosition(d.position),
+                play:
+                  gameCode === 'bcbm'
+                    ? formatBcbmPosition(d.position)
+                    : formatFruitPosition(d.position),
                 amount: d.amount,
                 status: d.won ? 'WON' : 'LOST',
                 profit: dProfit,
                 winAmount: d.payout,
-                hit: d.won ? '中奖' : '',
+                hit: d.won ? (d.multiplier > 0 ? `中 ×${d.multiplier}` : '中奖') : '',
               }
             })
           : [
@@ -529,13 +588,20 @@ function groupsFromArcadeRecords(gameCode: string, list: BetRecord[]): SscBetGro
                 hit: r.status === 'WON' ? '中奖' : '',
               },
             ]
+      const drawSummary = pending
+        ? undefined
+        : gameCode === 'bcbm'
+          ? play
+          : gameCode === 'fruit-machine'
+            ? formatFruitDraw(r.outcome)
+            : undefined
       return {
         game: gameCode,
         issue: formatArcadeIssue(r),
         createdAt: r.createdAt,
         settledAt: r.settledAt || undefined,
         settled: !pending,
-        drawSummary: gameCode === 'bcbm' ? play : undefined,
+        drawSummary,
         bets,
         totalAmount: r.amount,
         totalProfit: profit,
@@ -675,9 +741,26 @@ async function loadLotteryBetLog() {
   if (SERVER_LOTTERY_CODES.has(code)) {
     const seq = ++loadSeq
     try {
-      const res = await lotteryApi.myBets(code, 1, 200)
+      const [from, to] = rangeBounds(range.value)
+      const pageSize = 200
+      const all: LotteryBet[] = []
+      let page = 1
+      let total = Infinity
+      while (all.length < total && page <= 20) {
+        const res = await lotteryApi.myBets(code, page, pageSize, undefined, {
+          range: range.value,
+          from,
+          to,
+        })
+        if (seq !== loadSeq) return
+        const list = res.list || []
+        total = Number(res.total) || 0
+        all.push(...list)
+        if (list.length < pageSize) break
+        page += 1
+      }
       if (seq !== loadSeq) return
-      sscLog.value = groupsFromServerBets(code, res.list || [])
+      sscLog.value = groupsFromServerBets(code, all)
     } catch {
       if (seq !== loadSeq) return
       loadLocalLotteryBetLog()
@@ -687,7 +770,11 @@ async function loadLotteryBetLog() {
   loadLocalLotteryBetLog()
 }
 
+/* keep-alive 挂起后组件还活着，监听也还在；不判激活态就会替看不见的页拉数据 */
+let pageActive = true
+
 function onLotteryLogStorage(e: StorageEvent) {
+  if (!pageActive) return
   const code = activeGameCode.value
   if (SERVER_LOTTERY_CODES.has(code) || TABLE_BET_GAMES[code] || ARCADE_BET_GAMES[code]) return
   const key = lotteryBetLogStorageKey()
@@ -696,6 +783,7 @@ function onLotteryLogStorage(e: StorageEvent) {
 }
 
 function onLotteryLogVisible() {
+  if (!pageActive) return
   if (document.visibilityState === 'visible') void loadLotteryBetLog()
 }
 
@@ -806,11 +894,11 @@ async function loadReportSummary() {
 }
 
 function fmt(n: number) {
-  return Number(n).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
+  return formatMoney(n)
 }
 
 function fmtProfit(n: number) {
-  return (n >= 0 ? '+' : '') + fmt(n)
+  return formatSignedMoney(n)
 }
 
 function toggleExpand(issue: string) {
@@ -844,25 +932,35 @@ function detailProfitClass(b: SscBetItem, settled: boolean) {
 
 function goBack() {
   if (window.history.length > 1) router.back()
-  else router.push('/lobby')
+  else void leaveGameToLobby(router, 'push')
 }
 
 watch(activeGameCode, () => {
   void loadLotteryBetLog()
 })
 
+/* H5 写完本地注单会广播，各游戏一个事件名；用具名回调才能在卸载时摘干净 */
+const BET_LOG_EVENTS = [
+  'ssc-bet-log-updated',
+  'ffc-bet-log-updated',
+  'jsr-bet-log-updated',
+  'jsb-bet-log-updated',
+  'bjsc-bet-log-updated',
+  'k3-bet-log-updated',
+  'lhc-bet-log-updated',
+]
+
+function onBetLogEvent() {
+  if (!pageActive) return
+  void loadLotteryBetLog()
+}
+
 onMounted(async () => {
   await loadBetHistoryForRange()
   await Promise.all([loadLotteryBetLog(), loadReportSummary()])
   startLotteryPollIfNeeded()
   window.addEventListener('storage', onLotteryLogStorage)
-  window.addEventListener('ssc-bet-log-updated', () => { void loadLotteryBetLog() })
-  window.addEventListener('ffc-bet-log-updated', () => { void loadLotteryBetLog() })
-  window.addEventListener('jsr-bet-log-updated', () => { void loadLotteryBetLog() })
-  window.addEventListener('jsb-bet-log-updated', () => { void loadLotteryBetLog() })
-  window.addEventListener('bjsc-bet-log-updated', () => { void loadLotteryBetLog() })
-  window.addEventListener('k3-bet-log-updated', () => { void loadLotteryBetLog() })
-  window.addEventListener('lhc-bet-log-updated', () => { void loadLotteryBetLog() })
+  for (const name of BET_LOG_EVENTS) window.addEventListener(name, onBetLogEvent)
   document.addEventListener('visibilitychange', onLotteryLogVisible)
   loading.value = false
 })
@@ -870,19 +968,27 @@ onMounted(async () => {
 /* 被 keep-alive 挂起时组件不卸载，得靠 activated/deactivated 收停轮询 */
 let skipFirstActivate = true
 onActivated(() => {
+  pageActive = true
   if (skipFirstActivate) {
     skipFirstActivate = false
     return
   }
+  /* 报表与注单同期刷新，否则回到缓存页看到的是上次的汇总 */
+  void loadBetHistoryForRange().then(() => loadReportSummary())
   void loadLotteryBetLog()
   startLotteryPollIfNeeded()
 })
 
-onDeactivated(stopLotteryPoll)
+onDeactivated(() => {
+  pageActive = false
+  stopLotteryPoll()
+})
 
 onUnmounted(() => {
+  pageActive = false
   stopLotteryPoll()
   window.removeEventListener('storage', onLotteryLogStorage)
+  for (const name of BET_LOG_EVENTS) window.removeEventListener(name, onBetLogEvent)
   document.removeEventListener('visibilitychange', onLotteryLogVisible)
 })
 </script>

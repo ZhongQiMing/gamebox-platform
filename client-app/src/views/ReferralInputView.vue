@@ -15,7 +15,7 @@
       <div class="user-bar">
         <div class="avatar-luxe-wrap">
           <img class="avatar-img" :src="avatarSrc" alt="">
-          <img class="avatar-frame" src="/images/avatar-ring.png" alt="">
+          <img class="avatar-frame" src="/images/avatar-ring.webp" alt="">
         </div>
         <div class="user-info">
           <div class="user-name">{{ userStore.profile?.nickname ?? '———' }}</div>
@@ -62,7 +62,7 @@
           >
             <div class="room-luxe-wrap">
               <img class="room-icon" :src="r.icon || defaultIcon" :alt="r.name" loading="lazy">
-              <img class="room-frame" src="/images/room-frame-gold.png" alt="">
+              <img class="room-frame" src="/images/room-frame-gold.webp" alt="">
             </div>
             <div class="name">{{ r.name }}</div>
             <div class="room-no">{{ r.roomNo }}</div>
@@ -101,7 +101,7 @@ import '@/assets/referral-input.css'
 useBodyClass('referral-bg')
 
 const DESIGN_W = 390
-const defaultIcon = '/images/rooms/default-room.png'
+const defaultIcon = '/images/rooms/default-room.webp'
 
 const router = useRouter()
 const userStore = useUserStore()

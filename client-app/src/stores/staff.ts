@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import type { UserProfile } from '@/api/auth'
+import { isGeneralSide, isRoomAgentSide } from '@gamebox/shared'
 import {
   PLAYER_TOKEN_KEY, STAFF_TOKEN_KEY, clearSessionMark, isNativeApp, loadToken,
   markSession, removeToken, saveToken, sessionKind,
@@ -10,6 +11,8 @@ import { publicMediaUrl } from '@/utils/publicMediaUrl'
 const TOKEN_KEY = STAFF_TOKEN_KEY
 const KIND_KEY = 'staff_login_kind'
 const PLAY_KEY = 'staff_play'
+/** 试玩进的是哪间房：退出游戏要原路回去，不能落回房间列表 */
+const PLAY_ROOM_KEY = 'staff_play_room'
 
 export type StaffLoginKind = 'agent' | 'branch'
 
@@ -25,6 +28,7 @@ export const useStaffStore = defineStore('staff', () => {
     (localStorage.getItem(KIND_KEY) as StaffLoginKind) || 'agent',
   )
   const playActive = ref(localStorage.getItem(PLAY_KEY) === '1')
+  const playRoomId = ref(localStorage.getItem(PLAY_ROOM_KEY) || '')
   const restored = ref(false)
   let restoreInflight: Promise<void> | null = null
   /** 登录/退出递增，作废进行中的 restore，防止旧 me() 401 或晚到结果写回会话 */
@@ -33,9 +37,12 @@ export const useStaffStore = defineStore('staff', () => {
   const isLoggedIn = computed(() =>
     !!profile.value && (isNativeApp() ? !!token.value : sessionKind() === 'staff'))
   const role = computed(() => profile.value?.role || '')
+  const parentRole = computed(() => profile.value?.parentRole || null)
   const isBranch = computed(() => role.value === 'BRANCH' || role.value === 'ADMIN')
-  const isGeneral = computed(() => role.value === 'GENERAL')
-  const isAgentSide = computed(() => role.value === 'AGENT' || role.value === 'PROXY')
+  /** 总代本人 + 总代子账号（分身同权） */
+  const isGeneral = computed(() => isGeneralSide(role.value, parentRole.value))
+  /** 房间代理 + 代理子账号（不含总代分身） */
+  const isAgentSide = computed(() => isRoomAgentSide(role.value, parentRole.value))
   const isCs = computed(() => role.value === 'CS')
   /** 手机底栏运营端：主代理 / 总代 / 子账号 / 客服 / 管理 / 总监 */
   const isMobileOps = computed(() => isAgentSide.value || isCs.value || isBranch.value || isGeneral.value)
@@ -57,7 +64,9 @@ export const useStaffStore = defineStore('staff', () => {
     bumpEpoch()
     removeToken(PLAYER_TOKEN_KEY)
     localStorage.removeItem(PLAY_KEY)
+    localStorage.removeItem(PLAY_ROOM_KEY)
     playActive.value = false
+    playRoomId.value = ''
     profile.value = withPublicAvatar(user)
     token.value = tk
     loginKind.value = kind
@@ -72,16 +81,21 @@ export const useStaffStore = defineStore('staff', () => {
    * App 把票镜像一份给玩家端用；网页版两边本来就是同一个 Cookie，不用镜像。
    * 所以这里只能判 profile，判 token 会让网页版永远进不去游戏。
    */
-  function beginPlay() {
+  function beginPlay(roomId = '') {
     if (!profile.value) return
     playActive.value = true
     localStorage.setItem(PLAY_KEY, '1')
+    playRoomId.value = roomId
+    if (roomId) localStorage.setItem(PLAY_ROOM_KEY, roomId)
+    else localStorage.removeItem(PLAY_ROOM_KEY)
     saveToken(PLAYER_TOKEN_KEY, token.value)
   }
 
   function endPlay(): Promise<void> {
     playActive.value = false
+    playRoomId.value = ''
     localStorage.removeItem(PLAY_KEY)
+    localStorage.removeItem(PLAY_ROOM_KEY)
     if (token.value && loadToken(PLAYER_TOKEN_KEY) === token.value) {
       return removeToken(PLAYER_TOKEN_KEY)
     }
@@ -133,6 +147,9 @@ export const useStaffStore = defineStore('staff', () => {
           if (epoch !== sessionEpoch) return
           profile.value = withPublicAvatar(me)
           playActive.value = localStorage.getItem(PLAY_KEY) === '1'
+          playRoomId.value = playActive.value
+            ? localStorage.getItem(PLAY_ROOM_KEY) || ''
+            : ''
           if (playActive.value) {
             saveToken(PLAYER_TOKEN_KEY, token.value)
           }
@@ -153,8 +170,10 @@ export const useStaffStore = defineStore('staff', () => {
     token,
     loginKind,
     playActive,
+    playRoomId,
     isLoggedIn,
     role,
+    parentRole,
     isBranch,
     isGeneral,
     isAgentSide,

@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { roomsApi, type RoomCard } from '@/api/rooms'
+import { useWalletStore } from '@/stores/wallet'
 import { publicMediaUrl } from '@/utils/publicMediaUrl'
 
 const STORAGE_KEY = 'gamebox_current_room'
@@ -27,8 +28,14 @@ export const useRoomStore = defineStore('room', () => {
   const roomNo = computed(() => current.value?.roomNo ?? '')
 
   function setCurrent(room: RoomCard) {
+    /*
+     * 余额是按房间算的。换房时先归零，等新房的余额拉回来再显示；
+     * 不归零就会在新房间里短暂显示上一间房的钱，玩家按那个数去下注。
+     */
+    const changed = current.value?.roomNo !== room.roomNo
     current.value = room
     localStorage.setItem(STORAGE_KEY, JSON.stringify(room))
+    if (changed) useWalletStore().reset()
   }
 
   function clearCurrent() {

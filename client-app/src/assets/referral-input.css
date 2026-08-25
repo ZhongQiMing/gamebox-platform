@@ -120,7 +120,7 @@ body.referral-bg::before {
   display: grid;
   grid-template-columns: 1fr 2fr;
   align-items: center;
-  background-image: url('/images/card-frame.png');
+  background-image: url('/images/card-frame.webp');
   background-size: 100% 100%;
   background-repeat: no-repeat;
   background-color: transparent;

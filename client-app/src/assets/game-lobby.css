@@ -14,7 +14,6 @@ body.lobby-bg {
   /* 大厅统一字号阶梯（正文基线 13px，避免卡片里忽大忽小） */
   --lobby-font: 'Noto Serif SC', 'Songti SC', 'STSong', 'STZhongsong', 'SimSun', 'Microsoft YaHei', serif;
   --lobby-font-num: 'Roboto Mono', 'SF Mono', Menlo, Consolas, ui-monospace, monospace;
-  --lobby-fs-title: 22px;       /* 页标题「游戏大厅」 */
   --lobby-fs-name: 17px;        /* 卡片游戏名 */
   --lobby-fs-body: 13px;        /* 跑马灯 / 期号 / 底条正文 */
   --lobby-fs-timer: 17px;       /* 倒计时与「实时进行」同级，不再夸张放大 */
@@ -57,17 +56,19 @@ body.lobby-bg::before { display: none; }
     drop-shadow(0 2px 6px rgba(0, 0, 0, 0.5));
   pointer-events: none;
 }
-.lobby-deco-corner-tl { top: 0;    left: 0;  }
-.lobby-deco-corner-tr { top: 0;    right: 0; transform: scaleX(-1); }
-.lobby-deco-corner-bl { bottom: 0; left: 0;  transform: scaleY(-1); }
-.lobby-deco-corner-br { bottom: 0; right: 0; transform: scale(-1, -1); }
+/* 底部两角与皇冠都叠上 --deco-bottom：大厅一定挂着底栏，收在 0 会被底栏盖掉一截。
+   变量定义见 common.css 的 :root。 */
+.lobby-deco-corner-tl { top: 0;                     left: 0;  }
+.lobby-deco-corner-tr { top: 0;                     right: 0; transform: scaleX(-1); }
+.lobby-deco-corner-bl { bottom: var(--deco-bottom); left: 0;  transform: scaleY(-1); }
+.lobby-deco-corner-br { bottom: var(--deco-bottom); right: 0; transform: scale(-1, -1); }
 
 /* 屏幕中央皇冠铺底（与「输入房间号」页 .crown-deco 同款规格）：
    left:50%, bottom:18vh, width: min(84vw, 366px), opacity 0.9 */
 .lobby-deco-crown {
   position: absolute;
   left: 50%;
-  bottom: 18vh;
+  bottom: calc(18vh + var(--deco-bottom));
   transform: translateX(-50%);
   width: min(84vw, 366px);
   height: auto;
@@ -120,33 +121,8 @@ body.lobby-bg::before { display: none; }
   z-index: 1;
 }
 .lobby-page .page-body {
-  /* 顶 padding 8：给标题（行高 48，中线 = 8+24 = 32 与 fixed 按钮中线 12+20=32 完全对齐）让出空间 */
-  padding: 8px 16px 0;
-}
-
-/* ============ 顶部居中标题：与三颗 fixed 顶角按钮（返回 / 退出）同水平线 =====
-   左 12 + 40 + 12 = 64 留给左侧返回键，右侧同理；中间金色渐变文字居中 */
-.lobby-title {
-  height: 48px;                       /* 比 fixed 按钮（40）略高，让放大后的字撑得开 */
-  margin: 0 64px 16px;                /* 左右各空出一颗 fixed 按钮的位置（40 + 24 安全区） */
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-family: var(--lobby-font);
-  font-size: var(--lobby-fs-title);
-  font-weight: 900;
-  letter-spacing: 5px;
-  line-height: 1;
-  /* 金色渐变文字（与「输入房间号」用户卡名字同款配方） */
-  background: linear-gradient(180deg, #fff7e2 0%, var(--gold-bright) 48%, var(--gold) 80%, var(--gold-deep) 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-  color: var(--gold-bright);          /* 不支持 background-clip 时兜底纯色 */
-  filter:
-    drop-shadow(0 1px 1px rgba(0, 0, 0, 0.7))
-    drop-shadow(0 0 8px rgba(244, 211, 107, 0.25));
-  user-select: none;
+  /* 顶部留白交给 .page-title 的 margin-top，这里不再另加，避免两处叠出双倍间距 */
+  padding: 0 16px 0;
 }
 
 /* ============ 跑马灯：玩家喜报 / 活动推广 / 平台公告 ============ */
@@ -316,7 +292,7 @@ body.lobby-bg::before { display: none; }
   content: '';
   position: absolute;
   inset: 0;
-  background: url('/images/card-frame.png') no-repeat center / 100% 100%;
+  background: url('/images/card-frame.webp') no-repeat center / 100% 100%;
   filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.6));
   z-index: 0;
   pointer-events: none;
@@ -1148,6 +1124,15 @@ body.lobby-bg::before { display: none; }
   filter: grayscale(0.35);
 }
 .game-card.is-maint:active {
+  transform: none;
+}
+
+/* 正在进入：卡片压暗并吃掉后续点击，慢网下不至于看着像没反应 */
+.game-card.is-entering {
+  opacity: 0.62;
+  pointer-events: none;
+}
+.game-card.is-entering:active {
   transform: none;
 }
 

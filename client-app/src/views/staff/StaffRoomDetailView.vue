@@ -89,12 +89,12 @@
           <p v-if="!canSetStatus" class="rd-tip">当前角色不可改房间状态</p>
         </section>
 
-        <section v-if="canPlayerFund" class="rd-panel">
+        <section v-if="canPlayerFund || isHouseView" class="rd-panel">
           <div class="rd-panel-hd">快捷入口</div>
           <div class="rd-links">
             <button type="button" class="rd-link" @click="goPlayers">
               <div class="rd-link-txt">
-                <span class="lb">本房玩家上下分</span>
+                <span class="lb">{{ canPlayerFund ? '本房上下分' : '本房玩家查询' }}</span>
                 <span class="sub">{{ room.memberCount }} 人</span>
               </div>
               <span class="arrow">›</span>
@@ -141,12 +141,12 @@
               <div v-for="g in report.byGame" :key="g.gameCode" class="rd-rpt-game">
                 <div class="rd-rpt-game-hd">
                   <b>{{ g.gameName || g.gameCode }}</b>
-                  <span :class="pnlClass(isLandlord ? g.housePnl : -g.housePnl)">
-                    {{ fmtSigned(isLandlord ? g.housePnl : -g.housePnl) }}
+                  <span :class="pnlClass(isHouseView ? g.housePnl : -g.housePnl)">
+                    {{ fmtSigned(isHouseView ? g.housePnl : -g.housePnl) }}
                   </span>
                 </div>
                 <div class="rd-rpt-game-m">
-                  <span>注单 {{ fmt(g.betCount) }}</span>
+                  <span>注单 {{ formatCount(g.betCount) }}</span>
                   <span>流水 {{ fmt(g.betFlow) }}</span>
                   <span>派彩 {{ fmt(g.payout) }}</span>
                 </div>
@@ -182,7 +182,7 @@
               </label>
             </div>
           </div>
-          <p v-if="!canEditGames" class="rd-tip">子账号仅可查看，不可改游戏开关</p>
+          <p v-if="!canEditGames" class="rd-tip">代理子账号仅可查看，不可改游戏开关</p>
         </section>
       </template>
 
@@ -195,14 +195,16 @@
           </div>
           <div v-if="room.bookMode === 'CREDIT'" class="rd-grid tight">
             <div class="rd-cell"><span class="mk">合同额度</span><span class="mv">{{ fmt(room.creditLimit) }}</span></div>
-            <div class="rd-cell"><span class="mk">剩余信用</span><span class="mv accent">{{ fmt(room.ownerAgent.pointsQuota) }}</span></div>
-            <div class="rd-cell"><span class="mk">佣金账户</span><span class="mv">{{ fmt(room.ownerAgent.balance ?? 0) }}</span></div>
+            <!-- 剩余信用＝这个代理还能给玩家上多少分，信用房最该一眼看到的数 -->
+            <div class="rd-cell"><span class="mk">剩余信用</span><span class="mv">{{ fmt(room.ownerAgent.pointsQuota) }}</span></div>
+            <div class="rd-cell"><span class="mk">代理余额</span><span class="mv accent">{{ fmt(agentBalance) }}</span></div>
+            <div class="rd-cell"><span class="mk">上盘可飞</span><span class="mv">{{ fmt(room.ownerAgent.flyCover) }}</span></div>
             <div class="rd-cell"><span class="mk">玩家持分</span><span class="mv">{{ fmt(room.playerPointsTotal) }}</span></div>
             <div class="rd-cell wide"><span class="mk">占成</span><span class="mv">{{ Math.round(Number(room.agentShareRate || 0) * 1000) / 10 }}%</span></div>
           </div>
           <div v-else class="rd-grid tight">
-            <div class="rd-cell"><span class="mk">代理余额</span><span class="mv accent">{{ fmt(room.ownerAgent.balance ?? 0) }}</span></div>
-            <div class="rd-cell"><span class="mk">上盘额度</span><span class="mv">{{ fmt(room.ownerAgent.diskPoolRemaining ?? room.ownerAgent.pointsQuota) }}</span></div>
+            <div class="rd-cell"><span class="mk">代理余额</span><span class="mv accent">{{ fmt(agentBalance) }}</span></div>
+            <div class="rd-cell"><span class="mk">可用额度</span><span class="mv">{{ fmt(room.ownerAgent.diskPoolRemaining ?? room.ownerAgent.pointsQuota) }}</span></div>
             <div class="rd-cell"><span class="mk">上盘可飞</span><span class="mv">{{ fmt(room.ownerAgent.flyCover) }}</span></div>
             <div class="rd-cell"><span class="mk">玩家持分</span><span class="mv">{{ fmt(room.playerPointsTotal) }}</span></div>
           </div>
@@ -267,6 +269,17 @@
         </div>
       </div>
     </div>
+    <AppModal
+      :visible="confirmVisible"
+      :title="confirmTitle"
+      :message="confirmMessage"
+      :ok-text="confirmOkText"
+      :danger="confirmDanger"
+      cancel-text="取消"
+      @ok="onConfirmOk"
+      @cancel="onConfirmCancel"
+    />
+
     <StaffTabBar />
   </div>
 </template>
@@ -275,6 +288,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useStaffStore } from '@/stores/staff'
+import AppModal from '@/components/AppModal.vue'
 import StaffTabBar from '@/components/StaffTabBar.vue'
 import {
   staffConsoleApi,
@@ -284,10 +298,46 @@ import {
 } from '@/api/staffConsole'
 import { useToast } from '@/composables/useToast'
 import { useBodyClass } from '@/composables/useBodyClass'
+import { TIME_RANGES } from '@/composables/timeRange'
+import { formatCount, formatMoney, formatSignedMoney } from '@gamebox/shared'
 import { newFundOrderNo } from '@/utils/fundOrderNo'
 import '@/assets/staff-console.css'
 
 useBodyClass('deco-bg')
+
+/**
+ * 本页共用一个确认弹窗，样式跟上下分审核一致。
+ * 原来用的是浏览器原生 confirm，在手机上长得跟 App 完全两样。
+ */
+const confirmVisible = ref(false)
+const confirmTitle = ref('')
+const confirmMessage = ref('')
+const confirmOkText = ref('确认')
+const confirmDanger = ref(false)
+let confirmResolve: ((ok: boolean) => void) | null = null
+
+function askConfirm(opts: {
+  title: string
+  message: string
+  okText?: string
+  danger?: boolean
+}) {
+  confirmTitle.value = opts.title
+  confirmMessage.value = opts.message
+  confirmOkText.value = opts.okText || '确认'
+  confirmDanger.value = !!opts.danger
+  confirmVisible.value = true
+  return new Promise<boolean>((resolve) => { confirmResolve = resolve })
+}
+
+function settleConfirm(ok: boolean) {
+  confirmVisible.value = false
+  const fn = confirmResolve
+  confirmResolve = null
+  fn?.(ok)
+}
+function onConfirmOk() { settleConfirm(true) }
+function onConfirmCancel() { settleConfirm(false) }
 
 const GAME_LABEL: Record<string, string> = {
   ffc: '分分彩',
@@ -311,23 +361,24 @@ const router = useRouter()
 const staff = useStaffStore()
 const { toast } = useToast()
 
-const defaultIcon = '/images/rooms/default-room.png'
+const defaultIcon = '/images/rooms/default-room.webp'
 const loading = ref(false)
 const busy = ref(false)
 const statusBusy = ref(false)
 const gamesLoading = ref(false)
 const gameBusy = ref('')
 const room = ref<StaffRoomDetail | null>(null)
+/** 对外唯一的「代理余额」：信用盘=剩余信用+未结佣金，现金盘=余额。两种盘都走这里 */
+const agentBalance = computed(() => {
+  const a = room.value?.ownerAgent
+  if (!a) return 0
+  if (a.agentBalance != null) return Number(a.agentBalance)
+  return Number(a.balance || 0)
+})
 const games = ref<StaffRoomGameCfg[]>([])
 const tab = ref<'ops' | 'games' | 'agent'>('ops')
 
-const reportRanges = [
-  { key: 'today', label: '今日' },
-  { key: 'yesterday', label: '昨日' },
-  { key: 'thisweek', label: '本周' },
-  { key: 'lastweek', label: '上周' },
-  { key: 'thismonth', label: '本月' },
-]
+const reportRanges = TIME_RANGES
 const reportRange = ref('today')
 const reportLoading = ref(false)
 const report = ref<StaffReportSummary | null>(null)
@@ -343,15 +394,21 @@ const bumpVisible = ref(false)
 const bumpDir = ref<'up' | 'down'>('up')
 const bumpAmount = ref(10000)
 
-const canFundAgent = computed(() => staff.role === 'ADMIN' || staff.role === 'BRANCH')
+const canFundAgent = computed(() => {
+  /* 挂了总代：由总代给房间代理加减分。直挂平台：管理/总监直接加减分。 */
+  if (staff.isGeneral) return true
+  if (staff.isBranch) return !room.value?.general?.userId
+  return false
+})
 const canPlayerFund = computed(() => staff.role === 'AGENT')
-const isLandlord = computed(() => staff.role === 'ADMIN' || staff.role === 'BRANCH')
+const isLandlord = computed(() => staff.isBranch)
+const isHouseView = computed(() => staff.isBranch || staff.isGeneral)
 const canSetStatus = computed(() =>
-  staff.role === 'ADMIN' || staff.role === 'BRANCH' || staff.role === 'AGENT',
+  staff.isBranch || staff.isGeneral || staff.role === 'AGENT',
 )
 const canEditGames = computed(() => canSetStatus.value)
 
-const reportHeroLabel = computed(() => (isLandlord.value ? '平台净盈亏' : '玩家盈亏'))
+const reportHeroLabel = computed(() => (isHouseView.value ? (isLandlord.value ? '平台净盈亏' : '庄家盈亏') : '玩家盈亏'))
 const reportHeroValue = computed(() => {
   const s = report.value
   if (!s) return 0
@@ -359,6 +416,7 @@ const reportHeroValue = computed(() => {
     if (s.netPnl != null) return Number(s.netPnl)
     return Number(s.platformShareAmount ?? s.housePnl ?? 0) - Number(s.commissionAmount ?? 0)
   }
+  if (staff.isGeneral) return Number(s.housePnl || 0)
   return Number(s.playerPnl || 0)
 })
 const reportHeroMetrics = computed(() => {
@@ -375,7 +433,7 @@ const reportHeroMetrics = computed(() => {
   return [
     { k: '流水', v: fmt(s.betFlow) },
     { k: '派彩', v: fmt(s.payout) },
-    { k: '注单', v: fmt(s.betCount) },
+    { k: '注单', v: formatCount(s.betCount) },
   ]
 })
 const reportRows = computed(() => {
@@ -384,7 +442,7 @@ const reportRows = computed(() => {
   if (isLandlord.value) {
     const commission = Number(s.commissionAmount || 0)
     return [
-      { k: '注单数', v: fmt(s.betCount) },
+      { k: '注单数', v: formatCount(s.betCount) },
       { k: '玩家盈亏', v: fmtSigned(s.playerPnl), cls: pnlClass(s.playerPnl) },
       { k: '代理佣金', v: fmt(commission), cls: commission > 0 ? 'down' : '' },
       { k: '佣金笔数', v: String(s.commissionCount ?? 0) },
@@ -411,20 +469,16 @@ const statusOptions = computed(() => {
 
 const feeText = computed(() => {
   const fee = Number(room.value?.monthlyFee || 0)
-  return fee > 0 ? `${Math.floor(fee)}/月` : '不收费'
+  return fee > 0 ? `${formatMoney(fee)}/月` : '不收费'
 })
 
 const enabledGameCount = computed(() => games.value.filter((g) => g.enabled).length)
 
 function fmt(n?: number | null) {
-  return Number(n || 0).toLocaleString('zh-CN', { maximumFractionDigits: 0 })
+  return formatMoney(n ?? 0)
 }
 function fmtSigned(n?: number | null) {
-  const v = Number(n || 0)
-  const s = fmt(Math.abs(v))
-  if (v > 0) return `+${s}`
-  if (v < 0) return `-${s}`
-  return s
+  return formatSignedMoney(n ?? 0)
 }
 function pnlClass(n?: number | null) {
   const v = Number(n || 0)
@@ -485,9 +539,13 @@ function openAgentFund(mode: 'up' | 'down') {
   fundVisible.value = true
 }
 
+/** 订单号在开弹窗时定死，连点或重试复用同一键，由服务端去重 */
+const bumpOrderNo = ref('')
+
 function openBumpCredit(dir: 'up' | 'down') {
   bumpDir.value = dir
   bumpAmount.value = 10000
+  bumpOrderNo.value = newFundOrderNo('bump')
   bumpVisible.value = true
 }
 
@@ -500,11 +558,21 @@ async function doBumpCredit() {
   if (!room.value) return
   const amount = Number(bumpAmount.value)
   if (!(amount > 0)) return toast('请输入金额')
+  /* 合同额度与剩余信用同增同减，结账按新额度校准，值得再问一次 */
+  const up = bumpDir.value === 'up'
+  const ok = await askConfirm({
+    title: up ? '增加信用额度' : '减少信用额度',
+    message: `确认${up ? '增加' : '减少'}本房信用额度 ${fmt(amount)}？\n合同额度与剩余信用同增同减，结账时按新额度校准。`,
+    okText: '确认',
+    danger: !up,
+  })
+  if (!ok) return
   busy.value = true
   try {
     const res = await staffConsoleApi.bumpCreditLimit(room.value.id, {
       amount,
       direction: bumpDir.value,
+      clientRequestId: bumpOrderNo.value,
     })
     toast(res.message || (bumpDir.value === 'up' ? '已增加信用' : '已减少信用'))
     bumpVisible.value = false
@@ -520,9 +588,12 @@ async function setStatus(status: string) {
   if (!room.value || !canSetStatus.value || statusBusy.value) return
   /* 冻结/关闭会影响整房玩家，与 admin 端 RoomDetailView 一样要二次确认 */
   if (status === 'FROZEN' || status === 'CLOSED') {
-    const ok = window.confirm(
-      `确认将房间「${room.value.name || room.value.roomNo}」设为${statusLabel(status)}？房内玩家将无法继续游戏。`,
-    )
+    const ok = await askConfirm({
+      title: `房间${statusLabel(status)}`,
+      message: `确认将房间「${room.value.name || room.value.roomNo}」设为${statusLabel(status)}？\n房内玩家将无法继续游戏。`,
+      okText: `确认${statusLabel(status)}`,
+      danger: true,
+    })
     if (!ok) return
   }
   statusBusy.value = true
@@ -539,6 +610,16 @@ async function setStatus(status: string) {
 
 async function toggleGame(g: StaffRoomGameCfg) {
   if (!room.value || !canEditGames.value) return
+  /* 关一个游戏是整房玩家立刻受影响的事，别让它一点就生效 */
+  if (g.enabled) {
+    const ok = await askConfirm({
+      title: '关闭游戏',
+      message: `确认关闭「${gameLabel(g.gameCode)}」？\n本房玩家将无法再进入该游戏。`,
+      okText: '确认关闭',
+      danger: true,
+    })
+    if (!ok) return
+  }
   gameBusy.value = g.gameCode
   try {
     await staffConsoleApi.patchRoomGame(room.value.id, g.gameCode, { enabled: !g.enabled })
@@ -787,33 +868,34 @@ onMounted(() => { void load() })
   gap: 8px;
 }
 .rd-grid.tight { margin-top: 4px; }
+/* 标签在上、数字独占一行：与房间管理、游戏大厅的卡片同一套，
+   横排时金额带两位小数就会被挤成省略号。 */
 .rd-cell {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
+  flex-direction: column;
+  gap: 4px;
   min-height: 40px;
-  padding: 10px 12px;
+  padding: 8px 10px;
   border-radius: 10px;
   background: rgba(0, 0, 0, 0.26);
   border: 1px solid rgba(212, 175, 55, 0.14);
 }
 .rd-cell.wide { grid-column: 1 / -1; }
 .rd-cell .mk {
-  flex-shrink: 0;
-  font-size: 12px;
+  font-size: 11px;
   letter-spacing: 1px;
   color: var(--text-muted);
 }
+/*
+ * 用 --money-third 而不是 --money-half：--money-half 按「整页宽度放两个数字」算，
+ * 没扣掉面板自己的内边距，22px 的字会顶出格子右边。
+ */
 .rd-cell .mv {
-  min-width: 0;
-  text-align: right;
-  font-size: 15px;
+  font-size: var(--money-third);
   font-weight: 800;
+  line-height: 1.1;
   color: #fff4c2;
   font-variant-numeric: tabular-nums;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 .rd-cell .mv.accent { color: var(--gold-bright, #f5d36b); }

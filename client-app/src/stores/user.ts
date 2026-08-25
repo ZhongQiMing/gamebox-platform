@@ -10,7 +10,7 @@ import {
 } from '@/api/session'
 import { publicMediaUrl } from '@/utils/publicMediaUrl'
 
-const OPS_ROLES = ['ADMIN', 'BRANCH', 'AGENT', 'PROXY', 'CS'] as const
+const OPS_ROLES = ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY', 'CS'] as const
 
 function withPublicAvatar(user: UserProfile): UserProfile {
   return { ...user, avatar: publicMediaUrl(user.avatar) || null }
@@ -54,6 +54,18 @@ export const useUserStore = defineStore('user', () => {
    * 底下用的还是运营那张票（Cookie 或 Bearer 都是同一个身份），所以不打会话标记。
    * 递增 epoch 是为了作废正在飞的玩家 restore——它的结果已经是上一个会话的了。
    */
+  /**
+   * H5 游戏壳写在 localStorage 的旧身份缓存（uid / 昵称 / 头像）。
+   * 退出时不清，同一台设备换账号后，注单页的本地键和游戏顶栏会先读到上一个人的 uid。
+   */
+  function clearLegacyGameIdentity() {
+    try {
+      localStorage.removeItem('gamebox_user')
+    } catch {
+      /* 隐私模式下 localStorage 可能不可用 */
+    }
+  }
+
   function attachStaffPlay(user: UserProfile, tk: string) {
     bumpEpoch()
     profile.value = withPublicAvatar(user)
@@ -68,6 +80,7 @@ export const useUserStore = defineStore('user', () => {
     token.value = ''
     restored.value = true
     const removed = removeToken(PLAYER_TOKEN_KEY)
+    clearLegacyGameIdentity()
     useWalletStore().reset()
     return removed
   }
@@ -81,6 +94,7 @@ export const useUserStore = defineStore('user', () => {
     const removed = removeToken(PLAYER_TOKEN_KEY)
     /* 传 'player'：运营登录时也会走这里，不能把刚打上的 staff 标记抹掉 */
     clearSessionMark('player')
+    clearLegacyGameIdentity()
     useWalletStore().reset()
     useRoomStore().clearCurrent()
     return removed
@@ -100,6 +114,7 @@ export const useUserStore = defineStore('user', () => {
     restored.value = true
     const removed = removeToken(PLAYER_TOKEN_KEY)
     clearSessionMark('player')
+    clearLegacyGameIdentity()
     useWalletStore().reset()
     useRoomStore().clearCurrent()
     await Promise.all([

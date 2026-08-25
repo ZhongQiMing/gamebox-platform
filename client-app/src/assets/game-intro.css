@@ -2,18 +2,7 @@
   padding: 8px 16px 0;
 }
 
-.gi-hero {
-  margin: 4px 48px 8px;
-  text-align: center;
-  font-family: 'Noto Serif SC', serif;
-  font-size: 22px;
-  font-weight: 900;
-  letter-spacing: 6px;
-  background: linear-gradient(180deg, #fff5c8 0%, #f4d36b 40%, var(--gold) 70%, #8a6f1f 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-}
+/* 页面标题走 common.css 的公共 .page-title */
 
 .gi-lead {
   margin: 0 8px 18px;

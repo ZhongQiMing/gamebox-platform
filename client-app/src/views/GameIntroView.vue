@@ -6,15 +6,15 @@
     <img class="cd cd-br" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
   </div>
 
-  <div class="page gi-page">
+  <div class="page gi-page has-page-title">
     <div class="app-bar">
       <div class="back" @click="router.back()">‹</div>
       <div class="title">游 戏 介 绍</div>
       <div class="right"></div>
     </div>
+    <h1 class="page-title">金 御 汇</h1>
 
     <div class="page-body">
-      <h1 class="gi-hero">金 御 汇</h1>
       <p class="gi-lead">数字彩、赛车飞艇、牌桌与街机一站汇集。开奖可验、结算及时，按分类了解各游戏玩法特色。</p>
 
       <section v-for="sec in sections" :key="sec.id" class="gi-section">

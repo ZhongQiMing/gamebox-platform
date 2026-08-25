@@ -6,16 +6,15 @@
     <img class="cd cd-br" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
   </div>
 
-  <div class="page rb-page">
+  <div class="page rb-page has-page-title">
     <div class="app-bar">
       <div class="back" @click="goBack">‹</div>
       <div class="title">自助回水</div>
       <div class="right"></div>
     </div>
+    <h1 class="page-title">自 助 回 水</h1>
 
     <div class="page-body">
-      <h1 class="rb-title">自 助 回 水</h1>
-
       <div v-if="loading" class="rb-empty">
         <div class="rb-empty-icon">◇</div>
         <div class="rb-empty-text">加 载 中 …</div>
@@ -137,7 +136,9 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { rebateApi, type RebateStatus, type RebateRange } from '@/api/rebate'
 import { useBodyClass } from '@/composables/useBodyClass'
+import { leaveGameToLobby } from '@/composables/lobbyAfterGame'
 import { TIME_RANGES, formatRangeDateText } from '@/composables/timeRange'
+import { formatDateTime, formatMoney } from '@gamebox/shared'
 import { useWalletStore } from '@/stores/wallet'
 import '@/assets/rebate.css'
 
@@ -178,20 +179,15 @@ const todayTitle = computed(() => {
 })
 
 function fmtInt(n: number) {
-  return (Math.round((Number(n) || 0) * 100) / 100).toLocaleString('en-US', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })
+  return formatMoney(n)
 }
 
 function fmtMoney(n: number) {
-  return `¥${(n || 0).toFixed(2)}`
+  return formatMoney(n)
 }
 
 function fmtDate(iso: string) {
-  const d = new Date(iso)
-  const p = (x: number) => String(x).padStart(2, '0')
-  return `${p(d.getMonth() + 1)}-${p(d.getDate())}`
+  return formatDateTime(iso)
 }
 
 function showToast(msg: string) {
@@ -252,7 +248,7 @@ async function onClaimAll() {
 
 function goBack() {
   if (window.history.length > 1) router.back()
-  else router.push('/lobby')
+  else void leaveGameToLobby(router, 'push')
 }
 
 onMounted(() => { void loadStatus() })

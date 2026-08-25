@@ -11,41 +11,11 @@
   height: 100dvh;
 }
 
-/* .app-bar 的 .back 是 absolute 钉在屏幕左上角；把 .app-bar 本身高度坍缩为 0，
-   让下面的 .cs-title 紧贴屏顶，与大厅的 .lobby-title 位置完全一致 */
-.cs-page .app-bar {
-  min-height: 0;
-  height: 0;
-  padding: 0;
-  margin: 0;
-  overflow: visible;
+/* 顶栏坍缩与标题样式走公共 .has-page-title / .page-title；
+   本页是 flex 列，两者都要 flex-shrink:0 才不会被消息区挤扁 */
+.cs-page .app-bar,
+.cs-page .page-title {
   flex-shrink: 0;
-}
-
-/* ============ 页面标题（高度 / 字号 / 字距 / 颜色 全对齐 lobby-title；
-   cs-page 是 flex 列，没有 .page-body 容器，单独补 margin-top: 8px
-   模拟大厅的 .page-body padding-top） ============ */
-.cs-title {
-  flex-shrink: 0;
-  height: 48px;
-  margin: 8px 64px 16px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-family: 'Noto Serif SC', 'Songti SC', 'STSong', 'STZhongsong', 'SimSun', 'Microsoft YaHei', serif;
-  font-size: 24px;
-  font-weight: 900;
-  letter-spacing: 6px;
-  line-height: 1;
-  background: linear-gradient(180deg, #fff7e2 0%, var(--gold-bright) 48%, var(--gold) 80%, var(--gold-deep) 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-  color: var(--gold-bright);
-  filter:
-    drop-shadow(0 1px 1px rgba(0, 0, 0, 0.7))
-    drop-shadow(0 0 8px rgba(244, 211, 107, 0.25));
-  user-select: none;
 }
 
 /* ============ 消息区 ============ */

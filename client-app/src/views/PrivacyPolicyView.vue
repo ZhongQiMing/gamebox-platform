@@ -6,12 +6,13 @@
     <img class="cd cd-br" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
   </div>
 
-  <div class="page legal-page">
+  <div class="page legal-page has-page-title">
     <div class="app-bar">
       <div class="back" @click="router.back()">‹</div>
       <div class="title">隐 私 政 策</div>
       <div class="right"></div>
     </div>
+    <h1 class="page-title">隐 私 政 策</h1>
 
     <div class="page-body">
       <p class="legal-updated">最近更新：{{ UPDATED_AT }}</p>

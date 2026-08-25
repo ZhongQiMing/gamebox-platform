@@ -10,10 +10,7 @@
     <!-- 会话列表 -->
     <template v-if="!active">
       <div class="app-bar">
-        <div class="title">
-          <span class="brand-dot"></span>
-          <span class="brand-wordmark">客服聊天</span>
-        </div>
+        <div class="title">客服聊天</div>
         <div class="scs-bar-right">
           <button type="button" class="scs-bar-btn" @click="goSettings">设置</button>
           <button type="button" class="scs-bar-btn" @click="loadSessions">{{ sessionsLoading ? '…' : '刷新' }}</button>
@@ -23,12 +20,22 @@
       <div class="page-body">
         <div class="scs-head">
           <span>未读 {{ unreadTotal }}</span>
-          <button v-if="canPlayerFund" type="button" class="scs-link" @click="goPlayers">去给玩家上下分</button>
+          <button v-if="canPlayerFund" type="button" class="scs-link" @click="goPlayers">去上下分</button>
           <button v-else-if="canReviewFund" type="button" class="scs-link" @click="goFund">去审核申请</button>
         </div>
 
         <div v-if="sessionsLoading && !sessions.length" class="sp-empty">加载中…</div>
-        <div v-else-if="!sessions.length" class="sp-empty">暂无会话，玩家发消息后会出现在这里</div>
+        <!-- 原先只有一行小字，剩下整屏全黑；补上去处，避免客服上班后不知道该干嘛 -->
+        <div v-else-if="!sessions.length" class="scs-blank">
+          <div class="scs-blank-icon" aria-hidden="true">✆</div>
+          <div class="scs-blank-title">暂无会话</div>
+          <div class="scs-blank-sub">玩家在「在线客服」发消息后，会话会自动出现在这里</div>
+          <div class="scs-blank-ops">
+            <button v-if="canReviewFund" type="button" class="scs-blank-btn" @click="goFund">去审核申请</button>
+            <button v-if="canPlayerFund" type="button" class="scs-blank-btn" @click="goPlayers">去上下分</button>
+            <button type="button" class="scs-blank-btn ghost" @click="loadSessions">刷新</button>
+          </div>
+        </div>
 
         <button
           v-for="s in sessions"
@@ -41,7 +48,8 @@
           <span class="scs-body">
             <span class="scs-top">
               <b>{{ s.nickname || '玩家' }}</b>
-              <em>{{ fmtShort(s.lastAt) }}</em>
+              <em v-if="slaOf(s)" class="scs-sla" :class="slaOf(s)!.tone">{{ slaOf(s)!.text }}</em>
+              <em v-else>{{ fmtShort(s.lastAt) }}</em>
             </span>
             <span class="scs-preview">
               <i v-if="s.unread" class="scs-dot">{{ s.unread > 99 ? '99+' : s.unread }}</i>
@@ -64,6 +72,12 @@
           <button type="button" class="scs-bar-btn" @click="goSettings">设置</button>
           <button type="button" class="scs-bar-btn" @click="reloadChat">{{ msgLoading ? '…' : '刷新' }}</button>
         </div>
+      </div>
+
+      <!-- 还剩多久要被判超时：不显示的话客服只有事后罚款，没有事前提醒 -->
+      <div v-if="chatSla" class="scs-sla-bar" :class="chatSla.tone">
+        <span class="scs-sla-k">{{ chatSla.label }}</span>
+        <span class="scs-sla-v">{{ chatSla.text }}</span>
       </div>
 
       <div class="scs-chat">
@@ -234,8 +248,10 @@ import {
   staffConsoleApi,
   type StaffCsMessage,
   type StaffCsSession,
+  type StaffCsSlaLimits,
   type StaffFundOrder,
 } from '@/api/staffConsole'
+import { formatDateTime, formatMoney } from '@gamebox/shared'
 import { useStaffStore } from '@/stores/staff'
 import { useToast } from '@/composables/useToast'
 import { useBodyClass } from '@/composables/useBodyClass'
@@ -256,6 +272,15 @@ const sessionsLoading = ref(false)
 const sessions = ref<StaffCsSession[]>([])
 const active = ref<StaffCsSession | null>(null)
 const messages = ref<StaffCsMessage[]>([])
+
+/*
+ * 响应倒计时。时限由代理在「客服绩效」里设，服务端随会话下发；
+ * 这里只在本地跑秒，不为了走字每秒去问一次服务器。
+ */
+const slaLimits = ref<StaffCsSlaLimits | null>(null)
+const chatAskedAt = ref<string | null>(null)
+const nowTick = ref(Date.now())
+let slaTimer = 0
 const msgLoading = ref(false)
 const draft = ref('')
 const sending = ref(false)
@@ -326,6 +351,38 @@ const unreadTotal = computed(() =>
   sessions.value.reduce((n, s) => n + Number(s.unread || 0), 0),
 )
 
+function mmss(sec: number) {
+  const s = Math.max(0, Math.floor(sec))
+  const m = Math.floor(s / 60)
+  return m > 0 ? `${m} 分 ${String(s % 60).padStart(2, '0')} 秒` : `${s} 秒`
+}
+
+/**
+ * 一轮响应还剩多久。
+ * 先看离「提醒线」还有多久；过了提醒线就改看离「踢下线」还有多久；再过就是已漏接。
+ */
+function slaState(askedAt?: string | null) {
+  const limits = slaLimits.value
+  if (!limits?.enabled || !askedAt) return null
+  const started = new Date(askedAt).getTime()
+  if (Number.isNaN(started)) return null
+  const waited = Math.max(0, (nowTick.value - started) / 1000)
+
+  if (waited < limits.remindSec) {
+    return { tone: 'ok', label: '剩余回复时间', text: mmss(limits.remindSec - waited) }
+  }
+  if (waited < limits.kickSec) {
+    return { tone: 'warn', label: '已超时 · 距踢下线', text: mmss(limits.kickSec - waited) }
+  }
+  return { tone: 'bad', label: '已漏接', text: `等待 ${mmss(waited)}` }
+}
+
+function slaOf(s: StaffCsSession) {
+  return slaState(s.askedAt)
+}
+
+const chatSla = computed(() => slaState(chatAskedAt.value))
+
 function previewSender(sender?: string) {
   if (sender === 'PLAYER') return ''
   if (sender === 'SYSTEM') return '[系统] '
@@ -390,18 +447,11 @@ function goSettings() {
 }
 
 function fmtAmount(n?: number | null) {
-  return Number(n || 0).toLocaleString('zh-CN', { maximumFractionDigits: 0 })
+  return formatMoney(n ?? 0)
 }
 
 function fmtFundTime(iso?: string) {
-  if (!iso) return ''
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return ''
-  const mm = String(d.getMonth() + 1).padStart(2, '0')
-  const dd = String(d.getDate()).padStart(2, '0')
-  const hh = String(d.getHours()).padStart(2, '0')
-  const mi = String(d.getMinutes()).padStart(2, '0')
-  return `${mm}-${dd} ${hh}:${mi}`
+  return iso ? formatDateTime(iso) : ''
 }
 
 function channelLabel(ch?: string | null) {
@@ -576,6 +626,7 @@ async function loadSessions() {
   try {
     const res = await staffConsoleApi.csSessions()
     sessions.value = res.list || []
+    slaLimits.value = res.sla ?? null
   } catch (e: unknown) {
     toast(e instanceof Error ? e.message : '加载失败')
   } finally {
@@ -592,6 +643,8 @@ async function loadMessages(silent = false, fixedRequest?: ActiveRequest) {
     if (!isActiveRequest(request)) return
     const prevLen = messages.value.length
     messages.value = res.list || []
+    chatAskedAt.value = res.askedAt ?? null
+    if (res.sla) slaLimits.value = res.sla
     if (!silent || messages.value.length !== prevLen) await scrollBottom()
   } catch (e: unknown) {
     if (!silent && isActiveRequest(request)) toast(e instanceof Error ? e.message : '加载失败')
@@ -759,9 +812,13 @@ onMounted(async () => {
     }
   }
   startPoll()
+  slaTimer = window.setInterval(() => { nowTick.value = Date.now() }, 1000)
 })
 
-onUnmounted(() => { stopPoll() })
+onUnmounted(() => {
+  stopPoll()
+  if (slaTimer) window.clearInterval(slaTimer)
+})
 </script>
 
 <style scoped>
@@ -792,19 +849,31 @@ onUnmounted(() => { stopPoll() })
   display: flex;
   gap: 6px;
 }
+/* 与顶栏右侧 .sc-bar-act 同一套配方，只是两个并排所以窄一点 */
 .scs-bar-btn {
-  height: 32px;
-  padding: 0 10px;
+  height: 34px;
+  padding: 0 13px;
   border-radius: 999px;
-  border: 1px solid rgba(244, 211, 107, 0.45);
-  background: linear-gradient(180deg, rgba(72, 48, 20, 0.55) 0%, rgba(28, 18, 8, 0.9) 100%);
-  color: #fff4c2;
+  border: 1px solid rgba(244, 211, 107, 0.55);
+  background:
+    radial-gradient(120% 140% at 50% 0%, rgba(245, 200, 66, 0.2), transparent 62%),
+    linear-gradient(180deg, rgba(54, 40, 18, 0.96) 0%, rgba(20, 13, 6, 0.98) 100%);
+  box-shadow:
+    0 1px 0 rgba(255, 236, 179, 0.24) inset,
+    0 -1px 0 rgba(0, 0, 0, 0.5) inset,
+    0 3px 10px rgba(0, 0, 0, 0.5);
+  color: #ffeaad;
+  font-family: 'Noto Serif SC', 'Songti SC', serif;
   font-size: 12px;
-  letter-spacing: 1px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-indent: 2px;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
   cursor: pointer;
 }
 .scs-bar-btn:active {
-  filter: brightness(1.12);
+  transform: scale(0.96);
+  filter: brightness(1.18);
 }
 .scs-head {
   display: flex;
@@ -814,6 +883,96 @@ onUnmounted(() => { stopPoll() })
   font-size: 12px;
   letter-spacing: 1px;
   color: rgba(244, 211, 107, 0.55);
+}
+/* 会话列表里的等待提示：绿=还早，黄=已超时在扣钱，红=已漏接 */
+.scs-sla {
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+}
+.scs-sla.ok { color: #86efac; }
+.scs-sla.warn { color: #fcd34d; }
+.scs-sla.bad { color: #fca5a5; }
+
+/* 聊天窗口顶部整条倒计时 */
+.scs-sla-bar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 12px 8px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  font-size: 13px;
+  letter-spacing: 1px;
+  border: 1px solid transparent;
+}
+.scs-sla-bar .scs-sla-v {
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.scs-sla-bar.ok {
+  color: #bbf7d0;
+  border-color: rgba(134, 239, 172, 0.35);
+  background: rgba(20, 83, 45, 0.35);
+}
+.scs-sla-bar.warn {
+  color: #fde68a;
+  border-color: rgba(252, 211, 77, 0.45);
+  background: rgba(120, 53, 15, 0.4);
+}
+.scs-sla-bar.bad {
+  color: #fecaca;
+  border-color: rgba(252, 165, 165, 0.5);
+  background: rgba(127, 29, 29, 0.45);
+}
+
+.scs-blank {
+  margin: 24px 2px;
+  padding: 28px 20px;
+  border-radius: 14px;
+  border: 1px dashed rgba(212, 175, 55, 0.28);
+  background: rgba(20, 14, 8, 0.6);
+  text-align: center;
+}
+.scs-blank-icon {
+  font-size: 34px;
+  line-height: 1;
+  color: rgba(244, 211, 107, 0.5);
+}
+.scs-blank-title {
+  margin-top: 12px;
+  font-size: 15px;
+  letter-spacing: 2px;
+  color: rgba(255, 236, 179, 0.9);
+}
+.scs-blank-sub {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: rgba(244, 211, 107, 0.45);
+}
+.scs-blank-ops {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+}
+.scs-blank-btn {
+  padding: 9px 18px;
+  border-radius: 999px;
+  font-size: 13px;
+  letter-spacing: 1px;
+  color: #1a1408;
+  background: linear-gradient(180deg, #f4d36b 0%, var(--gold) 60%, #8a6f1f 100%);
+  border: 0;
+  cursor: pointer;
+}
+.scs-blank-btn.ghost {
+  color: rgba(244, 211, 107, 0.85);
+  background: transparent;
+  border: 1px solid rgba(244, 211, 107, 0.4);
 }
 .scs-link {
   border: 0;
@@ -895,14 +1054,29 @@ onUnmounted(() => { stopPoll() })
   vertical-align: 1px;
 }
 
-.scs-chat-title {
+/*
+ * 聊天页顶栏放的是「昵称 + UID」两行，不是页面标题，所以要从运营端标题那套
+ * 金色渐变大字里退出来：渐变靠 -webkit-text-fill-color: transparent 实现，会遗传
+ * 给子元素，不还原的话昵称和 UID 会整个变透明。选择器要压过 common.css 里那条
+ * 四层类的共用声明，故写满四层。
+ */
+.scs-page .app-bar .title.scs-chat-title {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 2px;
   line-height: 1.2;
+  font-family: inherit;
+  font-weight: 400;
+  letter-spacing: 0;
+  background: none;
+  -webkit-text-fill-color: currentcolor;
+  filter: none;
 }
 .scs-chat-title b {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-size: 15px;
   font-weight: 650;
   color: #fff4c2;

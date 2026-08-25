@@ -7,7 +7,7 @@
     <img class="cd cd-br" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
   </div>
 
-  <div class="page register-page">
+  <div :ref="pageEl" class="page register-page">
     <div class="app-bar">
       <div class="back" @click="router.back()">‹</div>
       <div class="title">
@@ -38,7 +38,7 @@
 
         <div class="field-luxe">
           <span class="ic" aria-hidden="true"><img src="/images/icon-lock.svg" alt=""></span>
-          <input v-model="password" type="password" class="field" placeholder="设置密码（6 位以上）" maxlength="30" autocomplete="new-password">
+          <input v-model="password" type="password" class="field" :placeholder="`设置密码（${PLAYER_PASSWORD_HINT}）`" maxlength="30" autocomplete="new-password">
         </div>
 
         <div class="field-luxe">
@@ -69,15 +69,17 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { validateAccount, validatePassword } from '@gamebox/shared'
+import { PLAYER_PASSWORD_HINT, validateAccount, validatePassword } from '@gamebox/shared'
 import { useUserStore } from '@/stores/user'
 import { authApi } from '@/api/auth'
 import { useToast } from '@/composables/useToast'
 import { useBodyClass } from '@/composables/useBodyClass'
+import { useScreenFit } from '@/composables/useScreenFit'
 import '@/assets/welcome.css'
 import '@/assets/register.css'
 
 useBodyClass('deco-bg')
+const pageEl = useScreenFit()
 
 const router = useRouter()
 const userStore = useUserStore()

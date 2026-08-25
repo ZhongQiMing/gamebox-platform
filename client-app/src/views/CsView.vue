@@ -6,7 +6,7 @@
     <img class="cd cd-br" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
   </div>
 
-  <div class="page cs-page">
+  <div class="page cs-page has-page-title">
 
     <div class="app-bar">
       <div class="back" @click="goBack">‹</div>
@@ -14,7 +14,7 @@
       <div class="right"></div>
     </div>
 
-    <h1 class="cs-title">在 线 客 服</h1>
+    <h1 class="page-title">在 线 客 服</h1>
 
     <div class="cs-messages" ref="msgListEl">
       <template v-for="m in viewMessages" :key="m.key">
@@ -103,6 +103,7 @@
 import { ref, computed, onMounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useToast } from '@/composables/useToast'
+import { leaveGameToLobby } from '@/composables/lobbyAfterGame'
 import { useActiveInterval } from '@/composables/useActiveInterval'
 import { useBodyClass } from '@/composables/useBodyClass'
 import TabBar from '@/components/TabBar.vue'
@@ -294,7 +295,7 @@ function autoGrow() {
 
 function goBack() {
   if (window.history.length > 1) router.back()
-  else router.push('/lobby')
+  else void leaveGameToLobby(router, 'push')
 }
 
 useActiveInterval(() => void load(true), 4000)

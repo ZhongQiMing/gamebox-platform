@@ -19,9 +19,92 @@
 
   window.App = window.App || {}
 
+  /**
+   * 单笔上下分上限，与 @gamebox/shared 的 PLAYER_FUND_MAX 一致。
+   * 各游戏聊天室只卡了最低额，最高额原来要等服务端拒绝才知道；
+   * 这里在共享层统一拦下，省一次往返，也免得 11 个游戏各写一份。
+   */
+  const FUND_MAX = 200000
+
   App.APP_NAME = '金御汇'
   App.NAME_PREFIX = ['黄金', '银河', '夜行', '闪电', '深海', '炽焰', '疾风', '幻影']
   App.NAME_SUFFIX = ['猎手', '行者', '骑士', '大师', '旅人', '王者', '武士', '侠客']
+
+  /*
+   * 壳层暂停时静音。
+   *
+   * 各游戏只在 document.hidden 时停 BGM，但玩家点返回回到大厅时，
+   * 外层是 keep-alive，iframe 根本没卸载，标签页也还是可见的——hidden 一直是 false，
+   * 于是游戏音乐会跟着人在大厅里继续放。各游戏的音频对象都是 new Audio() 建的，
+   * 不在 DOM 里，选择器找不到，只能在共享层记下谁在播。
+   *
+   * 恢复时只重启循环轨（房间 BGM）。开奖音这类一次性音效停了就算了，
+   * 隔几分钟回来再补播一段旧开奖声是错的。
+   */
+  var _liveMedia = []
+  var _pausedByShell = []
+
+  ;(function patchMediaPlay() {
+    if (typeof HTMLMediaElement === 'undefined') return
+    var origPlay = HTMLMediaElement.prototype.play
+    if (!origPlay || origPlay.__gbTracked) return
+    function trackedPlay() {
+      if (_liveMedia.indexOf(this) < 0) _liveMedia.push(this)
+      return origPlay.apply(this, arguments)
+    }
+    trackedPlay.__gbTracked = true
+    HTMLMediaElement.prototype.play = trackedPlay
+  })()
+
+  function pauseMediaForShell() {
+    _pausedByShell = []
+    /*
+     * 短音效是每次 new Audio() 现建的，放完就没人再引用了。
+     * 这里顺手把放完的、以及被游戏 src='' 停掉的节点丢出数组，
+     * 否则玩一晚上会攒下几百个节点一直被这里引着。
+     */
+    var keep = []
+    for (var i = 0; i < _liveMedia.length; i++) {
+      var el = _liveMedia[i]
+      if (!el) continue
+      var reusable = false
+      try {
+        reusable = !!el.loop || (!el.ended && !!el.src)
+      } catch (e) { /* 取不到属性就当它已经废了 */ }
+      if (!reusable) continue
+      keep.push(el)
+      try {
+        if (el.paused) continue
+        _pausedByShell.push(el)
+        el.pause()
+      } catch (e2) { /* ignore */ }
+    }
+    _liveMedia = keep
+  }
+
+  function resumeMediaForShell() {
+    var list = _pausedByShell
+    _pausedByShell = []
+    for (var i = 0; i < list.length; i++) {
+      var el = list[i]
+      if (!el || !el.loop) continue
+      try {
+        var p = el.play()
+        if (p && p.catch) p.catch(function () { /* 自动播放被拦就算了 */ })
+      } catch (e) { /* ignore */ }
+    }
+  }
+
+  /*
+   * 切后台/锁屏也要静音。
+   * 彩票几个游戏各自按 document.hidden 停了 BGM，但四个牌桌游戏的
+   * visibilitychange 只清筹码飞行层，音乐会在后台一直放。共享层统一兜住，
+   * 顺序上本文件先于各游戏脚本加载，重复 pause 是无害的。
+   */
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) pauseMediaForShell()
+    else if (!App._shellPaused) resumeMediaForShell()
+  })
 
   /** 大脑推送的展示余额（非 localStorage 账本） */
   App._balance = 0
@@ -714,6 +797,41 @@
     })
   }
 
+  /** 撤销本局我的全部挂单；服务端只在下注期受理 */
+  App.cancelTableBets = function (gameCode) {
+    return new Promise(function (resolve, reject) {
+      if (!gameCode) {
+        reject(new Error('游戏参数无效'))
+        return
+      }
+      const requestId = nextRequestId()
+      const timer = setTimeout(function () {
+        delete App._pending[requestId]
+        reject(new Error('撤销超时，请查看余额后重试'))
+      }, 12000)
+      App._pending[requestId] = {
+        resolve: function (data) {
+          clearTimeout(timer)
+          resolve(data || {})
+        },
+        reject: function (err) {
+          clearTimeout(timer)
+          reject(err)
+        },
+      }
+      const ok = postToParent({
+        type: 'assets-game-table-cancel',
+        requestId: requestId,
+        gameCode: gameCode,
+      })
+      if (!ok) {
+        clearTimeout(timer)
+        delete App._pending[requestId]
+        reject(new Error('请从大厅进入游戏'))
+      }
+    })
+  }
+
   /** 赔率单源（与服务端结算同源） */
   App.fetchTablePayTable = function (gameCode) {
     return new Promise(function (resolve, reject) {
@@ -943,6 +1061,10 @@
         reject(new Error('上分金额无效'))
         return
       }
+      if (amt > FUND_MAX) {
+        reject(new Error('单笔上分不超过 ' + FUND_MAX))
+        return
+      }
       const requestId = nextRequestId()
       const timer = setTimeout(function () {
         delete App._pending[requestId]
@@ -980,6 +1102,10 @@
       const amt = Math.floor(Number(amount) || 0)
       if (!(amt > 0)) {
         reject(new Error('下分金额无效'))
+        return
+      }
+      if (amt > FUND_MAX) {
+        reject(new Error('单笔下分不超过 ' + FUND_MAX))
         return
       }
       const requestId = nextRequestId()
@@ -1034,6 +1160,69 @@
         resolve(App._balance)
       }
     })
+  }
+
+  /*
+   * 玩家回水比例（小数，0.018 = 1.8%）。
+   *
+   * 以前每个游戏都写死 0.005，管理端配了多少都跟游戏里显示的对不上；
+   * 现在统一问大脑要。拉不到时返回 null，调用方自己决定是不显示还是显示占位，
+   * 绝不要再退回一个写死的数字——宁可不显示，也不能显示一个假的点数。
+   */
+  App._rebateRate = Object.create(null)
+  /** 本局游戏的服务端 code，由 assets-game-init 带下来 */
+  App._gameCode = ''
+
+  App.fetchRebateRate = function (gameCode) {
+    const code = String(gameCode || App._gameCode || '')
+    if (Object.prototype.hasOwnProperty.call(App._rebateRate, code)) {
+      return Promise.resolve(App._rebateRate[code])
+    }
+    const requestId = nextRequestId()
+    return new Promise(function (resolve) {
+      const timer = setTimeout(function () {
+        delete App._pending[requestId]
+        resolve(null)
+      }, 8000)
+      App._pending[requestId] = {
+        resolve: function (data) {
+          clearTimeout(timer)
+          const rate = data && typeof data.rate === 'number' && isFinite(data.rate)
+            ? data.rate
+            : null
+          if (rate !== null) App._rebateRate[code] = rate
+          resolve(rate)
+        },
+        reject: function () {
+          clearTimeout(timer)
+          resolve(null)
+        },
+      }
+      if (!postToParent({ type: 'assets-game-rebate-rate', requestId: requestId, gameCode: code })) {
+        clearTimeout(timer)
+        delete App._pending[requestId]
+        resolve(null)
+      }
+    })
+  }
+
+  /** 同步读已缓存的比例；没拉到过返回 null */
+  App.getRebateRate = function (gameCode) {
+    const code = String(gameCode || App._gameCode || '')
+    return Object.prototype.hasOwnProperty.call(App._rebateRate, code)
+      ? App._rebateRate[code]
+      : null
+  }
+
+  /**
+   * 本地统计面板用的回水累计额。
+   * 比例还没拉到就记 0——顶栏少一个数总好过显示一个和实际到账对不上的数。
+   */
+  App.calcRebate = function (turnover, gameCode) {
+    const rate = App.getRebateRate(gameCode)
+    const amt = Number(turnover) || 0
+    if (rate === null || !(amt > 0)) return 0
+    return Math.round(amt * rate * 100) / 100
   }
 
   App.toast = function (msg) {
@@ -1103,6 +1292,11 @@
       if (data.user && data.user.uid) App.setUser(data.user)
       if ((typeof data.balance === 'number' || (typeof data.balance === 'string' && data.balance !== ''))) App.applyServerBalance(data.balance)
       if (data.roomNo) App._roomNo = String(data.roomNo)
+      App._gameCode = String(data.serverGameCode || data.gameCode || '')
+      /* 顶栏「回水」要显示真实点数，进游戏就先要一次，结算时同步读缓存 */
+      if (App._gameCode) {
+        try { App.fetchRebateRate(App._gameCode) } catch (_) { /* ignore */ }
+      }
       App._bridgeReady = true
       if (typeof App.onAssetsGameReady === 'function') {
         try { App.onAssetsGameReady(data) } catch (_) { /* ignore */ }
@@ -1120,6 +1314,7 @@
     /* 外壳 keep-alive 切回：iframe 内往往收不到 visibilitychange，靠父页通知重对开奖轴 */
     if (data.type === 'assets-game-resume') {
       App._shellPaused = false
+      resumeMediaForShell()
       App._shellWakes.forEach(function (wake) {
         try { wake() } catch (_) { /* ignore */ }
       })
@@ -1136,6 +1331,7 @@
 
     if (data.type === 'assets-game-pause') {
       App._shellPaused = true
+      pauseMediaForShell()
       if (typeof App.onAssetsGamePause === 'function') {
         try { App.onAssetsGamePause(data) } catch (_) { /* ignore */ }
       }
@@ -1200,6 +1396,27 @@
       if (pending) {
         delete App._pending[data.requestId]
         pending.resolve(data)
+      }
+      return
+    }
+
+    if (data.type === 'assets-game-table-cancel-ok') {
+      if ((typeof data.balance === 'number' || (typeof data.balance === 'string' && data.balance !== ''))) App.applyServerBalance(data.balance)
+      const pending = data.requestId && App._pending[data.requestId]
+      if (pending) {
+        delete App._pending[data.requestId]
+        pending.resolve(data)
+      }
+      return
+    }
+
+    if (data.type === 'assets-game-table-cancel-err') {
+      const pending = data.requestId && App._pending[data.requestId]
+      if (pending) {
+        delete App._pending[data.requestId]
+        pending.reject(new Error(data.message || '撤销失败'))
+      } else if (data.message) {
+        App.toast(data.message)
       }
       return
     }
@@ -1271,7 +1488,14 @@
       const pending = data.requestId && App._pending[data.requestId]
       if (pending) {
         delete App._pending[data.requestId]
-        pending.resolve({ current: data.current || null, history: data.history || [] })
+        pending.resolve({
+          current: data.current || null,
+          history: data.history || [],
+          /* 校时样本：服务端时刻 + 宿主侧收发时刻，游戏内据此算时钟偏移 */
+          serverNow: data.serverNow,
+          sentAt: data.sentAt,
+          recvAt: data.recvAt,
+        })
       }
       return
     }
@@ -1281,6 +1505,24 @@
       if (pending) {
         delete App._pending[data.requestId]
         pending.reject(new Error(data.message || '同步开奖失败'))
+      }
+      return
+    }
+
+    if (data.type === 'assets-game-rebate-rate-ok') {
+      const pending = data.requestId && App._pending[data.requestId]
+      if (pending) {
+        delete App._pending[data.requestId]
+        pending.resolve({ rate: data.rate })
+      }
+      return
+    }
+
+    if (data.type === 'assets-game-rebate-rate-err') {
+      const pending = data.requestId && App._pending[data.requestId]
+      if (pending) {
+        delete App._pending[data.requestId]
+        pending.reject(new Error(data.message || '拉取回水比例失败'))
       }
       return
     }

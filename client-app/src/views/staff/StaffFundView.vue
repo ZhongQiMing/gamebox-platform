@@ -8,14 +8,12 @@
 
   <div class="page staff-console-page">
     <div class="app-bar">
-      <div class="title">
-        <span class="brand-dot"></span>
-        <span class="brand-wordmark">上下分审核</span>
-      </div>
+      <div class="title">上下分审核</div>
       <div class="right sc-bar-act" @click="reload">{{ loading ? '…' : '刷新' }}</div>
     </div>
 
     <div class="page-body">
+      <!-- 按状态分：三个标签互不重叠，且补上原先查不到的「已拒绝」 -->
       <div class="sp-tabs sf-tabs" :data-count="tabButtons.length">
         <button
           v-for="t in tabButtons"
@@ -26,9 +24,30 @@
         >{{ t.label }}</button>
       </div>
 
+      <!-- 上分 / 下分改成独立筛选，不再和状态混在同一排 -->
+      <div class="sp-tabs sf-types" data-count="3">
+        <button
+          v-for="t in typeButtons"
+          :key="t.key"
+          type="button"
+          :class="{ on: typeFilter === t.key }"
+          @click="switchType(t.key)"
+        >{{ t.label }}</button>
+      </div>
+
+      <div v-if="tab !== 'pending'" class="sp-tabs sp-tabs--range" :data-count="ranges.length">
+        <button
+          v-for="r in ranges"
+          :key="r.key"
+          type="button"
+          :class="{ on: range === r.key }"
+          @click="switchRange(r.key)"
+        >{{ r.label }}</button>
+      </div>
+
       <div class="sf-head">
         <span>{{ headHint }}</span>
-        <button v-if="canPlayerFund" type="button" class="sf-link" @click="goPlayers">玩家上下分</button>
+        <button v-if="canPlayerFund" type="button" class="sf-link" @click="goPlayers">上下分</button>
       </div>
 
       <div v-if="loading && !displayList.length" class="sp-empty">加载中…</div>
@@ -107,15 +126,19 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppModal from '@/components/AppModal.vue'
 import StaffTabBar from '@/components/StaffTabBar.vue'
+import { formatDateTime, formatMoney } from '@gamebox/shared'
 import { staffConsoleApi, type StaffFundOrder } from '@/api/staffConsole'
 import { useStaffStore } from '@/stores/staff'
 import { useToast } from '@/composables/useToast'
 import { useBodyClass } from '@/composables/useBodyClass'
+import { TIME_RANGES, type TimeRangeKey } from '@/composables/timeRange'
 import '@/assets/staff-console.css'
 
 useBodyClass('deco-bg')
 
-type FundTab = 'pending' | 'all' | 'done'
+/** 按单据状态分，三者互斥；原先的「未审核 / 全部待办」其实是同一批单子 */
+type FundTab = 'pending' | 'approved' | 'rejected'
+type FundType = '' | 'UP' | 'DOWN'
 
 const route = useRoute()
 const router = useRouter()
@@ -125,23 +148,27 @@ const { toast } = useToast()
 /** 客服不可浏览玩家列表，仅审申请 */
 const canPlayerFund = computed(() => staff.role === 'AGENT')
 
-/** 从四宫格带入的类型；「未审核」按此过滤，「全部待办」看全部 */
-const typeHint = computed(() => {
-  const t = String(route.query.type || '').toUpperCase()
-  return t === 'UP' || t === 'DOWN' ? t : ''
-})
-
 const tab = ref<FundTab>('pending')
-const isDone = computed(() => tab.value === 'done')
+const isDone = computed(() => tab.value !== 'pending')
 
-const tabButtons = computed(() => {
-  const base: { key: FundTab; label: string }[] = [
-    { key: 'pending', label: '未审核' },
-    { key: 'all', label: '全部待办' },
-    { key: 'done', label: '已通过' },
-  ]
-  return base
-})
+const tabButtons: { key: FundTab; label: string }[] = [
+  { key: 'pending', label: '待审' },
+  { key: 'approved', label: '已通过' },
+  { key: 'rejected', label: '已拒绝' },
+]
+
+const typeButtons: { key: FundType; label: string }[] = [
+  { key: '', label: '全部' },
+  { key: 'UP', label: '上分' },
+  { key: 'DOWN', label: '下分' },
+]
+
+const ranges = TIME_RANGES
+
+/* 从上一页四宫格「上分 / 下分」点进来时带默认值 */
+const initialType = String(route.query.type || '').toUpperCase()
+const typeFilter = ref<FundType>(initialType === 'UP' || initialType === 'DOWN' ? initialType : '')
+const range = ref<TimeRangeKey>('today')
 
 const loading = ref(false)
 const list = ref<StaffFundOrder[]>([])
@@ -149,42 +176,37 @@ const page = ref(1)
 const total = ref(0)
 const busyId = ref<string | null>(null)
 
+/* 待审接口不支持按类型过滤，本地筛；历史接口交给服务端筛 */
 const displayList = computed(() => {
-  if (tab.value === 'all' || tab.value === 'done' || !typeHint.value) return list.value
-  return list.value.filter((r) => r.type === typeHint.value)
+  if (isDone.value || !typeFilter.value) return list.value
+  return list.value.filter((r) => r.type === typeFilter.value)
 })
 
 const headHint = computed(() => {
-  if (tab.value === 'done') return `已通过 ${total.value} 笔`
-  if (tab.value === 'all') return `全部待办 ${list.value.length} 笔`
-  if (typeHint.value === 'UP') return `未审核上分 ${displayList.value.length} 笔`
-  if (typeHint.value === 'DOWN') return `未审核下分 ${displayList.value.length} 笔`
-  return `未审核 ${displayList.value.length} 笔`
+  const label = tabButtons.find((t) => t.key === tab.value)?.label ?? ''
+  const typeLabel = typeButtons.find((t) => t.key === typeFilter.value)?.label ?? ''
+  const n = isDone.value ? total.value : displayList.value.length
+  return `${label}${typeFilter.value ? typeLabel : ''} ${n} 笔`
 })
 
-const emptyText = computed(() => (isDone.value ? '暂无已通过记录' : '暂无待审申请'))
-const canLoadMore = computed(() => {
-  if (tab.value === 'pending') return false
-  return list.value.length < total.value
+const emptyText = computed(() => {
+  if (tab.value === 'approved') return '暂无已通过记录'
+  if (tab.value === 'rejected') return '暂无已拒绝记录'
+  return '暂无待审申请'
 })
+/* 待审也要能翻页：后端一页 50 条，堆超过 50 笔时后面的单原来根本看不到、审不了 */
+const canLoadMore = computed(() => list.value.length < total.value)
 
 const rejectVisible = ref(false)
 const rejectTarget = ref<StaffFundOrder | null>(null)
 const rejectReason = ref('')
 
 function fmt(n?: number | null) {
-  return Number(n || 0).toLocaleString('zh-CN', { maximumFractionDigits: 0 })
+  return formatMoney(n ?? 0)
 }
 
 function fmtTime(iso?: string | null) {
-  if (!iso) return ''
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return ''
-  const mm = String(d.getMonth() + 1).padStart(2, '0')
-  const dd = String(d.getDate()).padStart(2, '0')
-  const hh = String(d.getHours()).padStart(2, '0')
-  const mi = String(d.getMinutes()).padStart(2, '0')
-  return `${mm}-${dd} ${hh}:${mi}`
+  return iso ? formatDateTime(iso) : ''
 }
 
 function channelLabel(ch?: string | null) {
@@ -205,7 +227,9 @@ function statusText(s?: string) {
 }
 
 function goPlayers() {
-  router.push({ name: 'staff-players' })
+  /* 带上房间，玩家页才能直接上下分；只绑一间房时由玩家页自己兜底 */
+  const roomId = typeof route.query.roomId === 'string' ? route.query.roomId : ''
+  router.push({ name: 'staff-players', ...(roomId ? { query: { roomId } } : {}) })
 }
 
 function switchTab(next: FundTab) {
@@ -214,11 +238,27 @@ function switchTab(next: FundTab) {
   void fetchPage(1, false)
 }
 
+function switchType(next: FundType) {
+  if (typeFilter.value === next) return
+  typeFilter.value = next
+  void fetchPage(1, false)
+}
+
+function switchRange(next: TimeRangeKey) {
+  if (range.value === next) return
+  range.value = next
+  void fetchPage(1, false)
+}
+
 async function fetchPage(p: number, append: boolean) {
   loading.value = true
   try {
     const res = isDone.value
-      ? await staffConsoleApi.fundHistory(p, { status: 'APPROVED' })
+      ? await staffConsoleApi.fundHistory(p, {
+          status: tab.value === 'approved' ? 'APPROVED' : 'REJECTED',
+          range: range.value,
+          ...(typeFilter.value ? { type: typeFilter.value } : {}),
+        })
       : await staffConsoleApi.fundPending(p)
     total.value = res.total
     page.value = res.page
@@ -311,7 +351,10 @@ async function doReject() {
 
 function syncTabFromQuery() {
   const q = String(route.query.tab || '')
-  if (q === 'done' || q === 'all' || q === 'pending') tab.value = q
+  /* done / all 是改版前的旧写法，别的页面可能还带着，映射到新标签而不是无视 */
+  if (q === 'pending' || q === 'all') tab.value = 'pending'
+  else if (q === 'done' || q === 'approved') tab.value = 'approved'
+  else if (q === 'rejected') tab.value = 'rejected'
 }
 
 onMounted(() => {
@@ -326,7 +369,20 @@ watch(() => route.query.tab, () => {
 
 <style scoped>
 .sf-tabs {
-  margin-bottom: 10px;
+  margin-bottom: 8px;
+}
+.sf-types {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.sf-types button {
+  min-width: 0;
+  padding: 8px 2px;
+  font-size: 12px;
+  letter-spacing: 0;
+  text-align: center;
 }
 .sf-head {
   display: flex;

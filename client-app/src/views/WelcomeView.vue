@@ -8,7 +8,7 @@
     <img class="cd cd-br" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
   </div>
 
-  <div class="page welcome-page">
+  <div :ref="pageEl" class="page welcome-page">
 
     <!-- 顶部品牌栏 -->
     <div class="brand-bar">
@@ -24,7 +24,7 @@
     <!-- 右上角弹出菜单 -->
     <div :class="['menu-popover', menuOpen ? 'show' : '']" @click.stop>
       <div class="menu-item" @click="goStaffLogin('agent')">
-        <span class="ic">⚜</span><span class="lb">代理 / 总代 / 客服</span><span class="arrow">›</span>
+        <span class="ic">⚜</span><span class="lb">代理登录</span><span class="arrow">›</span>
       </div>
       <div class="menu-item" @click="goStaffLogin('branch')">
         <span class="ic">♛</span><span class="lb">总监登录</span><span class="arrow">›</span>
@@ -97,10 +97,12 @@ import { useUserStore } from '@/stores/user'
 import { authApi } from '@/api/auth'
 import { useToast } from '@/composables/useToast'
 import { useBodyClass } from '@/composables/useBodyClass'
+import { useScreenFit } from '@/composables/useScreenFit'
 import { acceptLoginRole } from '@/utils/loginRoleGuard'
 import '@/assets/welcome.css'
 
 useBodyClass('deco-bg', 'welcome-login')
+const pageEl = useScreenFit()
 
 const router = useRouter()
 const userStore = useUserStore()

@@ -1,4 +1,4 @@
-﻿/* ========================================================
+/* ========================================================
    充值通道（黑金至尊）
    - 卡片 1：账户 + 当前积分
    - 卡片 2：上分 / 下分 Tab + 金额输入 + 快捷金额
@@ -6,41 +6,10 @@
    ======================================================== */
 
 .recharge-page .page-body {
-  padding: 16px 16px 40px;
+  padding: 0 16px 40px;
 }
 
-/* .app-bar 的返回键是 absolute 固定到左上角；把 app-bar 高度坍缩，
-   让自定义标题与游戏大厅标题高度对齐 */
-.recharge-page .app-bar {
-  min-height: 0;
-  height: 0;
-  padding: 0;
-  margin: 0;
-  overflow: visible;
-}
-
-/* 顶部标题：对齐 game-lobby 的 .lobby-title */
-.recharge-title {
-  height: 48px;
-  margin: 8px 64px 16px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-family: 'Noto Serif SC', 'Songti SC', 'STSong', 'STZhongsong', 'SimSun', 'Microsoft YaHei', serif;
-  font-size: 24px;
-  font-weight: 900;
-  letter-spacing: 6px;
-  line-height: 1;
-  background: linear-gradient(180deg, #fff7e2 0%, var(--gold-bright) 48%, var(--gold) 80%, var(--gold-deep) 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-  color: var(--gold-bright);
-  filter:
-    drop-shadow(0 1px 1px rgba(0, 0, 0, 0.7))
-    drop-shadow(0 0 8px rgba(244, 211, 107, 0.25));
-  user-select: none;
-}
+/* 顶部标题与顶栏坍缩走公共 .page-title / .has-page-title */
 
 /* ============ 通用卡片 ============ */
 .r-card {

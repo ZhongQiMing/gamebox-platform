@@ -6,7 +6,17 @@ import { useActiveInterval } from '@/composables/useActiveInterval'
 import { gamesApi } from '@/api/games'
 import { TABLE_SERVER_CODE, type TableSnapshot } from '@/api/table'
 import { lobbyApi, type LobbySnapshot } from '@/api/lobby'
-import { gameAssetUrl } from '@/utils/gameOrigin'
+import {
+  DRAW_KIND,
+  isPk10Game,
+  isDice3Game,
+  isDigit5Game,
+  isLhcGame,
+  pk10BallUrl,
+  kuai3DiceUrl,
+  lhcBallUrl,
+  lhcFootNums,
+} from '@/composables/drawNumberAssets'
 import {
   formatTableRoundNo,
   shortTableRoundLabel,
@@ -191,69 +201,7 @@ function buildMarquee() {
 
 /* ===== 期号 / 倒计时滴答：倒计时显示 = 总时间 − 准备中 ===== */
 
-/** 开奖号码形态：大厅底条展示用 */
-type DrawKind = 'digit5' | 'dice3' | 'pk10' | 'lhc' | 'table'
-
-const DRAW_KIND: Record<string, DrawKind> = {
-  ssc: 'digit5',
-  ffc: 'digit5',
-  kuai3: 'dice3',
-  bjsc: 'pk10',
-  'speed-racing': 'pk10',
-  'speed-boat': 'pk10',
-  lhc: 'lhc',
-  zhajinhua: 'table',
-  douniu: 'table',
-  baccarat: 'table',
-  longhu: 'table',
-}
-
-/** 各 PK10 游戏自带赛道号素材目录（与游戏内 ballHtml 一致） */
-const PK10_BALL_BASE: Record<string, string> = {
-  bjsc: '/games-assets/bjsc/assets/balls',
-  'speed-racing': '/games-assets/speed-racing/assets/balls',
-  'speed-boat': '/games-assets/speed-boat/assets/balls',
-}
-
-function isPk10Game(key: string) {
-  return DRAW_KIND[key] === 'pk10'
-}
-function isDice3Game(key: string) {
-  return DRAW_KIND[key] === 'dice3'
-}
-function isDigit5Game(key: string) {
-  return DRAW_KIND[key] === 'digit5'
-}
-function isLhcGame(key: string) {
-  return DRAW_KIND[key] === 'lhc'
-}
-
-function pk10BallUrl(gameKey: string, n: string) {
-  const base = PK10_BALL_BASE[gameKey] || PK10_BALL_BASE['speed-racing']
-  const num = Math.max(1, Math.min(10, Number(n) || 1))
-  return gameAssetUrl(`${base}/ball-${String(num).padStart(2, '0')}.png`)
-}
-
-/** 快三大厅用游戏内 xs/tbl 同款扁平骰子图标 */
-function kuai3DiceUrl(n: string) {
-  const num = Math.max(1, Math.min(6, Number(n) || 1))
-  return gameAssetUrl(`/games-assets/kuai3/assets/result/icon-${String(num).padStart(2, '0')}.png`)
-}
-
-/** 六合彩：与游戏内 ballHtml 同路径 ball_01.png … ball_49.png */
-function lhcBallUrl(n: string) {
-  const num = Math.max(1, Math.min(49, Number(n) || 1))
-  return gameAssetUrl(`/games-assets/lhc/assets/balls/ball_${String(num).padStart(2, '0')}.png`)
-}
-
-/** 大厅底条：正码 6 + 「+」+ 特码（接口若无加号则补上） */
-function lhcFootNums(nums: string[]): string[] {
-  const raw = nums.filter((n) => n !== '+')
-  if (raw.length < 7) return nums
-  const mains = raw.slice(0, 6).map((n) => String(n).padStart(2, '0'))
-  const special = String(raw[6]).padStart(2, '0')
-  return [...mains, '+', special]
-}
+/* 开奖号码形态与素材路径已抽到 drawNumberAssets.ts，运营端实时开奖页共用同一套画法 */
 
 interface DrawPart {
   kind: 'side' | 'card' | 'point' | 'hand' | 'result' | 'tag' | 'sep'

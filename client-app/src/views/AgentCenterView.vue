@@ -6,12 +6,13 @@
     <img class="cd cd-br" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
   </div>
 
-  <div class="page ag-page">
+  <div class="page ag-page has-page-title">
     <div class="app-bar">
       <div class="back" @click="router.back()">‹</div>
       <div class="title">推 广 中 心</div>
       <div class="right"></div>
     </div>
+    <h1 class="page-title">推 广 中 心</h1>
 
     <div class="page-body">
       <section class="ag-hero" v-if="overview">
@@ -91,6 +92,7 @@ import { useRouter } from 'vue-router'
 import { useToast } from '@/composables/useToast'
 import { useBodyClass } from '@/composables/useBodyClass'
 import { agentApi, type AgentOverview, type TeamMember, type CommissionItem } from '@/api/agent'
+import { formatDateTime, formatMoney } from '@gamebox/shared'
 import TabBar from '@/components/TabBar.vue'
 import '@/assets/agent-center.css'
 
@@ -108,11 +110,10 @@ const hanging = ref(false)
 const friendUid = ref('')
 const underUid = ref('')
 
-const fmtInt = (n: number) => Number(n || 0).toLocaleString('en-US')
+const fmtInt = (n: number) => formatMoney(n)
 
 function fmtDate(s: string) {
-  const d = new Date(s)
-  return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  return formatDateTime(s)
 }
 
 async function doHang() {

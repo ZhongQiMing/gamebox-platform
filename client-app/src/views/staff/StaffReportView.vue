@@ -9,17 +9,7 @@
   <div class="page staff-console-page">
     <div class="app-bar">
       <div v-if="!isTabOverview" class="back" @click="router.back()">‹</div>
-      <div class="title">
-        <template v-if="isLandlordOverview">
-          <span class="brand-dot"></span>
-          <span class="brand-wordmark">经营明细</span>
-        </template>
-        <template v-else-if="isAgentOverview">
-          <span class="brand-dot"></span>
-          <span class="brand-wordmark">账单明细</span>
-        </template>
-        <template v-else>{{ pageTitle }}</template>
-      </div>
+      <div class="title">{{ pageTitle }}</div>
       <div class="right sc-bar-act" @click="load">{{ loading ? '…' : '刷新' }}</div>
     </div>
 
@@ -85,7 +75,7 @@
               </div>
             </div>
             <div class="rp-metrics cols-3">
-              <div class="rp-m"><em>注单</em><b>{{ fmt(g.betCount) }}</b></div>
+              <div class="rp-m"><em>注单</em><b>{{ formatCount(g.betCount) }}</b></div>
               <div class="rp-m"><em>流水</em><b>{{ fmt(g.betFlow) }}</b></div>
               <div class="rp-m"><em>派彩</em><b>{{ fmt(g.payout) }}</b></div>
             </div>
@@ -148,14 +138,14 @@
               <div class="rp-line"><span>平台占成</span><b :class="pnlClass(r.platformShareAmount ?? r.housePnl)">{{ fmtSigned(r.platformShareAmount ?? r.housePnl) }}</b></div>
               <div class="rp-line"><span>代理佣金</span><b class="down">{{ fmt(r.commissionAmount) }}</b></div>
               <div class="rp-line"><span>平台净盈</span><b :class="pnlClass(roomNetPnl(r))">{{ fmtSigned(roomNetPnl(r)) }}</b></div>
-              <div class="rp-line"><span>注单</span><b>{{ fmt(r.betCount) }}</b></div>
+              <div class="rp-line"><span>注单</span><b>{{ formatCount(r.betCount) }}</b></div>
             </div>
             <div v-else-if="view === 'fund'" class="rp-metrics">
               <div class="rp-m"><em>上分</em><b class="up">{{ fmt(r.upAmount) }}</b></div>
               <div class="rp-m"><em>下分</em><b class="down">{{ fmt(r.downAmount) }}</b></div>
             </div>
             <div v-else class="rp-metrics">
-              <div class="rp-m"><em>注单</em><b>{{ fmt(r.betCount) }}</b></div>
+              <div class="rp-m"><em>注单</em><b>{{ formatCount(r.betCount) }}</b></div>
               <div class="rp-m"><em>流水</em><b>{{ fmt(r.betFlow) }}</b></div>
               <div class="rp-m"><em>上分</em><b class="up">{{ fmt(r.upAmount) }}</b></div>
               <div class="rp-m"><em>下分</em><b class="down">{{ fmt(r.downAmount) }}</b></div>
@@ -203,7 +193,7 @@
       </template>
     </div>
 
-    <StaffTabBar v-if="isAgentSide || isLandlord" />
+    <StaffTabBar v-if="isAgentSide || isLandlord || isGeneral" />
   </div>
 </template>
 
@@ -221,7 +211,9 @@ import {
   type StaffWalletMe,
 } from '@/api/staffConsole'
 import { useToast } from '@/composables/useToast'
+import { formatCount, formatDateTime, formatMoney, formatSignedMoney } from '@gamebox/shared'
 import { useBodyClass } from '@/composables/useBodyClass'
+import { TIME_RANGES } from '@/composables/timeRange'
 import '@/assets/staff-console.css'
 
 useBodyClass('deco-bg')
@@ -231,13 +223,7 @@ const router = useRouter()
 const staff = useStaffStore()
 const { toast } = useToast()
 
-const allRanges = [
-  { key: 'today', label: '今日' },
-  { key: 'yesterday', label: '昨日' },
-  { key: 'thisweek', label: '本周' },
-  { key: 'lastweek', label: '上周' },
-  { key: 'thismonth', label: '本月' },
-]
+const allRanges = TIME_RANGES
 
 const range = ref('today')
 const loading = ref(false)
@@ -282,17 +268,19 @@ const view = computed(() => {
 })
 
 const isAgentSide = computed(() => staff.isAgentSide)
-const isLandlord = computed(() => staff.role === 'ADMIN' || staff.role === 'BRANCH')
+const isLandlord = computed(() => staff.isBranch)
+const isGeneral = computed(() => staff.isGeneral)
 /** 底栏「明细」总览：无 view；从「我的」进子报表时显示返回 */
 const isAgentOverview = computed(() => isAgentSide.value && !view.value)
 const isLandlordOverview = computed(() => isLandlord.value && !view.value)
-const isTabOverview = computed(() => isAgentOverview.value || isLandlordOverview.value)
+const isGeneralOverview = computed(() => isGeneral.value && !view.value)
+const isTabOverview = computed(() => isAgentOverview.value || isLandlordOverview.value || isGeneralOverview.value)
 /** 今日 / 昨日 / 本周 / 上周 / 本月 */
 const visibleRanges = computed(() => allRanges)
 
 const pageTitle = computed(() => {
-  if (isLandlordOverview.value) return '经营明细'
-  if (isLandlord.value) return '报表摘要'
+  if (isLandlordOverview.value || isGeneralOverview.value) return '经营明细'
+  if (isLandlord.value || isGeneral.value) return '报表摘要'
   if (view.value === 'guess') return '竞猜报表'
   if (view.value === 'points') return '积分报表'
   if (view.value === 'fund') return '上下分报表'
@@ -303,7 +291,7 @@ const pageTitle = computed(() => {
 /** 管理/房主总览始终展示分房；代理端单房不重复拆；竞猜/积分不拆房 */
 const showRoomBreakdown = computed(() => {
   if (view.value === 'guess' || view.value === 'points') return false
-  if (isLandlordOverview.value) return roomRows.value.length > 0
+  if (isLandlordOverview.value || isGeneralOverview.value) return roomRows.value.length > 0
   return roomRows.value.length > 1
 })
 
@@ -338,16 +326,19 @@ const heroMetrics = computed(() => {
   const s = summary.value
   if (view.value === 'points') {
     const credit = wallet.value?.bookMode === 'CREDIT'
-    return credit
-      ? [
-          { k: '剩余信用', v: fmt(wallet.value?.pointsQuota) },
-          { k: '佣金账户', v: fmt(wallet.value?.balance) },
-        ]
-      : [
-          { k: '上盘额度', v: fmt(wallet.value?.pointsQuota) },
-          { k: '代理余额', v: fmt(wallet.value?.balance) },
-          { k: '上盘可飞', v: fmt(wallet.value?.flyCover) },
-        ]
+    return [
+      {
+        k: '代理余额',
+        v: fmt(
+          wallet.value?.agentBalance
+          ?? (credit
+            ? Number(wallet.value?.pointsQuota ?? 0) + Number(wallet.value?.balance ?? 0)
+            : Number(wallet.value?.balance ?? 0)),
+        ),
+      },
+      { k: '上盘可飞', v: fmt(wallet.value?.flyCover) },
+      { k: '玩家持分', v: fmt(wallet.value?.playerPointsTotal) },
+    ]
   }
   if (!s) return []
   if (view.value === 'fund') {
@@ -361,7 +352,7 @@ const heroMetrics = computed(() => {
     return [
       { k: '流水', v: fmt(s.betFlow) },
       { k: '派彩', v: fmt(s.payout) },
-      { k: '注单', v: fmt(s.betCount) },
+      { k: '注单', v: formatCount(s.betCount) },
     ]
   }
   if (isLandlordOverview.value) {
@@ -376,7 +367,7 @@ const heroMetrics = computed(() => {
   return [
     { k: '流水', v: fmt(s.betFlow) },
     { k: '派彩', v: fmt(s.payout) },
-    { k: '注单', v: fmt(s.betCount) },
+    { k: '注单', v: formatCount(s.betCount) },
   ]
 })
 
@@ -389,7 +380,7 @@ const summaryCells = computed(() => {
   if (isLandlordOverview.value) {
     const commission = Number(s.commissionAmount || 0)
     return [
-      { k: '注单数', v: fmt(s.betCount) },
+      { k: '注单数', v: formatCount(s.betCount) },
       { k: '玩家盈亏', v: fmtSigned(s.playerPnl), cls: pnlClass(s.playerPnl) },
       { k: '代理佣金', v: fmt(commission), cls: commission > 0 ? 'down' : '' },
       { k: '佣金笔数', v: String(s.commissionCount ?? 0) },
@@ -425,14 +416,10 @@ function roomNetPnl(r: StaffReportByRoomRow) {
 }
 
 function fmt(n?: number | null) {
-  return Number(n || 0).toLocaleString('zh-CN', { maximumFractionDigits: 0 })
+  return formatMoney(n ?? 0)
 }
 function fmtSigned(n?: number | null) {
-  const v = Number(n || 0)
-  const s = fmt(Math.abs(v))
-  if (v > 0) return `+${s}`
-  if (v < 0) return `-${s}`
-  return s
+  return formatSignedMoney(n ?? 0)
 }
 function pnlClass(n?: number | null) {
   const v = Number(n || 0)
@@ -510,14 +497,7 @@ function loadMorePoints() {
 }
 
 function fmtTime(iso?: string | null) {
-  if (!iso) return ''
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return ''
-  const mm = String(d.getMonth() + 1).padStart(2, '0')
-  const dd = String(d.getDate()).padStart(2, '0')
-  const hh = String(d.getHours()).padStart(2, '0')
-  const mi = String(d.getMinutes()).padStart(2, '0')
-  return `${mm}-${dd} ${hh}:${mi}`
+  return iso ? formatDateTime(iso) : ''
 }
 
 function channelLabel(ch?: string | null) {

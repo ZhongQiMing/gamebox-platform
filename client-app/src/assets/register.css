@@ -1,5 +1,12 @@
 /* ===== 注册页 · 极简贵气 ===== */
 
+/* 矮屏等比缩放，与登录页同一套：变量由 useScreenFit 写入 */
+.register-page {
+  transform: scale(var(--screen-fit, 1));
+  transform-origin: top center;
+  margin-bottom: var(--screen-fit-trim, 0px);
+}
+
 /* 顶栏完全透明：去掉公共 .app-bar 的暗色压条 + 底部金线，让底图直接透过来 */
 .register-page .app-bar {
   background: none;

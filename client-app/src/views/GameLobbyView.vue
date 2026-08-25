@@ -11,12 +11,12 @@
   <!-- 屏幕级 fixed 顶角按钮（退出在房间页，大厅不放） -->
   <button class="lobby-back" @click="onLobbyBack" aria-label="返回"></button>
 
-  <div class="page lobby-page">
+  <div class="page lobby-page has-page-title">
     <div class="page-body">
 
-      <h1 class="lobby-title">游 戏 大 厅</h1>
+      <h1 class="page-title">游 戏 大 厅</h1>
 
-      <LobbyGamesList ref="listRef" @select="onGameClick" />
+      <LobbyGamesList ref="listRef" :entering-key="entering" @select="onGameClick" />
 
       <div class="lobby-spacer"></div>
     </div>
@@ -74,6 +74,11 @@ const showSlotsCover = ref(false)
 const currentSlotsRoute = ref('')
 const showBcbmCover = ref(false)
 const currentBcbmRoute = ref('')
+/*
+ * 正在进的那张卡。慢网下路由分块要下载几秒，没有这个标记时卡片毫无反应，
+ * 玩家会接着连点，连点就是两次 push，返回栈里多压一层游戏页。
+ */
+const entering = ref('')
 
 function closeSlotsCover() {
   showSlotsCover.value = false
@@ -85,16 +90,29 @@ function closeBcbmCover() {
 }
 async function enterSlotsGame() {
   const target = currentSlotsRoute.value
-  if (target) await router.push(target)
   closeSlotsCover()
+  if (!target || entering.value) return
+  entering.value = 'slots'
+  try {
+    await router.push(target)
+  } finally {
+    entering.value = ''
+  }
 }
 async function enterBcbmGame() {
   const target = currentBcbmRoute.value
-  if (target) await router.push(target)
   closeBcbmCover()
+  if (!target || entering.value) return
+  entering.value = 'bcbm'
+  try {
+    await router.push(target)
+  } finally {
+    entering.value = ''
+  }
 }
 
-function onGameClick(g: LobbyGame) {
+async function onGameClick(g: LobbyGame) {
+  if (entering.value) return
   const list = listRef.value
   if (list?.isMaintenance(g)) {
     toast(`${g.name.replace(/\s+/g, '')} · 维护中，暂不可进入`)
@@ -116,7 +134,14 @@ function onGameClick(g: LobbyGame) {
     return
   }
 
-  router.push(g.route)
+  entering.value = g.key
+  try {
+    await router.push(g.route)
+  } catch (e: unknown) {
+    toast(e instanceof Error ? e.message : '进入失败')
+  } finally {
+    entering.value = ''
+  }
 }
 
 /* 本页进了 keep-alive，被挂起时组件不卸载，监听还在；不判激活态的话

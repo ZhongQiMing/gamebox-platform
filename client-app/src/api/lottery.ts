@@ -43,11 +43,14 @@ export const lotteryApi = {
   history: (gameCode: string, limit = 10) =>
     http.get<DrawHistory[], DrawHistory[]>(`/lottery/${gameCode}/history?limit=${limit}`),
 
-  /** 当前期 + 历史一次取回：游戏内 2s 一轮的快照走这个，省掉一半往返 */
+  /**
+   * 当前期 + 历史一次取回：游戏内 2s 一轮的快照走这个，省掉一半往返。
+   * now 是服务端当前时刻（毫秒），供游戏内校准本地时钟，不受快照缓存影响。
+   */
   snapshot: (gameCode: string, limit = 20) =>
     http.get<
-      { current: LotteryIssue | null; history: DrawHistory[] },
-      { current: LotteryIssue | null; history: DrawHistory[] }
+      { current: LotteryIssue | null; history: DrawHistory[]; now?: number },
+      { current: LotteryIssue | null; history: DrawHistory[]; now?: number }
     >(`/lottery/${gameCode}/snapshot?limit=${limit}`),
 
   /** 活跃赔率表（与结算同一份） */
@@ -56,12 +59,22 @@ export const lotteryApi = {
       `/lottery/${gameCode}/pay-table`,
     ),
 
-  myBets: (gameCode: string, page = 1, pageSize = 20, issueNo?: string) => {
+  /** 注单页按所选日期向服务端要，不靠拉满一页再本地筛 */
+  myBets: (
+    gameCode: string,
+    page = 1,
+    pageSize = 20,
+    issueNo?: string,
+    window?: { range?: string; from?: number; to?: number },
+  ) => {
     const q = new URLSearchParams({
       page: String(page),
       pageSize: String(pageSize),
     })
     if (issueNo) q.set('issueNo', issueNo)
+    if (window?.range) q.set('range', window.range)
+    if (window?.from != null) q.set('from', String(window.from))
+    if (window?.to != null) q.set('to', String(window.to))
     return http.get<{ total: number; list: LotteryBet[] }, { total: number; list: LotteryBet[] }>(
       `/lottery/${gameCode}/my-bets?${q.toString()}`,
     )

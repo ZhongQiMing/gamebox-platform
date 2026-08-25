@@ -17,27 +17,21 @@
       <section v-if="!isLandlord" class="sc-panel fly-hero">
         <div class="fly-hero-grid">
           <div>
-            <div class="fly-k">{{ isCreditBook ? '剩余信用' : '上盘额度' }}</div>
+            <div class="fly-k">{{ isCreditBook ? '剩余信用' : '可用额度' }}</div>
             <div class="fly-v">{{ fmt(isCreditBook ? (wallet?.creditUnused ?? wallet?.diskPoolRemaining ?? wallet?.pointsQuota) : (wallet?.diskPoolRemaining ?? wallet?.pointsQuota)) }}</div>
-            <div class="fly-note">{{ isCreditBook ? '还能给玩家上的信用额度' : '向平台买的飞盘额度' }}</div>
           </div>
           <div v-if="isCreditBook">
             <div class="fly-k">合同额度</div>
             <div class="fly-v">{{ fmt(wallet?.creditLimit) }}</div>
-            <div class="fly-note">占成在结账时按信用账本轧差</div>
           </div>
           <div v-else>
             <div class="fly-k">上盘可飞</div>
             <div class="fly-v" :class="{ dim: !Number(wallet?.flyCover) }">{{ fmt(wallet?.flyCover) }}</div>
-            <div class="fly-note">{{ flyCoverHint }}</div>
           </div>
         </div>
         <div class="fly-sub">
           玩家持分 {{ fmt(wallet?.playerPointsTotal) }}
-          <template v-if="!isCreditBook">
-            · 代理余额 {{ fmt(wallet?.balance) }}
-          </template>
-          <template v-else> · 佣金账户 {{ fmt(wallet?.balance) }}（结账轧差后清零）</template>
+          · 代理余额 {{ fmt(agentBalance) }}
         </div>
       </section>
       <p v-else class="fly-land-tip">只读查看各房飞盘开关；开/关仍由本房代理操作</p>
@@ -61,9 +55,9 @@
           <div v-else class="fly-cover credit">开关</div>
         </div>
 
-        <div class="fly-status" :class="`is-${flyMode(r)}`">
-          <span>{{ flyModeLabel(r) }}</span>
-          <span class="fly-stat">开 {{ r.fly?.onCount ?? 0 }} · 关 {{ r.fly?.offCount ?? 0 }}</span>
+        <div class="fly-status" :class="`is-${toggleMode(r)}`">
+          <span class="fly-mode">{{ flyModeLabel(r) }}</span>
+          <span class="fly-stat">{{ flyStatText(r) }}</span>
         </div>
 
         <div v-if="canToggleAgent || canToggleGeneral" class="fly-ops">
@@ -85,19 +79,11 @@
         <p v-else class="fly-tip-inline">{{ isLandlord ? '只读查看；开/关由本房代理操作' : '仅本房代理或总代可整房开关' }}</p>
       </div>
 
-      <p class="fly-tip">
-        <template v-if="isCreditBook">
-          信用盘：飞盘开=输赢进平台，占成结账轧差；关盘=跟代理。电脑端玩家页可单独调整个人。
-        </template>
-        <template v-else>
-          飞盘：输赢进平台、吃上盘额度；关盘：只改玩家房间分。电脑端玩家页可单独调整个人。
-        </template>
-      </p>
     </div>
 
     <div v-if="confirmVisible" class="sp-sheet" @click.self="closeConfirm">
       <div class="sp-sheet-panel">
-        <h3>{{ confirmFlyOn ? '整房飞盘' : '整房关盘' }}</h3>
+        <h3>{{ confirmTitle }}</h3>
         <p class="hint">{{ confirmHint }}</p>
         <div class="sp-sheet-actions">
           <button type="button" class="cancel" :disabled="!!busyId" @click="closeConfirm">取消</button>
@@ -107,7 +93,7 @@
             :class="{ warn: !confirmFlyOn }"
             :disabled="!!busyId"
             @click="doConfirm"
-          >{{ busyId ? '处理中…' : (confirmFlyOn ? '确认开盘' : '确认关盘') }}</button>
+          >{{ busyId ? '处理中…' : confirmOkText }}</button>
         </div>
       </div>
     </div>
@@ -126,6 +112,7 @@ import {
 import StaffTabBar from '@/components/StaffTabBar.vue'
 import { useStaffStore } from '@/stores/staff'
 import { useToast } from '@/composables/useToast'
+import { formatMoney } from '@gamebox/shared'
 import { useBodyClass } from '@/composables/useBodyClass'
 import '@/assets/staff-console.css'
 
@@ -145,36 +132,50 @@ const confirmTarget = ref<StaffRoom | null>(null)
 const confirmFlyOn = ref(false)
 
 const canToggleAgent = computed(() => staff.role === 'AGENT')
-const canToggleGeneral = computed(() => staff.role === 'GENERAL')
-const isLandlord = computed(() => staff.role === 'ADMIN' || staff.role === 'BRANCH')
+const canToggleGeneral = computed(() => staff.isGeneral)
+const isLandlord = computed(() => staff.isBranch)
 const isCreditBook = computed(() => wallet.value?.bookMode === 'CREDIT')
+const agentBalance = computed(() => {
+  const w = wallet.value
+  if (!w) return 0
+  if (w.agentBalance != null) return Number(w.agentBalance)
+  return Number(w.balance || 0)
+})
 
-const flyCoverHint = computed(() => {
-  const cover = Number(wallet.value?.flyCover || 0)
-  if (cover > 0) return '上盘还有额度；开关开时跟平台飞'
-  return '上盘额度耗尽：即使开关开着也按关盘（只动玩家分）'
+/*
+ * 总代按的是「本房代理飞出来的注归谁」，代理按的是「自己房里玩家的注归谁」。
+ * 两件事都叫「飞盘 / 关盘」会让总代以为自己在动玩家开关，所以文案分开。
+ */
+const confirmTitle = computed(() => {
+  if (canToggleGeneral.value) return confirmFlyOn.value ? '整房飞平台' : '整房总代坐庄'
+  return confirmFlyOn.value ? '整房飞盘' : '整房关盘'
+})
+
+const confirmOkText = computed(() => {
+  if (canToggleGeneral.value) return confirmFlyOn.value ? '确认飞平台' : '确认坐庄'
+  return confirmFlyOn.value ? '确认飞盘' : '确认关盘'
+})
+
+/** 服务端没带 message 时的兜底提示 */
+const doneText = computed(() => {
+  if (canToggleGeneral.value) return confirmFlyOn.value ? '已设为飞平台' : '已设为总代坐庄'
+  return confirmFlyOn.value ? '已整房开启飞盘' : '已整房关盘'
 })
 
 const confirmHint = computed(() => {
   const name = confirmTarget.value?.name || '本房'
   if (canToggleGeneral.value) {
     return confirmFlyOn.value
-      ? `将「${name}」总代飞盘设为开：代理开盘的注飞向平台。`
-      : `将「${name}」总代飞盘设为关：代理开盘的注由总代坐庄，不再飞平台。`
+      ? `将「${name}」设为飞平台：代理开盘飞出来的注上交平台，输赢不算你的。代理关盘的玩家仍由代理坐庄，轮不到你。`
+      : `将「${name}」设为总代坐庄：代理开盘飞出来的注由你接，输赢从你的盘分出。代理关盘的玩家仍由代理坐庄，轮不到你。`
   }
-  const credit = confirmTarget.value?.bookMode === 'CREDIT'
-  if (confirmFlyOn.value) {
-    return credit
-      ? `将「${name}」全体玩家设为飞盘开：输赢进平台盘口，占成在结账时按信用账本轧差。个人仍可在电脑端单独关掉。`
-      : `将「${name}」全体玩家设为飞盘开：上盘额度大于 0 时输赢进平台。个人仍可在电脑端单独关掉。`
-  }
-  return credit
-    ? `将「${name}」全体玩家设为关盘：不再进平台盘口，输赢跟代理；占成仍按信用账本在结账时轧差。个人仍可在电脑端单独开启。`
-    : `将「${name}」全体玩家设为关盘：不再进平台，只改玩家房间分，不动上盘额度。个人仍可在电脑端单独开启。`
+  return confirmFlyOn.value
+    ? `将「${name}」整房设为飞盘：玩家的注飞给平台，输赢不动你的盘分。`
+    : `将「${name}」整房设为关盘：玩家的注由你自己坐庄，输赢从你的盘分出。`
 })
 
 function fmt(n?: number | null) {
-  return Number(n || 0).toLocaleString('zh-CN', { maximumFractionDigits: 0 })
+  return formatMoney(n ?? 0)
 }
 
 function flyMode(r: StaffRoom): 'on' | 'off' | 'mixed' | 'empty' {
@@ -188,6 +189,12 @@ function flyMode(r: StaffRoom): 'on' | 'off' | 'mixed' | 'empty' {
 }
 
 function flyModeLabel(r: StaffRoom) {
+  /* 总代这行只反映他自己那个开关；代理关盘的玩家轮不到他 */
+  if (canToggleGeneral.value) {
+    return r.generalFlyEnabled !== false
+      ? '飞平台（仅代理开盘的注上交）'
+      : '总代坐庄（仅代理开盘的注你接）'
+  }
   const m = flyMode(r)
   if (m === 'on') {
     const cover = Number(r.fly?.flyCover ?? r.agent?.flyCover ?? 0)
@@ -197,6 +204,20 @@ function flyModeLabel(r: StaffRoom) {
   if (m === 'off') return '关盘（不进平台）'
   if (m === 'mixed') return '部分开盘'
   return '暂无玩家'
+}
+
+/*
+ * 这两个数字是各玩家 flyEnabled 的合计。
+ * 代理按的就是这个开关，写「开 / 关」即可；
+ * 总代自己的按钮改的是另一层，必须标明「代理开 / 关」，
+ * 否则会以为这是自己那两个按钮的状态。
+ */
+function flyStatText(r: StaffRoom) {
+  const on = r.fly?.onCount ?? 0
+  const off = r.fly?.offCount ?? 0
+  return canToggleGeneral.value
+    ? `代理开 ${on} · 关 ${off}`
+    : `开 ${on} · 关 ${off}`
 }
 
 function toggleMode(r: StaffRoom): 'on' | 'off' | 'mixed' | 'empty' {
@@ -225,7 +246,7 @@ async function doConfirm() {
     const res = canToggleGeneral.value
       ? await staffConsoleApi.setGeneralRoomFly(r.id, confirmFlyOn.value)
       : await staffConsoleApi.setRoomFly(r.id, confirmFlyOn.value)
-    toast(res.message || (confirmFlyOn.value ? '已开启飞盘' : '已关盘'))
+    toast(res.message || doneText.value)
     confirmVisible.value = false
     confirmTarget.value = null
     await load()
@@ -276,22 +297,21 @@ onMounted(() => { void load() })
   color: rgba(255, 244, 194, 0.6);
   margin-bottom: 6px;
 }
+/*
+ * 这里不能用 --money-half：它按整页宽放两个数字算，而这格还要扣掉
+ * 页面 16×2、面板 14×2、边框 2×2 和栅格间隙 12，360px 屏每列只剩约 142px，
+ * 22px 字放到八位数金额就压线，配上 nowrap 会直接顶出面板。
+ */
 .fly-v {
   font-family: 'Noto Serif SC', serif;
-  font-size: 28px;
+  font-size: var(--money-third);
   font-weight: 700;
   color: #fff4c2;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
   line-height: 1.1;
 }
 .fly-v.dim { color: rgba(255, 244, 194, 0.45); }
-.fly-note {
-  margin-top: 4px;
-  font-size: 10px;
-  letter-spacing: 0.5px;
-  color: rgba(244, 211, 107, 0.42);
-  line-height: 1.3;
-}
 .fly-sub {
   margin-top: 12px;
   padding-top: 10px;
@@ -321,10 +341,11 @@ onMounted(() => { void load() })
   color: rgba(244, 211, 107, 0.5);
 }
 .fly-cover {
-  font-size: 18px;
+  font-size: var(--money-third);
   font-weight: 700;
   color: #fff4c2;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .fly-status {
   position: relative;
@@ -353,7 +374,12 @@ onMounted(() => { void load() })
   color: #fcd34d;
   background: rgba(120, 53, 15, 0.35);
 }
+.fly-mode {
+  min-width: 0;
+}
 .fly-stat {
+  flex-shrink: 0;
+  white-space: nowrap;
   font-variant-numeric: tabular-nums;
   opacity: 0.85;
 }
@@ -398,11 +424,5 @@ onMounted(() => { void load() })
   margin: 0;
   font-size: 11px;
   color: rgba(244, 211, 107, 0.45);
-}
-.fly-tip {
-  margin: 14px 2px 0;
-  font-size: 11px;
-  color: rgba(244, 211, 107, 0.4);
-  line-height: 1.4;
 }
 </style>

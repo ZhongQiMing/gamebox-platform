@@ -18,19 +18,25 @@
 .deco-bg .staff-console-page .app-bar {
   padding-right: 72px;
 }
+/*
+ * 运营端页面标题的定位。外观（字号、字距、金色渐变）在 common.css 里与玩家端的
+ * .page-title 共用一条声明，这里只管摆位置：左右各让出 64px 给返回键和刷新键，
+ * 在这段里居中，落点与玩家端完全一致。
+ */
 .deco-bg .staff-console-page .app-bar .title {
   visibility: visible !important;
-  font-size: 15px !important;
-  font-weight: 600 !important;
-  letter-spacing: 2px !important;
-  color: #fff4c2 !important;
-  justify-content: center;
+  position: absolute;
+  left: 64px;
+  right: 64px;
   text-align: center;
+  gap: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;                    /* 别挡住底下的返回键 */
 }
-.deco-bg .staff-console-page .app-bar .title:has(.brand-dot) {
-  justify-content: flex-start;
-  text-align: left;
-}
+/* 标题里的品牌圆点是登录页那套，运营端页面不需要 */
+.deco-bg .staff-console-page .app-bar .title .brand-dot { display: none; }
 .deco-bg .staff-console-page .app-bar .back {
   width: 44px;
   height: 44px;
@@ -41,37 +47,50 @@
 .deco-bg .staff-console-page .app-bar .back:active {
   filter: drop-shadow(0 0 10px rgba(244, 211, 107, 0.7)) brightness(1.35);
 }
+/*
+ * 顶栏右侧按钮（刷新 / 保存）。
+ * 原先是一圈细描边加纯色底，跟整页的黑金质感不搭；
+ * 换成黑曜石底 + 金边 + 顶部内高光，与页面里其它金色按钮同一套配方。
+ */
 .staff-console-page .app-bar .right.sc-bar-act,
 .staff-console-page .sc-bar-act {
   position: absolute;
-  top: 12px;
+  top: 11px;
   right: 12px;
-  z-index: 5;
+  z-index: 6;
   width: auto !important;
-  min-width: 52px;
-  height: 36px;
+  min-width: 60px;
+  height: 38px;
   margin: 0;
-  padding: 0 14px;
+  padding: 0 16px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   box-sizing: border-box;
   border-radius: 999px;
-  border: 1px solid rgba(244, 211, 107, 0.65);
-  background: rgba(18, 12, 6, 0.88);
+  border: 1px solid rgba(244, 211, 107, 0.55);
+  background:
+    radial-gradient(120% 140% at 50% 0%, rgba(245, 200, 66, 0.22), transparent 62%),
+    linear-gradient(180deg, rgba(54, 40, 18, 0.96) 0%, rgba(20, 13, 6, 0.98) 100%);
   box-shadow:
-    0 0 0 1px rgba(0, 0, 0, 0.35),
-    0 0 10px rgba(244, 211, 107, 0.22);
-  color: #fff4c2 !important;
+    0 1px 0 rgba(255, 236, 179, 0.28) inset,
+    0 -1px 0 rgba(0, 0, 0, 0.5) inset,
+    0 3px 10px rgba(0, 0, 0, 0.55),
+    0 0 14px rgba(212, 160, 64, 0.18);
+  color: #ffeaad !important;
+  font-family: 'Noto Serif SC', 'Songti SC', serif;
   font-size: 13px !important;
-  font-weight: 600;
-  letter-spacing: 2px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  text-indent: 3px;                        /* 抵消字距在右侧留下的空隙，视觉才居中 */
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
   user-select: none;
 }
 .staff-console-page .sc-bar-act:active {
-  filter: brightness(1.15);
+  transform: scale(0.96);
+  filter: brightness(1.18);
   border-color: rgba(255, 244, 194, 0.85);
 }
 
@@ -148,10 +167,11 @@
 }
 
 .sc-card .v {
-  font-size: 18px;
+  font-size: var(--money-half);
   font-weight: 800;
   color: #fff4c2;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .sc-menu {
@@ -366,18 +386,6 @@
   border-top: 1px solid rgba(212, 175, 55, 0.14);
 }
 
-.sp-row .ops button {
-  flex: 1;
-  padding: 10px;
-  font-size: 13px;
-  letter-spacing: 2px;
-  border-radius: 10px;
-  cursor: pointer;
-  border: 1px solid rgba(244, 211, 107, 0.4);
-  background: rgba(244, 211, 107, 0.1);
-  color: var(--gold-bright);
-}
-
 .sp-row .ops button.down {
   border-color: rgba(220, 120, 80, 0.5);
   color: #e8a080;
@@ -397,32 +405,49 @@
   font-size: 13px;
 }
 
+/*
+ * 运营端所有确认框 / 表单框。
+ * 原先是从底部拉起的抽屉，贴着屏幕下沿、看着像半截页面；改成居中弹窗，
+ * 内容多的（规则设置、超时明细）限高后内部滚动，不会把按钮顶出屏幕。
+ */
 .sp-sheet {
   position: fixed;
   inset: 0;
   /* 必须高于 .lobby-tabbar(100)，否则确认/取消会被底栏挡住点不到 */
   z-index: 300;
-  background: rgba(0, 0, 0, 0.55);
+  background: rgba(0, 0, 0, 0.62);
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: center;
+  padding: 20px 16px;
 }
 
 .sp-sheet-panel {
   width: 100%;
-  max-width: 420px;
-  padding: 18px 16px calc(28px + env(safe-area-inset-bottom, 0px));
-  border-radius: 16px 16px 0 0;
+  max-width: 400px;
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  padding: 20px 18px 18px;
+  border-radius: 16px;
   background: #1a120a;
   border: 1px solid rgba(244, 211, 107, 0.35);
+  box-shadow:
+    0 18px 48px rgba(0, 0, 0, 0.7),
+    0 0 24px rgba(212, 175, 55, 0.12);
 }
 
+/* 字段多的弹窗（规则设置、超时明细）内部滚动时，标题要一直看得见 */
 .sp-sheet-panel h3 {
-  margin: 0 0 12px;
+  position: sticky;
+  top: -20px;
+  z-index: 1;
+  margin: -20px -18px 12px;
+  padding: 20px 18px 10px;
   font-size: 16px;
   letter-spacing: 2px;
   color: var(--gold-bright);
   text-align: center;
+  background: #1a120a;
 }
 
 .sp-sheet-panel .hint {
@@ -470,10 +495,17 @@
   box-sizing: border-box;
 }
 
+/* 确认/取消钉在弹窗底部：字段一多，原先要滚到最底才点得到「保存」 */
 .sp-sheet-actions {
+  position: sticky;
+  bottom: -18px;
+  z-index: 1;
   display: flex;
   gap: 10px;
-  margin-top: 8px;
+  margin: 8px -18px -18px;
+  padding: 10px 18px 18px;
+  background: #1a120a;
+  box-shadow: 0 -10px 14px -8px rgba(0, 0, 0, 0.9);
 }
 
 .sp-sheet-actions button {
@@ -623,6 +655,8 @@
   padding: 8px 2px;
   font-size: 12px;
   letter-spacing: 0;
+  /* 标签统一带空格（「今 日」），窄屏靠这个收回来 */
+  word-spacing: -3px;
   white-space: nowrap;
   text-align: center;
 }
@@ -638,171 +672,6 @@
   color: #1a120a;
   background: #e8a080;
   border-radius: 999px;
-}
-
-.page-hint {
-  margin: 0 0 12px;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--text-muted);
-}
-
-/* 房间列表卡片（对照电脑房间中心字段） */
-.room-card {
-  display: block;
-  width: 100%;
-  margin-bottom: 12px;
-  padding: 14px;
-  text-align: left;
-  color: inherit;
-  cursor: pointer;
-  background: rgba(22, 16, 10, 0.92);
-  border: 1px solid rgba(212, 175, 55, 0.32);
-  border-radius: 12px;
-  -webkit-tap-highlight-color: transparent;
-}
-.room-card:active {
-  border-color: var(--gold-bright);
-}
-.room-card-hd {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 6px;
-}
-.room-card-name {
-  font-size: 16px;
-  font-weight: 700;
-  letter-spacing: 1px;
-  color: var(--gold-bright);
-}
-.room-card-code {
-  margin-bottom: 10px;
-  font-size: 12px;
-  color: var(--text-muted);
-}
-.room-card-code b {
-  color: #fff4c2;
-  font-variant-numeric: tabular-nums;
-}
-.room-card-agent {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid rgba(212, 175, 55, 0.14);
-  font-size: 12px;
-  color: var(--text-dim);
-}
-.room-card-agent .arrow {
-  color: var(--gold-deep);
-}
-
-.st {
-  flex-shrink: 0;
-  padding: 2px 8px;
-  font-size: 11px;
-  border-radius: 999px;
-  border: 1px solid rgba(212, 175, 55, 0.35);
-  color: var(--gold-bright);
-}
-.st.open { color: #7dcea0; border-color: rgba(125, 206, 160, 0.45); }
-.st.frozen, .st.closed { color: #e8a080; border-color: rgba(232, 160, 128, 0.45); }
-.st.maintenance { color: #f5d36b; }
-
-.room-metrics {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-.room-metrics .m {
-  padding: 8px 10px;
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.28);
-  border: 1px solid rgba(212, 175, 55, 0.14);
-}
-.mk {
-  display: block;
-  margin-bottom: 4px;
-  font-size: 11px;
-  color: var(--text-muted);
-}
-.mv {
-  font-size: 15px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  color: #fff4c2;
-}
-.mv.gold { color: var(--gold-bright); }
-.mv.sm { font-size: 12px; font-weight: 500; line-height: 1.3; }
-.mv.up { color: #7dcea0; }
-.mv.down { color: #e8a080; }
-
-/* 房间详情 */
-.rd-hero {
-  margin-bottom: 14px;
-  padding: 16px;
-  text-align: center;
-  border-radius: 12px;
-  border: 1px solid rgba(212, 175, 55, 0.3);
-  background: rgba(22, 16, 10, 0.92);
-}
-.rd-name {
-  margin-bottom: 8px;
-  font-size: 20px;
-  font-weight: 700;
-  letter-spacing: 2px;
-  color: var(--gold-bright);
-}
-.rd-code {
-  margin-top: 10px;
-  font-size: 13px;
-  color: var(--text-muted);
-}
-.rd-code b {
-  color: #fff4c2;
-  letter-spacing: 2px;
-}
-.rd-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  margin-bottom: 14px;
-}
-.rd-cell {
-  padding: 12px;
-  border-radius: 10px;
-  border: 1px solid rgba(212, 175, 55, 0.22);
-  background: rgba(22, 16, 10, 0.88);
-}
-.rd-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  margin-bottom: 20px;
-}
-.rd-btn {
-  min-height: 42px;
-  padding: 10px 8px;
-  font-size: 13px;
-  letter-spacing: 1px;
-  color: var(--gold-bright);
-  background: rgba(244, 211, 107, 0.1);
-  border: 1px solid rgba(244, 211, 107, 0.38);
-  border-radius: 10px;
-  cursor: pointer;
-}
-.rd-btn.warn {
-  color: #e8a080;
-  border-color: rgba(220, 120, 80, 0.5);
-  background: rgba(180, 80, 40, 0.12);
-}
-.rd-btn.ghost {
-  grid-column: 1 / -1;
-  color: var(--text-dim);
-  background: transparent;
-  border-style: dashed;
 }
 
 /* —— 共用金边卡片（我的各子页列表统一） —— */
@@ -849,53 +718,6 @@
   pointer-events: none;
 }
 
-.agent-card-hd {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 10px;
-}
-.agent-name {
-  font-size: 16px;
-  font-weight: 800;
-  letter-spacing: 1px;
-  color: #f5d36b;
-}
-.agent-sub {
-  margin-top: 4px;
-  font-size: 12px;
-  color: var(--text-muted);
-}
-.agent-quota {
-  text-align: right;
-}
-.agent-card .ops {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  gap: 8px;
-  margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px solid rgba(212, 175, 55, 0.14);
-}
-.agent-card .ops button {
-  flex: 1;
-  min-height: 40px;
-  font-size: 13px;
-  letter-spacing: 2px;
-  color: var(--gold-bright);
-  background: rgba(244, 211, 107, 0.1);
-  border: 1px solid rgba(244, 211, 107, 0.4);
-  border-radius: 10px;
-  cursor: pointer;
-}
-.agent-card .ops button.down {
-  color: #e8a080;
-  border-color: rgba(220, 120, 80, 0.5);
-  background: rgba(180, 80, 40, 0.12);
-}
 .agent-card .ops button.ghost {
   color: rgba(255, 244, 194, 0.75);
   border-style: dashed;
@@ -921,6 +743,7 @@
   border-radius: 10px;
 }
 
+/* 房间列表卡片（对照电脑房间中心字段） */
 .room-card {
   display: block;
   width: 100%;
@@ -952,6 +775,11 @@
   gap: 10px;
   margin-bottom: 6px;
 }
+/* 金边卡片的底纹由 ::before 铺满整块，卡内内容要抬到它上面才不会被盖住 */
+.agent-card-hd {
+  position: relative;
+  z-index: 1;
+}
 .room-card-name,
 .agent-name {
   font-size: 16px;
@@ -966,6 +794,7 @@
   margin-bottom: 10px;
 }
 .room-card-code b { color: #fff4c2; font-variant-numeric: tabular-nums; }
+.agent-sub { margin-top: 4px; }
 
 .st {
   flex-shrink: 0;
@@ -986,20 +815,30 @@
   gap: 8px;
   margin-bottom: 10px;
 }
+/* 标签在上、数字独占一行：横排时金额带两位小数会被挤到换行 */
 .room-metrics .m {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
+  flex-direction: column;
+  gap: 4px;
   min-height: 40px;
-  padding: 10px 12px;
+  padding: 8px 10px;
   border-radius: 10px;
   background: rgba(0, 0, 0, 0.28);
   border: 1px solid rgba(212, 175, 55, 0.14);
 }
 .room-metrics .m .mk {
   margin-bottom: 0;
-  flex-shrink: 0;
+}
+.room-metrics .m .mv {
+  font-size: var(--money-third);
+  line-height: 1.1;
+  white-space: nowrap;
+}
+/* 房间名那格不是金额，仍要能换行 */
+.room-metrics .m .mv.sm {
+  font-size: 12px;
+  line-height: 1.3;
+  white-space: normal;
 }
 .mk {
   display: block;
@@ -1022,15 +861,24 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(212, 175, 55, 0.14);
   font-size: 12px;
   color: var(--text-dim);
 }
 .room-card-agent .arrow { color: var(--gold-bright); }
 
 .agent-quota { text-align: right; }
+/* 同样要压在金边卡片的 ::before 底纹之上，否则按钮点不到 */
 .agent-card .ops {
+  position: relative;
+  z-index: 1;
   display: flex;
   gap: 8px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(212, 175, 55, 0.14);
 }
 .agent-card .ops button,
 .sp-row .ops button {
@@ -1044,15 +892,19 @@
   background: rgba(244, 211, 107, 0.1);
   color: var(--gold-bright);
 }
+/* 只有代理卡的按钮定了最小高度；玩家行 .sp-row 的按钮一直是靠 padding 撑开的 */
+.agent-card .ops button { min-height: 40px; }
 .agent-card .ops button.down {
   border-color: rgba(220, 120, 80, 0.5);
   color: #e8a080;
   background: rgba(180, 80, 40, 0.15);
 }
 
+/* 房间详情 */
 .rd-hero {
   margin-bottom: 14px;
   padding: 16px;
+  text-align: center;
   border-radius: 12px;
   border: 1px solid rgba(244, 211, 107, 0.32);
   background: linear-gradient(165deg, rgba(48, 34, 18, 0.92) 0%, rgba(18, 12, 8, 0.96) 100%);
@@ -1060,8 +912,10 @@
 .rd-name {
   display: inline-block;
   margin-right: 8px;
+  margin-bottom: 8px;
   font-size: 18px;
   font-weight: 700;
+  letter-spacing: 2px;
   color: #f5d36b;
 }
 .rd-code {
@@ -1091,6 +945,7 @@
   margin-bottom: 20px;
 }
 .rd-btn {
+  min-height: 42px;
   padding: 12px 8px;
   font-size: 13px;
   letter-spacing: 1px;
@@ -1103,16 +958,16 @@
 }
 .rd-btn.warn {
   color: #fff;
+  border-color: rgba(220, 120, 80, 0.5);
   background: linear-gradient(180deg, #e8a080 0%, #b45a30 100%);
 }
+/* 通栏：房间详情的操作区是两列栅格，幽灵按钮要独占一行 */
 .rd-btn.ghost {
+  grid-column: 1 / -1;
   color: var(--gold-bright);
   background: transparent;
   border: 1px solid rgba(244, 211, 107, 0.4);
   font-weight: 500;
 }
 
-/* 代理端底栏已复用玩家 .lobby-tabbar；仅保留内容区内边距 */
-body.has-staff-tabbar .staff-console-page .page-body {
-  padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
-}
+/* 代理端底栏复用玩家 .lobby-tabbar，底部避让也一并走 body.has-tabbar .page，此处不再另加 */

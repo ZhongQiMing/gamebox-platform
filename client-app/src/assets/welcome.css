@@ -6,6 +6,10 @@
   flex-direction: column;
   position: relative;
   overflow: hidden;
+  /* 矮屏等比缩放，两个变量由 useScreenFit 写入；放得下时为 1 / 0px，等于没生效 */
+  transform: scale(var(--screen-fit, 1));
+  transform-origin: top center;
+  margin-bottom: var(--screen-fit-trim, 0px);
 }
 
 /* ===== 顶部 brand bar ===== */

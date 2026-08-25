@@ -9,13 +9,13 @@
   <div class="page staff-console-page">
     <div class="app-bar">
       <div class="back" @click="router.back()">‹</div>
-      <div class="title">{{ canFund ? '玩家上下分' : '玩家查询' }}</div>
+      <div class="title">{{ canFund ? '上下分' : '玩家查询' }}</div>
       <div class="right sc-bar-act" @click="reload">{{ loading ? '…' : '刷新' }}</div>
     </div>
 
     <div class="page-body">
       <!-- 管理/房主：按房间分组，同账号多房各显各余额 -->
-      <template v-if="isLandlord">
+      <template v-if="useRoomGroups">
         <div class="sp-search">
           <input
             v-model="keyword"
@@ -105,6 +105,13 @@
           <div v-if="canFund" class="ops">
             <button type="button" @click="openFund(p, 'up')">上分</button>
             <button type="button" class="down" @click="openFund(p, 'down')">下分</button>
+            <button
+              type="button"
+              class="pl-fly"
+              :class="p.flyEnabled === false ? 'is-off' : 'is-on'"
+              :disabled="flyBusyId === p.id"
+              @click="askFly(p)"
+            >{{ p.flyEnabled === false ? '关盘' : '飞盘' }}</button>
           </div>
         </div>
 
@@ -177,6 +184,26 @@
       </div>
     </div>
 
+    <div v-if="flyConfirmVisible" class="sp-sheet" @click.self="flyConfirmVisible = false">
+      <div class="sp-sheet-panel">
+        <h3>{{ flyTargetNext ? '改为飞盘' : '改为关盘' }}</h3>
+        <p class="hint">
+          {{ flyTarget?.nickname }}（{{ flyTarget?.username }}）之后的注
+          {{ flyTargetNext ? '飞给平台，输赢不动你的盘分。' : '由你自己坐庄，输赢从你的盘分出。' }}
+        </p>
+        <div class="sp-sheet-actions">
+          <button type="button" class="cancel" :disabled="!!flyBusyId" @click="flyConfirmVisible = false">取消</button>
+          <button
+            type="button"
+            class="ok"
+            :class="{ warn: !flyTargetNext }"
+            :disabled="!!flyBusyId"
+            @click="doSetFly"
+          >{{ flyBusyId ? '处理中…' : '确认' }}</button>
+        </div>
+      </div>
+    </div>
+
     <div v-if="pwdResultVisible" class="sp-sheet" @click.self="pwdResultVisible = false">
       <div class="sp-sheet-panel">
         <h3>新密码（请立即告知）</h3>
@@ -204,7 +231,7 @@ import StaffTabBar from '@/components/StaffTabBar.vue'
 import { useStaffStore } from '@/stores/staff'
 import { useToast } from '@/composables/useToast'
 import { useBodyClass } from '@/composables/useBodyClass'
-import { PLAYER_DOWN_MIN, PLAYER_FUND_MAX, PLAYER_UP_MIN } from '@gamebox/shared'
+import { formatMoney, PLAYER_DOWN_MIN, PLAYER_FUND_MAX, PLAYER_UP_MIN } from '@gamebox/shared'
 import { newFundOrderNo } from '@/utils/fundOrderNo'
 import '@/assets/staff-console.css'
 
@@ -215,9 +242,22 @@ const router = useRouter()
 const staff = useStaffStore()
 const { toast } = useToast()
 
-const isLandlord = computed(() => staff.role === 'ADMIN' || staff.role === 'BRANCH')
+const isLandlord = computed(() => staff.isBranch)
+const isGeneral = computed(() => staff.isGeneral)
+const useRoomGroups = computed(() => isLandlord.value || isGeneral.value)
 const canFund = computed(() => staff.role === 'AGENT')
-const canResetPwd = computed(() => isLandlord.value)
+const canResetPwd = computed(() => useRoomGroups.value)
+
+/*
+ * 上下分必须落到具体房间的账本。从「我的 / 充值 / 客服」进来时地址栏没带 roomId，
+ * 只绑一间房的代理就直接用那一间，不然他在手机上永远上不了分。
+ * 绑多间房才要求先选房，避免把分加到错的房里。
+ */
+const fallbackRoomId = ref('')
+const activeRoomId = computed(() => {
+  const q = typeof route.query.roomId === 'string' ? route.query.roomId.trim() : ''
+  return q || fallbackRoomId.value
+})
 
 const rooms = ref<StaffRoom[]>([])
 const openIds = ref<string[]>([])
@@ -251,6 +291,12 @@ const pwdBusy = ref(false)
 const pwdTarget = ref<StaffPlayerRow | null>(null)
 const pwdResult = ref<{ username: string; password: string } | null>(null)
 
+/* 单玩家飞盘：接口一直都有，之前只有电脑端后台能改，代理在手机上只能整房一刀切 */
+const flyConfirmVisible = ref(false)
+const flyBusyId = ref<string | null>(null)
+const flyTarget = ref<StaffPlayerRow | null>(null)
+const flyTargetNext = computed(() => flyTarget.value?.flyEnabled === false)
+
 const visibleRooms = computed(() => {
   const q = keyword.value.trim().toLowerCase()
   const hits = searchHits.value
@@ -276,7 +322,7 @@ const totalPlayersShown = computed(() => {
 })
 
 function fmt(n?: number) {
-  return Number(n || 0).toLocaleString('zh-CN', { maximumFractionDigits: 2 })
+  return formatMoney(n ?? 0)
 }
 function statusLabel(s?: string) {
   return ({ OPEN: '营业', CLOSED: '关闭', MAINTENANCE: '维护', FROZEN: '冻结' } as Record<string, string>)[s || ''] || s || '—'
@@ -385,7 +431,7 @@ async function loadRooms() {
 }
 
 async function reload() {
-  if (isLandlord.value) {
+  if (useRoomGroups.value) {
     const q = keyword.value.trim()
     await loadRooms()
     if (q) await onSearch()
@@ -433,9 +479,9 @@ async function doFund() {
   if (!fundTarget.value) return
   const amount = Number(fundAmount.value)
   if (!validateFundAmount(amount)) return
-  const roomId = typeof route.query.roomId === 'string' ? route.query.roomId.trim() : ''
+  const roomId = activeRoomId.value
   if (!roomId) {
-    toast('请从房间进入玩家列表再上下分')
+    toast('你名下有多间房，请先从房间进入玩家列表再上下分')
     return
   }
   const rid = String(fundOrderNo.value || '').trim()
@@ -457,7 +503,7 @@ async function doFund() {
       toast(
         isCreditBook.value
           ? `上分成功 · ${orderTip} · 已扣剩余信用 ${fmt(amount)}`
-          : `上分成功 · ${orderTip} · 已扣上盘额度 ${fmt(amount)}`,
+          : `上分成功 · ${orderTip} · 已扣可用额度 ${fmt(amount)}`,
       )
     } else {
       const res = await staffConsoleApi.debitPlayer(
@@ -476,6 +522,31 @@ async function doFund() {
     toast(e instanceof Error ? e.message : '操作失败')
   } finally {
     fundBusy.value = false
+  }
+}
+
+function askFly(p: StaffPlayerRow) {
+  if (flyBusyId.value) return
+  flyTarget.value = p
+  flyConfirmVisible.value = true
+}
+
+async function doSetFly() {
+  const target = flyTarget.value
+  if (!target) return
+  const next = flyTargetNext.value
+  flyBusyId.value = target.id
+  try {
+    await staffConsoleApi.setPlayerFly(target.id, next, activeRoomId.value || undefined)
+    const row = list.value.find((x) => x.id === target.id)
+    if (row) row.flyEnabled = next
+    flyConfirmVisible.value = false
+    flyTarget.value = null
+    toast(next ? '已改为飞盘' : '已改为关盘')
+  } catch (e: unknown) {
+    toast(e instanceof Error ? e.message : '操作失败')
+  } finally {
+    flyBusyId.value = null
   }
 }
 
@@ -516,12 +587,12 @@ async function copyPwdResult() {
 async function fetchPage(p: number, append: boolean) {
   loading.value = true
   try {
-    const roomId = typeof route.query.roomId === 'string' ? route.query.roomId : undefined
+    /* 带上房间，余额才是本房的；不带会把多房余额加在一起，看着像多出一笔钱 */
     const res = await staffConsoleApi.players({
       page: p,
       pageSize,
       q: keyword.value.trim() || undefined,
-      roomId,
+      roomId: activeRoomId.value || undefined,
     })
     total.value = res.total
     page.value = res.page
@@ -544,7 +615,7 @@ onMounted(async () => {
     isCreditBook.value = w?.bookMode === 'CREDIT'
   }).catch(() => { isCreditBook.value = false })
 
-  if (isLandlord.value) {
+  if (useRoomGroups.value) {
     await loadRooms()
     const qRoomId = typeof route.query.roomId === 'string' ? route.query.roomId : ''
     if (qRoomId && rooms.value.some((r) => r.id === qRoomId)) {
@@ -552,6 +623,15 @@ onMounted(async () => {
       await loadRoomPlayers(qRoomId)
     }
   } else {
+    /* 只绑一间房就把它认下来，用户不必再绕回房间页 */
+    if (!activeRoomId.value && canFund.value) {
+      try {
+        const mine = (await staffConsoleApi.rooms()) || []
+        if (mine.length === 1) fallbackRoomId.value = mine[0].id
+      } catch {
+        /* 拉不到就退回「请先选房」，不挡列表 */
+      }
+    }
     await fetchPage(1, false)
   }
 })
@@ -644,5 +724,17 @@ onMounted(async () => {
   color: #f5d36b;
   border-color: rgba(244, 211, 107, 0.4);
   background: rgba(120, 53, 15, 0.3);
+}
+
+/* 当前状态直接写在按钮上：飞盘=绿，关盘=红，跟上盘查询页两个整房按钮同一套配色 */
+.pl-fly.is-on {
+  color: #bbf7d0;
+  border-color: rgba(134, 239, 172, 0.5);
+  background: rgba(20, 83, 45, 0.45);
+}
+.pl-fly.is-off {
+  color: #fecaca;
+  border-color: rgba(252, 165, 165, 0.5);
+  background: rgba(127, 29, 29, 0.45);
 }
 </style>

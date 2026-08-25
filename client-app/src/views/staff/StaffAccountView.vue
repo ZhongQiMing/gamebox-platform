@@ -96,6 +96,7 @@ import { useStaffStore } from '@/stores/staff'
 import { useUserStore } from '@/stores/user'
 import { useToast } from '@/composables/useToast'
 import { useBodyClass } from '@/composables/useBodyClass'
+import { staffRoleLabel } from '@gamebox/shared'
 import '@/assets/staff-console.css'
 
 useBodyClass('deco-bg')
@@ -119,15 +120,7 @@ const avatarSrc = computed(() => {
   if (isAgent.value) return roomIcon.value || DEFAULT_ROOM_ICON
   return staff.profile?.avatar || '/images/avatars/001.jpg'
 })
-const roleLabel = computed(() => {
-  if (staff.role === 'ADMIN') return '管理'
-  if (staff.role === 'BRANCH') return '总监'
-  if (staff.role === 'GENERAL') return '总代'
-  if (staff.role === 'AGENT') return '代理'
-  if (staff.role === 'PROXY') return '子账号'
-  if (staff.role === 'CS') return '客服'
-  return staff.role || ''
-})
+const roleLabel = computed(() => staffRoleLabel(staff.role, staff.parentRole))
 
 function applyProfile(p: UserProfile) {
   staff.profile = p

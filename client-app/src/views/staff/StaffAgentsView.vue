@@ -83,15 +83,16 @@
             </span>
           </div>
           <div class="room-metrics">
+            <!-- 同一本盘分账：现金叫可用额度，信用叫剩余信用，字段都是 pointsQuota -->
             <div class="m">
-              <span class="mk">{{ isCreditAgent(a) ? '剩余信用' : '上盘额度' }}</span>
+              <span class="mk">{{ isCreditAgent(a) ? '剩余信用' : '可用额度' }}</span>
               <span class="mv">{{ fmt(a.pointsQuota) }}</span>
             </div>
             <div class="m">
-              <span class="mk">{{ isCreditAgent(a) ? '佣金账户' : '代理余额' }}</span>
-              <span class="mv gold">{{ fmt(a.balance) }}</span>
+              <span class="mk">代理余额</span>
+              <span class="mv gold">{{ fmt(agentBalanceOf(a)) }}</span>
             </div>
-            <div v-if="!isCreditAgent(a)" class="m">
+            <div class="m">
               <span class="mk">上盘可飞</span>
               <span class="mv">{{ fmt(a.flyCover) }}</span>
             </div>
@@ -151,6 +152,8 @@ import {
 } from '@/api/staffConsole'
 import { useToast } from '@/composables/useToast'
 import { useBodyClass } from '@/composables/useBodyClass'
+import { TIME_RANGES } from '@/composables/timeRange'
+import { formatMoney, formatSignedMoney } from '@gamebox/shared'
 import { newFundOrderNo } from '@/utils/fundOrderNo'
 import '@/assets/staff-console.css'
 
@@ -162,15 +165,9 @@ const { toast } = useToast()
 
 const isAgentSide = computed(() => staff.isAgentSide)
 const pageTitle = computed(() => (isAgentSide.value ? '代理报表' : '代理管理'))
-const canFund = computed(() => staff.role === 'ADMIN' || staff.role === 'BRANCH')
+const canFund = computed(() => staff.isBranch || staff.isGeneral)
 
-const ranges = [
-  { key: 'today', label: '今日' },
-  { key: 'yesterday', label: '昨日' },
-  { key: 'thisweek', label: '本周' },
-  { key: 'lastweek', label: '上周' },
-  { key: 'thismonth', label: '本月' },
-]
+const ranges = TIME_RANGES
 
 const range = ref('today')
 const loading = ref(false)
@@ -201,14 +198,10 @@ const fundConfirming = ref(false)
 const FUND_MAX = 50_000_000
 
 function fmt(n?: number | null) {
-  return Number(n || 0).toLocaleString('zh-CN', { maximumFractionDigits: 0 })
+  return formatMoney(n ?? 0)
 }
 function fmtSigned(n?: number | null) {
-  const v = Number(n || 0)
-  const s = fmt(Math.abs(v))
-  if (v > 0) return `+${s}`
-  if (v < 0) return `-${s}`
-  return s
+  return formatSignedMoney(n ?? 0)
 }
 function pnlClass(n?: number | null) {
   const v = Number(n || 0)
@@ -222,6 +215,10 @@ function roomText(a: StaffAgentRow) {
 }
 function isCreditAgent(a: StaffAgentRow) {
   return (a.rooms || []).some((r) => r.bookMode === 'CREDIT')
+}
+function agentBalanceOf(a: StaffAgentRow) {
+  if (a.agentBalance != null) return Number(a.agentBalance)
+  return Number(a.balance || 0)
 }
 function openFund(a: StaffAgentRow, mode: 'up' | 'down') {
   fundTarget.value = a

@@ -8,7 +8,7 @@
     <img class="lobby-deco-corner lobby-deco-corner-br" src="/images/corner-flourish.webp" alt="">
   </div>
 
-  <div class="page lobby-page staff-lobby-page">
+  <div class="page lobby-page staff-lobby-page has-page-title">
     <div class="page-body">
       <div class="staff-lobby-head">
         <button
@@ -17,12 +17,12 @@
           class="staff-lobby-back"
           @click="switchRoom"
         >‹ 换房间</button>
-        <h1 class="lobby-title">{{ headTitle }}</h1>
+        <h1 class="page-title">{{ headTitle }}</h1>
         <button type="button" class="staff-lobby-refresh" @click="onRefresh">
           {{ loading ? '…' : '刷新' }}
         </button>
       </div>
-      <div v-if="activeRoom && isLandlord" class="staff-lobby-room">
+      <div v-if="activeRoom && isMultiRoom" class="staff-lobby-room">
         进房码 {{ activeRoom.roomNo }} · {{ activeRoom.bookMode === 'CREDIT' ? 'B·信用' : 'A·现金' }}
       </div>
 
@@ -112,7 +112,7 @@ const rooms = ref<StaffRoom[]>([])
 const activeRoomId = ref('')
 const entering = ref('')
 
-const isLandlord = computed(() => staff.isBranch)
+const isMultiRoom = computed(() => staff.isBranch || staff.isGeneral)
 const queryRoomId = computed(() => String(route.query.roomId || '').trim())
 
 const marqueeItems = [
@@ -130,11 +130,11 @@ const enabledCodes = computed(() => {
   return (activeRoom.value.enabledGames || []).map((c) => String(c))
 })
 const headTitle = computed(() => {
-  if (isLandlord.value && activeRoom.value?.name) return activeRoom.value.name
+  if (isMultiRoom.value && activeRoom.value?.name) return activeRoom.value.name
   return '游 戏 大 厅'
 })
-/** 管理/房主从房间卡进入大厅后，始终可返回换房（含仅 1 间） */
-const showSwitchRoom = computed(() => isLandlord.value)
+/** 管理/总监/总代从房间卡进入大厅后，始终可返回换房（含仅 1 间） */
+const showSwitchRoom = computed(() => isMultiRoom.value)
 
 const showSlotsCover = ref(false)
 const pendingSlotsRoute = ref('')
@@ -152,7 +152,7 @@ async function loadRooms() {
     const open = (list || []).filter((r) => r.status === 'OPEN')
     rooms.value = open
 
-    if (isLandlord.value) {
+    if (isMultiRoom.value) {
       const wanted = queryRoomId.value
       if (!wanted) {
         await router.replace({ name: 'staff-game-rooms' })
@@ -185,7 +185,7 @@ async function onRefresh() {
 async function attachPlaySession() {
   if (!activeRoom.value) throw new Error('请选择房间')
   const card = await staffConsoleApi.playEnter(activeRoom.value.id)
-  staff.beginPlay()
+  staff.beginPlay(activeRoom.value.id)
   /* 网页版 staff.token 恒为空（凭证在 Cookie 里），只能判 profile */
   if (staff.profile) {
     user.attachStaffPlay(staff.profile, staff.token)
@@ -272,7 +272,7 @@ async function enterBcbmGame() {
 }
 
 watch(queryRoomId, () => {
-  if (isLandlord.value) void loadRooms()
+  if (isMultiRoom.value) void loadRooms()
 })
 
 onMounted(() => { void loadRooms() })
@@ -291,7 +291,7 @@ onMounted(() => { void loadRooms() })
   margin-bottom: 4px;
   min-height: 36px;
 }
-.staff-lobby-head .lobby-title {
+.staff-lobby-head .page-title {
   margin-bottom: 0;
   max-width: 56%;
   overflow: hidden;

@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { isGeneralSide, staffMatchesRoles } from '@gamebox/shared'
 import { useUserStore } from '@/stores/user'
 import { useRoomStore } from '@/stores/room'
 import { useStaffStore } from '@/stores/staff'
@@ -92,7 +93,7 @@ const router = createRouter({
       path: '/staff/players',
       name: 'staff-players',
       component: () => import('@/views/staff/StaffPlayersView.vue'),
-      meta: { public: true, staff: true, staffRoles: ['ADMIN', 'BRANCH', 'AGENT'] },
+      meta: { public: true, staff: true, staffRoles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT'] },
     },
     {
       path: '/staff/fund',
@@ -117,6 +118,16 @@ const router = createRouter({
       name: 'staff-rebate',
       component: () => import('@/views/staff/StaffRebateView.vue'),
       meta: { public: true, staff: true, staffRoles: ['AGENT', 'PROXY'] },
+    },
+    {
+      path: '/staff/live',
+      name: 'staff-live',
+      component: () => import('@/views/staff/StaffLiveDrawsView.vue'),
+      meta: {
+        public: true,
+        staff: true,
+        staffRoles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'],
+      },
     },
     {
       path: '/staff/pay-methods',
@@ -159,6 +170,12 @@ const router = createRouter({
       name: 'staff-report',
       component: () => import('@/views/staff/StaffReportView.vue'),
       meta: { public: true, staff: true, staffRoles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'] },
+    },
+    {
+      path: '/staff/cs-perf',
+      name: 'staff-cs-perf',
+      component: () => import('@/views/staff/StaffCsPerfView.vue'),
+      meta: { public: true, staff: true, staffRoles: ['AGENT', 'PROXY'] },
     },
     {
       path: '/staff/agents',
@@ -279,8 +296,23 @@ router.beforeEach(async (to) => {
       }
     }
     const allow = to.meta.staffRoles as string[] | undefined
-    if (allow?.length && staffStore.role && !allow.includes(staffStore.role)) {
+    const parentRole = staffStore.profile?.parentRole
+    if (allow?.length && !staffMatchesRoles(staffStore.role, allow, parentRole)) {
       return { name: staffStore.homeRouteName() }
+    }
+    /* 总代分身 role 仍是 PROXY，不要进房间代理专属页 */
+    if (isGeneralSide(staffStore.role, parentRole)) {
+      const blocked = new Set([
+        'staff-rebate',
+        'staff-fund',
+        'staff-cs',
+        'staff-join',
+        'staff-hang',
+        'staff-pay-methods',
+      ])
+      if (to.name && blocked.has(String(to.name))) {
+        return { name: staffStore.homeRouteName() }
+      }
     }
     return true
   }

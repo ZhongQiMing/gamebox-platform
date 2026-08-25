@@ -142,6 +142,14 @@ export const gamesApi = {
       roomNo,
     }),
 
-  betHistory: () =>
-    http.get<BetHistoryRowDTO[], BetHistoryRowDTO[]>('/bet/history'),
+  betHistory: (params?: { range?: string; from?: number; to?: number }) => {
+    const q = new URLSearchParams()
+    if (params?.range) q.set('range', params.range)
+    if (params?.from != null) q.set('from', String(params.from))
+    if (params?.to != null) q.set('to', String(params.to))
+    const qs = q.toString()
+    return http.get<BetHistoryRowDTO[], BetHistoryRowDTO[]>(
+      `/bet/history${qs ? `?${qs}` : ''}`,
+    )
+  },
 }

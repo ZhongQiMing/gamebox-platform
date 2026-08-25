@@ -18,7 +18,7 @@
         <input v-model="keyword" type="search" placeholder="搜进房码 / 房间名 / 代理" @keyup.enter="noop">
       </div>
 
-      <div class="rm-sum" v-if="!loading && rooms.length">
+      <div class="rm-sum" v-if="!loading && operatingRooms.length">
         <span>共 {{ filtered.length }} 间</span>
         <span>营业 {{ openCount }}</span>
       </div>
@@ -51,15 +51,13 @@
           </div>
           <div class="rm-main">
             <div class="rm-hd">
-              <div class="rm-title">
-                <span class="rm-agent-tag">本房代理</span>
-                <span class="rm-name">{{ displayName(r) }}</span>
-              </div>
+              <span class="rm-agent-tag">本房代理</span>
               <div class="rm-tags">
                 <span class="rm-chip">{{ r.bookMode === 'CREDIT' ? 'B·信用' : 'A·现金' }}</span>
                 <span class="rm-st" :class="r.status.toLowerCase()">{{ statusLabel(r.status) }}</span>
               </div>
             </div>
+            <div class="rm-name">{{ displayName(r) }}</div>
             <div class="rm-code">
               <span class="rm-code-k">进房码</span>
               <span class="rm-code-v">{{ r.roomNo }}</span>
@@ -88,7 +86,7 @@
           </template>
           <template v-else>
             <div class="rm-cell">
-              <span class="mk">上盘额度</span>
+              <span class="mk">可用额度</span>
               <span class="mv">{{ r.agent ? fmt(r.agent.pointsQuota) : '—' }}</span>
             </div>
             <div class="rm-cell">
@@ -115,6 +113,7 @@ import { staffConsoleApi, type StaffRoom } from '@/api/staffConsole'
 import StaffTabBar from '@/components/StaffTabBar.vue'
 import { useStaffStore } from '@/stores/staff'
 import { useToast } from '@/composables/useToast'
+import { formatMoney } from '@gamebox/shared'
 import { useBodyClass } from '@/composables/useBodyClass'
 import '@/assets/staff-console.css'
 
@@ -124,15 +123,16 @@ const router = useRouter()
 const staff = useStaffStore()
 const { toast } = useToast()
 
-const defaultIcon = '/images/rooms/default-room.png'
+const defaultIcon = '/images/rooms/default-room.webp'
 const loading = ref(false)
 const rooms = ref<StaffRoom[]>([])
 const keyword = ref('')
 
+const operatingRooms = computed(() => rooms.value.filter((r) => r.status !== 'CLOSED'))
 const filtered = computed(() => {
   const q = keyword.value.trim().toLowerCase()
-  if (!q) return rooms.value
-  return rooms.value.filter((r) => {
+  if (!q) return operatingRooms.value
+  return operatingRooms.value.filter((r) => {
     const agent = `${r.agent?.nickname || ''} ${r.agent?.username || ''}`.toLowerCase()
     return (
       r.name.toLowerCase().includes(q)
@@ -141,10 +141,10 @@ const filtered = computed(() => {
     )
   })
 })
-const openCount = computed(() => rooms.value.filter((r) => r.status === 'OPEN').length)
+const openCount = computed(() => operatingRooms.value.filter((r) => r.status === 'OPEN').length)
 
 function fmt(n?: number | null) {
-  return Number(n || 0).toLocaleString('zh-CN', { maximumFractionDigits: 0 })
+  return formatMoney(n ?? 0)
 }
 function statusLabel(s: string) {
   return ({ OPEN: '营业', CLOSED: '关闭', MAINTENANCE: '维护', FROZEN: '冻结' } as Record<string, string>)[s] || s
@@ -166,7 +166,7 @@ function noop() { /* enter 仅触发本地筛选 */ }
 async function load() {
   loading.value = true
   try {
-    rooms.value = await staffConsoleApi.rooms()
+    rooms.value = (await staffConsoleApi.rooms()).filter((r) => r.status !== 'CLOSED')
     // 代理/子账号：一代理一房，列表无意义，直接进详情
     if (staff.isAgentSide && rooms.value.length === 1) {
       await router.replace({
@@ -303,29 +303,21 @@ onMounted(() => { void load() })
   justify-content: space-between;
   gap: 8px;
 }
-.rm-title {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  overflow: hidden;
-}
 .rm-agent-tag {
   flex-shrink: 0;
   font-size: 12px;
   letter-spacing: 1px;
   color: rgba(244, 211, 107, 0.72);
 }
+/* 房名独占一行：原先与「本房代理」和两个角标挤在同一行，六个字就被截成「直属…」 */
 .rm-name {
   min-width: 0;
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 800;
-  letter-spacing: 1.5px;
+  letter-spacing: 1px;
   color: #f5d36b;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
 }
 .rm-tags {
   display: flex;
@@ -384,32 +376,34 @@ onMounted(() => { void load() })
   gap: 8px;
   margin-bottom: 10px;
 }
+/* 标签在上、数字在下：原先同一行左右分列，标签先占掉一半宽，
+   六位数就已经放不下被截成「490,0…」。改成上下排，数字独占整格宽度。 */
 .rm-cell {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
+  flex-direction: column;
+  gap: 4px;
   min-height: 40px;
-  padding: 10px 12px;
+  padding: 8px 10px;
   border-radius: 10px;
   background: rgba(0, 0, 0, 0.26);
   border: 1px solid rgba(212, 175, 55, 0.14);
 }
 .rm-cell .mk {
-  flex-shrink: 0;
-  font-size: 12px;
+  font-size: 11px;
   letter-spacing: 1px;
   color: var(--text-muted);
 }
+/*
+ * --money-half 按「整页宽度放两个数字」算，没扣掉卡片自己的内边距：
+ * 页面 16 + 卡片 14 + 格子 10（左右各一份）加列间隙共吃掉约 68px，
+ * 每个数字实际只剩 (100vw − 68) / 2，22px 的字会顶出卡片右边。
+ */
 .rm-cell .mv {
-  min-width: 0;
-  text-align: right;
-  font-size: 15px;
+  font-size: var(--money-third);
   font-weight: 800;
+  line-height: 1.1;
   color: #fff4c2;
   font-variant-numeric: tabular-nums;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 

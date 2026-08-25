@@ -35,7 +35,7 @@
 
       <div :class="['settings-card', 'wallet-card', hidden ? 'is-hidden' : '']">
         <div class="wc-title-row">
-          <span class="wc-title">{{ isCs ? '我 的 口 袋' : (isLandlord ? '平 台 账 本' : '额 度 中 心') }}</span>
+          <span class="wc-title">{{ isCs ? '我 的 口 袋' : (isPlatform ? '平 台 账 本' : '额 度 中 心') }}</span>
           <div class="wc-actions">
             <button class="wc-eye" type="button" aria-label="刷新" @click="load">
               <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -60,8 +60,8 @@
           </div>
         </div>
         <div class="wc-balance-row">
-          <span class="wc-balance" :class="isLandlord ? pnlClass(mainQuota) : ''">
-            {{ hidden ? '*****' : (isLandlord ? fmtSigned(mainQuota) : fmt(mainQuota)) }}
+          <span class="wc-balance" :class="isPlatform ? pnlClass(mainQuota) : ''">
+            {{ hidden ? '*****' : (isPlatform ? fmtSigned(mainQuota) : fmt(mainQuota)) }}
           </span>
           <span class="wc-currency">{{ mainQuotaLabel }}</span>
         </div>
@@ -74,6 +74,9 @@
       </div>
 
       <template v-if="isCs">
+        <div v-if="csMe?.slaLocked" class="settings-card cs-lock-card">
+          账号已锁定：{{ csMe.slaLockReason || '漏接玩家消息' }}。请联系代理报备后解锁。
+        </div>
         <div class="settings-card cs-duty-card">
           <div class="cs-duty-row">
             <div>
@@ -87,6 +90,9 @@
               :disabled="csStatusBusy"
               @click="toggleCsDuty"
             >{{ csIdle ? '接单' : '休息' }}</button>
+          </div>
+          <div class="cs-duty-time">
+            今日接单 {{ hm(csMe?.idleSecToday) }} · 休息 {{ hm(csMe?.restSecToday) }}
           </div>
         </div>
         <div class="settings-card cs-menu-card">
@@ -103,7 +109,7 @@
       </template>
 
       <!-- 快捷经营：仅主代理（子账号查账型不碰钱、不审进房） -->
-      <div v-if="isAgent" class="settings-card grid-card grid-4col">
+      <div v-if="isAgent" class="settings-card grid-card grid-3x3">
         <button type="button" class="gc-item" @click="go('staff-join')">
           <span class="gc-icon gc-icon--join">
             <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -122,7 +128,7 @@
               <path d="M5.5 19c0-3.2 2.8-5.5 6.5-5.5s6.5 2.3 6.5 5.5"/>
             </svg>
           </span>
-          <span class="gc-text">玩家上下分</span>
+          <span class="gc-text">上下分</span>
         </button>
         <button type="button" class="gc-item" @click="go('staff-rebate')">
           <span class="gc-icon gc-icon--rebate">
@@ -144,10 +150,25 @@
           </span>
           <span class="gc-text">收款方式</span>
         </button>
+        <button type="button" class="gc-item" @click="go('staff-cs-perf')">
+          <span class="gc-icon gc-icon--agent">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 19V9"/>
+              <path d="M10 19V5"/>
+              <path d="M16 19v-7"/>
+              <path d="M3 21h18"/>
+            </svg>
+          </span>
+          <span class="gc-text">客服绩效</span>
+        </button>
       </div>
 
-      <!-- 管理/房主：9 格（软控/对账/游戏上下架仍用电脑后台） -->
-      <div v-if="isLandlord" class="settings-card grid-card grid-3col">
+      <!-- 管理 / 总监 / 总代：急办入口（风控仅平台侧；软控、对账、游戏上下架仍用电脑后台） -->
+      <div
+        v-if="isLandlord"
+        class="settings-card grid-card"
+        :class="isPlatform ? 'grid-4col' : 'grid-3x3'"
+      >
         <button type="button" class="gc-item" @click="go('staff-rooms')">
           <span class="gc-icon gc-icon--intro">
             <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -176,7 +197,7 @@
           </span>
           <span class="gc-text">玩家查询</span>
         </button>
-        <button type="button" class="gc-item" @click="go('staff-risk')">
+        <button type="button" class="gc-item" @click="go('staff-risk')" v-if="isPlatform">
           <span class="gc-icon gc-icon--risk">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M12 3.8 20.5 19H3.5L12 3.8z"/>
@@ -218,6 +239,15 @@
           </span>
           <span class="gc-text">上盘查询</span>
         </button>
+        <button type="button" class="gc-item" @click="go('staff-live')">
+          <span class="gc-icon gc-icon--bets">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="8"/>
+              <path d="M12 7.5V12l3 1.8"/>
+            </svg>
+          </span>
+          <span class="gc-text">实时开奖</span>
+        </button>
         <button type="button" class="gc-item" @click="go('staff-account')">
           <span class="gc-icon gc-icon--account">
             <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -239,7 +269,7 @@
       </div>
 
       <!-- 报表：主代理 / 子账号 -->
-      <div v-if="isAgentSide" class="settings-card grid-card grid-4col">
+      <div v-if="isAgentSide" class="settings-card grid-card grid-3x3">
         <button type="button" class="gc-item" @click="goReport('guess')">
           <span class="gc-icon gc-icon--bets">
             <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -301,6 +331,15 @@
           </span>
           <span class="gc-text">上盘查询</span>
         </button>
+        <button type="button" class="gc-item" @click="go('staff-live')">
+          <span class="gc-icon gc-icon--bets">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="8"/>
+              <path d="M12 7.5V12l3 1.8"/>
+            </svg>
+          </span>
+          <span class="gc-text">实时开奖</span>
+        </button>
         <button
           v-if="isAgent"
           type="button"
@@ -342,7 +381,7 @@
       </div>
 
       <div class="settings-card logout-card">
-        <button type="button" class="logout-btn" @click="showLogoutModal = true">退 出 登 录</button>
+        <button type="button" class="logout-btn" @click="askLogout">退 出 登 录</button>
       </div>
 
       <div class="lobby-spacer"></div>
@@ -352,7 +391,7 @@
   <AppModal
     :visible="showLogoutModal"
     title="退出登录"
-    message="确定要退出当前账号吗？"
+    :message="logoutMessage"
     ok-text="确定退出"
     cancel-text="再想想"
     :danger="true"
@@ -374,6 +413,7 @@ import { useRoomStore } from '@/stores/room'
 import { staffConsoleApi, type StaffCsMe, type StaffWalletMe } from '@/api/staffConsole'
 import { useToast } from '@/composables/useToast'
 import { useBodyClass } from '@/composables/useBodyClass'
+import { formatMoney, formatSignedMoney, staffRoleLabel } from '@gamebox/shared'
 import '@/assets/settings.css'
 import '@/assets/staff-console.css'
 
@@ -400,21 +440,30 @@ const todayHousePnl = ref(0)
 const todayUp = ref(0)
 const todayDown = ref(0)
 const csStatusBusy = ref(false)
+const pendingFundOnLogout = ref(0)
+
+const logoutMessage = computed(() => {
+  if (pendingFundOnLogout.value > 0) {
+    return `你还有 ${pendingFundOnLogout.value} 笔上下分没审。退出后计时不会停，超时仍会通知代理。确定退出吗？`
+  }
+  return '确定要退出当前账号吗？'
+})
+
+/** 秒 → 「2时13分」 */
+function hm(sec?: number | null) {
+  const s = Math.max(0, Math.floor(Number(sec) || 0))
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  return h > 0 ? `${h}时${m}分` : `${m}分`
+}
 
 const isAgent = computed(() => staff.role === 'AGENT')
 const isAgentSide = computed(() => staff.isAgentSide)
+const isPlatform = computed(() => staff.isBranch)
 const isLandlord = computed(() => staff.isBranch || staff.isGeneral)
 const isCs = computed(() => staff.isCs)
 const csIdle = computed(() => (csMe.value?.workStatus || 'REST') === 'IDLE')
-const roleLabel = computed(() => {
-  if (staff.role === 'ADMIN') return '管理'
-  if (staff.role === 'BRANCH') return '总监'
-  if (staff.role === 'GENERAL') return '总代'
-  if (staff.role === 'AGENT') return '代理'
-  if (staff.role === 'PROXY') return '子账号'
-  if (staff.role === 'CS') return '客服'
-  return staff.role || ''
-})
+const roleLabel = computed(() => staffRoleLabel(staff.role, staff.parentRole))
 const isCreditBook = computed(() => wallet.value?.bookMode === 'CREDIT')
 const avatarSrc = computed(() => {
   if (isAgent.value) return roomIcon.value || '/images/rooms/default-room.webp'
@@ -423,20 +472,21 @@ const avatarSrc = computed(() => {
 
 const mainQuota = computed(() => {
   if (isCs.value) return Number(csMe.value?.balance ?? wallet.value?.balance ?? 0)
-  if (isLandlord.value) return Number(todayHousePnl.value)
+  if (isPlatform.value) return Number(todayHousePnl.value)
   return Number(wallet.value?.pointsQuota || 0)
 })
 const mainQuotaLabel = computed(() => {
   if (isCs.value) return '可用额度'
-  if (isLandlord.value) return '今日庄家盈亏'
-  return isCreditBook.value ? '剩余信用' : '上盘额度'
+  if (isPlatform.value) return '今日庄家盈亏'
+  /* 房主与代理同一个叫法：现金＝可用额度，信用＝剩余信用，都别跟「上盘可飞」混 */
+  return isCreditBook.value ? '剩余信用' : '可用额度'
 })
 
 type QuotaStat = { k: string; v: number; raw?: string }
 
 const quotaStats = computed((): QuotaStat[] => {
   if (isCs.value) return []
-  if (isLandlord.value) {
+  if (isPlatform.value) {
     return [
       { k: '房间数', v: roomCount.value, raw: String(roomCount.value) },
       { k: '今日上分', v: Number(todayUp.value) },
@@ -444,29 +494,32 @@ const quotaStats = computed((): QuotaStat[] => {
     ]
   }
   if (isCreditBook.value) {
+    const merged =
+      wallet.value?.agentBalance
+      ?? Number(wallet.value?.balance || 0)
     return [
-      { k: '佣金账户', v: Number(wallet.value?.balance || 0) },
+      { k: '代理余额', v: Number(merged) },
       { k: '玩家持分', v: Number(wallet.value?.playerPointsTotal || 0) },
-      { k: '合同额度', v: Number(wallet.value?.creditLimit || 0) },
+      { k: '上盘可飞', v: Number(wallet.value?.flyCover || 0) },
     ]
   }
+  /*
+   * 总代这格不是 0：服务端给他返的 flyCover 是 generalTreeFlyAvailable，
+   * 即整棵树（他自己 + 名下代理盘分 + 玩家持分）还能让平台当庄多少，
+   * 与代理那格的单支口径不同但同样是真实值，电脑后台也照样显示。
+   */
   return [
-    { k: '代理余额', v: Number(wallet.value?.balance || 0) },
+    { k: isLandlord.value ? '账户余额' : '代理余额', v: Number(wallet.value?.balance || 0) },
     { k: '玩家持分', v: Number(wallet.value?.playerPointsTotal || 0) },
     { k: '上盘可飞', v: Number(wallet.value?.flyCover || 0) },
   ]
 })
 
 function fmt(n?: number | null) {
-  if (n == null || Number.isNaN(Number(n))) return '0'
-  return Number(n).toLocaleString('zh-CN', { maximumFractionDigits: 0 })
+  return formatMoney(n ?? 0)
 }
 function fmtSigned(n?: number | null) {
-  const v = Number(n || 0)
-  const s = fmt(Math.abs(v))
-  if (v > 0) return `+${s}`
-  if (v < 0) return `-${s}`
-  return s
+  return formatSignedMoney(n ?? 0)
 }
 function pnlClass(n?: number | null) {
   const v = Number(n || 0)
@@ -513,6 +566,23 @@ async function goRooms() {
   }
   await router.push({ name: 'staff-rooms' })
 }
+/**
+ * 退出前先数一遍手头还有多少笔没审。
+ * 计时不会因为退出而停——到点照样提醒代理，所以这里只是提醒，不是拦截。
+ */
+async function askLogout() {
+  pendingFundOnLogout.value = 0
+  if (isCs.value || isAgent.value) {
+    try {
+      const res = await staffConsoleApi.fundPending(1)
+      pendingFundOnLogout.value = Number(res?.total ?? res?.list?.length ?? 0)
+    } catch {
+      /* 数不出来就按 0 提示，别挡住退出 */
+    }
+  }
+  showLogoutModal.value = true
+}
+
 async function confirmLogout() {
   showLogoutModal.value = false
   await Promise.all([staff.endPlay(), user.clearStaffPlay()])
@@ -555,7 +625,7 @@ async function load() {
     } else {
       pendingJoin.value = 0
     }
-    if (isLandlord.value) {
+    if (isPlatform.value) {
       tasks.push(
         staffConsoleApi.rooms()
           .then((list) => { roomCount.value = list?.length || 0 })
@@ -574,6 +644,12 @@ async function load() {
         staffConsoleApi.riskSummary()
           .then((s) => { riskUnhandled.value = s.unhandled || 0 })
           .catch(() => { riskUnhandled.value = 0 }),
+      )
+    } else if (isLandlord.value) {
+      tasks.push(
+        staffConsoleApi.rooms()
+          .then((list) => { roomCount.value = list?.length || 0 })
+          .catch(() => { roomCount.value = 0 }),
       )
     }
     await Promise.all(tasks)
@@ -641,6 +717,21 @@ onMounted(() => { void load() })
   font-size: 14px;
   letter-spacing: 1px;
   color: rgba(255, 236, 179, 0.92);
+}
+.cs-duty-time {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed rgba(212, 175, 55, 0.18);
+  font-size: 12px;
+  color: rgba(244, 211, 107, 0.55);
+}
+.cs-lock-card {
+  padding: 12px 14px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #fecaca;
+  background: rgba(127, 29, 29, 0.35);
+  border: 1px solid rgba(252, 165, 165, 0.4);
 }
 .cs-duty-sub {
   margin-top: 4px;

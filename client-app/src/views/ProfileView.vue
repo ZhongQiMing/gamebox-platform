@@ -20,7 +20,7 @@
       <div class="user-card user-bar" title="个人资料">
         <button type="button" class="avatar-luxe-wrap avatar-luxe-wrap--btn" aria-label="更换头像" @click="pickAvatar">
           <img class="avatar-img" :src="avatarSrc" alt="">
-          <img class="avatar-frame" src="/images/avatar-ring.png" alt="">
+          <img class="avatar-frame" src="/images/avatar-ring.webp" alt="">
         </button>
         <div class="user-info">
           <div class="user-name">{{ userStore.profile?.nickname ?? '———' }}</div>
@@ -223,6 +223,7 @@ import { rangeBounds } from '@/composables/timeRange'
 import { userApi } from '@/api/user'
 import { rebateApi } from '@/api/rebate'
 import http from '@/api/http'
+import { formatMoney, formatSignedMoney } from '@gamebox/shared'
 import TabBar from '@/components/TabBar.vue'
 import AppModal from '@/components/AppModal.vue'
 import '@/assets/settings.css'
@@ -288,18 +289,9 @@ function toggleHidden() {
 
 const stats = reactive({ turnover: 0, rebate: 0, pnl: 0 })
 
-const fmtNum = (n: number) => Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-const fmtInt = (n: number) => Number(n || 0).toLocaleString('en-US', {
-  minimumFractionDigits: 0,
-  maximumFractionDigits: 2,
-})
-const fmtPnl = (n: number) => {
-  const v = Number(n) || 0
-  const body = Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 })
-  if (v > 0) return `+${body}`
-  if (v < 0) return `-${body}`
-  return body
-}
+const fmtNum = (n: number) => formatMoney(n)
+const fmtInt = (n: number) => formatMoney(n)
+const fmtPnl = (n: number) => formatSignedMoney(n)
 
 async function loadWalletStats() {
   const [from, to] = rangeBounds('today')

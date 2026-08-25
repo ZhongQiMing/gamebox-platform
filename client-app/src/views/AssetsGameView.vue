@@ -29,8 +29,10 @@ import { gamesApi } from '@/api/games'
 import { lotteryApi } from '@/api/lottery'
 import { roomsApi } from '@/api/rooms'
 import { rechargeApi } from '@/api/recharge'
+import { rebateApi } from '@/api/rebate'
 import http from '@/api/http'
 import { newFundOrderNo } from '@/utils/fundOrderNo'
+import { fundRequestIntentKey, type FundRequestIntent } from '@/utils/fundRequestIntent'
 import { useToast } from '@/composables/useToast'
 import {
   gameAssetUrl,
@@ -38,19 +40,20 @@ import {
   isTrustedGameMessage,
 } from '@/utils/gameOrigin'
 import { frameActivityMessage } from '@/utils/frameActivity'
+import { leaveGameToLobby } from '@/composables/lobbyAfterGame'
 
 const ASSET_GAMES: Record<string, string> = {
-  bjsc: '/games-assets/bjsc/index.html?v=175',
-  ssc: '/games-assets/ssc/index.html?v=195',
-  ffc: '/games-assets/ffc/index.html?v=183',
-  'speed-racing': '/games-assets/speed-racing/index.html?v=242',
-  'speed-boat': '/games-assets/speed-boat/index.html?v=167',
-  kuai3: '/games-assets/kuai3/index.html?v=167',
-  lhc: '/games-assets/lhc/index.html?v=200',
-  zhajinhua: '/games-assets/zhajinhua/index.html?v=362',
-  douniu: '/games-assets/douniu/index.html?v=171',
-  baccarat: '/games-assets/baccarat/index.html?v=62',
-  longhu: '/games-assets/longhu/index.html?v=60',
+  bjsc: '/games-assets/bjsc/index.html?v=179',
+  ssc: '/games-assets/ssc/index.html?v=201',
+  ffc: '/games-assets/ffc/index.html?v=187',
+  'speed-racing': '/games-assets/speed-racing/index.html?v=246',
+  'speed-boat': '/games-assets/speed-boat/index.html?v=171',
+  kuai3: '/games-assets/kuai3/index.html?v=171',
+  lhc: '/games-assets/lhc/index.html?v=204',
+  zhajinhua: '/games-assets/zhajinhua/index.html?v=378',
+  douniu: '/games-assets/douniu/index.html?v=186',
+  baccarat: '/games-assets/baccarat/index.html?v=76',
+  longhu: '/games-assets/longhu/index.html?v=73',
 }
 
 /** H5 gameCode → 服务端 lottery/table code */
@@ -244,12 +247,21 @@ async function handleRoomChat(
 
 async function handleLotterySnapshot(requestId: string, code: string) {
   try {
-    const { current, history } = await lotteryApi.snapshot(code, 20)
+    /*
+     * 校时样本在这里取：真正发 HTTP 的是宿主，量出的往返不含 postMessage 开销，
+     * 而宿主与游戏 iframe 共用同一个设备时钟，游戏侧可直接拿这组数据算偏移。
+     */
+    const sentAt = Date.now()
+    const { current, history, now } = await lotteryApi.snapshot(code, 20)
+    const recvAt = Date.now()
     postToFrame({
       type: 'assets-game-lottery-snapshot-ok',
       requestId,
       current,
       history,
+      serverNow: now,
+      sentAt,
+      recvAt,
     })
   } catch (e) {
     postToFrame({
@@ -274,6 +286,25 @@ async function handleLotteryPayTable(requestId: string, code: string) {
       type: 'assets-game-lottery-paytable-err',
       requestId,
       message: e instanceof Error ? e.message : '拉取赔率失败',
+    })
+  }
+}
+
+/** 游戏内「回水」展示用：后台改了比例，游戏里的点数要跟着变 */
+async function handleRebateRate(requestId: string, code: string) {
+  try {
+    const res = await rebateApi.rate(code || undefined)
+    postToFrame({
+      type: 'assets-game-rebate-rate-ok',
+      requestId,
+      gameCode: code,
+      rate: Number(res?.rate) || 0,
+    })
+  } catch (e) {
+    postToFrame({
+      type: 'assets-game-rebate-rate-err',
+      requestId,
+      message: e instanceof Error ? e.message : '拉取回水比例失败',
     })
   }
 }
@@ -401,6 +432,41 @@ async function handleTableBet(
   }
 }
 
+async function handleTableCancelBets(requestId: string, code: string) {
+  try {
+    const serverCode = SERVER_GAME_CODE[code] || code
+    type CancelRes = {
+      balance: number
+      refunded: number
+      roundNo: string
+      phase: string
+      secondsLeft: number
+      bySide: Record<string, number>
+    }
+    const res = await http.post<CancelRes, CancelRes>(
+      `/table/${encodeURIComponent(serverCode)}/cancel-bets`,
+      {},
+    )
+    walletStore.balance = Math.round((Number(res.balance) || 0) * 100) / 100
+    postToFrame({
+      type: 'assets-game-table-cancel-ok',
+      requestId,
+      balance: res.balance,
+      refunded: res.refunded,
+      roundNo: res.roundNo,
+      phase: res.phase,
+      secondsLeft: res.secondsLeft,
+      bySide: res.bySide,
+    })
+  } catch (e) {
+    postToFrame({
+      type: 'assets-game-table-cancel-err',
+      requestId,
+      message: e instanceof Error ? e.message : '撤销失败',
+    })
+  }
+}
+
 async function handleTableSnapshot(requestId: string, code: string) {
   try {
     const serverCode = SERVER_GAME_CODE[code] || code
@@ -483,14 +549,43 @@ async function handleTableVerify(requestId: string, code: string, roundNo: strin
   }
 }
 
+/**
+ * 聊天室里发起的上下分复用同一个幂等号，规则与 RechargeView 一致：
+ * 只有「类型+金额+渠道+房间」完全相同才算同一笔。
+ * 每次都新发号的话，玩家没等到回包又发一遍就变成两张单。
+ * 落单成功即弃号，下一笔必须换新号。
+ */
+const fundOrderCache = new Map<string, string>()
+
+function fundOrderNoFor(intent: FundRequestIntent): string {
+  const key = fundRequestIntentKey(intent)
+  const cached = fundOrderCache.get(key)
+  if (cached) return cached
+  const orderNo = newFundOrderNo(intent.type)
+  fundOrderCache.set(key, orderNo)
+  return orderNo
+}
+
+/** 房间号必须是 6 位；缺号时服务端会回退到「最近一间已通过的房」，多房账号会记错房 */
+function requireGameRoomNo(): string | null {
+  const roomNo = String(roomStore.roomNo || '').trim()
+  return /^\d{6}$/.test(roomNo) ? roomNo : null
+}
+
 async function handleTopup(requestId: string, amount: number, channel: string) {
+  const roomNo = requireGameRoomNo()
+  if (!roomNo) {
+    postToFrame({
+      type: 'assets-game-topup-err',
+      requestId,
+      message: '请先进入运营房间后再上分',
+    })
+    return
+  }
+  const intent: FundRequestIntent = { type: 'up', amount, channel, roomNo }
   try {
-    const order = await rechargeApi.apply(
-      amount,
-      channel,
-      roomStore.roomNo || undefined,
-      newFundOrderNo('up'),
-    )
+    const order = await rechargeApi.apply(amount, channel, roomNo, fundOrderNoFor(intent))
+    fundOrderCache.delete(fundRequestIntentKey(intent))
     postToFrame({
       type: 'assets-game-topup-ok',
       requestId,
@@ -507,12 +602,19 @@ async function handleTopup(requestId: string, amount: number, channel: string) {
 }
 
 async function handleWithdraw(requestId: string, amount: number) {
+  const roomNo = requireGameRoomNo()
+  if (!roomNo) {
+    postToFrame({
+      type: 'assets-game-withdraw-err',
+      requestId,
+      message: '请先进入运营房间后再下分',
+    })
+    return
+  }
+  const intent: FundRequestIntent = { type: 'down', amount, channel: 'default', roomNo }
   try {
-    const order = await rechargeApi.withdraw(
-      amount,
-      roomStore.roomNo || undefined,
-      newFundOrderNo('down'),
-    )
+    const order = await rechargeApi.withdraw(amount, roomNo, fundOrderNoFor(intent))
+    fundOrderCache.delete(fundRequestIntentKey(intent))
     await walletStore.fetchBalance()
     postToFrame({
       type: 'assets-game-withdraw-ok',
@@ -538,7 +640,7 @@ function navigateFromGame(rawPath: string) {
   const isSettings = pathname === '/settings' || pathname === 'settings'
 
   if (isLobby) {
-    router.replace({ name: 'lobby' })
+    void leaveGameToLobby(router)
     return
   }
   if (isSettings) {
@@ -609,6 +711,14 @@ async function onGameMessage(ev: MessageEvent) {
     return
   }
 
+  if (data.type === 'assets-game-rebate-rate') {
+    await handleRebateRate(
+      String(data.requestId || ''),
+      String(data.gameCode || gameCode.value),
+    )
+    return
+  }
+
   if (data.type === 'assets-game-lottery-mybets') {
     await handleLotteryMyBets(
       String(data.requestId || ''),
@@ -656,6 +766,14 @@ async function onGameMessage(ev: MessageEvent) {
 
   if (data.type === 'assets-game-table-snapshot') {
     await handleTableSnapshot(
+      String(data.requestId || ''),
+      String(data.gameCode || gameCode.value),
+    )
+    return
+  }
+
+  if (data.type === 'assets-game-table-cancel') {
+    await handleTableCancelBets(
       String(data.requestId || ''),
       String(data.gameCode || gameCode.value),
     )
@@ -720,7 +838,7 @@ async function onGameMessage(ev: MessageEvent) {
 
 onMounted(async () => {
   if (!ASSET_GAMES[gameCode.value]) {
-    router.replace('/lobby')
+    await leaveGameToLobby(router)
     return
   }
   /* 先挂 iframe，避免刷新开奖中先卡「加载中」；状态校验并行 */
@@ -734,12 +852,12 @@ onMounted(async () => {
     const entry = list.find((g) => g.code === serverCode)
     if (!entry || entry.status !== 'ONLINE') {
       toast(entry?.status === 'MAINTENANCE' ? '该游戏维护中，暂不可进入' : '该游戏已下架')
-      router.replace('/lobby')
+      await leaveGameToLobby(router)
       return
     }
   } catch {
     toast('无法确认游戏状态，请稍后重试')
-    router.replace('/lobby')
+    await leaveGameToLobby(router)
     return
   }
   try {

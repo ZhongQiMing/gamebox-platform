@@ -1,3 +1,7 @@
+/**
+ * 时间筛选：全站唯一一份定义，玩家端与运营端共用。
+ * 键名必须与服务端 shanghai-range.ts 一致，改一边就要改另一边。
+ */
 export const TIME_RANGES = [
   { key: 'today', label: '今 日' },
   { key: 'yesterday', label: '昨 日' },
@@ -45,6 +49,12 @@ export function rangeBounds(key: TimeRangeKey, nowMs = Date.now()): [number, num
     case 'thismonth':
       return [month0, nowMs + DAY_MS]
   }
+}
+
+/** 给只收 from/to 的接口用（如客服流水审计） */
+export function rangeToIso(key: TimeRangeKey, nowMs = Date.now()) {
+  const [from, to] = rangeBounds(key, nowMs)
+  return { from: new Date(from).toISOString(), to: new Date(to).toISOString() }
 }
 
 /** 选中时段对应的日期文案：单日只显示一天，跨日显示起止 */

@@ -8,10 +8,7 @@
 
   <div class="page staff-console-page">
     <div class="app-bar">
-      <div class="title">
-        <span class="brand-dot"></span>
-        <span class="brand-wordmark">游戏大厅</span>
-      </div>
+      <div class="title">游戏大厅</div>
       <div class="right sc-bar-act" @click="load">{{ loading ? '…' : '刷新' }}</div>
     </div>
 
@@ -87,7 +84,7 @@
           </template>
           <template v-else>
             <div class="gr-cell">
-              <span class="mk">上盘额度</span>
+              <span class="mk">可用额度</span>
               <span class="mv">{{ r.agent ? fmt(r.agent.pointsQuota) : '—' }}</span>
             </div>
             <div class="gr-cell">
@@ -108,6 +105,7 @@ import { useRouter } from 'vue-router'
 import { staffConsoleApi, type StaffRoom } from '@/api/staffConsole'
 import StaffTabBar from '@/components/StaffTabBar.vue'
 import { useToast } from '@/composables/useToast'
+import { formatMoney } from '@gamebox/shared'
 import { useBodyClass } from '@/composables/useBodyClass'
 import '@/assets/staff-console.css'
 
@@ -116,13 +114,13 @@ useBodyClass('deco-bg')
 const router = useRouter()
 const { toast } = useToast()
 
-const defaultIcon = '/images/rooms/default-room.png'
+const defaultIcon = '/images/rooms/default-room.webp'
 const loading = ref(false)
 const rooms = ref<StaffRoom[]>([])
 const openCount = computed(() => rooms.value.filter((r) => r.status === 'OPEN').length)
 
 function fmt(n?: number | null) {
-  return Number(n || 0).toLocaleString('zh-CN', { maximumFractionDigits: 0 })
+  return formatMoney(n ?? 0)
 }
 function statusLabel(s: string) {
   return ({ OPEN: '营业', CLOSED: '关闭', MAINTENANCE: '维护', FROZEN: '冻结' } as Record<string, string>)[s] || s
@@ -401,34 +399,33 @@ onMounted(() => { void load() })
   grid-template-columns: 1fr 1fr;
   gap: 8px;
 }
+/* 标签在上、数字独占一行：横排时六位数在窄屏放不下，会被截成省略号 */
 .gr-cell {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
+  flex-direction: column;
+  gap: 4px;
   min-height: 40px;
-  padding: 10px 12px;
+  padding: 8px 10px;
   border-radius: 10px;
   background: rgba(0, 0, 0, 0.26);
   border: 1px solid rgba(212, 175, 55, 0.14);
 }
 .gr-cell .mk {
-  flex-shrink: 0;
-  font-size: 12px;
+  font-size: 11px;
   letter-spacing: 1px;
   color: var(--text-muted);
-  line-height: 1.2;
 }
+/*
+ * 用 --money-third 而不是 --money-half：--money-half 按「整页宽度放两个数字」算，
+ * 没扣掉卡片自己的内边距。这里页面 16 + 卡片 14 + 格子 10（左右各一份）再加列间隙，
+ * 一共吃掉约 68px，每个数字实际只剩 (100vw − 68) / 2，22px 的字放不下会顶出卡片。
+ */
 .gr-cell .mv {
-  min-width: 0;
-  text-align: right;
-  font-size: 15px;
+  font-size: var(--money-third);
   font-weight: 800;
+  line-height: 1.1;
   color: #fff4c2;
   font-variant-numeric: tabular-nums;
-  line-height: 1.2;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 </style>

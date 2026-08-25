@@ -7,7 +7,7 @@
     <img class="cd cd-br" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
   </div>
 
-  <div class="page welcome-page">
+  <div :ref="pageEl" class="page welcome-page">
     <div class="brand-bar">
       <div class="brand">
         <span class="back-btn" @click="goBack" aria-label="返回">‹</span>
@@ -24,7 +24,7 @@
         <span class="ic">♟</span><span class="lb">返回玩家登录</span><span class="arrow">›</span>
       </div>
       <div v-if="kind === 'branch'" class="menu-item" @click="goOtherLogin">
-        <span class="ic">⚜</span><span class="lb">代理 / 总代 / 客服</span><span class="arrow">›</span>
+        <span class="ic">⚜</span><span class="lb">代理登录</span><span class="arrow">›</span>
       </div>
       <div v-else class="menu-item" @click="goOtherLogin">
         <span class="ic">♛</span><span class="lb">总监登录</span><span class="arrow">›</span>
@@ -44,7 +44,7 @@
           <span>金</span><span>御</span><span>汇</span>
         </h1>
         <div class="luxe-divider hero-divider"><span></span>◆<span></span></div>
-        <div class="hero-en">{{ kind === 'branch' ? '总 监 登 录' : '代 理 · 总 代 · 客 服' }}</div>
+        <div class="hero-en">G O L D &nbsp;·&nbsp; H U B</div>
       </div>
 
       <form class="welcome-form" @submit.prevent>
@@ -54,7 +54,7 @@
             v-model="account"
             type="text"
             class="field"
-            :placeholder="kind === 'branch' ? '总监 / 管理账号' : '代理 / 总代 / 子账号 / 客服'"
+            placeholder="账号"
             maxlength="20"
             autocomplete="username"
           >
@@ -103,10 +103,12 @@ import { useStaffStore, type StaffLoginKind } from '@/stores/staff'
 import { useUserStore } from '@/stores/user'
 import { useToast } from '@/composables/useToast'
 import { useBodyClass } from '@/composables/useBodyClass'
+import { useScreenFit } from '@/composables/useScreenFit'
 import { acceptLoginRole } from '@/utils/loginRoleGuard'
 import '@/assets/welcome.css'
 
 useBodyClass('deco-bg', 'welcome-login')
+const pageEl = useScreenFit()
 
 const route = useRoute()
 const router = useRouter()

@@ -35,8 +35,21 @@ const config: CapacitorConfig = {
     contentInset: 'never',
   },
   plugins: {
+    /*
+     * 安卓 12 起，系统开屏被强制成「纯色底 + 中间一个图标」，
+     * 主题里的整屏 splash.png 直接被无视（见 res/values/styles.xml 注释）。
+     * 所以品牌开屏图交给这个插件在 App 窗口里画，安卓 12 之前之后表现一致。
+     * 系统那一瞬的图标仍要配（brand_dark + splash_icon），否则中间会闪一下白。
+     */
     SplashScreen: {
       launchShowDuration: 0,
+      launchAutoHide: true,
+      backgroundColor: '#0d0a08',
+      androidSplashResourceName: 'splash',
+      androidScaleType: 'CENTER_CROP',
+      showSpinner: false,
+      splashFullScreen: true,
+      splashImmersive: false,
     },
   },
 }

@@ -47,7 +47,7 @@
   display: grid;
   grid-template-columns: 1fr 2fr;
   align-items: center;
-  background-image: url(/images/card-frame.png);
+  background-image: url(/images/card-frame.webp);
   background-size: 100% 100%;
   background-repeat: no-repeat;
   background-color: transparent;
@@ -271,7 +271,9 @@
 }
 .wc-balance {
   font-family: ui-monospace, 'JetBrains Mono', Consolas, monospace;
-  font-size: 32px;
+  font-size: var(--money-hero);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
   font-weight: 700;
   letter-spacing: 1px;
   line-height: 1;
@@ -307,16 +309,16 @@
   letter-spacing: 1px;
   color: var(--text-muted);
 }
+/* 原来允许 break-all 换行，八位数会被拦腰折成两行；改成整体缩到放得下 */
 .wc-stat .ws-value {
   font-family: ui-monospace, Consolas, monospace;
-  font-size: 14px;
+  font-size: var(--money-third);
   font-weight: 700;
   color: var(--gold-bright);
-  letter-spacing: 0.3px;
+  letter-spacing: 0;
   text-align: center;
-  white-space: normal;
-  overflow-wrap: anywhere;
-  word-break: break-all;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
   max-width: 100%;
 }
 .wc-stat .ws-value.is-pos { color: #7dffb0; }
@@ -329,16 +331,32 @@
   padding: 12px;
   overflow: hidden;
 }
-.grid-3col { grid-template-columns: 1fr 1fr 1fr; }
-.grid-4col { grid-template-columns: 1fr 1fr 1fr 1fr; }
+/*
+ * 功能格一律四列，且每格是正方形。
+ * 原先同一页里 3 列和 4 列混用，格高又由文字撑出来，
+ * 「玩家上下分」五个字的格子就比「回水」两个字的宽也高，看着大大小小。
+ */
+/*
+ * 列宽写成 minmax(0, 1fr) 而不是 1fr。
+ * 1fr 等价于 minmax(auto, 1fr)，列宽降不到内容的最小宽度以下；而格子上的 aspect-ratio
+ * 会把「内容撑出来的最小高度」反推成最小宽度（实测 77px），四列加间距要 338px，
+ * 塞不进 303px 的卡片，第四列就被裁在卡片外面。配合下面 .gc-item 的 min-width: 0，
+ * 窄屏时格子按比例缩小，而不是撑破容器。
+ */
+.grid-3col,
+.grid-4col { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+/* 总代 / 代理「我的」：三列铺满，不再四列剩孤格子 */
+.grid-3x3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 
 .gc-item {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 9px;
-  padding: 14px 6px 12px;
+  gap: 8px;
+  aspect-ratio: 1 / 1;
+  min-width: 0;            /* 解除 aspect-ratio 带来的自动最小宽度，见上面列宽的说明 */
+  padding: 8px 4px;
   background:
     linear-gradient(165deg, rgba(52, 40, 22, 0.55) 0%, rgba(18, 12, 8, 0.92) 100%);
   border: 1px solid rgba(212, 175, 55, 0.28);
@@ -362,9 +380,9 @@
 }
 
 .gc-item .gc-icon {
-  width: 44px;
-  height: 44px;
-  border-radius: 13px;
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -400,12 +418,14 @@
   position: relative;
   z-index: 1;
 }
+/* 四个字以内一行放得下；不设 nowrap，长词自己换行，格子大小不受字数影响 */
 .gc-item .gc-text {
   font-family: 'Noto Serif SC', serif;
-  font-size: 12px;
-  letter-spacing: 1.5px;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  line-height: 1.25;
+  text-align: center;
   color: #f0e0b0;
-  white-space: nowrap;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
 }
 

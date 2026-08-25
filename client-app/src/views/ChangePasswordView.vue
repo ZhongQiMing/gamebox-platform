@@ -6,13 +6,14 @@
     <img class="cd cd-br" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
   </div>
 
-  <div class="page password-page">
+  <div class="page password-page has-page-title">
 
     <div class="app-bar">
       <div class="back" @click="router.back()">‹</div>
       <div class="title">修 改 密 码</div>
       <div class="right"></div>
     </div>
+    <h1 class="page-title">修 改 密 码</h1>
 
     <div class="page-body">
 
@@ -37,7 +38,7 @@
               v-model="oldPwd"
               :type="show.old ? 'text' : 'password'"
               placeholder="请输入当前密码"
-              maxlength="32"
+              maxlength="30"
               autocomplete="current-password"
             >
             <button type="button" class="pwd-eye" aria-label="显示/隐藏密码" @click="show.old = !show.old">
@@ -60,8 +61,8 @@
             <input
               v-model="newPwd"
               :type="show.new1 ? 'text' : 'password'"
-              placeholder="6 位以上"
-              maxlength="32"
+              :placeholder="PLAYER_PASSWORD_HINT"
+              maxlength="30"
               autocomplete="new-password"
             >
             <button type="button" class="pwd-eye" aria-label="显示/隐藏密码" @click="show.new1 = !show.new1">
@@ -89,7 +90,7 @@
               v-model="newPwd2"
               :type="show.new2 ? 'text' : 'password'"
               placeholder="再次输入新密码"
-              maxlength="32"
+              maxlength="30"
               autocomplete="new-password"
             >
             <button type="button" class="pwd-eye" aria-label="显示/隐藏密码" @click="show.new2 = !show.new2">
@@ -109,9 +110,8 @@
 
       <!-- 规则提示 -->
       <ul class="pwd-rules">
-        <li>密 码 长 度 6 位 以 上</li>
+        <li>密 码 {{ PLAYER_PASSWORD_HINT }}</li>
         <li>新 密 码 不 能 与 当 前 密 码 相 同</li>
-        <li>建 议 包 含 字 母 + 数 字 以 增 强 安 全</li>
       </ul>
 
       <button type="button" class="pwd-submit" :disabled="submitting" @click="doSubmit">
@@ -131,7 +131,7 @@ import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { useToast } from '@/composables/useToast'
 import { useBodyClass } from '@/composables/useBodyClass'
-import { validatePassword } from '@gamebox/shared'
+import { PLAYER_PASSWORD_HINT, validatePassword } from '@gamebox/shared'
 import http from '@/api/http'
 import TabBar from '@/components/TabBar.vue'
 import '@/assets/password.css'

@@ -606,7 +606,7 @@ a:hover { color: var(--gold-bright); }
   border-style: solid;
   border-color: transparent;
   border-width: 9px 36px;
-  border-image-source: url('/images/btn-primary-gold.png');
+  border-image-source: url('/images/btn-primary-gold.webp');
   border-image-slice: 30 150 30 150 fill;
   border-image-width: 9px 36px 9px 36px;
   border-image-repeat: stretch;
@@ -652,7 +652,7 @@ a:hover { color: var(--gold-bright); }
   border-style: solid;
   border-color: transparent;
   border-width: 9px 36px;
-  border-image-source: url('/images/btn-secondary-gold.png');
+  border-image-source: url('/images/btn-secondary-gold.webp');
   border-image-slice: 36 170 36 170 fill;
   border-image-width: 9px 36px 9px 36px;
   border-image-repeat: stretch;

@@ -14,6 +14,15 @@ export interface StaffWalletMe {
   csBalances?: number
   diskPoolRemaining?: number
   creditUnused?: number
+  /**
+   * 对外唯一的「代理余额」：信用盘=剩余信用+未结佣金，现金盘=余额。
+   * 页面一律显示这个，别再自己拿 balance / pointsQuota 相加。
+   */
+  agentBalance?: number
+  /** 总代：名下各代理房间那一支合计 */
+  roomBalance?: number
+  /** 合并数里「已挣到、待结账轧掉」的那一截 */
+  unsettledWage?: number
   overIssueUsed?: number
   overIssueLimit?: number
   fakeExposure?: number
@@ -88,6 +97,13 @@ export interface StaffRoomDetail {
   playerPointsTotal?: number
   createdAt?: string
   fly?: StaffRoomFly
+  general?: {
+    agentId: string
+    userId: string
+    uid: string
+    nickname: string
+    username: string
+  } | null
   ownerAgent: {
     agentId: string
     userId: string
@@ -97,6 +113,9 @@ export interface StaffRoomDetail {
     csBalances?: number
     pointsUsed: number
     balance: number | null
+    /** 对外唯一的「代理余额」：信用盘=剩余信用+未结佣金 */
+    agentBalance?: number
+    unsettledWage?: number
     user: { id: string; uid: string; nickname: string; username: string }
   } | null
 }
@@ -115,6 +134,8 @@ export interface StaffPlayerRow {
   rebateRate?: number
   /** 玩家覆盖比例，null=继承 */
   playerRebateRate?: number | null
+  /** 该玩家的注是飞给平台还是代理自己坐庄 */
+  flyEnabled?: boolean
 }
 
 export interface StaffJoinRow {
@@ -169,6 +190,59 @@ export interface StaffCsMe {
   totalWage?: number
   todayWageCount?: number
   totalWageCount?: number
+  /** 漏接被强制下线后锁号，需代理解锁 */
+  slaLocked?: boolean
+  slaLockReason?: string | null
+  /** 今日值班时长（秒），空闲与休息分开 */
+  idleSecToday?: number
+  restSecToday?: number
+}
+
+/** 客服响应考核规则：时限与奖惩金额由代理自己设 */
+export interface CsSlaPolicy {
+  enabled: boolean
+  remindSec: number
+  kickSec: number
+  lateFine: number
+  missFine: number
+  dailyFineCapRate: number
+  bonusMinRate: number
+  bonusMinRounds: number
+  dailyBonus: number
+  streakDays: number
+  streakBonus: number
+}
+
+export interface CsSlaStatRow {
+  csUserId: string
+  nickname: string
+  username: string
+  workStatus: string
+  locked: boolean
+  lockReason: string | null
+  rounds: number
+  onTime: number
+  late: number
+  missed: number
+  onTimeRate: number | null
+  fine: number
+  waivedCount: number
+  idleSec: number
+  restSec: number
+}
+
+export interface CsSlaEventRow {
+  id: string
+  playerId: string
+  playerNickname: string
+  playerUid: string
+  askedAt: string
+  repliedAt: string | null
+  responseSec: number | null
+  level: string
+  fine: number
+  waived: boolean
+  waiveReason: string | null
 }
 
 export interface StaffReportSummary {
@@ -232,6 +306,15 @@ export interface StaffCsSession {
   lastSender: string
   lastAt: string
   unread: number
+  /** 本轮响应计时的起点；null = 没有等着回复的消息 */
+  askedAt?: string | null
+}
+
+/** 响应考核时限，客服端据此在本地跑倒计时 */
+export interface StaffCsSlaLimits {
+  enabled: boolean
+  remindSec: number
+  kickSec: number
 }
 
 export interface StaffCsMessage {
@@ -256,6 +339,9 @@ export interface StaffAgentRow {
   pointsQuota?: number
   pointsUsed?: number
   flyCover?: number
+  /** 对外唯一的「代理余额」：信用盘=剩余信用+未结佣金 */
+  agentBalance?: number
+  unsettledWage?: number
   memberCount?: number
   staffCount?: number
   rooms?: { id: string; roomNo: string; name: string; status: string; bookMode?: string }[]
@@ -326,8 +412,44 @@ function withPublicRoomIcon<T extends { icon?: string | null }>(room: T): T {
   return { ...room, icon: publicMediaUrl(room.icon) || null }
 }
 
+/** 实时开奖里的一个游戏 */
+export interface StaffLiveDrawGame {
+  code: string
+  name: string
+  category: string
+  status: string
+  phase: string
+  phaseLabel: string
+  issueNo: string
+  remainSec: number
+  lastDraw: string
+  lastIssueNo: string
+  currentBetAmount: number
+  currentBetCount: number
+  todayBetAmount: number
+  todayBetCount: number
+  todayPayout: number
+  sortOrder?: number
+}
+
+export interface StaffLiveDrawsPayload {
+  ts: number
+  maint?: {
+    windowActive: boolean
+    disabled?: boolean
+    window: string
+    timezone: string
+    remainSec: number
+  }
+  games: StaffLiveDrawGame[]
+}
+
 export const staffConsoleApi = {
   walletMe: () => staffHttp.get<StaffWalletMe, StaffWalletMe>('/console/wallet/me'),
+
+  /** 实时开奖：各游戏当期倒计时、上期结果、当期与今日下注 */
+  liveDraws: () =>
+    staffHttp.get<StaffLiveDrawsPayload, StaffLiveDrawsPayload>('/console/live-draws'),
 
   rooms: () => staffHttp.get<StaffRoom[], StaffRoom[]>('/console/rooms')
     .then((rooms) => rooms.map(withPublicRoomIcon)),
@@ -346,10 +468,15 @@ export const staffConsoleApi = {
   setRoomStatus: (roomId: string, status: string) =>
     staffHttp.patch(`/console/rooms/${roomId}/status`, { status }),
 
-  /** 信用盘：永久加减合同额度与剩余信用（仅管理员/房主） */
+  /** 信用盘：永久加减合同额度与剩余信用；clientRequestId 作幂等锚点，重放不会加两次 */
   bumpCreditLimit: (
     roomId: string,
-    data: { amount: number; direction?: 'up' | 'down'; remark?: string },
+    data: {
+      amount: number
+      direction?: 'up' | 'down'
+      remark?: string
+      clientRequestId: string
+    },
   ) =>
     staffHttp.post<{
       ok: boolean
@@ -375,6 +502,13 @@ export const staffConsoleApi = {
       { ok: boolean; flyEnabled: boolean; updated: number; message?: string },
       { ok: boolean; flyEnabled: boolean; updated: number; message?: string }
     >(`/console/rooms/${roomId}/fly`, { flyEnabled }),
+
+  /** 单个玩家飞盘开/关（仅本房主代理）。整房一刀切之外，还要能单独盯住大额玩家 */
+  setPlayerFly: (playerId: string, flyEnabled: boolean, roomId?: string) =>
+    staffHttp.patch<{ flyEnabled: boolean }, { flyEnabled: boolean }>(
+      `/console/players/${playerId}/fly`,
+      { flyEnabled, roomId },
+    ),
 
   setGeneralRoomFly: (roomId: string, flyEnabled: boolean) =>
     staffHttp.patch<
@@ -503,7 +637,10 @@ export const staffConsoleApi = {
     staffHttp.patch<{ ok?: boolean }, { ok?: boolean }>(`/recharge/${id}/reject`, { reason }),
 
   csSessions: () =>
-    staffHttp.get<{ list: StaffCsSession[] }, { list: StaffCsSession[] }>('/console/cs/sessions')
+    staffHttp.get<
+      { list: StaffCsSession[]; sla?: StaffCsSlaLimits | null },
+      { list: StaffCsSession[]; sla?: StaffCsSlaLimits | null }
+    >('/console/cs/sessions')
       .then((result) => ({
         ...result,
         list: (result.list || []).map((session) => ({
@@ -513,7 +650,10 @@ export const staffConsoleApi = {
       })),
 
   csMessages: (playerId: string, limit = 100) =>
-    staffHttp.get<{ list: StaffCsMessage[] }, { list: StaffCsMessage[] }>(
+    staffHttp.get<
+      { list: StaffCsMessage[]; askedAt?: string | null; sla?: StaffCsSlaLimits | null },
+      { list: StaffCsMessage[]; askedAt?: string | null; sla?: StaffCsSlaLimits | null }
+    >(
       `/console/cs/sessions/${playerId}/messages`,
       { params: { limit } },
     ),
@@ -604,7 +744,13 @@ export const staffConsoleApi = {
 
   agentAudit: (
     userId: string,
-    params?: { page?: number; pageSize?: number; tab?: 'balance' | 'fund' | 'ops' | 'wage' },
+    params?: {
+      page?: number
+      pageSize?: number
+      tab?: 'balance' | 'fund' | 'ops' | 'wage'
+      from?: string
+      to?: string
+    },
   ) =>
     staffHttp.get<{ list: StaffAuditRow[]; total: number }, { list: StaffAuditRow[]; total: number }>(
       `/console/agents/${userId}/audit`,
@@ -616,6 +762,33 @@ export const staffConsoleApi = {
 
   patchCsStaff: (id: string, body: { workStatus?: string; nickname?: string }) =>
     staffHttp.patch<StaffCsMe, StaffCsMe>(`/console/cs-staff/${id}`, body),
+
+  csSlaPolicy: () => staffHttp.get<CsSlaPolicy, CsSlaPolicy>('/console/cs-sla/policy'),
+
+  saveCsSlaPolicy: (body: Partial<CsSlaPolicy>) =>
+    staffHttp.put<CsSlaPolicy, CsSlaPolicy>('/console/cs-sla/policy', body),
+
+  csSlaStats: (range = 'today') =>
+    staffHttp.get<{ list: CsSlaStatRow[] }, { list: CsSlaStatRow[] }>('/console/cs-sla/stats', {
+      params: { range },
+    }),
+
+  csSlaEvents: (csUserId: string, range = 'today') =>
+    staffHttp.get<{ list: CsSlaEventRow[] }, { list: CsSlaEventRow[] }>('/console/cs-sla/events', {
+      params: { csUserId, range },
+    }),
+
+  csSlaWaive: (eventId: string, reason?: string) =>
+    staffHttp.post<{ ok: boolean }, { ok: boolean }>(`/console/cs-sla/events/${eventId}/waive`, {
+      reason,
+    }),
+
+  /** 客服端心跳：App 活着就报一次，断了服务端当他把 App 划掉了 */
+  csHeartbeat: () =>
+    staffHttp.post<{ ok: boolean }, { ok: boolean }>('/console/cs-sla/heartbeat', {}),
+
+  csSlaUnlock: (csUserId: string) =>
+    staffHttp.post<{ ok: boolean }, { ok: boolean }>(`/console/cs-staff/${csUserId}/sla-unlock`),
 
   reportSummary: (params?: { range?: string; roomId?: string }) =>
     staffHttp.get<StaffReportSummary, StaffReportSummary>('/console/reports/summary', { params }),

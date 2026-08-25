@@ -6,16 +6,15 @@
     <img class="cd cd-br" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
   </div>
 
-  <div class="page am-page">
+  <div class="page am-page has-page-title">
     <div class="app-bar">
       <div class="back" @click="router.back()">‹</div>
       <div class="title">账 号 管 理</div>
       <div class="right"></div>
     </div>
+    <h1 class="page-title">账 号 管 理</h1>
 
     <div class="page-body">
-      <h1 class="am-title">账 号 管 理</h1>
-
       <div class="am-list">
         <button type="button" class="am-row" @click="pickAvatar">
           <span class="am-label">个 人 头 像</span>

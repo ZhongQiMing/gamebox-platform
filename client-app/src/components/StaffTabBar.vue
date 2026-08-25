@@ -19,9 +19,9 @@
 <script setup lang="ts">
 /**
  * 主代理底栏：游戏 / 充值(审核) / 明细 / 客服 / 我的
- * 子账号（查账型）：游戏 / 明细 / 我的
+ * 代理子账号（查账型）：游戏 / 明细 / 我的
  * 客服：审核 / 明细 / 客服 / 我的
- * 管理员/房主：游戏 / 明细 / 我的
+ * 管理 / 总监 / 总代 / 总代子账号：游戏 / 明细 / 我的
  */
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -34,9 +34,10 @@ const router = useRouter()
 const staff = useStaffStore()
 
 const show = computed(() => staff.isMobileOps && staff.isLoggedIn)
-const isProxy = computed(() => staff.role === 'PROXY')
+/** 房间代理子账号：不是总代分身 */
+const isRoomProxy = computed(() => staff.role === 'PROXY' && !staff.isGeneral)
 const isCs = computed(() => staff.isCs)
-const isBranch = computed(() => staff.isBranch || staff.isGeneral)
+const isBranchShell = computed(() => staff.isBranch || staff.isGeneral)
 const fundBadge = ref(0)
 const csBadge = ref(0)
 /** 主代理进房待审；挂在「我的」上，入口在设置里不好找 */
@@ -73,6 +74,7 @@ const ALL_TABS = [
       'staff-hang',
       'staff-rooms',
       'staff-room-detail',
+      'staff-live',
     ],
   },
 ] as const
@@ -107,6 +109,8 @@ const BRANCH_TABS = [
       'staff-risk',
       'staff-home',
       'staff-fly-query',
+      'staff-players',
+      'staff-live',
     ],
   },
 ] as const
@@ -149,8 +153,8 @@ type StaffTab =
 
 const tabs = computed((): StaffTab[] => {
   if (isCs.value) return [...CS_TABS]
-  if (isBranch.value) return [...BRANCH_TABS]
-  if (isProxy.value) {
+  if (isBranchShell.value) return [...BRANCH_TABS]
+  if (isRoomProxy.value) {
     return ALL_TABS.filter((t) => t.key !== 'recharge' && t.key !== 'cs')
   }
   return [...ALL_TABS]
@@ -185,8 +189,8 @@ async function refreshBadges() {
   badgeBusy = true
   try {
     const tasks: Promise<unknown>[] = []
-    // 房主/子账号无充值·客服角标；主代理与客服保留
-    if (isProxy.value || isBranch.value) {
+    // 管理/总监/总代/代理子账号无充值·客服角标；主代理与客服保留
+    if (isRoomProxy.value || isBranchShell.value) {
       fundBadge.value = 0
       csBadge.value = 0
     } else {
@@ -235,10 +239,39 @@ function startPoll() {
   }, POLL_MS)
 }
 
+/*
+ * 客服心跳：App 从最近任务被划掉时进程直接结束，前端跑不了任何「我下班了」的代码，
+ * 只能靠这条定时上报。服务端超过约 100 秒收不到就把他转成休息，不再派单也不再按漏接罚。
+ * 挂在底栏是因为客服的每一页都带着它，页面之间跳转不会断。
+ */
+const HEARTBEAT_MS = 30_000
+let heartbeatTimer: ReturnType<typeof setInterval> | null = null
+
+function sendHeartbeat() {
+  if (!isCs.value || !staff.isLoggedIn) return
+  /* 切到后台时进程可能还活着，但人已经不在看了，不发心跳更贴近真实在岗 */
+  if (document.visibilityState === 'hidden') return
+  void staffConsoleApi.csHeartbeat().catch(() => undefined)
+}
+
+function startHeartbeat() {
+  stopHeartbeat()
+  if (!isCs.value || !staff.isLoggedIn) return
+  sendHeartbeat()
+  heartbeatTimer = setInterval(sendHeartbeat, HEARTBEAT_MS)
+}
+
+function stopHeartbeat() {
+  if (heartbeatTimer) clearInterval(heartbeatTimer)
+  heartbeatTimer = null
+}
+
 function onVisibility() {
   if (document.visibilityState === 'visible') {
     void refreshBadges()
     startPoll()
+    /* 回到前台立刻补一次，别等下一个 30 秒才让服务端知道人回来了 */
+    sendHeartbeat()
   }
 }
 
@@ -256,18 +289,28 @@ onMounted(() => {
   syncBody()
   void refreshBadges()
   startPoll()
+  startHeartbeat()
   document.addEventListener('visibilitychange', onVisibility)
 })
 watch(show, (on) => {
   syncBody()
   void refreshBadges()
-  if (on) startPoll()
-  else stopPoll()
+  if (on) {
+    startPoll()
+    startHeartbeat()
+  } else {
+    stopPoll()
+    stopHeartbeat()
+  }
 })
-watch([isProxy, isCs, isBranch, isMainAgent], () => { void refreshBadges() })
+watch([isRoomProxy, isCs, isBranchShell, isMainAgent], () => {
+  void refreshBadges()
+  startHeartbeat()
+})
 watch(() => route.fullPath, () => { void refreshBadges() })
 onUnmounted(() => {
   stopPoll()
+  stopHeartbeat()
   document.removeEventListener('visibilitychange', onVisibility)
   document.body.classList.remove('has-tabbar')
   document.body.classList.remove('has-staff-tabbar')

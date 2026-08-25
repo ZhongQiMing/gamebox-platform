@@ -21,6 +21,16 @@
         <button type="button" :class="{ on: tab === 'wage' }" @click="switchTab('wage')">佣金</button>
       </div>
 
+      <div v-if="!isLandlord" class="sp-tabs sp-tabs--range" :data-count="TIME_RANGES.length">
+        <button
+          v-for="r in TIME_RANGES"
+          :key="r.key"
+          type="button"
+          :class="{ on: range === r.key }"
+          @click="switchRange(r.key)"
+        >{{ r.label }}</button>
+      </div>
+
       <div class="rm-sum" v-if="!loading && list.length">
         <span>共 {{ total }} 条</span>
         <span>本页 {{ list.length }}</span>
@@ -56,6 +66,8 @@ import {
   type StaffAuditRow,
 } from '@/api/staffConsole'
 import { useToast } from '@/composables/useToast'
+import { TIME_RANGES, rangeToIso, type TimeRangeKey } from '@/composables/timeRange'
+import { formatDateTime, formatMoney } from '@gamebox/shared'
 import { useBodyClass } from '@/composables/useBodyClass'
 import '@/assets/staff-console.css'
 
@@ -76,7 +88,7 @@ const router = useRouter()
 const staff = useStaffStore()
 const { toast } = useToast()
 
-const isLandlord = computed(() => staff.role === 'ADMIN' || staff.role === 'BRANCH')
+const isLandlord = computed(() => staff.isBranch || staff.isGeneral)
 const isCs = computed(() => staff.isCs)
 const showTabs = computed(() => isCs.value)
 const pageTitle = computed(() => {
@@ -93,6 +105,7 @@ const emptyText = computed(() => {
 })
 
 const tab = ref<AuditTab>('balance')
+const range = ref<TimeRangeKey>('thismonth')
 const loading = ref(false)
 const list = ref<Row[]>([])
 const page = ref(1)
@@ -100,17 +113,10 @@ const total = ref(0)
 const pageSize = computed(() => (isLandlord.value ? 10 : 20))
 
 function fmt(n?: number | null) {
-  return Number(n || 0).toLocaleString('zh-CN', { maximumFractionDigits: 2 })
+  return formatMoney(n ?? 0)
 }
 function fmtTime(v?: string) {
-  if (!v) return '—'
-  const d = new Date(v)
-  if (Number.isNaN(d.getTime())) return '—'
-  const mm = String(d.getMonth() + 1).padStart(2, '0')
-  const dd = String(d.getDate()).padStart(2, '0')
-  const hh = String(d.getHours()).padStart(2, '0')
-  const mi = String(d.getMinutes()).padStart(2, '0')
-  return `${mm}-${dd} ${hh}:${mi}`
+  return formatDateTime(v)
 }
 
 function mapAdminLog(a: StaffAdminLogItem): Row {
@@ -170,6 +176,12 @@ function switchTab(next: AuditTab) {
   void fetchPage(1, false)
 }
 
+function switchRange(next: TimeRangeKey) {
+  if (range.value === next) return
+  range.value = next
+  void fetchPage(1, false)
+}
+
 async function fetchPage(p: number, append: boolean) {
   loading.value = true
   try {
@@ -186,10 +198,13 @@ async function fetchPage(p: number, append: boolean) {
         return
       }
       const auditTab = isCs.value ? tab.value : 'fund'
+      const win = rangeToIso(range.value)
       const res = await staffConsoleApi.agentAudit(uid, {
         page: p,
         pageSize: pageSize.value,
         tab: auditTab,
+        from: win.from,
+        to: win.to,
       })
       total.value = res.total
       page.value = p

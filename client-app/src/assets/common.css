@@ -3,6 +3,26 @@
    ======================================================== */
 
 :root {
+  /* 底栏实高。页面底部避让按它算，改这里就够，别在各页另写数字 */
+  --tabbar-h: 60px;
+
+  /*
+   * 屏幕级装饰层（四角卷草、皇冠）的底部收边位置。
+   * 装饰层是 fixed 贴视口的：登录 / 注册 / 输入房间号这些没有底栏的页面收在 0，正好贴底；
+   * 进房之后底栏压在上面，收在 0 就会被盖掉一截，看着像花纹缺了一块。所以有底栏时整体
+   * 抬到底栏上沿，抬升量与 .page 的底部避让同一个式子，花纹下沿正好与底栏上沿相接。
+   */
+  --deco-bottom: 0px;
+
+  /*
+   * 金额字号三档。要求是至少完整显示到千万级：「99,999,999.00」共 13 个字符，
+   * 按等宽数字约占 6.9em 宽。下面按「一行放几个数字」倒推容器宽度，
+   * 宽屏取上限（不至于大得刺眼），窄屏自动缩到刚好放得下，而不是截成省略号。
+   */
+  --money-hero: min(30px, calc(14.5vw - 8px));   /* 整行只有一个数字 */
+  --money-half: min(22px, calc(7.2vw - 3px));    /* 一行两个 */
+  --money-third: min(15px, calc(4.8vw - 2px));   /* 一行三个 */
+
   /* ===== 背景层（深棕黑 · 暖调） ===== */
   --bg-dark:      #0d0a08;        /* 主背景 深棕黑 */
   --bg-card:      #1a140d;        /* 卡片底 略亮 */
@@ -159,15 +179,17 @@ body.deco-bg .page { position: relative; z-index: 1; }
     brightness(0.88)
     drop-shadow(0 2px 6px rgba(0, 0, 0, 0.5));
 }
-.deco-bg .screen-deco .cd-tl { top: 0;    left: 0; }
-.deco-bg .screen-deco .cd-tr { top: 0;    right: 0; transform: scaleX(-1); }
-.deco-bg .screen-deco .cd-bl { bottom: 0; left: 0;  transform: scaleY(-1); }
-.deco-bg .screen-deco .cd-br { bottom: 0; right: 0; transform: scale(-1, -1); }
+.deco-bg .screen-deco .cd-tl { top: 0;              left: 0; }
+.deco-bg .screen-deco .cd-tr { top: 0;              right: 0; transform: scaleX(-1); }
+.deco-bg .screen-deco .cd-bl { bottom: var(--deco-bottom); left: 0;  transform: scaleY(-1); }
+.deco-bg .screen-deco .cd-br { bottom: var(--deco-bottom); right: 0; transform: scale(-1, -1); }
 /* 皇冠纹章：屏幕底部居中铺底；默认按登录短表单给值，各页可覆写 bottom/width */
 .deco-bg .screen-deco .crown-deco {
   position: absolute;
   left: 50%;
-  bottom: 4vh;    /* ← 改这个数：调大=皇冠往上，调小=往下（单位 vh=屏高的百分比）*/
+  /* ← 改 4vh：调大=皇冠往上，调小=往下（单位 vh=屏高的百分比）。
+     后一项是底栏避让，见 :root 里 --deco-bottom 的说明，别删。 */
+  bottom: calc(4vh + var(--deco-bottom));
   transform: translateX(-50%);
   width: min(62vw, 264px);
   height: auto;
@@ -193,11 +215,26 @@ body.deco-bg .page { position: relative; z-index: 1; }
 .deco-bg .brand-bar {
   min-height: 64px;
   padding-left: 64px;
-  background: transparent !important;     /* 去掉 rgba(13,10,8,0.92) 黑膜 */
+  /*
+   * 底色、毛玻璃、金描边一起去掉，是为了让背景底图透上来。
+   * 但顶栏是 sticky 的，去掉底色后它什么都挡不住，往上滚时卡片会从返回键和标题
+   * 底下穿过去糊成一片。用一层「上深下透」的渐变代替实色：底图照样透，
+   * 滚上来的内容进入这一段会自然淡出。
+   */
+  background: linear-gradient(
+    180deg,
+    var(--bg-dark) 0%,
+    rgba(13, 10, 8, 0.92) 45%,
+    rgba(13, 10, 8, 0) 100%
+  ) !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
   border-bottom: none !important;         /* 去掉那条金描边线 */
   box-shadow: none !important;
+}
+/* 标题自绘的页面把顶栏坍缩成 0 了，没有可遮的高度，也就不需要这层渐变 */
+.has-page-title .app-bar {
+  background: none !important;
 }
 /* 标题：与「输入房间号」页一致 → 整体不显示标题文字
    保留 .title DOM 节点（让 .back 的 flex 居中布局不变），但视觉隐藏。
@@ -328,6 +365,47 @@ a:hover { color: var(--gold-bright); }
   letter-spacing: 2px;
 }
 .app-bar .right { width: 32px; }
+
+/* ============ 页面标题（全端唯一一处定义） ============
+   原先大厅 / 明细 / 客服 / 充值 / 报表各写各的：字号 22 与 24、字距 5 与 6 与 8、
+   高度 40 与 48、上边距 0 与 8 都不一致，报表页还漏了坍缩 .app-bar，标题被顶栏
+   整整推低一截。这里统一，页面只需 <h1 class="page-title"> 并给根节点加 .has-page-title。
+
+   运营端的标题写在 .app-bar 里（那边顶栏要留着放刷新键），DOM 位置不同但落点相同：
+   坍缩顶栏后标题中线在 y=32，运营端 64px 顶栏里垂直居中也是 y=32。所以外观声明
+   两边共用这一条，字号字距只能在这里改，改一次两端一起动。 */
+.has-page-title .app-bar {
+  min-height: 0;
+  height: 0;
+  padding: 0;
+  margin: 0;
+  overflow: visible;      /* 返回键是 absolute 钉在屏幕左上角，坍缩后仍要可见可点 */
+}
+.page-title,
+.deco-bg .staff-console-page .app-bar .title {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Noto Serif SC', 'Songti SC', 'STSong', 'STZhongsong', 'SimSun', 'Microsoft YaHei', serif;
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: 6px;
+  line-height: 1;
+  background: linear-gradient(180deg, #fff7e2 0%, var(--gold-bright) 48%, var(--gold) 80%, var(--gold-deep) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: var(--gold-bright);          /* 不支持 background-clip 时兜底纯色 */
+  filter:
+    drop-shadow(0 1px 1px rgba(0, 0, 0, 0.7))
+    drop-shadow(0 0 8px rgba(244, 211, 107, 0.25));
+  user-select: none;
+}
+.page-title {
+  height: 48px;
+  /* 左右各让出一颗 40px fixed 顶角按钮加安全距；上 8 使标题中线与按钮中线对齐 */
+  margin: 8px 64px 16px;
+}
 
 /* ============ 屏幕级 fixed 顶角金圈按钮（任何页面都能用，无需 .deco-bg） ============
    用于在没有黑条 app-bar 的页面（大厅 / 输入房间号 / 弹窗式页面）独立钉两个金圆按钮：
@@ -606,7 +684,7 @@ a:hover { color: var(--gold-bright); }
   border-style: solid;
   border-color: transparent;
   border-width: 9px 36px;
-  border-image-source: url('/images/btn-primary-gold.png');
+  border-image-source: url('/images/btn-primary-gold.webp');
   border-image-slice: 30 150 30 150 fill;
   border-image-width: 9px 36px 9px 36px;
   border-image-repeat: stretch;
@@ -652,7 +730,7 @@ a:hover { color: var(--gold-bright); }
   border-style: solid;
   border-color: transparent;
   border-width: 9px 36px;
-  border-image-source: url('/images/btn-secondary-gold.png');
+  border-image-source: url('/images/btn-secondary-gold.webp');
   border-image-slice: 36 170 36 170 fill;
   border-image-width: 9px 36px 9px 36px;
   border-image-repeat: stretch;
@@ -1519,10 +1597,14 @@ a:hover { color: var(--gold-bright); }
 }
 
 /* ============ 全局底部 Tab 导航（所有登录后页面共用） ============ */
-/* 占位元素：放在页面内容尾部，撑开高度避免被 tabbar 遮挡 */
-.lobby-spacer { height: 72px; }
+/*
+ * 避让底栏只由一处负责：body.has-tabbar .page 的 padding-bottom。
+ * 这里的占位块原先写死 72px，与那份 padding 叠在一起，滚到底会多出大半屏空白，
+ * 运营端还有第三份 padding 再叠一次。现在它只留一点收尾呼吸感。
+ */
+.lobby-spacer { height: 8px; }
 
-/* 游戏内全屏子页：无底部 Tab，不必留大块空白 */
+/* 游戏内全屏子页没有底栏，.page 也就没有那份 padding，安全区由占位块自己顶 */
 body:not(.has-tabbar) .lobby-spacer {
   height: max(16px, env(safe-area-inset-bottom, 0px));
 }
@@ -1531,13 +1613,25 @@ body:not(.has-tabbar) .lobby-spacer {
   position: fixed;
   left: 0; right: 0; bottom: 0;
   display: flex;
-  height: 60px;
+  height: var(--tabbar-h);
   padding-bottom: env(safe-area-inset-bottom, 0);
+  /* 原来是 0.95/0.98 半透明，滚上来的文字会从底栏后面透出来，改成不透明 */
   background:
-    linear-gradient(180deg, rgba(28, 20, 12, 0.95) 0%, rgba(15, 10, 6, 0.98) 100%);
+    linear-gradient(180deg, rgb(28, 20, 12) 0%, rgb(15, 10, 6) 100%);
   border-top: 1px solid var(--gold-deep);
   box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.6);
   z-index: 100;
+}
+/* 底栏上沿再补一段淡出，内容滚到底栏附近是渐隐而不是被生硬切断 */
+.lobby-tabbar::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  height: 20px;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(13, 10, 8, 0) 0%, rgba(13, 10, 8, 0.9) 100%);
 }
 .lobby-tabbar .tab-item {
   position: relative;
@@ -1593,10 +1687,64 @@ body:not(.has-tabbar) .lobby-spacer {
   transform: translateY(1px);
 }
 
-/* 当页面已挂载 tabbar 时，给 .page 自动留底部 padding，避免内容被遮挡 */
+/* 挂了底栏就给 .page 留出底栏那么高的 padding —— 全站唯一一处底部避让，别再另加 */
 body.has-tabbar .page {
-  padding-bottom: calc(60px + env(safe-area-inset-bottom, 0));
+  padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0));
 }
+/* 同时把屏幕级装饰层的底部收边抬到底栏上沿，见 :root 里 --deco-bottom 的说明 */
+body.has-tabbar {
+  --deco-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px));
+}
+
+/* ============ 时间筛选按钮（今日/昨日/本周/上周/本月） ============
+   原先明细、注单、回水、上下分记录各写一份、数值还不一致，这里只留一份。 */
+.time-tabs {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 8px;
+  overflow: visible;
+}
+.tt-item {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 0;
+  text-align: center;
+  font-family: 'Noto Serif SC', serif;
+  font-size: 12px;
+  letter-spacing: 1px;
+  white-space: nowrap;
+  color: var(--text-dim);
+  background: rgba(20, 14, 8, 0.6);
+  border: 1px solid rgba(212, 175, 55, 0.3);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.tt-item:active { transform: scale(0.96); }
+.tt-item.active {
+  color: var(--bg-dark);
+  font-weight: 700;
+  background: linear-gradient(180deg, #f4d36b 0%, var(--gold) 50%, #8a6f1f 100%);
+  border-color: var(--gold);
+  box-shadow:
+    0 1px 0 rgba(255, 230, 150, 0.6) inset,
+    0 -1px 0 rgba(0, 0, 0, 0.3) inset,
+    0 3px 8px rgba(212, 175, 55, 0.3);
+}
+
+/* ============ 金额文本（全站统一，禁止再各页自定字号） ============
+   等宽数字保证竖排对齐；不换行也不截断——宁可字小一点，也不能把钱显示成「490,0…」。 */
+.money {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
+  letter-spacing: 0;
+}
+.money--hero  { font-size: var(--money-hero); }
+.money--half  { font-size: var(--money-half); }
+.money--third { font-size: var(--money-third); }
 
 /* ============ 通用工具类 ============ */
 .text-center { text-align: center; }

@@ -6,12 +6,13 @@
     <img class="cd cd-br" src="/images/corner-flourish.webp" loading="lazy" decoding="async" alt="">
   </div>
 
-  <div class="page close-page">
+  <div class="page close-page has-page-title">
     <div class="app-bar">
       <div class="back" @click="router.back()">‹</div>
       <div class="title">注 销 账 号</div>
       <div class="right"></div>
     </div>
+    <h1 class="page-title">注 销 账 号</h1>
 
     <div class="page-body">
       <div class="close-card close-warn">
@@ -84,6 +85,7 @@ import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { useToast } from '@/composables/useToast'
 import { useBodyClass } from '@/composables/useBodyClass'
+import { formatMoney } from '@gamebox/shared'
 import { userApi } from '@/api/user'
 import AppModal from '@/components/AppModal.vue'
 import '@/assets/close-account.css'
@@ -107,7 +109,7 @@ const username = computed(() => userStore.profile?.username ?? '———')
 /** 有余额时必须在最后一步再说一次金额，不能只在页面上写 */
 const confirmMessage = computed(() =>
   balance.value > 0
-    ? `账上还有 ${balance.value.toFixed(2)} 积分，注销后立即清零且无法找回。账号也不能再次注册。确定继续吗？`
+    ? `账上还有 ${formatMoney(balance.value)} 积分，注销后立即清零且无法找回。账号也不能再次注册。确定继续吗？`
     : '注销后无法恢复，账号也不能再次注册。确定继续吗？',
 )
 

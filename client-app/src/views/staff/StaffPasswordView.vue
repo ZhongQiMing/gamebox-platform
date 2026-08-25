@@ -17,11 +17,11 @@
       <section class="sc-panel pwd-panel">
         <p class="pwd-tip">{{ staff.profile?.nickname }} · {{ staff.profile?.username }}</p>
         <label class="pwd-label">当前密码</label>
-        <input v-model="oldPwd" class="pwd-input" type="password" maxlength="32" autocomplete="current-password">
+        <input v-model="oldPwd" class="pwd-input" type="password" maxlength="30" autocomplete="current-password">
         <label class="pwd-label">新密码</label>
-        <input v-model="newPwd" class="pwd-input" type="password" maxlength="32" autocomplete="new-password" placeholder="至少 6 位">
+        <input v-model="newPwd" class="pwd-input" type="password" maxlength="30" autocomplete="new-password" :placeholder="OPS_PASSWORD_HINT">
         <label class="pwd-label">确认新密码</label>
-        <input v-model="newPwd2" class="pwd-input" type="password" maxlength="32" autocomplete="new-password">
+        <input v-model="newPwd2" class="pwd-input" type="password" maxlength="30" autocomplete="new-password">
         <button type="button" class="pwd-submit" :disabled="busy" @click="submit">
           {{ busy ? '提交中…' : '确认修改' }}
         </button>
@@ -39,7 +39,7 @@ import StaffTabBar from '@/components/StaffTabBar.vue'
 import { useStaffStore } from '@/stores/staff'
 import { useToast } from '@/composables/useToast'
 import { useBodyClass } from '@/composables/useBodyClass'
-import { validateOpsPassword } from '@gamebox/shared'
+import { OPS_PASSWORD_HINT, validateOpsPassword } from '@gamebox/shared'
 import '@/assets/staff-console.css'
 
 useBodyClass('deco-bg')
