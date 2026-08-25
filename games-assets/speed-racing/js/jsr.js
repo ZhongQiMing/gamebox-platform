@@ -9,6 +9,24 @@ $(function () {
   const INTERVAL = 60;
   const PREP_SEC = 19;
 
+  /*
+   * 服务端校准时钟。
+   * 凡是要跟 lockAt / openAt 这类服务端绝对时间戳比较的地方都走 srvNow()，
+   * 否则玩家设备时钟偏几秒，倒计时和下注闸门就跟着偏几秒。
+   * 公共层没加载时退化成本地钟，行为与改造前一致，不会把游戏卡死。
+   */
+  function srvNow() {
+    return window.LotteryClock ? LotteryClock.now() : Date.now();
+  }
+  /** 服务端时刻 → 本地时刻，供 setTimeout 排程 */
+  function toLocalMs(serverMs) {
+    return window.LotteryClock ? LotteryClock.toLocal(serverMs) : Number(serverMs);
+  }
+  /** 客户端停止接单的时刻：比服务端封盘线提前一点，避免最后一刻下注被服务端打回 */
+  function betCutoffAt(lockAtMs) {
+    return window.LotteryClock ? LotteryClock.cutoffAt(lockAtMs) : Number(lockAtMs);
+  }
+
   function fixAvatar(url) {
     const fallback = '/images/avatars/001.jpg';
     if (!url) return fallback;
@@ -544,7 +562,8 @@ $(function () {
   /** 与服务端 genIssueNo 一致：UTC 对齐 openAt → 上海日 MMDD + 当日序号 */
   function nextOpenAtMs(now) {
     const intervalMs = INTERVAL * 1000;
-    const t = now != null ? now : Date.now();
+    /* 服务端的开奖网格对齐 Unix 纪元，推算必须站在服务端时间轴上 */
+    const t = now != null ? now : srvNow();
     return Math.ceil(t / intervalMs) * intervalMs;
   }
   function fmtIssueFromOpenAt(openAtMs) {
@@ -566,7 +585,7 @@ $(function () {
   }
   function getRoundRemain() {
     const openAt = nextOpenAtMs();
-    let r = (openAt - Date.now()) / 1000;
+    let r = (openAt - srvNow()) / 1000;
     if (r <= 0) r = INTERVAL;
     return r;
   }
@@ -579,7 +598,9 @@ $(function () {
   }
   function isBettingOpen() {
     if (!serverSynced || !serverCurrent) return false;
-    const open = serverCurrent.status === 'PENDING' && Date.now() < new Date(serverCurrent.lockAt).getTime();
+    /* 提前于服务端封盘线收口：请求还要飞过网络，卡着线点下去必被服务端拒 */
+    const open = serverCurrent.status === 'PENDING'
+      && srvNow() < betCutoffAt(new Date(serverCurrent.lockAt).getTime());
     if (!open) return false;
     /* 开奖仪式未回到 betting：禁止下注（避免冲线后、开盘线前误注下一期） */
     if (roomChat && typeof roomChat.isBettingOpen === 'function' && !roomChat.isBettingOpen()) return false;
@@ -931,7 +952,7 @@ $(function () {
     const stats = getStats(user.uid);
     stats.winloss += serverProfit;
     stats.turnover += serverTurnover;
-    stats.rebate = (stats.rebate || 0) + Math.round(serverTurnover * 0.005 * 100) / 100;
+    stats.rebate = (stats.rebate || 0) + ((window.App && App.calcRebate) ? App.calcRebate(serverTurnover) : 0);
     saveStats(user.uid, stats);
     refreshStats();
   }
@@ -1292,7 +1313,7 @@ $(function () {
       if (opts.midRaceMs == null && serverCurrent && String(serverCurrent.issueNo || '') === String(issue || '')) {
         const openAt = new Date(serverCurrent.openAt).getTime();
         if (Number.isFinite(openAt)) {
-          const remain = openAt - Date.now();
+          const remain = openAt - srvNow();
           const cdMs = Math.max(0, cdSec) * 1000;
           const targetMid = remain - cdMs - finishVisualMs - 200;
           if (Number.isFinite(targetMid) && targetMid >= PK10_RACE_MID_MS) {
@@ -1309,7 +1330,7 @@ $(function () {
           if (serverCurrent && String(serverCurrent.issueNo || '') === String(issue || '')) {
             const openAt = new Date(serverCurrent.openAt).getTime();
             if (Number.isFinite(openAt)) {
-              armMs = Math.max(armMs, openAt - Date.now() + 1200);
+              armMs = Math.max(armMs, openAt - srvNow() + 1200);
             }
           }
           roomChat.scheduleRevealReady(issue, armMs);
@@ -1400,7 +1421,7 @@ $(function () {
     if (String(serverCurrent.issueNo || '') !== issue) return false;
     const st = String(serverCurrent.status || '');
     const lockAt = new Date(serverCurrent.lockAt).getTime();
-    const now = Date.now();
+    const now = srvNow();
     return st === 'LOCKED' || (st === 'PENDING' && Number.isFinite(lockAt) && now >= lockAt);
   }
 
@@ -1455,7 +1476,7 @@ $(function () {
     const openAt = new Date(serverCurrent.openAt).getTime();
     const readyMs = resultRevealDurationMs() + 1400;
     const remain = Number.isFinite(openAt)
-      ? Math.max(1200, openAt - Date.now() + 600)
+      ? Math.max(1200, openAt - srvNow() + 600)
       : readyMs;
     if (typeof roomChat.scheduleRevealReady === 'function') {
       roomChat.scheduleRevealReady(issue, Math.min(remain, readyMs + 400));
@@ -1763,7 +1784,7 @@ $(function () {
             ctx.setRevealPending(issue);
             const openAt = serverCurrent && new Date(serverCurrent.openAt).getTime();
             const remain = Number.isFinite(openAt)
-              ? Math.max(1200, openAt - Date.now() + 600)
+              ? Math.max(1200, openAt - srvNow() + 600)
               : readyMs;
             ctx.scheduleRevealReady(issue, Math.min(remain, readyMs + 400));
           } else {
@@ -1983,10 +2004,10 @@ $(function () {
     const $img = $('#plusBtnImg');
     if (hasText) {
       $btn.addClass('is-send').attr('aria-label', '发送');
-      if ($img.length) $img.attr('src', '/images/chat-rail/send.png?v=1');
+      if ($img.length) $img.attr('src', '/images/chat-rail/send.webp?v=1');
     } else {
       $btn.removeClass('is-send').attr('aria-label', '更多');
-      if ($img.length) $img.attr('src', '/images/chat-rail/plus.png?v=1');
+      if ($img.length) $img.attr('src', '/images/chat-rail/plus.webp?v=1');
     }
   }
 
@@ -3210,6 +3231,10 @@ $(function () {
     if (snapshotBusy || !App.fetchLotterySnapshot) return;
     snapshotBusy = true;
     App.fetchLotterySnapshot(SERVER_GAME).then(function (snapshot) {
+      /* 先校时：后面所有与 lockAt / openAt 的比较都要用校准后的钟 */
+      if (snapshot && window.LotteryClock) {
+        LotteryClock.sync(snapshot.serverNow, snapshot.sentAt, snapshot.recvAt);
+      }
       /* 历史与当前期解耦：即使短暂没有 current，上期栏也要能刷新 */
       const rows = parseServerHistory(snapshot && snapshot.history);
       const headChanged = rows[0] && (!historyRows[0] || rows[0].issue !== historyRows[0].issue);
@@ -3246,7 +3271,7 @@ $(function () {
         const _st = String(serverCurrent.status || '');
         const _openAt = new Date(serverCurrent.openAt).getTime();
         /* 无新 current 且旧期已开完才清空；LOCKED/PENDING 仍保留给 tick 显示开奖中 */
-        if (_st !== 'PENDING' && _st !== 'LOCKED' && Number.isFinite(_openAt) && Date.now() >= _openAt) {
+        if (_st !== 'PENDING' && _st !== 'LOCKED' && Number.isFinite(_openAt) && srvNow() >= _openAt) {
           serverCurrent = null;
         }
       }
@@ -3293,19 +3318,26 @@ $(function () {
     }
     if (serverSynced && serverCurrent) {
       const lockAt = new Date(serverCurrent.lockAt).getTime();
+      const cutoff = betCutoffAt(lockAt);
       const issueCur = String(serverCurrent.issueNo || '');
       const status = String(serverCurrent.status || '');
-      const now = Date.now();
-      const open = status === 'PENDING' && now < lockAt;
+      const now = srvNow();
+      /* 倒计时归零点与停止接单点对齐，玩家看到 0 的那一刻正好点不动 */
+      const open = status === 'PENDING' && now < cutoff;
       setCurIssueDisplay(issueCur);
       if (open) {
-        updateCountdownUI('bet', Math.max(0, (lockAt - now) / 1000));
-        if (window.JsrAudio && JsrAudio.armCountdown) JsrAudio.armCountdown(lockAt);
+        updateCountdownUI('bet', Math.max(0, (cutoff - now) / 1000));
+        /* 铃声排程走本地钟，这里把服务端时刻换算回去 */
+        if (window.JsrAudio && JsrAudio.armCountdown) JsrAudio.armCountdown(toLocalMs(cutoff));
         if (roomBetFrozen && sealedIssueNo && issueCur && issueCur !== sealedIssueNo) {
           roomBetFrozen = false;
           sealedIssueNo = '';
         }
-      } else if (status === 'LOCKED' || (status === 'PENDING' && now >= lockAt)) {
+      } else if (status === 'LOCKED' || (status === 'PENDING' && now >= cutoff)) {
+        /*
+         * 停止接单到服务端封盘之间的提前量窗口也走这里，
+         * 否则这不到一秒会掉进「等待开盘」分支，每局闪一下。
+         */
         updateCountdownDrawing();
         if (Number.isFinite(new Date(serverCurrent.openAt).getTime()) &&
             now >= new Date(serverCurrent.openAt).getTime()) {
