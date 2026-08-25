@@ -175,16 +175,22 @@
     } catch (e) { /* ignore */ }
   }
 
-  /** 关掉时立刻掐开奖仪式；有 drawSfx 通道时不碰房间铃声 */
+  /**
+   * 关掉时立刻掐开奖仪式；有 drawSfx 通道时不碰房间铃声。
+   *
+   * 有 drawSfx 这一路的游戏不走这里：那边 setDrawSfxOn 已经把进行中的音轨就地静音，
+   * 节点和 opening→over 的定时器都留着，中途再打开能接着响。这里若再补一刀
+   * endDrawCeremony()，节点和定时器就没了，「关掉再马上打开」这一整段就哑到下一期。
+   * 没有 drawSfx 通道的老游戏没有就地静音的能力，仍按原来的硬停处理。
+   */
   function hardStopCeremony(api) {
     if (!api) return;
+    if (hasDrawApi(api)) return;
     try { if (typeof api.endDrawCeremony === 'function') api.endDrawCeremony(); } catch (e1) { /* ignore */ }
     try { if (typeof api.endRaceCeremony === 'function') api.endRaceCeremony(); } catch (e2) { /* ignore */ }
     try { if (typeof api.stopDrawSfx === 'function') api.stopDrawSfx(); } catch (e3) { /* ignore */ }
     try { if (typeof api.stopRaceSfx === 'function') api.stopRaceSfx(); } catch (e4) { /* ignore */ }
-    if (!hasDrawApi(api)) {
-      try { if (typeof api.clearCountdownArm === 'function') api.clearCountdownArm(); } catch (e5) { /* ignore */ }
-    }
+    try { if (typeof api.clearCountdownArm === 'function') api.clearCountdownArm(); } catch (e5) { /* ignore */ }
   }
 
   function toggleFromEvent(ev) {

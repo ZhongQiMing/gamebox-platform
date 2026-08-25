@@ -279,6 +279,11 @@
     var phaseIssue = '';
     /** 本仪式是否已刷中奖终态 */
     var winFlushed = false;
+    /**
+     * 等中奖核对超时、只出了「正在核对」占位。
+     * 相位照常往前走，但真数据晚到时必须替换占位——不能当成已刷完直接丢掉。
+     */
+    var winTimedOut = false;
     /** 本仪式揭晓是否已完成（防重复 settle） */
     var revealDone = false;
     /** 本仪式是否已 finishToBetting（防双开盘线） */
@@ -366,6 +371,7 @@
       if (next === PHASE_BETTING) {
         phaseIssue = '';
         winFlushed = false;
+        winTimedOut = false;
         revealDone = false;
         finished = false;
         pendingWin = null;
@@ -546,6 +552,7 @@
       phase = PHASE_BETTING;
       phaseIssue = '';
       winFlushed = false;
+      winTimedOut = false;
       revealDone = false;
       pendingWin = null;
       notifyPhase(PHASE_BETTING, nextIssue || prev);
@@ -635,8 +642,15 @@
           }
           if (waited >= WIN_ARRIVE_WAIT_MS) {
             clearWinWait();
-            pendingWin = { issueNo: phaseIssue, users: [], empty: true };
-            flushPendingWinVerify();
+            /*
+             * 服务端的中奖核对还没到。以前这里伪造一张「本期暂无中奖」并把 winFlushed 锁死，
+             * 真数据晚一步到就被当成重复丢弃——中了奖的玩家只会看到「暂无中奖」，
+             * 从玩家角度看就是平台吞奖。
+             * 现在只留「正在核对」占位并放行相位，等真数据到了再替换成终态。
+             */
+            winTimedOut = true;
+            winFlushed = true;
+            appendCalculatingWinCard(true);
             afterWin();
           }
         }, step);
@@ -708,6 +722,7 @@
       if (!issue) return;
       revealDone = false;
       winFlushed = false;
+      winTimedOut = false;
     }
 
     /** 历史回放：只记标志，不推进直播 phase */
@@ -717,8 +732,10 @@
       void ready;
     }
 
-    function appendCalculatingWinCard() {
-      if (!phaseIssue || winFlushed || !pendingWin) return false;
+    /** allowWithoutPending：超时占位场景下 pendingWin 还是空的，也要把占位打出来 */
+    function appendCalculatingWinCard(allowWithoutPending) {
+      if (!phaseIssue) return false;
+      if (!allowWithoutPending && (winFlushed || !pendingWin)) return false;
       if (typeof opts.buildWinVerifyCalculatingHtml !== 'function') return false;
       if (typeof opts.appendMsg !== 'function') return false;
       var $ = global.jQuery || global.$;
@@ -791,6 +808,7 @@
       phase = PHASE_BETTING;
       phaseIssue = '';
       winFlushed = false;
+      winTimedOut = false;
       revealDone = false;
       finished = false;
       openMissTries = 0;
@@ -804,6 +822,7 @@
       finished = false;
       revealDone = false;
       winFlushed = false;
+      winTimedOut = false;
       openMissTries = 0;
       pendingWin = null;
       phaseIssue = issue;
@@ -945,6 +964,20 @@
             pendingWin = p;
             winVerifyDeferred = true;
             html = '';
+          }
+        } else if (winTimedOut && !finished && issue === phaseIssue) {
+          /* 之前超时只出了占位：真数据到了必须换上去，否则玩家永远看不到自己中奖 */
+          winTimedOut = false;
+          winVerifyDeferred = true;
+          html = '';
+          try {
+            if (typeof opts.onFlushWinVerify === 'function') {
+              opts.onFlushWinVerify(issue, p);
+            }
+          } catch (e) {
+            if (typeof console !== 'undefined' && console.warn) {
+              console.warn('[LotteryRoomChat] 迟到的中奖核对替换失败', e);
+            }
           }
         } else if (winFlushed || finished) {
           html = '';

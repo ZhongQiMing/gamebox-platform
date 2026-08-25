@@ -7,6 +7,36 @@
 
   var TableShell = global.TableShell || {};
 
+  /* ───────── 相位横幅 ───────── */
+
+  /**
+   * 预热横幅图的解码。
+   *
+   * 「开始下注」「停止下注」两张图各自常驻一个 <img>，显示时只切换哪个可见，绝不改 src。
+   * 之所以不能共用一个 <img> 改 src：赋值是异步的，新图解码完成前元素仍在画上一张，
+   * 于是「开始下注」的语音配着上一局残留的「停止下注」图（这张图 1503×721，模拟器上
+   * 解码要几百毫秒，必现）。改 src 无论怎么等解码都存在时序缝隙，换成两个元素后，
+   * 最坏情况只是横幅晚半拍出现，绝不会出现「声画对不上」。
+   *
+   * decode() 不依赖元素是否可见，所以进游戏时就能把两张都解好。
+   */
+  TableShell.warmBannerImages = function (imgs) {
+    (imgs || []).forEach(function (img) {
+      if (!img || typeof img.decode !== 'function') return;
+      img.decode().catch(function () {});
+    });
+  };
+
+  /**
+   * 顶栏金额显示：千分位 + 固定两位小数。
+   * 全项目统一——彩票类一直是两位小数，牌桌类原先按整数取整，会把角分抹掉。
+   */
+  TableShell.fmtMoney2 = function (n) {
+    var v = Math.round((Number(n) || 0) * 100) / 100;
+    if (!isFinite(v)) v = 0;
+    return v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
+
   TableShell.profitReturn = function (amount, profitOdds) {
     var a = Math.floor(Number(amount) || 0);
     var o = Number(profitOdds) || 0;
@@ -67,6 +97,40 @@
     }
   };
 
+  /**
+   * 单边限红。
+   *
+   * 高赔低频的边（顺金/豹子 500、小牛/五花 200、牛牛 2000、和 5000）
+   * 服务端本来就卡，但前端不拦的话玩家点下去才被退回，筹码已经飞出去了。
+   * 这里把 /pay-table 的 sideMaxBet 记下来，落筹前先判一次。
+   *
+   * @param {Record<string, string>} labels 边 key → 中文名，用于提示文案
+   * @param {Record<string, number>} [fallback] 拉不到赔率表时的兜底限额
+   */
+  TableShell.createSideLimits = function (labels, fallback) {
+    var caps = {};
+    var base = fallback || {};
+    Object.keys(base).forEach(function (k) { caps[k] = base[k]; });
+    return {
+      apply: function (pt) {
+        var next = pt && pt.sideMaxBet;
+        if (!next) return;
+        Object.keys(next).forEach(function (k) { caps[k] = next[k]; });
+      },
+      capOf: function (key) {
+        var c = Number(caps[key]);
+        return c > 0 ? c : 0;
+      },
+      /** 超限返回提示文案；未超返回空串 */
+      reject: function (key, nextTotal) {
+        var cap = Number(caps[key]);
+        if (!(cap > 0)) return '';
+        if (Number(nextTotal) <= cap) return '';
+        return ((labels && labels[key]) || key) + ' 单边限注 ' + cap;
+      },
+    };
+  };
+
   /** 从大脑拉赔率，合并进本地 odds / mult 对象，并可选同步 DOM */
   TableShell.loadPayTable = function (gameCode, targets) {
     targets = targets || {};
@@ -118,6 +182,40 @@
     return settlement;
   };
 
+  /**
+   * 撤销按钮状态：只在下注期且本局有自己的挂单时可点。
+   * 之前这颗按钮被无条件禁用（真账不可撤销），现在服务端支持封盘前撤单。
+   */
+  TableShell.syncUndoButton = function (undoBtn, canUndo, busy) {
+    if (!undoBtn) return;
+    undoBtn.hidden = false;
+    var on = !!canUndo && !busy;
+    undoBtn.classList.toggle('is-disabled', !on);
+    undoBtn.setAttribute('aria-disabled', on ? 'false' : 'true');
+    var label = busy ? '撤销中…' : (on ? '撤销本局下注' : '本局暂无可撤销的下注');
+    undoBtn.setAttribute('aria-label', busy ? '撤销中' : '撤销');
+    undoBtn.setAttribute('title', label);
+  };
+
+  /**
+   * 移除桌面上「自己」的筹码图，气氛筹码（data-owner=other）保留。
+   * @param {Element} root 下注区根节点
+   * @param {string} chipsSelector 单个下注区里放筹码的容器选择器
+   */
+  TableShell.removeMyChipVisuals = function (root, chipsSelector) {
+    if (!root) return 0;
+    var boxes = root.querySelectorAll(chipsSelector);
+    var removed = 0;
+    for (var i = 0; i < boxes.length; i++) {
+      var mine = boxes[i].querySelectorAll('img[data-owner="me"]');
+      for (var j = 0; j < mine.length; j++) {
+        mine[j].parentNode.removeChild(mine[j]);
+        removed++;
+      }
+    }
+    return removed;
+  };
+
   TableShell.disableUndoButton = function (undoBtn) {
     if (!undoBtn) return;
     undoBtn.hidden = false;
@@ -140,19 +238,267 @@
     roomEl.classList.toggle('is-live-bet', p === 'bet' && !focus);
   };
 
-  /** 服务器相位时钟（优先于本地墙钟） */
+  /**
+   * 服务器相位时钟。
+   *
+   * 牌桌一切时序都从这里推导，本地不再自己累加倒计时：
+   * 每一局的绝对起点由服务端局号唯一确定（局号 = 该局在当天的第几个整周期），
+   * 界面只回答「按服务端的钟，现在走到这一局的第几毫秒」。
+   * 这样网络抖动、丢包、切后台、慢机器都只影响画面追赶的快慢，不会让流程错乱。
+   */
   TableShell.createServerClock = function () {
-    return { phase: '', secondsLeft: 0, syncedAt: 0, roundNo: '', timing: null };
+    return {
+      phase: '', secondsLeft: 0, syncedAt: 0, roundNo: '', timing: null,
+      /** 服务端时间 - 本地时间；靠快照估出来 */
+      offsetMs: 0,
+      /** 已经对上过时；没对上前先按本地钟走，不至于卡死 */
+      synced: false,
+      /** 最近一次估计的往返耗时，用来挑更可信的样本 */
+      bestRtt: Infinity,
+    };
   };
 
+  /** 同一局内相位只会往后走；PAUSED 是维护，任何时候都得认 */
+  var PHASE_RANK = { BETTING: 1, DRAWING: 2, SETTLED: 3 };
+
+  /** 局号 `{前缀}{YYYYMMDD}-{序号}` → 可比较的数值；解析不出返回 null */
+  function roundOrder(roundNo) {
+    var m = String(roundNo || '').match(/(\d{8})-(\d+)$/);
+    return m ? Number(m[1]) * 1e6 + Number(m[2]) : null;
+  }
+
+  /** 整局毫秒；timing 缺失时用兜底值 */
+  TableShell.cycleMsOf = function (timing, fallbackMs) {
+    if (!timing) return fallbackMs || 60000;
+    var c = Number(timing.bettingMs) + Number(timing.drawMs) + Number(timing.settleMs);
+    return c > 0 ? c : (fallbackMs || 60000);
+  };
+
+  /**
+   * 从局号还原这一局的绝对起点（毫秒），精确到毫秒。
+   *
+   * 服务端的开局网格对齐 Unix 纪元：起点 = floor(时刻 / 整局时长) × 整局时长；
+   * 局号里的当日序号则是 floor((起点 - 当日零点) / 整局时长) + 1。
+   * 当日零点通常不在这个网格上，所以不能拿「零点 + (序号-1)×整局」当起点。
+   * 但序号圈定的这段区间长度正好是一个整局，里面有且只有一个网格点，取它就是精确值。
+   */
+  TableShell.roundStartAtOf = function (roundNo, cycleMs) {
+    var m = String(roundNo || '').match(/(\d{4})(\d{2})(\d{2})-(\d+)$/);
+    if (!m || !(cycleMs > 0)) return null;
+    var dayStart = Date.parse(m[1] + '-' + m[2] + '-' + m[3] + 'T00:00:00+08:00');
+    if (!Number.isFinite(dayStart)) return null;
+    var lo = dayStart + (Number(m[4]) - 1) * cycleMs;
+    return Math.ceil(lo / cycleMs) * cycleMs;
+  };
+
+  /** 这一局已经走了多少毫秒（按快照里的相位与剩余秒数推） */
+  function elapsedInRound(phase, secondsLeft, timing) {
+    var b = Number(timing.bettingMs);
+    var d = Number(timing.drawMs);
+    var s = Number(timing.settleMs);
+    /*
+     * 服务端的剩余秒数是向上取整的，真实剩余落在 (n-1, n] 秒内，取中点误差最小。
+     */
+    var remain = Math.max(0, (Number(secondsLeft) || 0) - 0.5) * 1000;
+    if (phase === 'BETTING') return b - remain;
+    if (phase === 'DRAWING') return b + d - remain;
+    if (phase === 'SETTLED') return b + d + s - remain;
+    return null;
+  }
+
+  /**
+   * 用一次快照校时。
+   * @param sentAt 请求发出的时刻；快照反映的是大约 sentAt + 半个往返 时的服务端状态
+   */
+  TableShell.syncClock = function (clock, snap, sentAt, recvAt) {
+    if (!clock || !snap || !clock.timing) return;
+    var cycle = TableShell.cycleMsOf(clock.timing);
+    var startAt = TableShell.roundStartAtOf(snap.roundNo, cycle);
+    var tIn = elapsedInRound(String(snap.phase || ''), snap.secondsLeft, clock.timing);
+    if (startAt == null || tIn == null) return;
+
+    recvAt = recvAt || Date.now();
+    sentAt = sentAt || recvAt;
+    var rtt = Math.max(0, recvAt - sentAt);
+    var sampledAt = sentAt + rtt / 2;
+    var offset = (startAt + tIn) - sampledAt;
+
+    if (!clock.synced) {
+      clock.offsetMs = offset;
+      clock.synced = true;
+      clock.bestRtt = rtt;
+      return;
+    }
+    /*
+     * 只认更快的那次往返，慢样本噪声大。往返差不多时做慢平滑，
+     * 避免个别抖动把时间基准拽走造成画面跳帧。
+     */
+    if (rtt <= clock.bestRtt) {
+      clock.bestRtt = rtt;
+      clock.offsetMs = offset;
+    } else {
+      clock.offsetMs += (offset - clock.offsetMs) * 0.1;
+      clock.bestRtt = clock.bestRtt * 0.9 + rtt * 0.1;
+    }
+  };
+
+  /** 按服务端的钟，现在几点 */
+  TableShell.serverNow = function (clock) {
+    return Date.now() + ((clock && clock.offsetMs) || 0);
+  };
+
+  /**
+   * 现在处在哪一局、走到第几毫秒。
+   * 返回 null 表示 timing 还没到手，调用方应先等快照。
+   */
+  TableShell.roundPositionOf = function (clock) {
+    if (!clock || !clock.timing) return null;
+    var timing = clock.timing;
+    var cycle = TableShell.cycleMsOf(timing);
+    var now = TableShell.serverNow(clock);
+    var startAt = Math.floor(now / cycle) * cycle;
+    var tIn = now - startAt;
+    var b = Number(timing.bettingMs);
+    var d = Number(timing.drawMs);
+    var phase = tIn < b ? 'BETTING' : (tIn < b + d ? 'DRAWING' : 'SETTLED');
+    return {
+      startAt: startAt,
+      tIn: tIn,
+      cycleMs: cycle,
+      phase: phase,
+      /** 下注剩余毫秒（非下注期为 0） */
+      betLeftMs: phase === 'BETTING' ? b - tIn : 0,
+      /** 开奖已进行毫秒（下注期为 0） */
+      drawElapsedMs: phase === 'BETTING' ? 0 : tIn - b,
+    };
+  };
+
+  /**
+   * 用快照对时。迟到的快照必须丢掉，否则时钟会倒退。
+   *
+   * 轮询 1.5s 一次，响应还可能乱序，于是「上一局 SETTLED」会盖掉「新一局 BETTING」。
+   * 客户端一看剩余时间成 0，立刻当作下注结束开下一轮开奖：刚弹出的「开始下注」被
+   * 「停止下注」顶掉（实测两者只隔 199ms，倒计时从 44 秒直接跳到「开奖中」）。
+   */
   TableShell.applyServerSnap = function (clock, snap) {
     if (!clock || !snap) return clock;
-    clock.phase = String(snap.phase || '');
+    var nextPhase = String(snap.phase || '');
+    var nextNo = snap.roundNo ? String(snap.roundNo) : '';
+    if (nextPhase !== 'PAUSED') {
+      var cur = roundOrder(clock.roundNo);
+      var next = roundOrder(nextNo);
+      if (cur != null && next != null) {
+        if (next < cur) return clock;
+        if (next === cur && (PHASE_RANK[nextPhase] || 0) < (PHASE_RANK[clock.phase] || 0)) {
+          return clock;
+        }
+      }
+    }
+    clock.phase = nextPhase;
     clock.secondsLeft = Number(snap.secondsLeft) || 0;
     clock.syncedAt = Date.now();
-    clock.roundNo = snap.roundNo ? String(snap.roundNo) : '';
+    clock.roundNo = nextNo;
     if (snap.timing) clock.timing = snap.timing;
     return clock;
+  };
+
+  /**
+   * 顶栏 2x2 积分区自适应缩放。
+   *
+   * 积分/输赢/流水/回水 要按七位整数加两位小数预留位置，窄屏上这个宽度放不下，
+   * 溢出后右列（流水/回水）会被屏幕边缘切掉，甚至整列看不见。这里按内容量出自然
+   * 宽度，超出可用空间就等比缩到刚好放下——宽屏保持原始字号，窄屏只是整体略小，
+   * 任何屏宽都不会切数字。
+   *
+   * @param {{head:Element, stats:Element, brand?:Element}} opts
+   * @returns {{refit:Function}}
+   */
+  TableShell.createStatsFitter = function (opts) {
+    opts = opts || {};
+    var head = opts.head;
+    var stats = opts.stats;
+    var brand = opts.brand;
+    if (!head || !stats) return { refit: function () {} };
+
+    function measureAndFit() {
+      /* 拿不到样式或尺寸的环境（如无 DOM 的测试沙箱）直接跳过，不影响游戏流程 */
+      if (typeof global.getComputedStyle !== 'function') return;
+      if (typeof head.clientWidth !== 'number') return;
+
+      /* 先复原，否则量到的是上一次缩放后的尺寸 */
+      stats.style.width = '';
+      stats.style.transform = '';
+      stats.style.transformOrigin = '';
+
+      /*
+       * 四项数值列统一成同一宽度。
+       * 每个格子各是一个独立网格，若让标签列吸收剩余空间，标签文字就会被数值长度
+       * 推着走——同一列里「积分」和「输赢」会一前一后错开。统一数值列宽后，
+       * 标签按内容左对齐、数字在固定宽度里右对齐，两者各自成线。
+       */
+      stats.style.removeProperty('--tb-stat-vw');
+      var vals = stats.querySelectorAll('.v');
+      var widest = 0;
+      for (var i = 0; i < vals.length; i++) {
+        var w = vals[i].getBoundingClientRect().width;
+        if (w > widest) widest = w;
+      }
+      if (widest > 0) {
+        stats.style.setProperty('--tb-stat-vw', Math.ceil(widest) + 'px');
+      }
+
+      var cs = global.getComputedStyle(head);
+      if (!cs) return;
+      var padL = parseFloat(cs.paddingLeft) || 0;
+      var padR = parseFloat(cs.paddingRight) || 0;
+      var gap = parseFloat(cs.columnGap) || parseFloat(cs.gap) || 0;
+      var brandW = brand ? brand.getBoundingClientRect().width : 0;
+      var avail = head.clientWidth - padL - padR - brandW - (brandW ? gap : 0);
+      var natural = stats.scrollWidth;
+      if (!(avail > 0) || !(natural > 0)) return;
+
+      var scale = Math.min(1, avail / natural);
+      if (scale >= 0.999) return;
+      /* 占位宽度跟着缩，否则 flex 仍按原宽排版，照样顶出屏幕 */
+      stats.style.width = (natural * scale) + 'px';
+      stats.style.transformOrigin = 'left center';
+      stats.style.transform = 'scale(' + scale + ')';
+    }
+
+    var pending = 0;
+    function schedule() {
+      if (pending) return;
+      pending = global.requestAnimationFrame
+        ? global.requestAnimationFrame(function () { pending = 0; measureAndFit(); })
+        : setTimeout(function () { pending = 0; measureAndFit(); }, 16);
+    }
+
+    global.addEventListener('resize', schedule);
+    /* 字体晚于首帧就绪时字宽会变，就绪后再量一次 */
+    if (global.document && document.fonts && document.fonts.ready && document.fonts.ready.then) {
+      document.fonts.ready.then(schedule).catch(function () {});
+    }
+    schedule();
+    return { refit: schedule };
+  };
+
+  /**
+   * 筹码自适应降档：选中面额超过可用余额时，退到不超过余额的最大一档。
+   * 只降不升——赢钱后不擅自替玩家加大注码。
+   * @param {number[][]} pages 筹码分页（各页面额）
+   * @param {number} bal 可用余额（已扣掉在途下注）
+   * @returns {number} 目标面额；一分都下不起返回 0
+   */
+  TableShell.affordableChip = function (pages, bal) {
+    var all = [];
+    (pages || []).forEach(function (p) { all = all.concat(p || []); });
+    all.sort(function (a, b) { return b - a; });
+    var n = Number(bal);
+    if (!Number.isFinite(n)) return 0;
+    for (var i = 0; i < all.length; i++) {
+      if (all[i] <= n) return all[i];
+    }
+    return 0;
   };
 
   /** 房间托人数（0~50）；缺省按 14 */
@@ -245,9 +591,11 @@
       if (inFlight) return;
       if (opts && typeof opts.shouldPoll === 'function' && !opts.shouldPoll()) return;
       inFlight = true;
+      /* 记下发出时刻：校时要扣掉半个往返，否则慢网下时间基准会整体偏后 */
+      var sentAt = Date.now();
       App.fetchTableSnapshot(gameCode)
         .then(function (snap) {
-          if (onSnap) onSnap(snap);
+          if (onSnap) onSnap(snap, { sentAt: sentAt, recvAt: Date.now() });
         })
         .catch(function () { /* 忽略瞬时失败，保留本地兜底 */ })
         .then(function () { inFlight = false; });
@@ -260,14 +608,19 @@
     if (global.App && App.toast) App.toast('已提交真账，不可撤销');
   };
 
-  /** 公平提示文案 */
+  /**
+   * 公平提示文案；下注期没有种子与指纹，不显示。
+   *
+   * 措辞刻意只说「可复算」，不说「预承诺」：种子是封盘时才生成的，
+   * 下注前并不存在可承诺之物。宣称做不到的事，在纠纷里比从不宣称严重得多。
+   */
   TableShell.fairLine = function (snap) {
     if (!snap || !snap.serverSeedHash) return '';
     var shortHash = String(snap.serverSeedHash).slice(0, 10);
     if (snap.serverSeed) {
       return '本局已开奖 · seed已公开 · hash ' + shortHash + '…';
     }
-    return '本局承诺 hash ' + shortHash + '…（封盘后公开种子）';
+    return 'hash ' + shortHash + '…';
   };
 
   /** 从 outcome 提取珠盘结果键 */
@@ -330,14 +683,22 @@
     return Math.max(8, Math.floor((w + gap) / (cell + gap)));
   };
 
-  /** 珠盘视口序列：最多填满「总列数 - 1」列，末列留空 */
+  /**
+   * 珠盘视口序列：最多填满「总列数 - 1」列，末列留空。
+   *
+   * 满了之后必须按「整列」往前推，不能按颗推。
+   * 珠盘是竖着填的（每列 rows 颗），原先这里是 slice(length - maxBeads)，也就是每来一颗
+   * 就丢掉最旧的一颗；珠子整体前移一格，列的分组跟着全部错位，看着像所有珠子往上挪了
+   * 一格，而不是最旧那一列被推出去。这里把丢弃数向上取整到整列，列内位置就不会变。
+   */
   TableShell.roadBeadViewSeq = function (seq, viewCols, rows) {
     seq = Array.isArray(seq) ? seq : [];
     rows = rows || 6;
     var maxFilled = Math.max(1, (viewCols || 12) - 1);
     var maxBeads = maxFilled * rows;
     if (seq.length <= maxBeads) return seq.slice();
-    return seq.slice(seq.length - maxBeads);
+    var dropCols = Math.ceil((seq.length - maxBeads) / rows);
+    return seq.slice(dropCols * rows);
   };
 
   /** 大路视口列：同样只保留最近「总列数 - 1」列 */
@@ -404,13 +765,25 @@
     var p = classPrefix || 'tbl';
     info = info || {};
     var lines = [];
-    lines.push('<p class="' + p + '-rules__intro"><b>可证明公平</b></p>');
+    /*
+     * 只说「开奖可复算」，不说「可证明公平 / 承诺 Hash」。
+     *
+     * 种子与指纹是封盘那一刻才生成的，玩家下注前不存在任何承诺物，
+     * 所以这里能证明的是「公布的结果没有被事后改过」（结果可复算），
+     * 而不是「种子不是看完下注才挑的」（预承诺公平）。两者差别很大，
+     * 把后者写在界面上等于宣称做不到的事——出纠纷时这比从不宣称糟得多。
+     */
+    lines.push('<p class="' + p + '-rules__intro"><b>开奖可复算</b></p>');
+    lines.push(
+      '<p class="' + p + '-rules__intro">开奖后公布本局种子与其指纹，' +
+        '任何人都能用它复算出同一副牌与同一结果，据此核对公布的结果有没有被改过。</p>',
+    );
     if (info.roundNo) {
       lines.push('<p class="' + p + '-rules__intro">局号：' + String(info.roundNo) + '</p>');
     }
     if (info.serverSeedHash) {
       lines.push(
-        '<p class="' + p + '-rules__intro">承诺 Hash：<code style="word-break:break-all;font-size:11px">' +
+        '<p class="' + p + '-rules__intro">结果指纹 Hash：<code style="word-break:break-all;font-size:11px">' +
           String(info.serverSeedHash) + '</code></p>',
       );
     }
@@ -420,7 +793,8 @@
           String(info.serverSeed) + '</code></p>',
       );
     } else {
-      lines.push('<p class="' + p + '-rules__intro">下注期仅公开 Hash；封盘开奖后公开 Seed，可用 Hash 核验。</p>');
+      /* 下注期没有种子也没有指纹：候选是封盘时才生成的，开局前无可承诺之物 */
+      lines.push('<p class="' + p + '-rules__intro">本局尚未开奖；开奖后公开种子与其指纹，可自行复算核验。</p>');
     }
     if (typeof info.nonce === 'number') {
       lines.push('<p class="' + p + '-rules__intro">Nonce：' + info.nonce + '</p>');
@@ -431,7 +805,7 @@
           (info.hashMatches ? '通过 ✓' : '失败 ✗') + '</p>',
       );
     } else if (!info.serverSeed) {
-      lines.push('<p class="' + p + '-rules__intro">Hash 校验：下注期暂不可验（需封盘后对照 Seed）</p>');
+      lines.push('<p class="' + p + '-rules__intro">Hash 校验：开奖后可验</p>');
     }
     if (info.outcomeMatches != null) {
       lines.push(
@@ -453,6 +827,7 @@
    *   sections?: Array<{ title: string, paragraphs?: string[], list?: string[] }>,
    *   oddsHeaders?: string[],
    *   oddsRows?: string[][],
+   *   oddsIntro?: string,
    *   notes?: string[],
    * }} opts
    */
@@ -481,8 +856,14 @@
       if (oddsIdx < 0) oddsIdx = headers.length - 1;
       html.push('<section class="tb-rules__sec">');
       html.push('<h3 class="tb-rules__title">玩法与赔率</h3>');
+      /*
+       * 默认按净赔率说明。斗牛的牛牛/牛7-9/无牛-牛6 挂的是含本总赔率，
+       * 照默认文案念会让玩家多算一份本金，所以允许各桌自己传口径说明。
+       */
       html.push(
-        '<p class="tb-rules__p">赔率按「押 1 净得 X」标注（不含本金）；派彩以当局结算为准。</p>',
+        '<p class="tb-rules__p">'
+        + (opts.oddsIntro || '赔率按「押 1 净得 X」标注（不含本金）；派彩以当局结算为准。')
+        + '</p>',
       );
       html.push('<div class="tb-rules__table-wrap"><table class="tb-rules__table"><thead><tr>');
       headers.forEach(function (h, i) {
