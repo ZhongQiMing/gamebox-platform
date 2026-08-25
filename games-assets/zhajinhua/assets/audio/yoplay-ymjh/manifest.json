@@ -21,6 +21,7 @@
     "countboard.mp3": "计分板",
     "history.mp3": "路单/历史",
     "voice/start-bet.mp3": "语音：开始下注",
+    "voice/stop-bet.mp3": "语音：停止下注（合成补录，对齐 start-bet 的 44.1k 立体声）",
     "voice/pair.mp3": "语音：对子",
     "voice/flush.mp3": "语音：金花",
     "voice/high.mp3": "语音：高牌/散牌",

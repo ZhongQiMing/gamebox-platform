@@ -2,10 +2,12 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <link rel="stylesheet" href="/fonts/gamebox-fonts.css">
+  <link rel="preload" as="style" href="/fonts/gamebox-fonts.css"
+        onload="this.onload=null;this.rel='stylesheet'">
+  <noscript><link rel="stylesheet" href="/fonts/gamebox-fonts.css"></noscript>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>炸金花</title>
-<link rel="stylesheet" href="./css/zjh.css?v=310">
+<link rel="stylesheet" href="./css/zjh.css?v=315">
   <link rel="stylesheet" href="/games-assets/_table-common/table-ui.css?v=7">
   <script>
     (function () {
@@ -52,8 +54,8 @@
 <div class="zjh-room tb-room">
   <!-- 顶栏发牌器 + 其上扑克 -->
   <div class="zjh-shoe" id="shoeBox" aria-hidden="true">
-    <img class="zjh-shoe__body" src="./assets/ui/shoe-dealer-live.png?v=1" alt="" draggable="false">
-    <img class="zjh-shoe__cards" src="./assets/ui/shoe-cards-live.png?v=2" alt="" draggable="false">
+    <img class="zjh-shoe__body" src="./assets/ui/shoe-dealer-live.webp?v=1" alt="" draggable="false">
+    <img class="zjh-shoe__cards" src="./assets/ui/shoe-cards-live.webp?v=2" alt="" draggable="false">
   </div>
 
   <!-- 倒计时：下注秒数 / 开奖中 / 派奖中 -->
@@ -66,20 +68,20 @@
     <div class="zjh-hand zjh-hand--banker" id="bankerHand">
       <div class="zjh-card" data-slot="b1">
         <div class="zjh-card__inner">
-          <div class="zjh-card__face zjh-card__face--back"><img src="./assets/cards/card-back.png?v=4" alt="" draggable="false"></div>
-          <div class="zjh-card__face zjh-card__face--front"><img src="./assets/cards/card-back.png?v=4" alt="" draggable="false"></div>
+          <div class="zjh-card__face zjh-card__face--back"><img src="./assets/cards/card-back.webp?v=4" alt="" draggable="false"></div>
+          <div class="zjh-card__face zjh-card__face--front"><img src="./assets/cards/card-back.webp?v=4" alt="" draggable="false"></div>
         </div>
       </div>
       <div class="zjh-card" data-slot="b2">
         <div class="zjh-card__inner">
-          <div class="zjh-card__face zjh-card__face--back"><img src="./assets/cards/card-back.png?v=4" alt="" draggable="false"></div>
-          <div class="zjh-card__face zjh-card__face--front"><img src="./assets/cards/card-back.png?v=4" alt="" draggable="false"></div>
+          <div class="zjh-card__face zjh-card__face--back"><img src="./assets/cards/card-back.webp?v=4" alt="" draggable="false"></div>
+          <div class="zjh-card__face zjh-card__face--front"><img src="./assets/cards/card-back.webp?v=4" alt="" draggable="false"></div>
         </div>
       </div>
       <div class="zjh-card" data-slot="b3">
         <div class="zjh-card__inner">
-          <div class="zjh-card__face zjh-card__face--back"><img src="./assets/cards/card-back.png?v=4" alt="" draggable="false"></div>
-          <div class="zjh-card__face zjh-card__face--front"><img src="./assets/cards/card-back.png?v=4" alt="" draggable="false"></div>
+          <div class="zjh-card__face zjh-card__face--back"><img src="./assets/cards/card-back.webp?v=4" alt="" draggable="false"></div>
+          <div class="zjh-card__face zjh-card__face--front"><img src="./assets/cards/card-back.webp?v=4" alt="" draggable="false"></div>
         </div>
       </div>
       <div class="zjh-hand-type" id="bankerType" hidden></div>
@@ -87,20 +89,20 @@
     <div class="zjh-hand zjh-hand--player" id="playerHand">
       <div class="zjh-card" data-slot="p1">
         <div class="zjh-card__inner">
-          <div class="zjh-card__face zjh-card__face--back"><img src="./assets/cards/card-back.png?v=4" alt="" draggable="false"></div>
-          <div class="zjh-card__face zjh-card__face--front"><img src="./assets/cards/card-back.png?v=4" alt="" draggable="false"></div>
+          <div class="zjh-card__face zjh-card__face--back"><img src="./assets/cards/card-back.webp?v=4" alt="" draggable="false"></div>
+          <div class="zjh-card__face zjh-card__face--front"><img src="./assets/cards/card-back.webp?v=4" alt="" draggable="false"></div>
         </div>
       </div>
       <div class="zjh-card" data-slot="p2">
         <div class="zjh-card__inner">
-          <div class="zjh-card__face zjh-card__face--back"><img src="./assets/cards/card-back.png?v=4" alt="" draggable="false"></div>
-          <div class="zjh-card__face zjh-card__face--front"><img src="./assets/cards/card-back.png?v=4" alt="" draggable="false"></div>
+          <div class="zjh-card__face zjh-card__face--back"><img src="./assets/cards/card-back.webp?v=4" alt="" draggable="false"></div>
+          <div class="zjh-card__face zjh-card__face--front"><img src="./assets/cards/card-back.webp?v=4" alt="" draggable="false"></div>
         </div>
       </div>
       <div class="zjh-card" data-slot="p3">
         <div class="zjh-card__inner">
-          <div class="zjh-card__face zjh-card__face--back"><img src="./assets/cards/card-back.png?v=4" alt="" draggable="false"></div>
-          <div class="zjh-card__face zjh-card__face--front"><img src="./assets/cards/card-back.png?v=4" alt="" draggable="false"></div>
+          <div class="zjh-card__face zjh-card__face--back"><img src="./assets/cards/card-back.webp?v=4" alt="" draggable="false"></div>
+          <div class="zjh-card__face zjh-card__face--front"><img src="./assets/cards/card-back.webp?v=4" alt="" draggable="false"></div>
         </div>
       </div>
       <div class="zjh-hand-type" id="playerType" hidden></div>
@@ -111,56 +113,56 @@
   <!-- 下注区：抠图按钮叠在底图上，文字叠在按钮上 -->
   <div class="zjh-bet zjh-bet--hotspot tb-bet" id="betArea" aria-label="下注区">
     <button type="button" class="zjh-bet-btn zjh-bet-btn--banker" data-bet="banker">
-      <img class="zjh-bet-btn__frame" src="./assets/ui/bet-btns/banker.png?v=9" alt="" draggable="false">
+      <img class="zjh-bet-btn__frame" src="./assets/ui/bet-btns/banker.webp?v=9" alt="" draggable="false">
       <span class="zjh-bet-btn__name">庄</span>
       <span class="zjh-bet-btn__odds">1:0.95</span>
       <span class="zjh-bet-btn__chips" aria-hidden="true"></span>
       <span class="zjh-bet-btn__stake" hidden>0</span>
     </button>
     <button type="button" class="zjh-bet-btn zjh-bet-btn--player" data-bet="player">
-      <img class="zjh-bet-btn__frame" src="./assets/ui/bet-btns/player.png?v=9" alt="" draggable="false">
+      <img class="zjh-bet-btn__frame" src="./assets/ui/bet-btns/player.webp?v=9" alt="" draggable="false">
       <span class="zjh-bet-btn__name">闲</span>
       <span class="zjh-bet-btn__odds">1:1</span>
       <span class="zjh-bet-btn__chips" aria-hidden="true"></span>
       <span class="zjh-bet-btn__stake" hidden>0</span>
     </button>
     <button type="button" class="zjh-bet-btn zjh-bet-btn--span zjh-bet-btn--gold" data-bet="shunjin">
-      <img class="zjh-bet-btn__frame" src="./assets/ui/bet-btns/shunjin.png?v=8" alt="" draggable="false">
+      <img class="zjh-bet-btn__frame" src="./assets/ui/bet-btns/shunjin.webp?v=8" alt="" draggable="false">
       <span class="zjh-bet-btn__name">顺金</span>
       <span class="zjh-bet-btn__odds">1:100</span>
       <span class="zjh-bet-btn__chips" aria-hidden="true"></span>
       <span class="zjh-bet-btn__stake" hidden>0</span>
     </button>
     <button type="button" class="zjh-bet-btn zjh-bet-btn--sub zjh-bet-btn--gold" data-bet="san2">
-      <img class="zjh-bet-btn__frame" src="./assets/ui/bet-btns/san2.png?v=8" alt="" draggable="false">
+      <img class="zjh-bet-btn__frame" src="./assets/ui/bet-btns/san2.webp?v=8" alt="" draggable="false">
       <span class="zjh-bet-btn__name">散牌</span>
       <span class="zjh-bet-btn__odds">1:0.75</span>
       <span class="zjh-bet-btn__chips" aria-hidden="true"></span>
       <span class="zjh-bet-btn__stake" hidden>0</span>
     </button>
     <button type="button" class="zjh-bet-btn zjh-bet-btn--sub zjh-bet-btn--gold" data-bet="san3">
-      <img class="zjh-bet-btn__frame" src="./assets/ui/bet-btns/san3.png?v=8" alt="" draggable="false">
+      <img class="zjh-bet-btn__frame" src="./assets/ui/bet-btns/san3.webp?v=8" alt="" draggable="false">
       <span class="zjh-bet-btn__name">对子</span>
       <span class="zjh-bet-btn__odds">1:2</span>
       <span class="zjh-bet-btn__chips" aria-hidden="true"></span>
       <span class="zjh-bet-btn__stake" hidden>0</span>
     </button>
     <button type="button" class="zjh-bet-btn zjh-bet-btn--span zjh-bet-btn--gold" data-bet="baozi">
-      <img class="zjh-bet-btn__frame" src="./assets/ui/bet-btns/baozi.png?v=8" alt="" draggable="false">
+      <img class="zjh-bet-btn__frame" src="./assets/ui/bet-btns/baozi.webp?v=8" alt="" draggable="false">
       <span class="zjh-bet-btn__name">豹子</span>
       <span class="zjh-bet-btn__odds">1:120</span>
       <span class="zjh-bet-btn__chips" aria-hidden="true"></span>
       <span class="zjh-bet-btn__stake" hidden>0</span>
     </button>
     <button type="button" class="zjh-bet-btn zjh-bet-btn--sub zjh-bet-btn--gold" data-bet="san6">
-      <img class="zjh-bet-btn__frame" src="./assets/ui/bet-btns/san6.png?v=8" alt="" draggable="false">
+      <img class="zjh-bet-btn__frame" src="./assets/ui/bet-btns/san6.webp?v=8" alt="" draggable="false">
       <span class="zjh-bet-btn__name">顺子</span>
       <span class="zjh-bet-btn__odds">1:7</span>
       <span class="zjh-bet-btn__chips" aria-hidden="true"></span>
       <span class="zjh-bet-btn__stake" hidden>0</span>
     </button>
     <button type="button" class="zjh-bet-btn zjh-bet-btn--sub zjh-bet-btn--gold" data-bet="san7">
-      <img class="zjh-bet-btn__frame" src="./assets/ui/bet-btns/san7.png?v=8" alt="" draggable="false">
+      <img class="zjh-bet-btn__frame" src="./assets/ui/bet-btns/san7.webp?v=8" alt="" draggable="false">
       <span class="zjh-bet-btn__name">金花</span>
       <span class="zjh-bet-btn__odds">1:8</span>
       <span class="zjh-bet-btn__chips" aria-hidden="true"></span>
@@ -218,16 +220,16 @@
   <!-- 桌边下方左右：撤销 / 续押 -->
   <div class="zjh-actions" id="actionBar" aria-label="操作">
     <button type="button" class="zjh-action zjh-action--undo" data-action="undo" aria-label="撤销">
-      <img src="./assets/ui/action-btns/undo.png?v=4" alt="撤销" draggable="false">
+      <img src="./assets/ui/action-btns/undo.webp?v=4" alt="撤销" draggable="false">
     </button>
     <button type="button" class="zjh-action zjh-action--rebet" data-action="rebet" aria-label="续押">
-      <img src="./assets/ui/action-btns/rebet.png?v=4" alt="续押" draggable="false">
+      <img src="./assets/ui/action-btns/rebet.webp?v=4" alt="续押" draggable="false">
     </button>
   </div>
 
   <!-- 牌桌顶部桌边右侧：在线人数（底部动态数字） -->
   <div class="zjh-players tb-players" id="playersBox" aria-label="气氛人数（非实时在线）" title="桌面气氛人数，非实时在线">
-    <img class="zjh-players__icon" src="./assets/ui/action-btns/players.png?v=2" alt="" draggable="false">
+    <img class="zjh-players__icon" src="./assets/ui/action-btns/players.webp?v=2" alt="" draggable="false">
     <span class="zjh-players__count" id="playersCount">43</span>
   </div>
 
@@ -235,27 +237,27 @@
   <div class="zjh-chips" id="chipBar" aria-label="筹码">
     <button type="button" class="zjh-chip is-selected" data-chip="1" aria-label="1">
       <span class="zjh-chip__glow" aria-hidden="true"></span>
-      <img src="./assets/ui/chips/chip-1.png?v=4" alt="1" draggable="false">
+      <img src="./assets/ui/chips/chip-1.webp?v=4" alt="1" draggable="false">
     </button>
     <button type="button" class="zjh-chip" data-chip="5" aria-label="5">
       <span class="zjh-chip__glow" aria-hidden="true"></span>
-      <img src="./assets/ui/chips/chip-5.png?v=4" alt="5" draggable="false">
+      <img src="./assets/ui/chips/chip-5.webp?v=4" alt="5" draggable="false">
     </button>
     <button type="button" class="zjh-chip" data-chip="10" aria-label="10">
       <span class="zjh-chip__glow" aria-hidden="true"></span>
-      <img src="./assets/ui/chips/chip-10.png?v=4" alt="10" draggable="false">
+      <img src="./assets/ui/chips/chip-10.webp?v=4" alt="10" draggable="false">
     </button>
     <button type="button" class="zjh-chip" data-chip="50" aria-label="50">
       <span class="zjh-chip__glow" aria-hidden="true"></span>
-      <img src="./assets/ui/chips/chip-50.png?v=4" alt="50" draggable="false">
+      <img src="./assets/ui/chips/chip-50.webp?v=4" alt="50" draggable="false">
     </button>
     <button type="button" class="zjh-chip" data-chip="100" aria-label="100">
       <span class="zjh-chip__glow" aria-hidden="true"></span>
-      <img src="./assets/ui/chips/chip-100.png?v=4" alt="100" draggable="false">
+      <img src="./assets/ui/chips/chip-100.webp?v=4" alt="100" draggable="false">
     </button>
     <button type="button" class="zjh-chip" data-chip="500" aria-label="500">
       <span class="zjh-chip__glow" aria-hidden="true"></span>
-      <img src="./assets/ui/chips/chip-500.png?v=4" alt="500" draggable="false">
+      <img src="./assets/ui/chips/chip-500.webp?v=4" alt="500" draggable="false">
     </button>
     <button type="button" class="zjh-chip-more tb-chip-more" id="chipPageBtn" aria-label="切换筹码页" title="切换筹码">
       <span class="zjh-chip-more__dot"></span>
@@ -278,31 +280,35 @@
     </button>
     <div class="zjh-rail-stack" id="zjhRailStack">
       <button type="button" class="zjh-rail-btn" id="railCs" title="客服">
-        <img class="zjh-rail-ic" src="/images/table-rail/rail-cs.png?v=3" alt="" draggable="false">
+        <img class="zjh-rail-ic" src="/images/table-rail/rail-cs.webp?v=3" alt="" draggable="false">
         <span class="zjh-rail-lb">客服</span>
       </button>
       <button type="button" class="zjh-rail-btn" id="railHistory" title="历史记录">
-        <img class="zjh-rail-ic" src="/images/table-rail/rail-history.png?v=3" alt="" draggable="false">
+        <img class="zjh-rail-ic" src="/images/table-rail/rail-history.webp?v=3" alt="" draggable="false">
         <span class="zjh-rail-lb">历史</span>
       </button>
       <button type="button" class="zjh-rail-btn" id="railRecords" title="下注记录">
-        <img class="zjh-rail-ic" src="/images/table-rail/rail-records.png?v=3" alt="" draggable="false">
+        <img class="zjh-rail-ic" src="/images/table-rail/rail-records.webp?v=3" alt="" draggable="false">
         <span class="zjh-rail-lb">记录</span>
       </button>
       <button type="button" class="zjh-rail-btn" id="railRules" title="玩法规则">
-        <img class="zjh-rail-ic" src="/images/table-rail/rail-rules.png?v=3" alt="" draggable="false">
+        <img class="zjh-rail-ic" src="/images/table-rail/rail-rules.webp?v=3" alt="" draggable="false">
         <span class="zjh-rail-lb">玩法</span>
       </button>
       <button type="button" class="zjh-rail-btn" id="railSettings" title="设置">
-        <img class="zjh-rail-ic" src="/images/table-rail/rail-settings.png?v=3" alt="" draggable="false">
+        <img class="zjh-rail-ic" src="/images/table-rail/rail-settings.webp?v=3" alt="" draggable="false">
         <span class="zjh-rail-lb">设置</span>
       </button>
     </div>
   </aside>
 </div><!-- /.zjh-stage -->
   <div class="zjh-payout-fly" id="payoutFlyLayer" aria-hidden="true"></div>
+  <!-- 两张图各自常驻：显示时只切换哪个可见，绝不改 src（改 src 会出现声画错位） -->
   <div class="zjh-phase-banner" id="phaseBanner" aria-hidden="true">
-    <img class="zjh-phase-banner__img" id="phaseBannerImg" alt="" draggable="false">
+    <img class="zjh-phase-banner__img" id="phaseBannerStart"
+         src="./assets/ui/banners/bet-start.webp?v=4" alt="开始下注" draggable="false" hidden>
+    <img class="zjh-phase-banner__img" id="phaseBannerStop"
+         src="./assets/ui/banners/bet-stop.webp?v=4" alt="停止下注" draggable="false" hidden>
   </div>
 
   <!-- 通用弹层：历史 / 玩法 / 设置 -->
@@ -316,8 +322,8 @@
   </section>
 </div><!-- /.zjh-viewport -->
 
-<script src="/legacy/js/games-common.js?v=33"></script>
-<script src="/games-assets/_table-common/table-shell.js?v=12"></script>
+<script src="/legacy/js/games-common.js?v=36"></script>
+<script src="/games-assets/_table-common/table-shell.js?v=24"></script>
 <script src="/games-assets/_lottery-common/app-audio-level.js?v=1"></script>
 <script src="/games-assets/_table-common/table-audio.js?v=3"></script>
 <script>
@@ -328,7 +334,7 @@
   if (window.__zjhPlayersTimer) { clearInterval(window.__zjhPlayersTimer); window.__zjhPlayersTimer = null; }
   if (window.__zjhSnapTimer) { clearInterval(window.__zjhSnapTimer); window.__zjhSnapTimer = null; }
 
-  /* 总周期 60s：下注 + 开奖流程(发牌翻牌报牌≈13s) + 派奖 4s */
+  /* 总周期 62s：下注 + 开奖流程(发牌翻牌报牌≈13s) + 派奖 4s */
   /* 下注统一 45s；发牌/派奖时长本游戏不变；整局 = 45+13+4=62s */
   var BETTING_SEC = 45;
   var DRAW_EST_SEC = 13;
@@ -336,37 +342,53 @@
   var ROUND_SEC = BETTING_SEC + DRAW_EST_SEC + PAYOUT_SECS;
   var TOTAL = BETTING_SEC;
   var SERVER_GAME = 'zhajinhua';
-  var alignWaitTimer = null;
-  var alignWaiting = false;
-  /* 与服务端 alignedBettingEndsAt 一致：Unix epoch 60s 网格 */
-  function getAlignedBetRemain() {
-    var cycleMs = ROUND_SEC * 1000;
-    var bettingMs = TOTAL * 1000;
-    var now = Date.now();
-    var cycleStart = Math.floor(now / cycleMs) * cycleMs;
-    var end = cycleStart + bettingMs;
-    if (now >= end) return 0;
-    return (end - now) / 1000;
-  }
-  function getAlignedWaitRemain() {
-    var cycleMs = ROUND_SEC * 1000;
-    var bettingMs = TOTAL * 1000;
-    var now = Date.now();
-    var cycleStart = Math.floor(now / cycleMs) * cycleMs;
-    var end = cycleStart + bettingMs;
-    if (now < end) return 0;
-    return (cycleStart + cycleMs - now) / 1000;
-  }
-  function clearAlignWait() {
-    if (alignWaitTimer) {
-      clearTimeout(alignWaitTimer);
-      alignWaitTimer = null;
-    }
-  }
 
   var serverClock = (window.TableShell && TableShell.createServerClock)
     ? TableShell.createServerClock()
     : { phase: '', secondsLeft: 0, syncedAt: 0, roundNo: '', timing: null };
+
+  /*
+   * ───────── 时间基准 ─────────
+   *
+   * 整局时序只认服务端的钟：每一局的绝对起点由局号唯一确定，界面永远只回答
+   * 「按服务端的钟，现在走到本局第几毫秒」，本地不再自己累加倒计时。
+   * 这样丢包、慢网、切后台、机器卡顿都只影响画面追赶的快慢，不会让流程错乱。
+   *
+   * roundPositionOf 在拿到 timing 之前返回 null，此时先按本地墙钟顶着，
+   * 保证首帧不至于白屏；一旦第一份快照到手就切到服务端基准。
+   */
+  function localFallbackPosition() {
+    var cycleMs = ROUND_SEC * 1000;
+    var bettingMs = TOTAL * 1000;
+    var now = Date.now();
+    var startAt = Math.floor(now / cycleMs) * cycleMs;
+    var tIn = now - startAt;
+    var drawMs = DRAW_EST_SEC * 1000;
+    var phase = tIn < bettingMs
+      ? 'BETTING'
+      : (tIn < bettingMs + drawMs ? 'DRAWING' : 'SETTLED');
+    return {
+      startAt: startAt,
+      tIn: tIn,
+      cycleMs: cycleMs,
+      phase: phase,
+      betLeftMs: phase === 'BETTING' ? bettingMs - tIn : 0,
+      drawElapsedMs: phase === 'BETTING' ? 0 : tIn - bettingMs,
+    };
+  }
+
+  function roundPosition() {
+    if (window.TableShell && TableShell.roundPositionOf) {
+      var pos = TableShell.roundPositionOf(serverClock);
+      if (pos) return pos;
+    }
+    return localFallbackPosition();
+  }
+
+  /** 下注剩余秒（只给 UI 用；流程判断一律用 roundPosition） */
+  function getBetRemainSec() {
+    return roundPosition().betLeftMs / 1000;
+  }
 
   var atmosphereRobotCount = 14;
 
@@ -383,7 +405,10 @@
     }
   }
 
-  function applyServerSnap(snap) {
+  /**
+   * @param meta 轮询给的 { sentAt, recvAt }，用来扣掉半个往返再校时
+   */
+  function applyServerSnap(snap, meta) {
     if (!snap) return;
     if (window.TableShell && TableShell.applyServerSnap) {
       TableShell.applyServerSnap(serverClock, snap);
@@ -401,16 +426,13 @@
       ROUND_SEC = BETTING_SEC + DRAW_EST_SEC + PAYOUT_SECS;
       TOTAL = BETTING_SEC;
     }
+    /* 校时要在 timing 落定之后：整局时长是反推开局时刻的前提 */
+    if (window.TableShell && TableShell.syncClock) {
+      TableShell.syncClock(serverClock, snap, meta && meta.sentAt, meta && meta.recvAt);
+    }
     if (snap.roundNo && typeof setRoundNoLabel === 'function') {
       setRoundNoLabel(snap.roundNo);
     }
-  }
-
-  function getBetRemainSec() {
-    if (window.TableShell && TableShell.bettingLeftSec) {
-      return TableShell.bettingLeftSec(serverClock, getAlignedBetRemain);
-    }
-    return getAlignedBetRemain();
   }
   var BANNER_MS = 1500;
   var FLY_MS = 360;
@@ -425,7 +447,7 @@
   var phase = 'bet'; /* bet | draw | payout */
   var roundBusy = false;
   var roundSeq = 0; /* 局序号：作废过期的发牌/报牌链 */
-  var betDeadline = 0;
+  /** 派奖倒计时的截止时刻，仅用于派奖动画自身节奏；换局由时间基准决定 */
   var payoutDeadline = 0;
   var lastBeatSec = -1;
   var lastRoundResult = null;
@@ -450,6 +472,7 @@
     'voice/straight-flush': 1200,
     'voice/leopard': 1500,
     'voice/start-bet': 1400,
+    'voice/stop-bet': 900,
     'voice/banker-win': 1600,
     'voice/player-win': 1600,
     'voice/tie': 1400
@@ -458,7 +481,7 @@
     ? TableAudio.create({
         prefKey: 'zjh_audio',
         base: './assets/audio/yoplay-ymjh/',
-        ver: '4',
+        ver: '5',
         voiceTimeoutMs: function (name) { return (VOICE_MS[name] || 1400) + 400; },
         exportAs: 'ZjhAudio',
       })
@@ -510,7 +533,17 @@
     san6: 7,
     san7: 8
   };
-  if (window.TableShell) TableShell.loadPayTable(SERVER_GAME, { odds: BET_ODDS, domRoot: document.getElementById('betArea') });
+  /* 单边限红兜底与 @gamebox/shared table-paytable 的 sideMaxBet 同源 */
+  var sideLimits = window.TableShell
+    ? TableShell.createSideLimits(
+        { banker: '庄', player: '闲', shunjin: '顺金', baozi: '豹子', san2: '散牌', san3: '对子', san6: '顺子', san7: '金花' },
+        { shunjin: 500, baozi: 500 },
+      )
+    : null;
+  if (window.TableShell) {
+    TableShell.loadPayTable(SERVER_GAME, { odds: BET_ODDS, domRoot: document.getElementById('betArea') })
+      .then(function (pt) { if (sideLimits) sideLimits.apply(pt); });
+  }
   // 发牌顺序：庄3 → 闲1 → 庄2 → 闲2 → 庄1 → 闲3
   var DEAL_ORDER = ['b3', 'p1', 'b2', 'p2', 'b1', 'p3'];
   var SUITS = ['spade', 'heart', 'club', 'diamond'];
@@ -518,8 +551,13 @@
   var CARD_V = '4';
   var roundCards = null; /* { b1..p3: {suit,rank} } */
 
-  function isBetting() { return phase === 'bet' && !roundBusy; }
-  function isClosed() { return phase !== 'bet'; }
+  /*
+   * roundBusy 是「本局已经在走开奖流程」的闸。
+   * 原来它只写在没人调用的 isBetting() 里，真正把门的 isClosed() 漏了，
+   * 于是 phase 还没翻成 draw 的那段过渡里点注单能穿过去，白跑一次会被服务端拒的请求。
+   * 与百家乐 / 龙虎保持同一个判断。
+   */
+  function isClosed() { return phase !== 'bet' || roundBusy; }
 
   function pad(n) { return n < 10 ? '0' + n : '' + n; }
   function fmt(s) { return pad(s); }
@@ -662,7 +700,7 @@
       var card = cards[i];
       card.classList.remove('is-dealt', 'is-flipped');
       var front = card.querySelector('.zjh-card__face--front img');
-      if (front) front.src = './assets/cards/card-back.png?v=' + CARD_V;
+      if (front) front.src = './assets/cards/card-back.webp?v=' + CARD_V;
     }
     if (bankerHand) bankerHand.classList.remove('is-winner', 'is-loser');
     if (playerHand) playerHand.classList.remove('is-winner', 'is-loser');
@@ -707,7 +745,7 @@
       fly.style.top = startY + 'px';
       fly.style.setProperty('--fly-x', dx + 'px');
       fly.style.setProperty('--fly-y', dy + 'px');
-      fly.innerHTML = '<img src="./assets/cards/card-back.png?v=' + CARD_V + '" alt="" draggable="false">';
+      fly.innerHTML = '<img src="./assets/cards/card-back.webp?v=' + CARD_V + '" alt="" draggable="false">';
       flyLayer.appendChild(fly);
 
       shoe.classList.remove('is-dealing');
@@ -782,7 +820,12 @@
     return next();
   }
 
-  function showCompare(banker, player, serverOutcome) {
+  /**
+   * 只算比牌结论，不动画面。
+   * 结论要比显示早算出来（配音总时长得按牌型提前排期），但牌型文字和输赢高亮必须等
+   * 六张牌翻完再露，否则第一张牌一翻就把答案摊开了。显示见 paintCompare。
+   */
+  function evalCompare(banker, player, serverOutcome) {
     var bt = (serverOutcome && serverOutcome.bankerType && serverOutcome.bankerType.label)
       ? serverOutcome.bankerType
       : evalHand(banker);
@@ -796,6 +839,13 @@
       var cmp = compareHands(bt, pt, banker, player);
       result = cmp >= 0 ? 'banker' : 'player';
     }
+    return { result: result, bankerType: bt, playerType: pt };
+  }
+
+  /** 露结论：牌型文字 + 输赢高亮 */
+  function paintCompare(compared) {
+    if (!compared) return;
+    var result = compared.result;
     if (bankerHand) bankerHand.classList.remove('is-winner', 'is-loser');
     if (playerHand) playerHand.classList.remove('is-winner', 'is-loser');
     if (result === 'banker') {
@@ -813,9 +863,15 @@
       void el.offsetWidth;
       el.classList.add('is-show');
     }
-    revealType(bankerTypeEl, bt.label);
-    revealType(playerTypeEl, pt.label);
-    return { result: result, bankerType: bt, playerType: pt };
+    revealType(bankerTypeEl, compared.bankerType.label);
+    revealType(playerTypeEl, compared.playerType.label);
+  }
+
+  /** 兼容旧调用：算完立刻露（补播 / 跳帧路径用） */
+  function showCompare(banker, player, serverOutcome) {
+    var compared = evalCompare(banker, player, serverOutcome);
+    paintCompare(compared);
+    return compared;
   }
 
   function layerRect(el) {
@@ -1023,7 +1079,7 @@
     var s = getStats(user.uid);
     s.turnover = (s.turnover || 0) + (settlement.stakeTotal || 0);
     s.winloss = (s.winloss || 0) + (settlement.profit || 0);
-    s.rebate = (s.rebate || 0) + Math.floor((settlement.stakeTotal || 0) * 0.005);
+    s.rebate = (s.rebate || 0) + ((window.App && App.calcRebate) ? App.calcRebate(settlement.stakeTotal || 0) : 0);
     try {
       localStorage.setItem('zjh_stats_' + user.uid, JSON.stringify(s));
     } catch (e) { /* ignore */ }
@@ -1244,9 +1300,9 @@
   function paint(doBeat) {
     box.classList.remove('is-urgent', 'is-critical', 'is-draw', 'is-payout');
     timeEl.classList.remove('is-beat');
-    if (alignWaiting) {
+    if (phase === 'paused') {
       box.classList.add('is-payout');
-      timeEl.textContent = '准备中';
+      timeEl.textContent = '维护中';
       if (window.TableShell && TableShell.syncFocusUi) TableShell.syncFocusUi(roomEl, 'payout');
       return;
     }
@@ -1274,15 +1330,32 @@
     if (window.TableShell && TableShell.syncFocusUi) TableShell.syncFocusUi(roomEl, 'bet');
   }
 
+  var bannerStartImg = document.getElementById('phaseBannerStart');
+  var bannerStopImg = document.getElementById('phaseBannerStop');
+  if (window.TableShell && TableShell.warmBannerImages) {
+    TableShell.warmBannerImages([bannerStartImg, bannerStopImg]);
+  }
+
+  /** 立刻收掉横幅（进维护、异常复位时用），不走淡出动画 */
+  function hidePhaseBanner() {
+    var box = document.getElementById('phaseBanner');
+    if (!box) return;
+    if (box._bannerTimer) { clearTimeout(box._bannerTimer); box._bannerTimer = null; }
+    if (box._bannerHideTimer) { clearTimeout(box._bannerHideTimer); box._bannerHideTimer = null; }
+    box.classList.remove('is-show', 'is-hide');
+    box.setAttribute('aria-hidden', 'true');
+    if (bannerStartImg) bannerStartImg.hidden = true;
+    if (bannerStopImg) bannerStopImg.hidden = true;
+  }
+
+  /**
+   * 两张横幅图各自常驻一个 <img>，这里只切换哪个可见，绝不改 src。
+   * 改 src 是异步的，新图解码完成前元素还在画上一张，会出现「报开始下注、显示停止下注」。
+   */
   function showPhaseBanner(kind) {
     var box = document.getElementById('phaseBanner');
-    var img = document.getElementById('phaseBannerImg');
-    if (!box || !img) return Promise.resolve();
+    if (!box || !bannerStartImg || !bannerStopImg) return Promise.resolve();
     var isStop = kind === 'stop';
-    img.src = isStop
-      ? './assets/ui/banners/bet-stop.png?v=4'
-      : './assets/ui/banners/bet-start.png?v=4';
-    img.alt = isStop ? '停止下注' : '开始下注';
     if (box._bannerTimer) {
       clearTimeout(box._bannerTimer);
       box._bannerTimer = null;
@@ -1291,12 +1364,23 @@
       clearTimeout(box._bannerHideTimer);
       box._bannerHideTimer = null;
     }
+    bannerStartImg.hidden = isStop;
+    bannerStopImg.hidden = !isStop;
     box.classList.remove('is-show', 'is-hide');
     void box.offsetWidth;
     box.classList.add('is-show');
     box.setAttribute('aria-hidden', 'false');
-    if (isStop) sfx('stop-bet', { vol: 0.95, dedupeMs: 800 });
-    else sfx('voice/start-bet', { vol: 1, dedupeMs: 800 });
+    /*
+     * 两句都走 voice 通道：playVoice 会先掐掉上一句，正好把上一局没播完的报牌尾音
+     * 收干净。走 sfx 通道的话两路各播各的，会和报点数叠在一起。
+     * 停止下注另配一声提示音（stop-bet），跟龙虎/百家乐一致。
+     */
+    if (isStop) {
+      sfx('stop-bet', { vol: 0.95, dedupeMs: 800 });
+      if (!document.hidden) playVoice('voice/stop-bet');
+    } else {
+      playVoice('voice/start-bet');
+    }
     return new Promise(function (resolve) {
       box._bannerTimer = setTimeout(function () {
         box.classList.remove('is-show');
@@ -1312,45 +1396,74 @@
     });
   }
 
-  function startBetRound() {
-    clearAlignWait();
-    var remain = getBetRemainSec();
-    if (remain <= 0) {
-      alignWaiting = true;
-      phase = 'payout';
-      roundBusy = false;
-      currentBetIssue = '';
-      left = 0;
-      lastBeatSec = -1;
-      var wait = Math.max(0.05, getAlignedWaitRemain());
-      payoutDeadline = Date.now() + wait * 1000;
-      stopOtherBetting();
-      paint(false);
-      syncActionButtons();
-      alignWaitTimer = setTimeout(startBetRound, Math.ceil(wait * 1000));
-      return;
-    }
-    alignWaiting = false;
-    phase = 'bet';
-    roundBusy = false;
-      /* 与服务端局号对齐，便于同局刷新后还原假筹 */
+  /* ───────── 单一驱动：换局只由时间基准触发 ───────── */
+
+  /** 当前这一局的绝对起点（服务端钟）；靠它识别换局，不靠倒计时归零 */
+  var curRoundStartAt = 0;
+
+  /**
+   * 本局局号。服务端给的那个必须确认属于当前这一局才用，
+   * 否则迟到的快照会把上一局号带进来。
+   */
+  function roundNoAt(pos) {
     var rn = (serverClock && serverClock.roundNo) ? String(serverClock.roundNo) : '';
-    currentBetIssue = rn || '';
-    left = Math.max(1, Math.ceil(remain));
+    if (!rn) return '';
+    if (window.TableShell && TableShell.roundStartAtOf) {
+      var startAt = TableShell.roundStartAtOf(rn, pos.cycleMs);
+      if (startAt != null && startAt !== pos.startAt) return '';
+    }
+    return rn;
+  }
+
+  /**
+   * 进入新的一局。
+   *
+   * 这是整局唯一的复位入口：以前下注开始有三条路能进（本地倒计时、快照轮询、
+   * 切回前台），三方各按各的时间判断，网络一抖就互相打架。现在只认时间基准。
+   */
+  function enterRound(pos) {
+    curRoundStartAt = pos.startAt;
+    roundSeq += 1;
+    drawClock = null;
+    roundBusy = false;
+    phase = 'bet';
     payoutLeft = 0;
-    lastBeatSec = -1;
-    betDeadline = Date.now() + remain * 1000;
     payoutDeadline = 0;
+    lastBeatSec = -1;
+    currentBetIssue = roundNoAt(pos);
+    try { flyLayer.innerHTML = ''; } catch (eFly) { /* ignore */ }
     hideAllCards();
-      /* 同局刷新：保留 session 假筹缓存；换局才清空 */
-    var keepPersist = !!(rn && peekPersistedChipRound() === rn);
+    clearWinHighlight();
+    /* 同局刷新保留 session 假筹缓存；换局才清空 */
+    var keepPersist = !!(currentBetIssue && peekPersistedChipRound() === currentBetIssue);
     commitRoundBets({ keepPersist: keepPersist });
-    paint(false);
-    syncActionButtons();
-    if (rn) ensureChipsHydrated(rn);
-    startOtherBetting();
+    if (currentBetIssue) {
+      setRoundNoLabel(currentBetIssue);
+      ensureChipsHydrated(currentBetIssue);
+    }
     ensureBgm(true);
-    if (remain >= TOTAL - 1.5) showPhaseBanner('start');
+    syncActionButtons();
+    if (pos.phase === 'BETTING') {
+      startOtherBetting();
+      /*
+       * 只有真从头开始下注才弹「开始下注」：中途进房、切回前台不该看到这块牌子。
+       * 这一局是刚开始还是进行中，由时间基准直接给出，不需要再猜。
+       */
+      if (pos.tIn < 1200) showPhaseBanner('start');
+    }
+  }
+
+  /** 下注期每帧刷新：倒计时纯粹是「服务端还剩多少」的显示 */
+  function runBetting(pos) {
+    if (phase !== 'bet') {
+      phase = 'bet';
+      roundBusy = false;
+      syncActionButtons();
+    }
+    left = Math.max(0, Math.ceil(pos.betLeftMs / 1000));
+    var doBeat = left !== lastBeatSec;
+    if (doBeat) lastBeatSec = left;
+    paint(doBeat);
   }
 
   /* ---------- 开奖时间轴：墙上时钟 seek（进注单/刷新按服务端进度对齐） ---------- */
@@ -1644,92 +1757,6 @@
     return hydrateTableChips({ roundNo: rn, betSummary: {} });
   }
 
-  /**
-   * 中途进入 / 从注单返回：按服务端进度进入或对齐开奖轴。
-   * 避免 startBetRound 在 DRAWING 时掉进「准备中」等到下一局。
-   */
-  function joinOrSeekDraw(snap) {
-    if (!snap || !snap.outcome) return false;
-    if (snap.phase !== 'DRAWING' && snap.phase !== 'SETTLED') return false;
-    var rn = snap.roundNo ? String(snap.roundNo) : '';
-    var elapsed = drawElapsedMsFromSnap(snap);
-    clearAlignWait();
-    alignWaiting = false;
-    stopOtherBetting();
-
-    var same =
-      drawClock &&
-      phase === 'draw' &&
-      drawClock.outcome &&
-      (!rn || !drawClock.roundNo || drawClock.roundNo === rn);
-
-    if (!same) {
-      roundSeq += 1;
-      roundBusy = true;
-      phase = 'draw';
-      hideAllCards();
-      clearWinHighlight();
-      drawClock = {
-        seq: roundSeq,
-        anchorAt: Date.now() - elapsed,
-        lastAdvAt: 0,
-        roundNo: rn,
-        outcome: null,
-        hands: null,
-        compared: null,
-        dealBaseAt: 0,
-        voiceMs: 3000,
-        dealStarted: {},
-        flipStarted: {},
-        flags: { compared: false, road: false, voice: false, payout: false }
-      };
-    } else {
-      /* 已有本局时钟：按服务端进度重锚，避免暂停偏移导致整段空白 */
-      drawClock.anchorAt = Date.now() - elapsed;
-      if (drawClock.dealBaseAt) {
-        drawClock.dealBaseAt = drawClock.anchorAt + BANNER_MS;
-      }
-    }
-
-    bindDrawOutcome(snap);
-    if (!drawClock.dealBaseAt) drawClock.dealBaseAt = drawClock.anchorAt + BANNER_MS;
-    drawClock.dealStarted = {};
-    drawClock.flipStarted = {};
-    /* 先还原筹码并等一帧布局，再 seek（避免筹码宽高为 0 / 立刻被派奖清掉） */
-    var seqAtJoin = drawClock.seq;
-    hydrateTableChips(snap).then(function () {
-      if (!drawClock || drawClock.seq !== seqAtJoin) return;
-      requestAnimationFrame(function () {
-        requestAnimationFrame(function () {
-          if (!drawClock || drawClock.seq !== seqAtJoin) return;
-            /* 若仍空（summary 异常），再强拉一次我的注单 */
-          if (!tableHasChipVisuals()) {
-            chipsHydratedRound = '';
-            hydrateTableChips(snap).then(function () {
-              if (!drawClock || drawClock.seq !== seqAtJoin) return;
-              drawClock.forceSeek = true;
-              advanceDrawClock();
-            });
-            return;
-          }
-          drawClock.forceSeek = true;
-          advanceDrawClock();
-        });
-      });
-    });
-    return true;
-  }
-
-  function abortDrawAndRealign() {
-    roundSeq += 1;
-    drawClock = null;
-    roundBusy = false;
-    try { flyLayer.innerHTML = ''; } catch (e0) { /* ignore */ }
-    hideAllCards();
-    clearWinHighlight();
-    startBetRound();
-  }
-
   function bindDrawOutcome(snap) {
     if (!drawClock || !snap || !snap.outcome) return false;
     if (drawClock.outcome) return true;
@@ -1897,35 +1924,19 @@
 
   function advanceDrawClock() {
     if (!drawClock || drawClock.seq !== roundSeq) return;
-    var now = Date.now();
-    var elapsed = now - drawClock.anchorAt;
-      /* forceSeek / 挂起后间隔过大 → 按墙上时钟跳点对齐当前时刻 */
+    /*
+     * 时间一律取服务端的钟。仪式的每一步都是「本局第几毫秒该发生什么」，
+     * 所以慢一帧、卡一下、切后台回来，都只是下一帧直接跳到正确位置，
+     * 不会像以前那样把整条时间轴往后推。
+     */
+    var now = (window.TableShell && TableShell.serverNow)
+      ? TableShell.serverNow(serverClock)
+      : Date.now();
+    /* 跳点：主动 seek，或两帧间隔过大（后台/卡顿），此时略过动画直接落位 */
     var jumping = !!drawClock.forceSeek ||
       (!!drawClock.lastAdvAt && (now - drawClock.lastAdvAt) > 420);
     drawClock.forceSeek = false;
     drawClock.lastAdvAt = now;
-
-    if (elapsed > (DRAW_EST_SEC + PAYOUT_SECS + 12) * 1000) {
-      abortDrawAndRealign();
-      return;
-    }
-
-      /* 服务端已进入下一局下注：本局仪式应结束 */
-    if (
-      drawClock.outcome &&
-      serverClock.phase === 'BETTING' &&
-      Number(serverClock.secondsLeft) > 0 &&
-      elapsed > BANNER_MS + dealAnimTotalMs() + 500
-    ) {
-      var tCheck = now - drawClock.dealBaseAt;
-      var ceremonyEnd = dealAnimTotalMs() + DEAL_HOLD_MS + flipAnimTotalMs() + (drawClock.voiceMs || 2500);
-      if (tCheck >= ceremonyEnd || elapsed > (DRAW_EST_SEC + 2) * 1000) {
-        if (!drawClock.flags.payout) beginDrawPayout(drawClock, true);
-        if (phase === 'payout' || drawClock.flags.payout) {
-          /* 交给 payout tick 收尾进下一局 */
-        }
-      }
-    }
 
     if (!drawClock.outcome) {
       paint(false);
@@ -1943,8 +1954,14 @@
     var flipEnd = holdEnd + flipAnimTotalMs();
     syncDealFlipByClock(t, jumping);
 
+    /*
+     * 比牌结论要等六张牌全翻完再露（flipEnd），不能在 holdEnd 就露。
+     * holdEnd 是「发牌结束、翻牌刚要开始」的时刻：那时 showCompare 已经把牌型文字和
+     * 输赢高亮全写上了，于是第一张牌刚翻起来，谁赢、什么牌型就都摊在脸上，后面五张
+     * 白翻。这里只把结论的计算留在 holdEnd（配音时长要提前算），显示推到翻完。
+     */
     if (t >= holdEnd && !drawClock.flags.compared) {
-      drawClock.compared = showCompare(drawClock.hands.banker, drawClock.hands.player, drawClock.outcome);
+      drawClock.compared = evalCompare(drawClock.hands.banker, drawClock.hands.player, drawClock.outcome);
       lastRoundResult = drawClock.compared.result;
       if (drawClock.roundNo) lastSettledRoundNo = String(drawClock.roundNo);
       drawClock.voiceMs = voiceAnimTotalMs(
@@ -1953,6 +1970,11 @@
         drawClock.compared.result
       );
       drawClock.flags.compared = true;
+    }
+
+    if (t >= flipEnd && drawClock.compared && !drawClock.flags.comparedShown) {
+      paintCompare(drawClock.compared);
+      drawClock.flags.comparedShown = true;
     }
 
     if (t >= flipEnd && drawClock.compared && !drawClock.flags.road) {
@@ -1981,108 +2003,114 @@
     syncActionButtons();
   }
 
-  function startDrawRound() {
-    /* 立刻锁局，防止 tick 重入 */
-    if (roundBusy || phase !== 'bet') return;
+  /**
+   * 建立本局的开奖时间轴。
+   *
+   * 关键：仪式锚在服务端的开奖起点（开局时刻 + 下注时长），跟客户端什么时候
+   * 察觉到封盘完全无关。以前锚的是「本地发现的那一刻」，于是发现得早晚不同，
+   * 整段发牌翻牌报牌就整体前后漂移，跟服务端对不上。
+   */
+  function ensureDrawClock(pos) {
+    if (drawClock && drawClock.startAt === pos.startAt) return;
+    stopOtherBetting();
+    /* 封盘瞬间落盘（含气氛假筹），开奖中刷新也能还原 */
+    persistTableChips(currentBetIssue || currentChipRoundNo());
     roundBusy = true;
     phase = 'draw';
-    var seq = ++roundSeq;
-    var roundIssue = currentBetIssue || '';
-    stopOtherBetting();
-    /* 封盘瞬间落盘（含气氛假筹），刷新开奖中也能还原 */
-    persistTableChips(roundIssue || currentChipRoundNo());
-    paint(false);
-    syncActionButtons();
     hideAllCards();
-
+    var drawStartAt = pos.startAt + Number(BETTING_SEC) * 1000;
     drawClock = {
-      seq: seq,
-      anchorAt: Date.now(),
+      seq: ++roundSeq,
+      startAt: pos.startAt,
+      /* 仪式基准：开奖起点之后先亮横幅，再开始发牌 */
+      anchorAt: drawStartAt,
+      dealBaseAt: drawStartAt + BANNER_MS,
       lastAdvAt: 0,
-      roundNo: roundIssue,
+      roundNo: currentBetIssue || '',
       outcome: null,
       hands: null,
       compared: null,
-      dealBaseAt: 0,
       voiceMs: 3000,
       dealStarted: {},
       flipStarted: {},
+      outcomeAsked: false,
       flags: { compared: false, road: false, voice: false, payout: false }
     };
+    /* 刚封盘才亮牌子；中途进来牌都发一半了就别弹 */
+    if (pos.drawElapsedMs < BANNER_MS) showPhaseBanner('stop');
+    syncActionButtons();
+    requestOutcome(drawClock);
+  }
 
-    /* 横幅不阻塞时间轴；发牌基准至少在横幅之后 */
-    showPhaseBanner('stop');
-
-    if (!window.App || !App.waitTableOutcome) {
-      if (window.App && App.toast) App.toast('请从大厅进入游戏');
-      abortDrawAndRealign();
-      return;
-    }
-
-    var expectedRound = roundIssue;
-    var prep = expectedRound
-      ? Promise.resolve(expectedRound)
-      : (App.fetchTableSnapshot
-        ? App.fetchTableSnapshot(SERVER_GAME).then(function (pre) {
-            return pre && pre.roundNo ? String(pre.roundNo) : '';
-          }).catch(function () { return ''; })
-        : Promise.resolve(''));
-
-    prep.then(function (rn) {
-      if (!drawClock || drawClock.seq !== seq) return null;
-      expectedRound = rn || expectedRound;
-      if (expectedRound) drawClock.roundNo = expectedRound;
-      return App.waitTableOutcome(SERVER_GAME, {
-        timeoutMs: 25000,
-        roundNo: expectedRound || undefined,
-      });
+  /** 取本局开奖结果。失败不改流程，只是让下一帧重试 */
+  function requestOutcome(dc) {
+    if (!dc || dc.outcomeAsked) return;
+    if (!window.App || !App.waitTableOutcome) return;
+    dc.outcomeAsked = true;
+    var seq = dc.seq;
+    App.waitTableOutcome(SERVER_GAME, {
+      timeoutMs: 25000,
+      roundNo: dc.roundNo || undefined,
     }).then(function (snap) {
       if (!drawClock || drawClock.seq !== seq) return;
       if (!snap || !snap.outcome) throw new Error('开奖结果缺失');
       bindDrawOutcome(snap);
       advanceDrawClock();
-    }).catch(function (err) {
-      console.error(err);
+    }).catch(function () {
       if (!drawClock || drawClock.seq !== seq) return;
-      if (window.App && App.toast) App.toast((err && err.message) || '开奖失败，请稍候');
-      clearBets();
-      currentBetIssue = '';
-      if (window.App && App.refreshBalance) {
-        App.refreshBalance().then(function () { refreshStats(); });
-      }
-      abortDrawAndRealign();
+      /*
+       * 拿不到就下一帧再要，轮询那边拿到同样能补上，本局时间轴不受影响。
+       * 这里不报错：开奖结果晚到几百毫秒是正常的，刷日志反而盖住真问题。
+       */
+      drawClock.outcomeAsked = false;
     });
   }
 
-  function tick() {
-    var now = Date.now();
-    if (phase === 'draw') {
-      advanceDrawClock();
-      return;
-    }
-    if (phase === 'payout' || alignWaiting) {
-      payoutLeft = Math.max(0, Math.ceil((payoutDeadline - now) / 1000));
-      if (alignWaiting && (now >= payoutDeadline || getBetRemainSec() > 0)) {
-        startBetRound();
-        return;
-      }
-      if (!alignWaiting && payoutLeft <= 0) {
-        drawClock = null;
-        startBetRound();
-        return;
-      }
-      paint(false);
-      return;
-    }
-    if (roundBusy) return;
-    left = Math.max(0, Math.ceil(getBetRemainSec()));
-    var doBeat = left !== lastBeatSec;
-    if (doBeat) lastBeatSec = left;
-    paint(doBeat);
-    if (left <= 0) startDrawRound();
+  /**
+   * 唯一的心跳。
+   *
+   * 每一帧只做三件事：问时间基准现在是本局第几毫秒、必要时换局、
+   * 然后照着这个位置渲染。没有任何「等某个 setTimeout 到点再切相位」的逻辑，
+   * 所以丢包、卡顿、切后台回来都只是画面追赶，不会把流程带偏。
+   */
+  /**
+   * 牌桌维护（每天 04:00–06:01，或管理端手动下架）。
+   *
+   * 维护期服务端不开局，但时间基准照样一轮轮往前走。不拦住的话画面会每 62 秒
+   * 空转一次「开奖中」，牌却永远发不出来，玩家只能干看两个小时。
+   */
+  function enterPaused() {
+    if (phase === 'paused') return;
+    phase = 'paused';
+    roundBusy = false;
+    drawClock = null;
+    /* 清掉本局标记：维护结束后要当作全新一局重新进入 */
+    curRoundStartAt = 0;
+    stopOtherBetting();
+    hideAllCards();
+    clearWinHighlight();
+    hidePhaseBanner();
+    syncActionButtons();
+    paint(false);
   }
 
-  /* 定时器改到全文末尾、startBetRound 之后再启动 */
+  function tick() {
+    if (serverClock && serverClock.phase === 'PAUSED') {
+      enterPaused();
+      return;
+    }
+    var pos = roundPosition();
+    if (pos.startAt !== curRoundStartAt) enterRound(pos);
+    if (pos.phase === 'BETTING') {
+      runBetting(pos);
+      return;
+    }
+    ensureDrawClock(pos);
+    if (drawClock && !drawClock.outcome) requestOutcome(drawClock);
+    advanceDrawClock();
+  }
+
+  /* 心跳在全文末尾、所有变量就绪后再启动 */
 
   var betArea = document.getElementById('betArea');
   function pressBtn(btn, on) {
@@ -2110,18 +2138,18 @@
   var CHIP_FLY_MS = 420;
   var CHIP_LAND_SCALE = 2 / 3;
   var CHIP_SRC = {
-    1: './assets/ui/chips/chip-1.png?v=4',
-    5: './assets/ui/chips/chip-5.png?v=4',
-    10: './assets/ui/chips/chip-10.png?v=4',
-    50: './assets/ui/chips/chip-50.png?v=4',
-    100: './assets/ui/chips/chip-100.png?v=4',
-    500: './assets/ui/chips/chip-500.png?v=4',
-    1000: './assets/ui/chips/chip-1000.png?v=1',
-    2000: './assets/ui/chips/chip-2000.png?v=1',
-    3000: './assets/ui/chips/chip-3000.png?v=1',
-    4000: './assets/ui/chips/chip-4000.png?v=1',
-    5000: './assets/ui/chips/chip-5000.png?v=1',
-    10000: './assets/ui/chips/chip-10000.png?v=1'
+    1: './assets/ui/chips/chip-1.webp?v=4',
+    5: './assets/ui/chips/chip-5.webp?v=4',
+    10: './assets/ui/chips/chip-10.webp?v=4',
+    50: './assets/ui/chips/chip-50.webp?v=4',
+    100: './assets/ui/chips/chip-100.webp?v=4',
+    500: './assets/ui/chips/chip-500.webp?v=4',
+    1000: './assets/ui/chips/chip-1000.webp?v=1',
+    2000: './assets/ui/chips/chip-2000.webp?v=1',
+    3000: './assets/ui/chips/chip-3000.webp?v=1',
+    4000: './assets/ui/chips/chip-4000.webp?v=1',
+    5000: './assets/ui/chips/chip-5000.webp?v=1',
+    10000: './assets/ui/chips/chip-10000.webp?v=1'
   };
   var CHIP_PAGES = [
     [1, 5, 10, 50, 100, 500],
@@ -2139,7 +2167,7 @@
   var roundPlacements = []; /* 本局每次落筹 {key,value} */
   var lastRoundPlacements = []; /* 仅上一局，不能隔局 */
   var rebetting = false;
-  var usedUndo = false;  /* 当局撤销仅一次 */
+  var undoing = false;   /* 撤销请求在途，避免连点重复提交 */
   var usedRebet = false; /* 当局续押仅一次 */
   var chipBar = document.getElementById('chipBar');
   var actionBar = document.getElementById('actionBar');
@@ -2230,8 +2258,9 @@
     return Number(n).toLocaleString('en-US');
   }
 
-  function paintChipPage() {
+  function paintChipPage(keepVal) {
     var page = CHIP_PAGES[chipPage] || CHIP_PAGES[0];
+    var want = page.indexOf(keepVal) >= 0 ? keepVal : page[0];
     var btns = chipBar.querySelectorAll('.zjh-chip');
     for (var i = 0; i < btns.length; i++) {
       var val = page[i];
@@ -2243,14 +2272,54 @@
         img.src = CHIP_SRC[val] || CHIP_SRC[1];
         img.alt = String(val);
       }
-      btns[i].classList.toggle('is-selected', i === 0);
+      btns[i].classList.toggle('is-selected', val === want);
     }
-    selectedChip = page[0];
+    selectedChip = want;
     var more = document.getElementById('chipPageBtn');
     if (more) {
       more.classList.toggle('is-page2', chipPage === 1);
       more.setAttribute('aria-label', chipPage === 0 ? '切换到大额筹码' : '切换到小额筹码');
     }
+  }
+
+  /* 已发出但未回执的下注额，连点时不能重复占用同一笔余额 */
+  var inFlightStake = 0;
+
+  function availableBalance() {
+    if (!window.App || !App.getBalance || !user) return Infinity;
+    var bal = App.getBalance(user.uid);
+    if (typeof bal !== 'number' || !isFinite(bal)) return Infinity;
+    return bal - inFlightStake;
+  }
+
+  function largestAffordableChip(bal) {
+    return TableShell.affordableChip(CHIP_PAGES, bal);
+  }
+
+  function selectChipValue(val) {
+    if (!val || val === selectedChip) return;
+    for (var p = 0; p < CHIP_PAGES.length; p++) {
+      if (CHIP_PAGES[p].indexOf(val) < 0) continue;
+      if (p !== chipPage) {
+        chipPage = p;
+        paintChipPage(val);
+        return;
+      }
+      break;
+    }
+    selectedChip = val;
+    var all = chipBar.querySelectorAll('.zjh-chip');
+    for (var i = 0; i < all.length; i++) {
+      all[i].classList.toggle('is-selected', Number(all[i].getAttribute('data-chip')) === val);
+    }
+  }
+
+  /** 余额跌破当前筹码时自动降档，只降不升 */
+  function syncChipToBalance() {
+    var bal = availableBalance();
+    if (!isFinite(bal) || selectedChip <= bal) return;
+    var next = largestAffordableChip(bal);
+    if (next) selectChipValue(next);
   }
 
   function clearBets(opts) {
@@ -2283,19 +2352,15 @@
       lastRoundPlacements.length > 0 && roundPlacements.length === 0;
   }
 
+  function canUndo() {
+    return !isClosed() && !rebetting && roundPlacements.length > 0;
+  }
+
   function syncActionButtons() {
     var undoBtn = actionBar.querySelector('[data-action="undo"]');
     var rebetBtn = actionBar.querySelector('[data-action="rebet"]');
     var r = canRebet();
-    if (undoBtn) {
-      if (window.TableShell && TableShell.disableUndoButton) TableShell.disableUndoButton(undoBtn);
-      else {
-        undoBtn.classList.add('is-disabled');
-        undoBtn.setAttribute('aria-disabled', 'true');
-        undoBtn.setAttribute('aria-label', '真账已锁，不可撤销');
-        undoBtn.setAttribute('title', '真账已提交，不可撤销');
-      }
-    }
+    if (undoBtn) TableShell.syncUndoButton(undoBtn, canUndo(), undoing);
     if (rebetBtn) {
       rebetBtn.classList.toggle('is-disabled', !r);
       rebetBtn.setAttribute('aria-disabled', r ? 'false' : 'true');
@@ -2308,14 +2373,45 @@
       return { key: p.key, value: p.value };
     });
     clearBets(opts);
-    usedUndo = false;
+    undoing = false;
     usedRebet = false;
     rebetting = false;
     syncActionButtons();
   }
 
+  /** 撤销本局我的全部下注：服务端只在封盘前受理，退款由服务端原路退回 */
   function undoAllBets() {
-    if (window.App && App.toast) App.toast('已提交真账，不可撤销');
+    if (undoing || !canUndo()) return;
+    if (!window.App || !App.cancelTableBets) {
+      if (window.App && App.toast) App.toast('请从大厅进入游戏');
+      return;
+    }
+    undoing = true;
+    syncActionButtons();
+    App.cancelTableBets(SERVER_GAME).then(function (res) {
+      undoing = false;
+      /* 只清自己的筹码，别人的气氛筹码留在桌上 */
+      TableShell.removeMyChipVisuals(betArea, '.zjh-bet-btn__chips');
+      roundPlacements = [];
+      for (var i = 0; i < BET_CHIP_KEYS.length; i++) {
+        var k = BET_CHIP_KEYS[i];
+        betTotals[k] = 0;
+        var btn = betBtn(k);
+        if (btn) updateStakeUI(btn, 0);
+      }
+      slotStacks = {};
+      if (typeof schedulePersistTableChips === 'function') schedulePersistTableChips();
+      refreshStats();
+      syncChipToBalance();
+      syncActionButtons();
+      if (window.App && App.toast) {
+        App.toast('已撤销本局下注，退回 ' + fmtStake(res && res.refunded || 0));
+      }
+    }).catch(function (e) {
+      undoing = false;
+      syncActionButtons();
+      if (window.App && App.toast) App.toast((e && e.message) || '撤销失败');
+    });
   }
 
   function rebetLastRound() {
@@ -2324,6 +2420,18 @@
     var n = list.length;
     var need = 0;
     for (var t = 0; t < n; t++) need += list[t].value;
+    /* 续押是往本局已有筹码上再加一轮，可能把某一边顶过限红 */
+    if (sideLimits) {
+      var after = {};
+      for (var q = 0; q < n; q++) {
+        after[list[q].key] = (after[list[q].key] || betTotals[list[q].key] || 0) + list[q].value;
+      }
+      var overKey = Object.keys(after).find(function (k) { return !!sideLimits.reject(k, after[k]); });
+      if (overKey) {
+        if (window.App && App.toast) App.toast(sideLimits.reject(overKey, after[overKey]));
+        return;
+      }
+    }
     if (window.App && App.getBalance && user) {
       if (App.getBalance(user.uid) < need) {
         if (App.toast) App.toast('积分不足');
@@ -2549,9 +2657,21 @@
     var key = btn.getAttribute('data-bet');
     if (!key) return;
     var value = selectedChip || 1;
-    if (window.App && App.getBalance && user) {
-      if (App.getBalance(user.uid) < value) {
-        if (App.toast) App.toast('积分不足');
+    /* 余额不够就降到能下的最大一档，这一手即按新筹码下注 */
+    var bal = availableBalance();
+    if (value > bal) {
+      var fallback = largestAffordableChip(bal);
+      if (!fallback) {
+        if (window.App && App.toast) App.toast('积分不足');
+        return;
+      }
+      selectChipValue(fallback);
+      value = fallback;
+    }
+    if (sideLimits) {
+      var capMsg = sideLimits.reject(key, (betTotals[key] || 0) + value);
+      if (capMsg) {
+        if (window.App && App.toast) App.toast(capMsg);
         return;
       }
     }
@@ -2559,7 +2679,9 @@
       if (window.App && App.toast) App.toast('请从大厅进入游戏');
       return;
     }
+    inFlightStake += value;
     App.placeTableBet(SERVER_GAME, key, value).then(function (res) {
+      inFlightStake = Math.max(0, inFlightStake - value);
       if (res && res.roundNo) {
         currentBetIssue = String(res.roundNo);
         setRoundNoLabel(currentBetIssue);
@@ -2573,9 +2695,16 @@
       flyChipToBet(btn, value, slot, landSize, undefined, 'me');
       sfx('bet', { vol: 0.9 });
       refreshStats();
-      if (window.App && App.refreshBalance) App.refreshBalance().then(function () { refreshStats(); });
+      syncChipToBalance();
+      if (window.App && App.refreshBalance) {
+        App.refreshBalance().then(function () {
+          refreshStats();
+          syncChipToBalance();
+        });
+      }
       syncActionButtons();
     }).catch(function (e) {
+      inFlightStake = Math.max(0, inFlightStake - value);
       if (window.App && App.toast) App.toast((e && e.message) || '下注失败');
     });
   }
@@ -2859,20 +2988,28 @@
     }
   }
 
+  var statsFitter = TableShell.createStatsFitter({
+    head: document.querySelector('.zjh-head'),
+    stats: document.getElementById('statsBar'),
+    brand: document.querySelector('.zjh-head__brand'),
+  });
+
   function refreshStats() {
     if (!window.App || !App.getBalance) return;
     var bal = App.getBalance(user.uid);
     var s = getStats(user.uid);
-    setText('statBalance', bal.toLocaleString('en-US'));
-    setText('statTurnover', Math.round(s.turnover).toLocaleString('en-US'));
-    setText('statRebate', Math.round(s.rebate).toLocaleString('en-US'));
+    setText('statBalance', TableShell.fmtMoney2(bal));
+    setText('statTurnover', TableShell.fmtMoney2(s.turnover));
+    setText('statRebate', TableShell.fmtMoney2(s.rebate));
     var wlEl = document.getElementById('statWinloss');
     if (wlEl) {
-      var wl = Math.round(s.winloss);
-      wlEl.textContent = (wl >= 0 ? '+' : '') + wl.toLocaleString('en-US');
+      var wl = Math.round((Number(s.winloss) || 0) * 100) / 100;
+      /* fmtMoney2 自带负号，只有非负才补 + */
+      wlEl.textContent = (wl >= 0 ? '+' : '') + TableShell.fmtMoney2(wl);
       wlEl.classList.toggle('is-plus', wl > 0);
       wlEl.classList.toggle('is-minus', wl < 0);
     }
+    statsFitter.refit();
   }
 
   var backBtn = document.getElementById('backBtn');
@@ -2889,7 +3026,10 @@
   }
 
   refreshStats();
-  window.addEventListener('gamebox-balance', function () { refreshStats(); });
+  window.addEventListener('gamebox-balance', function () {
+    refreshStats();
+    syncChipToBalance();
+  });
 
   /* ---------- 右侧快捷按钮 + 弹层（客服/历史/记录/玩法/设置） ---------- */
   (function initRail() {
@@ -3129,101 +3269,61 @@
 
   /* 全部变量就绪后再开局 + 启动唯一倒计时 */
   hideAllCards();
-  /* 先拉 snapshot：开奖中刷新/重进应 join 开奖轴，勿直接 startBetRound 卡「准备中」 */
+  /*
+   * 先拉一份快照把时钟对上，再让心跳接管。
+   * 对不上也不要紧：roundPosition 会先用本地墙钟顶着，下一份快照到手自动切回来。
+   */
   function bootFromServer() {
-    if (!window.App || !App.fetchTableSnapshot) {
-      startBetRound();
-      return;
-    }
+    if (!window.App || !App.fetchTableSnapshot) return;
+    var sentAt = Date.now();
     App.fetchTableSnapshot(SERVER_GAME).then(function (snap) {
-      if (!snap) {
-        startBetRound();
-        return;
-      }
-      applyServerSnap(snap);
-      if (joinOrSeekDraw(snap)) return;
-      startBetRound();
-    }).catch(function () {
-      startBetRound();
-    });
+      if (!snap) return;
+      applyServerSnap(snap, { sentAt: sentAt, recvAt: Date.now() });
+      if (snap.outcome && drawClock && !drawClock.outcome) bindDrawOutcome(snap);
+      tick();
+    }).catch(function () { /* 忽略：心跳会继续尝试 */ });
   }
   bootFromServer();
   if (window.__zjhTickTimer) clearInterval(window.__zjhTickTimer);
   window.__zjhTickTimer = setInterval(tick, 200);
   if (window.TableShell && TableShell.startSnapshotPoll) {
-    window.__zjhSnapTimer = TableShell.startSnapshotPoll(SERVER_GAME, function (snap) {
-      applyServerSnap(snap);
-      if (alignWaiting) {
-        if (joinOrSeekDraw(snap)) return;
-        if (snap.phase === 'BETTING' && Number(snap.secondsLeft) > 0) {
-          startBetRound();
-          return;
-        }
-      }
-      if (phase === 'draw' && drawClock) {
-        if (snap.phase === 'BETTING' && Number(snap.secondsLeft) > 0) {
-          if (drawClock.outcome && !drawClock.flags.payout) beginDrawPayout(drawClock, true);
-          else {
-            drawClock = null;
-            roundBusy = false;
-            startBetRound();
-          }
-          return;
-        }
-        if (snap && snap.outcome) bindDrawOutcome(snap);
+    /*
+     * 轮询只干两件事：给时钟校时、把开奖结果补进来。
+     * 它不再有权切换相位——以前它和心跳各自判断「该开奖了/该下注了」，
+     * 两边抢着切，网络一抖就打架（实测「开始下注」弹出 199ms 就被顶掉）。
+     */
+    window.__zjhSnapTimer = TableShell.startSnapshotPoll(SERVER_GAME, function (snap, meta) {
+      applyServerSnap(snap, meta);
+      if (snap && snap.outcome && drawClock && !drawClock.outcome) {
+        bindDrawOutcome(snap);
         advanceDrawClock();
-        return;
-      }
-        /* 下注态却发现服务端已开奖：立刻切入开奖轴（防漏切） */
-      if (phase === 'bet' && !roundBusy && joinOrSeekDraw(snap)) return;
-      if (phase === 'bet' && !roundBusy) {
-        left = Math.max(0, Math.ceil(getBetRemainSec()));
-        paint(false);
       }
     }, {
       intervalMs: 1000,
-      shouldPoll: function () {
-        return (phase === 'bet' && !roundBusy) || alignWaiting || phase === 'draw';
-      },
+      shouldPoll: function () { return true; },
     });
   }
 
+  /** 切回前台：重新对时并把画面跳到当前应有的位置 */
   function onShellResume() {
     try { flyLayer.innerHTML = ''; } catch (eR) { /* ignore */ }
+    if (drawClock) {
+      drawClock.dealStarted = {};
+      drawClock.flipStarted = {};
+      drawClock.forceSeek = true;
+    }
     if (!window.App || !App.fetchTableSnapshot) {
-      if (phase === 'draw' && drawClock) {
-        drawClock.dealStarted = {};
-        drawClock.flipStarted = {};
-        drawClock.forceSeek = true;
-        advanceDrawClock();
-      }
+      tick();
       return;
     }
+    var sentAt = Date.now();
     App.fetchTableSnapshot(SERVER_GAME).then(function (snap) {
-      if (!snap) return;
-      applyServerSnap(snap);
-      if (snap.phase === 'BETTING' && Number(snap.secondsLeft) > 0) {
-        if (phase === 'draw' || alignWaiting || (phase === 'payout' && drawClock)) {
-          if (drawClock && drawClock.outcome && !drawClock.flags.payout) {
-            beginDrawPayout(drawClock, true);
-          }
-          drawClock = null;
-          roundBusy = false;
-          startBetRound();
-          return;
-        }
+      if (snap) {
+        applyServerSnap(snap, { sentAt: sentAt, recvAt: Date.now() });
+        if (snap.outcome && drawClock && !drawClock.outcome) bindDrawOutcome(snap);
       }
-      if (joinOrSeekDraw(snap)) return;
-      if (phase === 'draw' && drawClock) {
-        if (snap.outcome) bindDrawOutcome(snap);
-        drawClock.dealStarted = {};
-        drawClock.flipStarted = {};
-        drawClock.forceSeek = true;
-        advanceDrawClock();
-      } else if (alignWaiting && snap.phase === 'BETTING' && Number(snap.secondsLeft) > 0) {
-        startBetRound();
-      }
-    }).catch(function () { /* ignore */ });
+      tick();
+    }).catch(function () { tick(); });
   }
 
   /* 父壳 keep-alive：visibility 不一定变，靠 postMessage 通知回来对齐 */
