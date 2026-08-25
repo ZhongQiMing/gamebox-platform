@@ -1,5 +1,23 @@
 apply plugin: 'com.android.application'
 
+/*
+ * 正式签名配置。
+ *
+ * 密钥和口令放在 android/keystore.properties（已在 .gitignore 里，绝不入库）。
+ * 文件不存在时 release 走无签名，能编译但装不上手机 —— 这是故意的：
+ * 与其悄悄用 debug 证书打出一个「看起来能装、实际无法上架也无法覆盖升级」的包，
+ * 不如让它明确装不上，逼人先把密钥配好。
+ *
+ * 密钥库一旦丢失，这个 applicationId 就再也发不出能覆盖安装的更新，
+ * 老用户只能卸载重装。务必异地备份 keystore 文件和口令。
+ */
+def keystorePropsFile = rootProject.file('keystore.properties')
+def keystoreProps = new Properties()
+if (keystorePropsFile.exists()) {
+    keystorePropsFile.withInputStream { keystoreProps.load(it) }
+}
+def hasReleaseKeystore = keystoreProps.containsKey('storeFile')
+
 android {
     namespace = "com.goldhub.app"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -16,8 +34,31 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        if (hasReleaseKeystore) {
+            release {
+                storeFile rootProject.file(keystoreProps['storeFile'])
+                storePassword keystoreProps['storePassword']
+                keyAlias keystoreProps['keyAlias']
+                keyPassword keystoreProps['keyPassword']
+                /* 两种签名方案都开：v1 兼容旧机型，v2 是 Android 7.0+ 的整包校验 */
+                v1SigningEnabled true
+                v2SigningEnabled true
+            }
+        }
+    }
     buildTypes {
         release {
+            if (hasReleaseKeystore) {
+                signingConfig signingConfigs.release
+            } else {
+                logger.warn('[gamebox] 缺少 android/keystore.properties，release 包不会被签名，装不上手机。')
+            }
+            /*
+             * 保持关闭。这个壳只是个 WebView 容器，业务代码全在 JS 里，
+             * 混淆 Java 层换不来多少安全收益，却会让 Capacitor 插件的反射调用
+             * 有概率在正式包里失效，而这种问题只在正式包出现、最难查。
+             */
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }

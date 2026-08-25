@@ -16,7 +16,14 @@
     </style>
 
 
+    <!-- 安卓 12 起系统强制「纯色底 + 中心图标」，整屏封面只能由 Web 层画。
+         图标做成与底色相同的色块，启动时不会再露出中间那枚皇冠。 -->
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
-        <item name="android:background">@drawable/splash</item>
+        <item name="android:background">@color/brand_dark</item>
+        <item name="windowSplashScreenBackground">@color/brand_dark</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_empty</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">@color/brand_dark</item>
+        <item name="windowSplashScreenAnimationDuration">0</item>
+        <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item>
     </style>
 </resources>
