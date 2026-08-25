@@ -88,8 +88,11 @@
             </div>
             <div class="sum-chip">
               <span class="sum-label">单期开档线</span>
-              <span class="sum-val iron-val">亏超{{ gscForm.maxPeriodLossPct }}% 才挑号</span>
-              <span class="sum-note">只看本期总注与总派彩，不认玩法；覆盖打法亏得少，进不了这层</span>
+              <!-- 真实生效值来自档位，不是后台那个「单期亏损触发线」 -->
+              <span class="sum-val iron-val">亏超{{ effectiveOpenLossPct }}% 才挑号</span>
+              <span class="sum-note">
+                只看本期总注与总派彩，不认玩法；当前档位「{{ gearLabel(currentGearLevel) }}」决定此线
+              </span>
             </div>
           </div>
 
@@ -165,7 +168,6 @@
         <section class="control-sec control-sec-bias">
           <div class="sec-label">
             <span>③ 偏置策略</span>
-            <span class="sec-label-sub">仅彩票/牌桌 · 启用中最多 {{ MAX_ACTIVE_BIAS }} 条 · 达标自动停</span>
           </div>
           <div class="rooms-summary cols-3">
             <div class="sum-chip">
@@ -173,17 +175,14 @@
               <span class="sum-val" :class="biasEnabledCount >= MAX_ACTIVE_BIAS ? 'warn' : 'ok'">
                 {{ biasEnabledCount }}/{{ MAX_ACTIVE_BIAS }}
               </span>
-              <span class="sum-note">满额后须先停用或删除旧策略</span>
             </div>
             <div class="sum-chip">
               <span class="sum-label">已停用</span>
               <span class="sum-val muted">{{ biasDisabledCount }}</span>
-              <span class="sum-note">含已达标自动停</span>
             </div>
             <div class="sum-chip">
               <span class="sum-label">全部</span>
               <span class="sum-val">{{ biases.length }}</span>
-              <span class="sum-note">列表含停用记录</span>
             </div>
           </div>
 
@@ -257,7 +256,6 @@
         <section v-if="legacyList.length" class="control-sec">
           <div class="sec-label">
             <span>历史定向策略</span>
-            <span class="sec-label-sub">已全部停用且开奖不再读取；仅可删除清理</span>
           </div>
           <div class="panel-body legacy-body">
             <el-table :data="legacyList" size="small" border stripe max-height="220">
@@ -285,7 +283,6 @@
     <DeskDialog
       v-model="biasDlg"
       title="新建偏置策略"
-      subtitle="填累计目标金额 · 正常开奖只按偏置挑 · 日账越界时日账优先"
       width="480px"
     >
       <div class="dlg-body">
@@ -346,7 +343,7 @@
               reserve-keyword
               :remote-method="searchPlayers"
               :loading="playerLoading"
-              placeholder="搜索昵称 / UID / 账号"
+              placeholder="搜索登录账号 / 昵称 / UID"
               style="width:100%"
             >
               <el-option
@@ -378,81 +375,81 @@
     <DeskDialog
       v-model="gscDlg"
       title="全局软控参数"
-      :subtitle="gscUnlocked ? '已解锁 · 修改后点保存将重新上锁' : '已上锁 · 查看参数，修改请先解锁'"
-      width="560px"
-      @closed="lockGscEdit"
+      :subtitle="gscUnlocked ? '已解锁 · 保存后重新上锁' : '已上锁 · 修改请先解锁'"
+      width="720px"
+      dialog-class="gsc-param-dlg"
+      @closed="onGscDlgClosed"
     >
-      <div class="dlg-body">
-        <div class="gsc-lock-bar" :class="{ on: gscUnlocked }">
-          <span>{{ gscUnlocked ? '已解锁，可修改' : '已上锁，仅可查看' }}</span>
-          <el-button
-            v-if="!gscUnlocked"
-            size="small"
-            type="warning"
-            :loading="gscUnlocking"
-            @click="unlockGscEdit"
-          >解锁</el-button>
-          <el-button v-else size="small" @click="lockGscEdit">重新上锁</el-button>
-        </div>
-        <el-form label-position="top" class="form" :disabled="!gscUnlocked">
-          <div class="dlg-block">
-            <div class="dlg-block-hd">共盘日账目标（彩票+牌桌 · R = (G − C) ÷ F）</div>
-            <div class="form-row">
-              <el-form-item label="开盘流水门槛 F" class="grow" required>
-                <div class="num-wrap">
-                  <el-input-number
-                    v-model="gscEdit.minFlowToControl"
-                    :min="0"
-                    :max="10000000"
-                    :step="1000"
-                    controls-position="right"
-                  />
-                </div>
-              </el-form-item>
-              <el-form-item label="目标中轴 R*" class="grow" required>
-                <div class="num-wrap">
-                  <el-input-number
-                    v-model="gscEdit.targetNetPct"
-                    :min="0"
-                    :max="30"
-                    :step="0.5"
-                    controls-position="right"
-                  />
-                  <span class="unit">%</span>
-                </div>
-              </el-form-item>
-            </div>
-            <div class="form-row">
-              <el-form-item label="目标带下限" class="grow">
-                <div class="num-wrap">
-                  <el-input-number v-model="gscEdit.bandLowPct" :step="0.5" controls-position="right" />
-                  <span class="unit">%</span>
-                </div>
-              </el-form-item>
-              <el-form-item label="目标带上限" class="grow">
-                <div class="num-wrap">
-                  <el-input-number v-model="gscEdit.bandHighPct" :step="0.5" controls-position="right" />
-                  <span class="unit">%</span>
-                </div>
-              </el-form-item>
-            </div>
-            <div class="field-readonly-hint">中轴须落在目标带内（下限 ≤ 中轴 ≤ 上限），否则过热/偏低时会往带外拉</div>
-            <el-form-item label="佣金估算率">
-              <div class="num-wrap narrow">
+      <el-form label-position="top" class="form gsc-form" :disabled="!gscUnlocked">
+        <div class="gsc-sec">
+          <div class="gsc-sec-hd">
+            <span>共盘日账</span>
+            <span class="gsc-sec-sub">彩票+牌桌 · R=(G−C)÷F · 佣金 {{ gscEdit.commissionRatePct }}% 只读</span>
+          </div>
+          <div class="gsc-grid cols-4">
+            <el-form-item required>
+              <template #label>
+                开盘门槛 F
+                <el-tooltip content="流水未达此值强制自然开奖" placement="top">
+                  <span class="gsc-q">?</span>
+                </el-tooltip>
+              </template>
+              <div class="num-wrap">
                 <el-input-number
-                  :model-value="gscEdit.commissionRatePct"
-                  disabled
+                  v-model="gscEdit.minFlowToControl"
+                  :min="0"
+                  :max="10000000"
+                  :step="1000"
+                  controls-position="right"
+                />
+              </div>
+            </el-form-item>
+            <el-form-item required>
+              <template #label>
+                目标中轴 R*
+                <el-tooltip content="中轴须落在目标带内，否则过热/偏低会往带外拉" placement="top">
+                  <span class="gsc-q">?</span>
+                </el-tooltip>
+              </template>
+              <div class="num-wrap">
+                <el-input-number
+                  v-model="gscEdit.targetNetPct"
+                  :min="0"
+                  :max="30"
+                  :step="0.5"
                   controls-position="right"
                 />
                 <span class="unit">%</span>
               </div>
-              <div class="field-readonly-hint">只读 · 同步「回水规则 → 回水总额」</div>
+            </el-form-item>
+            <el-form-item label="目标带下限">
+              <div class="num-wrap">
+                <el-input-number v-model="gscEdit.bandLowPct" :step="0.5" controls-position="right" />
+                <span class="unit">%</span>
+              </div>
+            </el-form-item>
+            <el-form-item label="目标带上限">
+              <div class="num-wrap">
+                <el-input-number v-model="gscEdit.bandHighPct" :step="0.5" controls-position="right" />
+                <span class="unit">%</span>
+              </div>
             </el-form-item>
           </div>
+        </div>
 
-          <div class="dlg-block">
-            <div class="dlg-block-hd">街机单游戏资金池（各游戏独立 · 只看窗口内）</div>
-            <el-form-item label="目标返还率" required>
+        <div class="gsc-sec">
+          <div class="gsc-sec-hd">
+            <span>街机资金池</span>
+            <span class="gsc-sec-sub">一游戏一口 · 窗口外盈亏落袋</span>
+          </div>
+          <div class="gsc-grid cols-3">
+            <el-form-item required>
+              <template #label>
+                目标返还率
+                <el-tooltip content="例 0.92 → 希望池余额≈流水×8%。与共盘试号分开" placement="top">
+                  <span class="gsc-q">?</span>
+                </el-tooltip>
+              </template>
               <div class="num-wrap">
                 <el-input-number
                   v-model="gscEdit.arcadeRtpTarget"
@@ -463,151 +460,147 @@
                   controls-position="right"
                 />
               </div>
-              <div class="field-readonly-hint">
-                例 0.92 → 希望池余额≈流水×8%；一游戏一口池，互不影响
+            </el-form-item>
+            <el-form-item>
+              <template #label>
+                街机试号
+                <el-tooltip content="试号越多越压爆率" placement="top">
+                  <span class="gsc-q">?</span>
+                </el-tooltip>
+              </template>
+              <div class="num-wrap">
+                <el-input-number
+                  v-model="gscEdit.arcadeCandidateTries"
+                  :min="1"
+                  :max="50"
+                  controls-position="right"
+                />
+                <span class="unit">次</span>
               </div>
             </el-form-item>
-            <div class="form-row">
-              <el-form-item label="街机试号" class="grow">
-                <div class="num-wrap">
-                  <el-input-number
-                    v-model="gscEdit.arcadeCandidateTries"
-                    :min="1"
-                    :max="50"
-                    controls-position="right"
-                  />
-                  <span class="unit">次</span>
-                </div>
-                <div class="field-readonly-hint">与共盘试号分开；试号越多越压爆率</div>
-              </el-form-item>
-              <el-form-item label="统计窗口" class="grow">
-                <div class="num-wrap">
-                  <el-input-number
-                    v-model="gscEdit.arcadePoolWindowDays"
-                    :min="1"
-                    :max="365"
-                    controls-position="right"
-                  />
-                  <span class="unit">天</span>
-                </div>
-                <div class="field-readonly-hint">
-                  窗口外的盈亏永久落袋，不会在之后的开奖里吐回去
-                </div>
-              </el-form-item>
-            </div>
+            <el-form-item label="统计窗口">
+              <div class="num-wrap">
+                <el-input-number
+                  v-model="gscEdit.arcadePoolWindowDays"
+                  :min="1"
+                  :max="365"
+                  controls-position="right"
+                />
+                <span class="unit">天</span>
+              </div>
+            </el-form-item>
           </div>
+        </div>
 
-          <div class="dlg-block">
-            <div class="dlg-block-hd">共盘单期铁律（自然亏超触发线才挑号；候选亏超此线非法）</div>
-            <div class="form-row">
-              <el-form-item label="单期亏损触发线" class="grow">
-                <div class="num-wrap">
-                  <el-input-number
-                    v-model="gscEdit.maxPeriodLossPct"
-                    :min="1"
-                    :max="100"
-                    :step="1"
-                    controls-position="right"
-                  />
-                  <span class="unit">%</span>
-                </div>
-              </el-form-item>
-              <el-form-item label="庄赢上限（已停用）" class="grow">
-                <div class="num-wrap">
-                  <el-input-number
-                    v-model="gscEdit.maxPeriodWinPct"
-                    :min="5"
-                    :max="100"
-                    :step="1"
-                    :disabled="true"
-                    controls-position="right"
-                  />
-                  <span class="unit">%</span>
-                </div>
-              </el-form-item>
-            </div>
-            <div class="dlg-hint">
-              挑号目标亏损约 30%（代码常量）。庄赢上限字段保留兼容，不再参与铁律过滤。
-            </div>
+        <div class="gsc-sec">
+          <div class="gsc-sec-hd">
+            <span>试号与缓刹</span>
+            <span class="gsc-sec-sub">仅共盘 · 单期开档线由失血档位决定</span>
           </div>
+          <div class="gsc-grid cols-3">
+            <el-form-item label="轻微试号">
+              <div class="num-wrap">
+                <el-input-number
+                  v-model="gscEdit.candidateTries"
+                  :min="1"
+                  :max="50"
+                  controls-position="right"
+                />
+                <span class="unit">次</span>
+              </div>
+            </el-form-item>
+            <el-form-item label="偏热试号">
+              <div class="num-wrap">
+                <el-input-number
+                  v-model="gscEdit.candidateTriesHalt"
+                  :min="1"
+                  :max="80"
+                  controls-position="right"
+                />
+                <span class="unit">次</span>
+              </div>
+            </el-form-item>
+            <el-form-item label="加强试号">
+              <div class="num-wrap">
+                <el-input-number
+                  v-model="gscEdit.candidateTriesBoost"
+                  :min="1"
+                  :max="80"
+                  controls-position="right"
+                />
+                <span class="unit">次</span>
+              </div>
+            </el-form-item>
+            <el-form-item label="单人缓刹">
+              <el-switch v-model="gscEdit.playerBrakeEnabled" :disabled="!gscUnlocked" />
+            </el-form-item>
+            <el-form-item>
+              <template #label>
+                缓刹倍数
+                <el-tooltip content="该房净赢≥该房净带入×倍数则碰线；挑号在铁律内优先压碰线玩家，不突破单期铁律" placement="top">
+                  <span class="gsc-q">?</span>
+                </el-tooltip>
+              </template>
+              <div class="num-wrap">
+                <el-input-number
+                  v-model="gscEdit.playerBrakeMultiple"
+                  :min="1"
+                  :max="20"
+                  :step="0.5"
+                  :disabled="!gscUnlocked || !gscEdit.playerBrakeEnabled"
+                  controls-position="right"
+                />
+                <span class="unit">倍</span>
+              </div>
+            </el-form-item>
+            <el-form-item>
+              <template #label>
+                失血档位
+                <el-tooltip content="回收档开档线 30%、目标持平；强回收 15%。控后冷却已停用" placement="top">
+                  <span class="gsc-q">?</span>
+                </el-tooltip>
+              </template>
+              <el-select v-model="gscEdit.gearMode" :disabled="!gscUnlocked">
+                <el-option label="自动（48 小时周期账）" value="AUTO" />
+                <el-option label="强制正常" value="FORCE_NORMAL" />
+                <el-option label="强制回收" value="FORCE_RECOVER" />
+              </el-select>
+            </el-form-item>
+          </div>
+          <div class="gsc-meta">
+            单期亏损触发线、庄赢上限已停用；挑号目标约亏 30%，开档线看档位。
+          </div>
+        </div>
 
-          <div class="dlg-block last">
-            <div class="dlg-block-hd">试号与缓刹（仅共盘 · 不影响街机）</div>
-            <div class="form-row">
-              <el-form-item label="轻微试号" class="grow">
-                <div class="num-wrap">
-                  <el-input-number
-                    v-model="gscEdit.candidateTries"
-                    :min="1"
-                    :max="50"
-                    controls-position="right"
-                  />
-                  <span class="unit">次</span>
-                </div>
-              </el-form-item>
-              <el-form-item label="偏热试号" class="grow">
-                <div class="num-wrap">
-                  <el-input-number
-                    v-model="gscEdit.candidateTriesHalt"
-                    :min="1"
-                    :max="80"
-                    controls-position="right"
-                  />
-                  <span class="unit">次</span>
-                </div>
-              </el-form-item>
-              <el-form-item label="加强试号" class="grow">
-                <div class="num-wrap">
-                  <el-input-number
-                    v-model="gscEdit.candidateTriesBoost"
-                    :min="1"
-                    :max="80"
-                    controls-position="right"
-                  />
-                  <span class="unit">次</span>
-                </div>
-              </el-form-item>
+        <div v-if="truthIneffective.length || truthScopes.length" class="gsc-fold">
+          <button type="button" class="gsc-fold-btn" @click="gscTruthOpen = !gscTruthOpen">
+            {{ gscTruthOpen ? '收起说明' : '适用范围与不生效项' }}
+          </button>
+          <div v-if="gscTruthOpen" class="gsc-fold-body">
+            <div v-if="truthIneffective.length" class="gsc-truth-list">
+              <div v-for="t in truthIneffective" :key="t.key" class="truth-line">
+                <b>{{ t.label }}</b>：{{ t.why }}
+              </div>
             </div>
-            <div class="form-row bottom">
-              <el-form-item label="单人缓刹" class="switch-item">
-                <el-switch v-model="gscEdit.playerBrakeEnabled" :disabled="!gscUnlocked" />
-              </el-form-item>
-              <el-form-item label="缓刹倍数" class="grow">
-                <div class="num-wrap">
-                  <el-input-number
-                    v-model="gscEdit.playerBrakeMultiple"
-                    :min="1"
-                    :max="20"
-                    :step="0.5"
-                    :disabled="!gscUnlocked || !gscEdit.playerBrakeEnabled"
-                    controls-position="right"
-                  />
-                  <span class="unit">倍</span>
-                </div>
-              </el-form-item>
-            </div>
-            <div class="field-readonly-hint" style="margin-top:-4px;margin-bottom:8px">
-              按房计算：该房净赢≥该房净带入×倍数则碰线；共盘挑号在铁律内优先压碰线玩家派彩，不突破单期铁律
-            </div>
-            <div class="form-row bottom">
-              <el-form-item label="失血档位" class="grow">
-                <el-select v-model="gscEdit.gearMode" :disabled="!gscUnlocked">
-                  <el-option label="自动（按 48 小时周期账）" value="AUTO" />
-                  <el-option label="强制正常" value="FORCE_NORMAL" />
-                  <el-option label="强制回收" value="FORCE_RECOVER" />
-                </el-select>
-              </el-form-item>
-              <div class="field-readonly-hint" style="flex:1;padding-top:8px">
-                回收档把开档线收到 30%、目标压到持平；强回收 15% / 庄赢 10%。
-                控后冷却已停用：冷却期会把防爆权让出去，改由单期金额门约束干预频率
+            <div v-if="truthScopes.length" class="truth-scopes">
+              <div v-for="s in truthScopes" :key="s.key" class="truth-scope">
+                <span class="truth-scope-name">{{ s.label }}</span>
+                <span class="truth-scope-tags">
+                  <el-tag v-for="a in s.applies" :key="a" size="small" effect="plain">{{ a }}</el-tag>
+                </span>
+                <span v-if="s.note" class="truth-scope-note">{{ s.note }}</span>
               </div>
             </div>
           </div>
-        </el-form>
-      </div>
+        </div>
+      </el-form>
       <template #footer>
         <el-button @click="gscDlg = false">取消</el-button>
         <span class="win-footer-grow" />
+        <el-button
+          v-if="gscUnlocked"
+          @click="lockGscEdit"
+        >重新上锁</el-button>
         <el-button
           v-if="!gscUnlocked"
           type="warning"
@@ -638,6 +631,7 @@ import {
   type GlobalSoftControlConfig,
   type GlobalSoftControlOverview,
 } from '@/api/console'
+import { formatMoney, formatSignedMoney } from '@gamebox/shared'
 import { gameLabel } from '@/utils/labels'
 
 const rooms = ref<ConsoleRoom[]>([])
@@ -654,6 +648,7 @@ const gscDlg = ref(false)
 const gscUnlocked = ref(false)
 const gscUnlocking = ref(false)
 const gscUnlockPwd = ref('')
+const gscTruthOpen = ref(false)
 const defaultGsc = (): GlobalSoftControlConfig => ({
   enabled: false,
   minFlowToControl: 50000,
@@ -828,6 +823,34 @@ function gearGameName(g: { gameCode: string; name: string }) {
   return gameLabel(g.gameCode)
 }
 const gearGames = computed(() => gsc.value?.gear?.games || [])
+
+/**
+ * 当前实际生效的档位与开档线。
+ *
+ * 后台那个「单期亏损触发线」不参与真实判断——挑号的开档线由档位决定
+ * （正常 50% / 回收 30% / 强回收 15%）。这里显示真值，避免看到的和执行的不一致。
+ */
+const currentGearLevel = computed(() => {
+  if (gscForm.gearMode === 'FORCE_RECOVER') return 'RECOVER'
+  if (gscForm.gearMode === 'FORCE_NORMAL') return 'NORMAL'
+  /* 自动档：有任一游戏收紧就按最紧的那档显示 */
+  const games = gearGames.value
+  if (games.some((g) => g.gear === 'STRONG')) return 'STRONG'
+  if (games.some((g) => g.gear === 'RECOVER')) return 'RECOVER'
+  return 'NORMAL'
+})
+const effectiveOpenLossPct = computed(() => {
+  const params = gsc.value?.gear?.params as
+    | Record<string, { openLossPct?: number }>
+    | undefined
+  const key = currentGearLevel.value.toLowerCase()
+  return params?.[key]?.openLossPct ?? 50
+})
+/** 服务端如实交代的「已不生效项」与「适用范围」 */
+const truthIneffective = computed(
+  () => gsc.value?.truth?.ineffective ?? [],
+)
+const truthScopes = computed(() => gsc.value?.truth?.scopes ?? [])
 const gearActiveCount = computed(
   () => gearGames.value.filter((g) => g.gear !== 'NORMAL').length,
 )
@@ -869,14 +892,10 @@ const gscStatusLine = computed(() => {
 })
 
 function fmtMoney(n: number) {
-  return Number(n || 0).toLocaleString('zh-CN', { maximumFractionDigits: 2 })
+  return formatMoney(n)
 }
 function fmtSigned(n: number) {
-  const v = Number(n || 0)
-  const body = Math.abs(v).toLocaleString('zh-CN', { maximumFractionDigits: 2 })
-  if (v > 0) return `+${body}`
-  if (v < 0) return `−${body}`
-  return body
+  return formatSignedMoney(n)
 }
 function legacyModeLabel(row: ControlPolicy) {
   const m = row.mode || row.targetType
@@ -902,7 +921,13 @@ async function loadGsc() {
 function openGscDlg() {
   Object.assign(gscEdit, { ...gscForm })
   lockGscEdit()
+  gscTruthOpen.value = false
   gscDlg.value = true
+}
+
+function onGscDlgClosed() {
+  lockGscEdit()
+  gscTruthOpen.value = false
 }
 
 function lockGscEdit() {
@@ -1395,34 +1420,90 @@ onMounted(refresh)
 .cell-name { font-weight: 650; color: #0f172a; }
 .cell-meta { font-size: 12px; color: #64748b; margin-top: 2px; }
 .dlg-body { display: flex; flex-direction: column; gap: 0; }
-.dlg-block {
-  padding-bottom: 12px;
-  margin-bottom: 12px;
-  border-bottom: 1px solid #f1f5f9;
+.gsc-sec + .gsc-sec {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #f1f5f9;
 }
-.dlg-block.last {
-  margin-bottom: 0;
-  padding-bottom: 0;
-  border-bottom: none;
-}
-.dlg-hint {
-  margin: 0 0 8px;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-  line-height: 1.5;
-}
-.dlg-block-hd {
+.gsc-sec-hd {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
   font-size: 12px;
   font-weight: 700;
-  color: #64748b;
-  letter-spacing: 0.02em;
-  margin-bottom: 10px;
+  color: #334155;
 }
+.gsc-sec-sub { font-size: 11px; font-weight: 500; color: #94a3b8; }
+.gsc-grid {
+  display: grid;
+  gap: 8px 12px;
+}
+.gsc-grid.cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.gsc-grid.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.gsc-q {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #e2e8f0;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: help;
+  line-height: 1;
+}
+.gsc-meta {
+  margin-top: 8px;
+  font-size: 11px;
+  color: #94a3b8;
+  line-height: 1.4;
+}
+.gsc-fold {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #f1f5f9;
+}
+.gsc-fold-btn {
+  border: 0;
+  background: none;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 650;
+  color: #2563eb;
+  cursor: pointer;
+}
+.gsc-fold-btn:hover { color: #1d4ed8; }
+.gsc-fold-body { margin-top: 8px; }
+.gsc-truth-list { margin-bottom: 8px; }
+.truth-line { font-size: 12px; line-height: 1.6; color: #64748b; }
+.truth-scopes { display: flex; flex-direction: column; gap: 6px; }
+.truth-scope {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+}
+.truth-scope-name { min-width: 110px; font-weight: 600; color: #334155; }
+.truth-scope-tags { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.truth-scope-note { color: #94a3b8; }
 .form :deep(.el-form-item) { margin-bottom: 12px; }
 .form :deep(.el-form-item__label) {
   margin-bottom: 4px !important;
   font-weight: 600;
   color: #475569;
+}
+.form.gsc-form :deep(.el-form-item) { margin-bottom: 0; }
+.form.gsc-form :deep(.el-form-item__label) {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 4px !important;
+  line-height: 1.2;
 }
 .form-row {
   display: flex;
@@ -1496,6 +1577,14 @@ onMounted(refresh)
   .weight-item { width: 100%; }
   .kind-grid { grid-template-columns: 1fr; }
   .sum-note { white-space: normal; }
+  .gsc-grid.cols-4,
+  .gsc-grid.cols-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+</style>
+
+<style>
+.gsc-param-dlg.desk-window-dialog .win-content {
+  padding: 12px 16px 10px;
 }
 </style>
 

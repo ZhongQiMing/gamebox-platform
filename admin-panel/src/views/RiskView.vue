@@ -58,7 +58,7 @@
           v-model="filter.keyword"
           clearable
           size="small"
-          placeholder="UID / 昵称 / 账号"
+          placeholder="搜登录账号 / 昵称 / UID"
           class="filter-search"
           @keyup.enter="onFilterChange"
         />
@@ -89,7 +89,6 @@
           height="100%"
           empty-text="暂无告警"
           @selection-change="(rows: RiskEvent[]) => (selected = rows)"
-          @row-click="openDetail"
         >
           <el-table-column type="selection" width="42" :selectable="(r: RiskEvent) => !r.handled" />
           <el-table-column label="级别" width="88">
@@ -108,7 +107,7 @@
             <template #default="{ row }: { row: any }">
               <template v-if="row.target">
                 <div class="cell-name">{{ row.target.nickname }}</div>
-                <div class="cell-meta">{{ row.target.uid }} · IP {{ row.target.lastLoginIp || '—' }}</div>
+                <div class="cell-meta">{{ row.target.username || '—' }} · {{ row.target.uid }}</div>
               </template>
               <span v-else class="muted">{{ shortId(row.targetId) }}</span>
             </template>
@@ -178,16 +177,27 @@
         <div v-if="current.target" class="detail-block mb16">
           <div class="detail-title">关联玩家</div>
           <div class="player-block">
-            <div><b>{{ current.target.nickname }}</b>（{{ current.target.uid }}）</div>
+            <div><b>{{ current.target.nickname }}</b>（{{ current.target.username }} · {{ current.target.uid }}）</div>
             <div class="hint">账号 {{ current.target.username }} · 状态 {{ current.target.status }}</div>
             <div class="hint">最近登录 IP {{ current.target.lastLoginIp || '—' }}</div>
           </div>
         </div>
 
-        <div class="detail-block mb16">
-          <div class="detail-title">原始明细</div>
-          <pre class="json">{{ pretty(current.detail) }}</pre>
+        <div v-if="detailRows.length" class="detail-block mb16">
+          <div class="detail-title">判定依据</div>
+          <el-descriptions :column="1" border size="small">
+            <el-descriptions-item v-for="r in detailRows" :key="r.key" :label="r.label">
+              <span :class="{ mono: r.raw }">{{ r.value }}</span>
+            </el-descriptions-item>
+          </el-descriptions>
         </div>
+
+        <el-collapse class="raw-collapse mb16">
+          <el-collapse-item name="raw">
+            <template #title><span class="raw-title">原始数据</span></template>
+            <pre class="json">{{ pretty(current.detail) }}</pre>
+          </el-collapse-item>
+        </el-collapse>
 
         <div v-if="!current.handled" class="drawer-actions">
           <el-input
@@ -210,7 +220,9 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { formatDateTime } from '@gamebox/shared'
 import PageHeader from '@/components/PageHeader.vue'
+import { toDetailRows } from '@/utils/detailFields'
 import {
   riskApi,
   type RiskEvent,
@@ -227,6 +239,10 @@ const summary = ref<RiskSummary | null>(null)
 const typeOptions = ref<RiskMeta['types']>([])
 const drawer = ref(false)
 const current = ref<RiskEvent | null>(null)
+/* 判定依据里已经有的字段不必再重复一遍 */
+const detailRows = computed(() =>
+  toDetailRows(current.value?.detail).filter((r) => r.key !== 'summary'),
+)
 const handleNote = ref('')
 const dateRange = ref<[string, string] | null>(null)
 
@@ -424,7 +440,7 @@ function levelLabel(l: string) {
   return l === 'CRITICAL' ? '严重' : l === 'WARN' ? '警告' : l === 'INFO' ? '提示' : l
 }
 function fmtTime(s: string) {
-  return new Date(s).toLocaleString('zh-CN', { hour12: false })
+  return formatDateTime(s)
 }
 function shortId(id: string | null) {
   if (!id) return '—'
@@ -438,17 +454,28 @@ function pretty(d: unknown) {
   }
 }
 
+/* 标签页不可见时没人看这张表，切回来补一次即可 */
+function pollOnce() {
+  void loadSummary()
+  if (filter.handled === false) void load()
+}
+
+function onVisibilityChange() {
+  if (!document.hidden) pollOnce()
+}
+
 onMounted(async () => {
   await loadMeta()
   await refreshAll()
   timer = setInterval(() => {
-    void loadSummary()
-    if (filter.handled === false) void load()
+    if (!document.hidden) pollOnce()
   }, 60_000)
+  document.addEventListener('visibilitychange', onVisibilityChange)
 })
 
 onUnmounted(() => {
   if (timer) clearInterval(timer)
+  document.removeEventListener('visibilitychange', onVisibilityChange)
 })
 </script>
 
@@ -518,7 +545,7 @@ onUnmounted(() => {
   background: #f1f5f9 !important;
 }
 .risk-table { width: 100%; }
-.risk-table :deep(.el-table__row) { cursor: pointer; }
+.risk-table :deep(.el-table__row) { cursor: default; }
 .panel-foot {
   flex-shrink: 0;
   display: flex;
@@ -557,6 +584,13 @@ onUnmounted(() => {
   color: #0f172a;
 }
 .player-block { font-size: 13px; line-height: 1.6; color: #0f172a; }
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  word-break: break-all;
+}
+.raw-collapse { margin-top: 12px; }
+.raw-title { font-size: 12px; color: #94a3b8; }
 .json {
   margin: 0;
   font-size: 12px;

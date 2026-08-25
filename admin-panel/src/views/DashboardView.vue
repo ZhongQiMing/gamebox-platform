@@ -45,7 +45,7 @@
                   v-if="isCreditBook"
                   size="small"
                   plain
-                  @click="$router.push('/rooms')"
+                  @click="goOwnRoomSettle"
                 >查看对账</el-button>
               </div>
             </div>
@@ -96,9 +96,19 @@
           </section>
 
           <section class="dash-sec">
-            <h3 class="dash-sec__title">{{ agentTodayTitle }}</h3>
-            <div class="dash-summary" :style="summaryCols(agentToday.length)">
-              <div v-for="k in agentToday" :key="k.label" class="sum-chip">
+            <h3 class="dash-sec__title">{{ todayTitle }}</h3>
+            <div class="dash-summary" :style="summaryCols(todayCore.length)">
+              <div v-for="k in todayCore" :key="k.label" class="sum-chip" :class="{ hot: k.hot }">
+                <span class="sum-label">{{ k.label }}</span>
+                <span class="sum-val" :style="{ color: k.color }">{{ k.value }}</span>
+              </div>
+            </div>
+          </section>
+
+          <section class="dash-sec">
+            <h3 class="dash-sec__title">今日上下分</h3>
+            <div class="dash-summary" :style="summaryCols(todayFund.length)">
+              <div v-for="k in todayFund" :key="k.label" class="sum-chip">
                 <span class="sum-label">{{ k.label }}</span>
                 <span class="sum-val" :style="{ color: k.color }">{{ k.value }}</span>
               </div>
@@ -148,13 +158,22 @@
                 <span class="sum-val" :class="{ hot: lastWeekPending > 0 }">{{ lastWeekPending }}</span>
               </div>
             </div>
-            <p class="dash-hint">点「去结账」进入对应房间的「占成结账」页签处理上周占成。</p>
           </section>
 
           <section class="dash-sec">
-            <h3 class="dash-sec__title">今日经营</h3>
-            <div class="dash-summary" :style="summaryCols(landlordCore.length)">
-              <div v-for="k in landlordCore" :key="k.label" class="sum-chip">
+            <h3 class="dash-sec__title">{{ todayTitle }}</h3>
+            <div class="dash-summary" :style="summaryCols(todayCore.length)">
+              <div v-for="k in todayCore" :key="k.label" class="sum-chip" :class="{ hot: k.hot }">
+                <span class="sum-label">{{ k.label }}</span>
+                <span class="sum-val" :style="{ color: k.color }">{{ k.value }}</span>
+              </div>
+            </div>
+          </section>
+
+          <section class="dash-sec">
+            <h3 class="dash-sec__title">今日上下分</h3>
+            <div class="dash-summary" :style="summaryCols(todayFund.length)">
+              <div v-for="k in todayFund" :key="k.label" class="sum-chip">
                 <span class="sum-label">{{ k.label }}</span>
                 <span class="sum-val" :style="{ color: k.color }">{{ k.value }}</span>
               </div>
@@ -178,7 +197,6 @@
                 <span class="leg flow">流水</span>
                 <span class="leg pnl">盈亏+</span>
                 <span class="leg pnl-neg">盈亏−</span>
-                <span class="ops-muted">{{ isAdmin ? '全平台注单口径' : '授权房间注单口径' }}</span>
               </div>
             </div>
             <div class="panel-block">
@@ -216,7 +234,7 @@
         <!-- 共用：游戏明细 + 最近操作 -->
         <div class="dash-split">
           <section class="dash-sec grow">
-            <h3 class="dash-sec__title">{{ isAgent ? '今日注单明细（按游戏）' : '今日游戏流水 TOP' }}</h3>
+            <h3 class="dash-sec__title">今日注单明细（按游戏）</h3>
             <div class="panel-block">
               <el-table :data="byGame" size="small" stripe empty-text="今日暂无注单">
                 <el-table-column label="游戏" width="140">
@@ -226,15 +244,15 @@
                 <el-table-column label="流水" min-width="110">
                   <template #default="{ row }">{{ fmt(row.betFlow) }}</template>
                 </el-table-column>
-                <el-table-column v-if="isAgent" label="派彩" min-width="100">
+                <el-table-column label="派彩" min-width="100">
                   <template #default="{ row }">{{ fmt(row.payout) }}</template>
                 </el-table-column>
-                <el-table-column v-if="isAgent" label="玩家盈亏" min-width="110">
+                <el-table-column label="玩家盈亏" min-width="110">
                   <template #default="{ row }">
                     <span :style="{ color: pnlColor(-(row.housePnl ?? 0)) }">{{ fmt(-(row.housePnl ?? 0)) }}</span>
                   </template>
                 </el-table-column>
-                <el-table-column :label="isAgent ? '本房盈亏' : '庄家盈亏'" min-width="110">
+                <el-table-column label="庄家盈亏" min-width="110">
                   <template #default="{ row }">
                     <span :style="{ color: pnlColor(row.housePnl) }">{{ fmt(row.housePnl) }}</span>
                   </template>
@@ -258,7 +276,7 @@
                 >
                   <div class="log-line">
                     <b>{{ l.operator }}</b>
-                    <span class="ops-muted"> {{ actionLabel(l.action) }}</span>
+                    <span class="ops-muted"> {{ l.actionLabel || l.action }}</span>
                     <span v-if="l.target" class="ops-muted"> · {{ shortTarget(l.target) }}</span>
                   </div>
                 </el-timeline-item>
@@ -271,9 +289,6 @@
     </div>
 
     <DeskDialog v-model="settlePendingVisible" title="上周未结账房间" width="520px">
-      <p class="dash-hint" style="margin:0 0 12px">
-        以下房间上周尚未完成占成结账。点「去结账」进入该房间的「占成结账」页签。
-      </p>
       <el-table :data="pendingSettleRooms" size="small" stripe empty-text="暂无待结房间">
         <el-table-column label="房间" min-width="160">
           <template #default="{ row }">
@@ -308,6 +323,8 @@ import PageHeader from '@/components/PageHeader.vue'
 import DeskDialog from '@/components/DeskDialog.vue'
 import { consoleApi, type DashboardData, type ReportSummary } from '@/api/console'
 import { useAdminStore } from '@/stores/admin'
+import { CLOSED_FLOW_COLOR } from '@/utils/labels'
+import { formatMoney, isGeneralSide } from '@gamebox/shared'
 
 type TrendPoint = { date: string; betFlow: number; pnl: number; newUsers: number }
 type Kpi = { label: string; value: string; color: string; hot?: boolean }
@@ -315,32 +332,6 @@ type Kpi = { label: string; value: string; color: string; hot?: boolean }
 function summaryCols(n: number) {
   const cols = Math.max(1, Math.min(6, n || 1))
   return { gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }
-}
-
-const ACTION_ZH: Record<string, string> = {
-  QUOTA_SELL: '收到额度',
-  QUOTA_RECALL: '额度被回收',
-  CONSOLE_CREDIT: '玩家上分',
-  CONSOLE_DEBIT: '玩家下分',
-  CS_STAFF_ALLOC: '划额度给客服',
-  CS_STAFF_RECALL: '收回客服额度',
-  CS_STAFF_CREATE: '开客服账号',
-  RECHARGE_APPROVE: '通过上下分',
-  RECHARGE_REJECT: '拒绝上下分',
-  GAME_STATUS_CHANGE: '游戏状态变更',
-  GAME_DAY_CUT: '游戏日切',
-  GAME_REORDER: '调整游戏排序',
-  GAME_BASICS_UPDATE: '游戏基础信息',
-  ROOM_CREATE: '创建房间',
-  ROOM_STATUS: '房间状态变更',
-  ROOM_FLY: '整房飞盘',
-  ROOM_OVER_ISSUE: '房间超发设置（历史）',
-  REBATE_POLICY: '回水规则',
-  USER_STATUS: '账号启停',
-  RISK_EVENT_HANDLE: '处理风控',
-  RISK_EVENT_BATCH_HANDLE: '批量风控',
-  CONTROL_CREATE: '新建控奖',
-  CONTROL_STATUS: '控奖状态',
 }
 
 const store = useAdminStore()
@@ -359,15 +350,18 @@ const byGame = computed(() => data.value?.byGame ?? [])
 const logs = computed(() => data.value?.recentLogs ?? [])
 const isAgent = computed(() => {
   const r = store.profile?.role
+  if (isGeneralSide(r, store.profile?.parentRole)) return false
   return r === 'AGENT' || r === 'PROXY'
 })
 const isAdmin = computed(() => store.profile?.role === 'ADMIN')
 const isBranch = computed(() => store.profile?.role === 'BRANCH')
 const isLandlord = computed(() => isAdmin.value || isBranch.value)
-const isProxy = computed(() => store.profile?.role === 'PROXY')
+const isGeneralUser = computed(() => isGeneralSide(store.profile?.role, store.profile?.parentRole))
+const isProxy = computed(() =>
+  store.profile?.role === 'PROXY' && !isGeneralSide(store.profile?.role, store.profile?.parentRole),
+)
 const lastWeekPending = computed(() => data.value?.settle?.lastWeekPending ?? 0)
 const pendingSettleRooms = computed(() => data.value?.settle?.pendingRooms ?? [])
-
 function openSettlePending() {
   if (lastWeekPending.value <= 0) {
     ElMessage.info('上周房间均已结账')
@@ -383,7 +377,16 @@ function openSettlePending() {
 
 function goRoomSettle(roomId: string) {
   settlePendingVisible.value = false
-  void router.push({ path: `/rooms/${roomId}`, query: { tab: 'settle' } })
+  void router.push({ name: 'settle', query: { roomId, period: 'last' } })
+}
+
+function goOwnRoomSettle() {
+  const rid = joinRoomId.value || wallet.value?.primaryRoomId
+  if (rid) {
+    void router.push({ path: `/rooms/${rid}`, query: { tab: 'settle' } })
+    return
+  }
+  void router.push({ path: '/rooms' })
 }
 
 function goJoinReview() {
@@ -398,9 +401,17 @@ function goJoinReview() {
 const maxTrendFlow = computed(() => Math.max(1, ...trend.value.map((t) => Number(t.betFlow) || 0)))
 const maxTrendPnl = computed(() => Math.max(1, ...trend.value.map((t) => Math.abs(Number(t.pnl) || 0))))
 
+function displayFlownFlow(s?: ReportSummary | null) {
+  if (isGeneralUser.value) return Number(s?.flownBetFlowLive ?? s?.flownBetFlow ?? 0)
+  return Number(s?.agentFlyBetFlowLive ?? s?.agentFlyBetFlow ?? s?.flownBetFlow ?? 0)
+}
+function stakeFlow(s?: ReportSummary | null) {
+  return Number(s?.betFlow || 0) + Number(s?.pendingBetFlow || 0)
+}
+
 function fmt(n?: number | null) {
   if (n == null) return '—'
-  return Number(n).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  return formatMoney(n)
 }
 function pnlColor(n?: number | null) {
   if (n == null) return 'var(--ops-muted)'
@@ -414,31 +425,55 @@ function fmtTime(iso: string) {
   const d = new Date(iso)
   return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
-function actionLabel(a: string) {
-  return ACTION_ZH[a] || a
-}
 function shortTarget(t: string) {
   if (!t) return ''
   if (t.includes(',')) return t.split(',').slice(0, 3).join('、') + (t.split(',').length > 3 ? '…' : '')
   return t.length > 18 ? `${t.slice(0, 10)}…` : t
 }
 
-/** 管理员/房主：今日核心（额度进出看代理，不看玩家上下分） */
-const landlordCore = computed<Kpi[]>(() => {
-  const q = data.value?.agentQuota
+/**
+ * 三方共用的今日六格：管理、总代、代理打开工作台看到的格子数、名字、顺序完全一致，
+ * 只有取数范围按各自账本不同（后端 summary 已按角色算好，前端不再自己拼）。
+ */
+const todayCore = computed<Kpi[]>(() => {
+  const v = s.value
   return [
-    { label: '今日流水', value: fmt(s.value?.betFlow), color: 'var(--desk-accent, #38bdf8)' },
-    { label: '庄家盈亏', value: fmt(s.value?.housePnl), color: pnlColor(s.value?.housePnl) },
+    { label: '今日流水', value: fmt(stakeFlow(v)), color: 'var(--desk-accent, #38bdf8)' },
+    { label: '飞盘', value: fmt(displayFlownFlow(v)), color: 'var(--desk-accent, #38bdf8)' },
+    { label: '关盘', value: fmt(v?.closedBetFlow), color: CLOSED_FLOW_COLOR },
+    { label: '庄家盈亏', value: fmt(v?.satHousePnl), color: pnlColor(v?.satHousePnl) },
     {
-      label: '给代理上分',
-      value: fmt(q?.issueAmount),
-      color: 'var(--ops-gold)',
+      label: isLandlord.value ? '平台占成' : '占成盈亏',
+      value: fmt(v?.myShareAmount),
+      color: pnlColor(v?.myShareAmount),
     },
     {
-      label: '收回代理',
-      value: fmt(q?.recallAmount),
-      color: '#ef4444',
+      label: '今日盈亏',
+      value: fmt(v?.myNetEarning),
+      color: pnlColor(v?.myNetEarning),
+      hot: true,
     },
+  ]
+})
+
+/** 上下分：管理/总代看额度进出，代理看对玩家的 */
+const todayFund = computed<Kpi[]>(() => {
+  const q = data.value?.agentQuota
+  if (isLandlord.value) {
+    return [
+      { label: '今日上分', value: fmt(q?.issueAmount), color: 'var(--ops-gold)' },
+      { label: '今日下分', value: fmt(q?.recallAmount), color: '#ef4444' },
+    ]
+  }
+  if (isGeneralUser.value) {
+    return [
+      { label: '给代理上分', value: fmt(q?.issueAmount), color: 'var(--ops-gold)' },
+      { label: '收回代理', value: fmt(q?.recallAmount), color: '#ef4444' },
+    ]
+  }
+  return [
+    { label: '给玩家上分', value: fmt(s.value?.upAmount), color: 'var(--ops-gold)' },
+    { label: '玩家下分', value: fmt(s.value?.downAmount), color: '#ef4444' },
   ]
 })
 
@@ -465,42 +500,19 @@ const creditLow = computed(() => {
   return left <= 0
 })
 
-const agentTodayTitle = computed(() =>
-  isCreditBook.value ? '今日经营（信用口径）' : '今日经营',
-)
+const todayTitle = '今日经营'
 
-const agentToday = computed<Kpi[]>(() => {
-  if (isCreditBook.value) {
-    const rate = Number(data.value?.share?.rate ?? wallet.value?.agentShareRate ?? 0)
-    const todayShare = asMoneySafe((Number(s.value?.housePnl ?? 0)) * rate)
-    return [
-      { label: '今日流水', value: fmt(s.value?.betFlow), color: 'var(--desk-accent, #38bdf8)' },
-      { label: '本房盈亏', value: fmt(s.value?.housePnl), color: pnlColor(s.value?.housePnl) },
-      { label: '预估占成', value: fmt(todayShare), color: pnlColor(todayShare) },
-      { label: '今日发分', value: fmt(s.value?.upAmount), color: 'var(--ops-gold)' },
-      { label: '今日收回', value: fmt(s.value?.downAmount), color: '#ef4444' },
-      { label: '今日活跃', value: String(s.value?.activePlayers ?? '—'), color: '#0f172a' },
-    ]
-  }
-  return [
-    { label: '今日流水', value: fmt(s.value?.betFlow), color: 'var(--desk-accent, #38bdf8)' },
-    { label: '本房盈亏', value: fmt(s.value?.housePnl), color: pnlColor(s.value?.housePnl) },
-    { label: '上分', value: fmt(s.value?.upAmount), color: 'var(--ops-gold)' },
-    { label: '下分', value: fmt(s.value?.downAmount), color: '#ef4444' },
-    { label: '今日活跃', value: String(s.value?.activePlayers ?? '—'), color: '#0f172a' },
-    { label: '注单数', value: String(s.value?.betCount ?? '—'), color: '#0f172a' },
-  ]
-})
 
 const agentShareRow = computed<Kpi[]>(() => {
   const sh = data.value?.share
   const pct = sh?.ratePct
   return [
     { label: '占成比例', value: pct == null ? '—' : `${pct}%`, color: 'var(--ops-gold)' },
-    { label: '本周流水', value: fmt(sh?.weekBetFlow), color: 'var(--desk-accent, #38bdf8)' },
+    { label: '本周结账流水', value: fmt(sh?.weekBetFlow), color: 'var(--desk-accent, #38bdf8)' },
     { label: '本周盈亏', value: fmt(sh?.weekHousePnl), color: pnlColor(sh?.weekHousePnl) },
-    { label: '代理占成', value: fmt(sh?.weekAgentShare), color: pnlColor(sh?.weekAgentShare) },
-    { label: '平台占成', value: fmt(sh?.weekPlatformShare), color: pnlColor(sh?.weekPlatformShare) },
+    { label: '占成盈亏', value: fmt(sh?.weekAgentShare), color: pnlColor(sh?.weekAgentShare) },
+    /* 代理看的是「要上缴多少」，不是平台内部那份账 */
+    { label: '应上缴上家', value: fmt(sh?.weekPlatformShare), color: pnlColor(sh?.weekPlatformShare) },
     {
       label: '上周未结账',
       value: String(lastWeekPending.value),
@@ -512,52 +524,19 @@ const agentShareRow = computed<Kpi[]>(() => {
 
 const agentShareTitle = '本周占成'
 
-function asMoneySafe(n: number) {
-  if (!Number.isFinite(n)) return 0
-  return Math.round(n * 100) / 100
-}
-
 const agentWallet = computed<Kpi[]>(() => {
-  if (isCreditBook.value) {
-    const unused =
-      wallet.value?.creditUnused
-      ?? wallet.value?.diskPoolRemaining
-      ?? (Number(wallet.value?.pointsQuota ?? 0) + Number(wallet.value?.csBalances ?? 0))
-    return [
-      {
-        label: '佣金账户',
-        value: fmt(wallet.value?.balance),
-        color: 'var(--ops-gold)',
-      },
-      {
-        label: '代理额度',
-        value: fmt(wallet.value?.pointsQuota),
-        color: creditLow.value ? '#ef4444' : 'var(--ops-gold)',
-        hot: creditLow.value,
-      },
-      {
-        label: '客服额度',
-        value: fmt(wallet.value?.csBalances ?? 0),
-        color: 'var(--desk-accent, #38bdf8)',
-      },
-      {
-        label: '剩余信用',
-        value: fmt(unused),
-        color: creditLow.value ? '#ef4444' : 'var(--ops-gold)',
-        hot: creditLow.value,
-      },
-      {
-        label: '玩家持分',
-        value: fmt(wallet.value?.playerPointsTotal),
-        color: '#0f172a',
-      },
-    ]
-  }
+  /* 现金/信用同一本盘分，后端已算好 */
+  const merged =
+    wallet.value?.agentBalance
+    ?? (isCreditBook.value
+      ? Number(wallet.value?.pointsQuota ?? 0) + Number(wallet.value?.balance ?? 0)
+      : Number(wallet.value?.balance ?? 0))
   return [
     {
       label: '代理余额',
-      value: fmt(wallet.value?.balance),
-      color: 'var(--ops-gold)',
+      value: fmt(merged),
+      color: isCreditBook.value && creditLow.value ? '#ef4444' : 'var(--ops-gold)',
+      hot: !!(isCreditBook.value && creditLow.value),
     },
     {
       label: '客服额度',

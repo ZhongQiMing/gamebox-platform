@@ -26,7 +26,7 @@
           v-model="filter.keyword"
           clearable
           size="small"
-          placeholder="操作人 / 目标 / UID / 房间号"
+          placeholder="操作人账号 / 昵称 / UID / 房间号"
           class="filter-search"
           @keyup.enter="onFilterChange"
         />
@@ -56,15 +56,14 @@
           size="small"
           height="100%"
           empty-text="暂无操作记录"
-          @row-click="openDetail"
         >
           <el-table-column label="时间" width="160">
             <template #default="{ row }: { row: any }">{{ fmtTime(row.createdAt) }}</template>
           </el-table-column>
-          <el-table-column label="操作人" width="140">
+          <el-table-column label="操作人" min-width="160">
             <template #default="{ row }: { row: any }">
               <div class="cell-name">{{ row.operator.nickname }}</div>
-              <div class="cell-meta">{{ row.operator.roleLabel || row.operator.role }}</div>
+              <div class="cell-meta">{{ row.operator.username || row.operator.uid }} · {{ row.operator.roleLabel || row.operator.role }}</div>
             </template>
           </el-table-column>
           <el-table-column label="操作" width="140">
@@ -107,7 +106,7 @@
           <el-descriptions-item label="时间">{{ fmtTime(current.createdAt) }}</el-descriptions-item>
           <el-descriptions-item label="操作人">
             {{ current.operator.nickname }}
-            <span class="hint"> · {{ current.operator.roleLabel }} · {{ current.operator.uid }}</span>
+            <span class="hint"> · {{ current.operator.uid }} · {{ current.operator.roleLabel }}</span>
           </el-descriptions-item>
           <el-descriptions-item label="操作">
             {{ current.actionLabel }}
@@ -118,11 +117,26 @@
           <el-descriptions-item v-if="current.ip" label="IP">{{ current.ip }}</el-descriptions-item>
         </el-descriptions>
 
-        <div class="detail-block">
-          <div class="detail-title">技术明细</div>
-          <div v-if="current.target" class="hint mb8">原始目标 ID：{{ current.target }}</div>
-          <pre class="json">{{ pretty(current.detail) }}</pre>
+        <div v-if="detailRows.length" class="detail-block">
+          <div class="detail-title">变更内容</div>
+          <el-descriptions :column="1" border size="small">
+            <el-descriptions-item
+              v-for="r in detailRows"
+              :key="r.key"
+              :label="r.label"
+            >
+              <span :class="{ mono: r.raw }">{{ r.value }}</span>
+            </el-descriptions-item>
+          </el-descriptions>
         </div>
+
+        <el-collapse class="raw-collapse">
+          <el-collapse-item name="raw">
+            <template #title><span class="raw-title">原始数据</span></template>
+            <div v-if="current.target" class="hint mb8">目标 ID：{{ current.target }}</div>
+            <pre class="json">{{ pretty(current.detail) }}</pre>
+          </el-collapse-item>
+        </el-collapse>
       </template>
     </el-drawer>
   </div>
@@ -130,8 +144,11 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { ElMessage } from 'element-plus'
+import { formatDateTime } from '@gamebox/shared'
 import PageHeader from '@/components/PageHeader.vue'
 import { adminLogApi, type AdminLogItem, type LogActionOption } from '@/api/admin'
+import { toDetailRows } from '@/utils/detailFields'
 
 const list = ref<AdminLogItem[]>([])
 const total = ref(0)
@@ -140,6 +157,9 @@ const actions = ref<LogActionOption[]>([])
 const dateRange = ref<[string, string] | null>(null)
 const drawer = ref(false)
 const current = ref<AdminLogItem | null>(null)
+const detailRows = computed(() =>
+  toDetailRows(current.value?.detail, current.value?.detailNames ?? {}),
+)
 
 const filter = reactive({
   action: '',
@@ -180,6 +200,14 @@ async function load() {
     })
     list.value = res.list
     total.value = res.total
+  } catch (e) {
+    /*
+     * 原来没有 catch：查询失败时表格留着上一次的结果、页码也不变，
+     * 看起来像「这个时间段确实没有日志」。审计日志上不能让人误判。
+     */
+    list.value = []
+    total.value = 0
+    ElMessage.error(e instanceof Error ? e.message : '日志加载失败')
   } finally {
     loading.value = false
   }
@@ -196,7 +224,7 @@ function openDetail(row: AdminLogItem) {
 }
 
 function fmtTime(s: string) {
-  return new Date(s).toLocaleString('zh-CN', { hour12: false })
+  return formatDateTime(s)
 }
 function pretty(d: unknown) {
   try {
@@ -247,7 +275,7 @@ onMounted(async () => {
   background: #f1f5f9 !important;
 }
 .log-table { width: 100%; }
-.log-table :deep(.el-table__row) { cursor: pointer; }
+.log-table :deep(.el-table__row) { cursor: default; }
 .panel-foot {
   flex-shrink: 0;
   display: flex;
@@ -283,6 +311,13 @@ onMounted(async () => {
   font-weight: 650;
   color: #0f172a;
 }
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  word-break: break-all;
+}
+.raw-collapse { margin-top: 12px; }
+.raw-title { font-size: 12px; color: #94a3b8; }
 .json {
   margin: 0;
   font-size: 12px;

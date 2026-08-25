@@ -76,7 +76,6 @@
           class="custom-picker"
           @change="onCustomRangeChange"
         />
-        <span class="tip">上海时间 · 左闭右开</span>
       </div>
 
       <div v-if="summary?.range" class="range-bar">
@@ -93,43 +92,64 @@
       </div>
 
       <div class="desk-panel__scroll">
-        <!-- ========== 代理 / 子账号：与工作台、经营概况同一套统计条 ========== -->
+        <el-alert
+          v-if="unattributedCount > 0"
+          type="error"
+          show-icon
+          :closable="false"
+          class="report-alert"
+          :title="`有 ${unattributedCount} 笔注单没写房间号（投注额 ${fmt(unattributedFlow)}），报表和账单都不认`"
+          description="正常下注必定带房号，出现这条只可能是历史遗留单或写入异常。这些注不摊进任何一间房，也不进结账，请排查后再对账。"
+        />
+
+        <!-- 结账口径：与结算中心同一个数，付钱只看这一块 -->
+        <section class="report-sec settle-sec">
+          <div class="sec-head">
+            <h3 class="sec-title">本期结账</h3>
+            <el-button size="small" type="primary" plain @click="goSettle">去结算中心</el-button>
+          </div>
+          <div class="report-summary" :style="summaryCols(settleKpis.length)">
+            <div v-for="k in settleKpis" :key="k.label" class="sum-chip">
+              <span class="sum-label">{{ k.label }}</span>
+              <span class="sum-val" :style="{ color: k.color || undefined }">{{ k.value }}</span>
+            </div>
+          </div>
+        </section>
+
+        <h3 class="sec-divider">经营</h3>
+
+        <!-- 三个角色同样三个分区、同样格子名，只有取数范围按各自账本不同 -->
+        <section class="report-sec">
+          <h3 class="sec-title">本期经营</h3>
+          <div class="report-summary" :style="summaryCols(coreKpis.length)">
+            <div v-for="k in coreKpis" :key="k.label" class="sum-chip" :class="{ hot: k.hot }">
+              <span class="sum-label">{{ k.label }}</span>
+              <span class="sum-val" :style="{ color: k.color || undefined }">{{ k.value }}</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="report-sec">
+          <h3 class="sec-title">本期上下分</h3>
+          <div class="report-summary" :style="summaryCols(cashKpis.length)">
+            <div v-for="k in cashKpis" :key="k.label" class="sum-chip" :class="{ hot: k.hot }">
+              <span class="sum-label">{{ k.label }}</span>
+              <span class="sum-val" :style="{ color: k.color || undefined }">{{ k.value }}</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="report-sec">
+          <h3 class="sec-title">注单与活跃</h3>
+          <div class="report-summary" :style="summaryCols(betKpis.length)">
+            <div v-for="k in betKpis" :key="k.label" class="sum-chip">
+              <span class="sum-label">{{ k.label }}</span>
+              <span class="sum-val" :style="{ color: k.color || undefined }">{{ k.value }}</span>
+            </div>
+          </div>
+        </section>
+
         <template v-if="isAgentSide">
-          <section class="report-sec">
-            <h3 class="sec-title">核心指标</h3>
-            <div class="report-summary" :style="summaryCols(agentCoreKpis.length)">
-              <div v-for="k in agentCoreKpis" :key="k.label" class="sum-chip">
-                <span class="sum-label">{{ k.label }}</span>
-                <span class="sum-val" :style="{ color: k.color || undefined }">{{ k.value }}</span>
-              </div>
-            </div>
-          </section>
-
-          <section class="report-sec">
-            <h3 class="sec-title">玩家上下分</h3>
-            <div class="report-summary" :style="summaryCols(agentCashKpis.length)">
-              <div
-                v-for="k in agentCashKpis"
-                :key="k.label"
-                class="sum-chip"
-                :class="{ hot: k.hot }"
-              >
-                <span class="sum-label">{{ k.label }}</span>
-                <span class="sum-val" :style="{ color: k.color || undefined }">{{ k.value }}</span>
-              </div>
-            </div>
-          </section>
-
-          <section class="report-sec">
-            <h3 class="sec-title">注单概况</h3>
-            <div class="report-summary" :style="summaryCols(agentBetKpis.length)">
-              <div v-for="k in agentBetKpis" :key="k.label" class="sum-chip">
-                <span class="sum-label">{{ k.label }}</span>
-                <span class="sum-val" :style="{ color: k.color || undefined }">{{ k.value }}</span>
-              </div>
-            </div>
-          </section>
-
           <div class="bet-cols">
             <section class="report-sec">
               <div class="sec-head">
@@ -152,7 +172,7 @@
                   </el-table-column>
                   <el-table-column prop="betCount" label="注单" width="70" align="right" />
                   <el-table-column label="流水" min-width="90" align="right">
-                    <template #default="{ row }">{{ fmt(row.betFlow) }}</template>
+                    <template #default="{ row }">{{ fmt(stakeFlow(row)) }}</template>
                   </el-table-column>
                   <el-table-column label="派彩" min-width="90" align="right">
                     <template #default="{ row }">{{ fmt(row.payout) }}</template>
@@ -192,7 +212,7 @@
                   <el-table-column label="玩家" min-width="100" show-overflow-tooltip>
                     <template #default="{ row }">
                       <div class="cell-name">{{ row.playerNickname }}</div>
-                      <div class="cell-meta">{{ row.playerUid || '—' }}</div>
+                      <div class="cell-meta">{{ row.playerUsername || '—' }} · {{ row.playerUid || '' }}</div>
                     </template>
                   </el-table-column>
                   <el-table-column label="游戏" min-width="80" show-overflow-tooltip>
@@ -221,35 +241,14 @@
                   </el-table-column>
                 </el-table>
                 <div v-if="betTotal > betRows.length" class="bet-more">
-                  仅展示最近 {{ betRows.length }} 笔，共 {{ betTotal }} 笔 · 点明细查看更多
+                  仅展示最近 {{ betRows.length }} 笔，共 {{ betTotal }} 笔
                 </div>
               </div>
             </section>
           </div>
         </template>
 
-        <!-- ========== 超管 / 房主：与代理同一套统计条 ========== -->
         <template v-else>
-          <section class="report-sec">
-            <h3 class="sec-title">核心指标</h3>
-            <div class="report-summary" :style="summaryCols(adminCoreKpis.length)">
-              <div v-for="k in adminCoreKpis" :key="k.label" class="sum-chip">
-                <span class="sum-label">{{ k.label }}</span>
-                <span class="sum-val" :style="{ color: k.color || undefined }">{{ k.value }}</span>
-              </div>
-            </div>
-          </section>
-
-          <section class="report-sec">
-            <h3 class="sec-title">活跃概况</h3>
-            <div class="report-summary" :style="summaryCols(activeKpis.length)">
-              <div v-for="k in activeKpis" :key="k.label" class="sum-chip">
-                <span class="sum-label">{{ k.label }}</span>
-                <span class="sum-val" :style="{ color: k.color || undefined }">{{ k.value }}</span>
-              </div>
-            </div>
-          </section>
-
           <section class="report-sec">
             <div class="sec-head">
               <h3 class="sec-title">分房间明细</h3>
@@ -266,6 +265,7 @@
               show-summary
               :summary-method="roomSummary"
               table-layout="fixed"
+              max-height="420"
             >
               <el-table-column label="房间" min-width="90" align="center" header-align="center">
                 <template #default="{ row }">
@@ -280,11 +280,22 @@
                   </el-tag>
                 </template>
               </el-table-column>
-              <el-table-column label="代理" min-width="90" align="center" header-align="center">
-                <template #default="{ row }">{{ row.agentNickname || row.agentUsername || '—' }}</template>
+              <el-table-column label="代理" min-width="120" align="center" header-align="center">
+                <template #default="{ row }">
+                  <div>{{ row.agentNickname || '—' }}</div>
+                  <div class="room-name">{{ row.agentUsername || '' }}</div>
+                </template>
               </el-table-column>
-              <el-table-column label="流水" min-width="90" align="center" header-align="center" sortable :sort-method="(a: ReportByRoomRow, b: ReportByRoomRow) => a.betFlow - b.betFlow">
-                <template #default="{ row }">{{ fmt(row.betFlow) }}</template>
+              <el-table-column label="流水" min-width="90" align="center" header-align="center" sortable :sort-method="(a: ReportByRoomRow, b: ReportByRoomRow) => stakeFlow(a) - stakeFlow(b)">
+                <template #default="{ row }">{{ fmt(stakeFlow(row)) }}</template>
+              </el-table-column>
+              <el-table-column v-if="!isAdminOrBranch" label="飞盘" min-width="88" align="center" header-align="center">
+                <template #default="{ row }">{{ fmt(row.flownBetFlow) }}</template>
+              </el-table-column>
+              <el-table-column v-if="!isAdminOrBranch" label="关盘" min-width="80" align="center" header-align="center">
+                <template #default="{ row }">
+                  <span class="closed-flow">{{ fmt(row.closedBetFlow) }}</span>
+                </template>
               </el-table-column>
               <el-table-column label="派彩" min-width="90" align="center" header-align="center">
                 <template #default="{ row }">{{ fmt(row.payout) }}</template>
@@ -329,7 +340,10 @@
           </section>
 
           <section class="report-sec">
-            <h3 class="sec-title">游戏明细</h3>
+            <div class="sec-head">
+              <h3 class="sec-title">游戏明细</h3>
+              <el-button size="small" type="primary" plain @click="openGameDetailDlg">明细</el-button>
+            </div>
             <div class="table-panel">
             <el-table
               :data="summary?.byGame || []"
@@ -339,13 +353,14 @@
               size="small"
               show-summary
               :summary-method="gameSummary"
+              max-height="360"
             >
               <el-table-column label="游戏" min-width="140">
                 <template #default="{ row }">{{ row.gameName || row.gameCode }}</template>
               </el-table-column>
               <el-table-column prop="betCount" label="注单" width="90" />
               <el-table-column label="流水" min-width="120">
-                <template #default="{ row }">{{ fmt(row.betFlow) }}</template>
+                <template #default="{ row }">{{ fmt(stakeFlow(row)) }}</template>
               </el-table-column>
               <el-table-column label="派彩" min-width="120">
                 <template #default="{ row }">{{ fmt(row.payout) }}</template>
@@ -362,6 +377,9 @@
               </el-table-column>
             </el-table>
             </div>
+            <p v-if="(summary?.byGame?.length || 0) > 8" class="bet-more">
+              共 {{ summary?.byGame?.length }} 款游戏
+            </p>
           </section>
         </template>
       </div>
@@ -401,11 +419,11 @@
       </template>
     </DeskDialog>
 
-    <!-- 注单明细（按游戏） -->
+    <!-- 游戏 / 注单明细 -->
     <DeskDialog
       v-model="showGameDetailDlg"
-      title="注单明细（按游戏）"
-      width="900px"
+      title="游戏明细"
+      width="980px"
       append-to-body
     >
       <div class="dlg-filter-bar">
@@ -420,15 +438,31 @@
             <el-radio-button label="custom">自定义</el-radio-button>
           </el-radio-group>
         </div>
+        <div v-if="!isAgentSide" class="filter-item">
+          <span class="filter-label">房间</span>
+          <el-select
+            v-model="gameDlgRoomId"
+            size="small"
+            class="dlg-game-select"
+            @change="onGameDlgRoomChange"
+          >
+            <el-option
+              v-for="r in gameDlgRoomOptions"
+              :key="r.id"
+              :label="`${r.name}（${r.roomNo}）`"
+              :value="r.id"
+            />
+          </el-select>
+        </div>
         <div class="filter-item">
-          <span class="filter-label">类别</span>
+          <span class="filter-label">游戏</span>
           <el-select
             v-model="gameDlgGameCode"
             size="small"
             clearable
             placeholder="全部游戏"
             class="dlg-game-select"
-            @change="loadGameDetail"
+            @change="onGameDlgQuery"
           >
             <el-option
               v-for="g in gameFilterOptions"
@@ -438,7 +472,7 @@
             />
           </el-select>
         </div>
-        <el-button type="primary" size="small" :loading="gameDlgLoading" @click="loadGameDetail">
+        <el-button type="primary" size="small" :loading="gameDlgLoading || gameDlgBetLoading" @click="onGameDlgQuery">
           查询
         </el-button>
       </div>
@@ -459,9 +493,10 @@
           time-format="HH:mm"
           value-format="YYYY-MM-DDTHH:mm:ss+08:00"
           class="custom-picker"
-          @change="loadGameDetail"
+          @change="onGameDlgQuery"
         />
       </div>
+      <div class="dlg-sec-title">按游戏汇总</div>
       <div class="table-panel">
         <el-table
           v-loading="gameDlgLoading"
@@ -471,8 +506,8 @@
           empty-text="该区间暂无注单"
           size="small"
           show-summary
-          :summary-method="agentGameSummary"
-          max-height="480"
+          :summary-method="isAgentSide ? agentGameSummary : gameSummary"
+          max-height="240"
         >
           <el-table-column label="游戏" min-width="120">
             <template #default="{ row }">{{ row.gameName || gameLabel(row.gameCode) }}</template>
@@ -484,17 +519,86 @@
           <el-table-column label="派彩" min-width="110">
             <template #default="{ row }">{{ fmt(row.payout) }}</template>
           </el-table-column>
-          <el-table-column label="玩家盈亏" min-width="110">
+          <el-table-column v-if="isAgentSide" label="玩家盈亏" min-width="110">
             <template #default="{ row }">
               <span :style="{ color: pnlColor(gamePnl(row)) }">{{ fmt(gamePnl(row)) }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="本房盈亏" min-width="110">
+          <el-table-column v-if="isAgentSide" label="本房盈亏" min-width="110">
             <template #default="{ row }">
               <span :style="{ color: pnlColor(row.housePnl) }">{{ fmt(row.housePnl) }}</span>
             </template>
           </el-table-column>
+          <el-table-column v-else label="庄家盈亏" min-width="110">
+            <template #default="{ row }">
+              <span :style="{ color: pnlColor(row.housePnl) }">{{ fmt(row.housePnl) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column v-if="!isAgentSide" label="玩家盈亏" min-width="110">
+            <template #default="{ row }">
+              <span :style="{ color: pnlColor(-(row.housePnl || 0)) }">{{ fmt(-(row.housePnl || 0)) }}</span>
+            </template>
+          </el-table-column>
         </el-table>
+      </div>
+      <div class="dlg-sec-title">逐笔注单</div>
+      <div class="table-panel">
+        <el-table
+          v-loading="gameDlgBetLoading"
+          :data="gameDlgBets"
+          stripe
+          border
+          size="small"
+          empty-text="该区间暂无注单"
+          max-height="320"
+        >
+          <el-table-column label="时间" width="110">
+            <template #default="{ row }">{{ formatDtShort(row.createdAt) }}</template>
+          </el-table-column>
+          <el-table-column label="玩家" min-width="120" show-overflow-tooltip>
+            <template #default="{ row }">
+              <div class="cell-name">{{ row.playerNickname }}</div>
+              <div class="cell-meta">{{ row.playerUsername || '—' }} · {{ row.playerUid || '' }}</div>
+            </template>
+          </el-table-column>
+          <el-table-column label="游戏" min-width="100" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.gameName || gameLabel(row.gameCode) }}</template>
+          </el-table-column>
+          <el-table-column label="玩法" min-width="90" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.betType || '—' }}</template>
+          </el-table-column>
+          <el-table-column label="下注" width="96" align="right">
+            <template #default="{ row }">{{ fmt(row.amount) }}</template>
+          </el-table-column>
+          <el-table-column label="派彩" width="96" align="right">
+            <template #default="{ row }">{{ fmt(row.payout) }}</template>
+          </el-table-column>
+          <el-table-column label="玩家盈亏" width="100" align="right">
+            <template #default="{ row }">
+              <span :style="{ color: pnlColor(row.playerPnl) }">{{ fmt(row.playerPnl) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="状态" width="80" align="center">
+            <template #default="{ row }">
+              <el-tag size="small" :type="betStatusType(row.status)" effect="plain">
+                {{ betStatusLabel(row.status) }}
+              </el-tag>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
+      <div class="dlg-pager">
+        <el-pagination
+          v-model:current-page="gameDlgBetPage"
+          v-model:page-size="gameDlgBetPageSize"
+          :total="gameDlgBetTotal"
+          :page-sizes="[20, 50]"
+          layout="total, sizes, prev, pager, next"
+          background
+          small
+          @current-change="loadGameDlgBets"
+          @size-change="() => { gameDlgBetPage = 1; loadGameDlgBets() }"
+        />
       </div>
     </DeskDialog>
 
@@ -580,7 +684,7 @@
           <el-table-column label="玩家" min-width="120" show-overflow-tooltip>
             <template #default="{ row }">
               <div class="cell-name">{{ row.playerNickname }}</div>
-              <div class="cell-meta">{{ row.playerUid || '—' }}</div>
+              <div class="cell-meta">{{ row.playerUsername || '—' }} · {{ row.playerUid || '' }}</div>
             </template>
           </el-table-column>
           <el-table-column label="游戏" min-width="100" show-overflow-tooltip>
@@ -639,16 +743,58 @@ import {
   type ReportRoomBetRow,
   type ReportSummary,
 } from '@/api/console'
+import { formatMoney, isGeneralSide } from '@gamebox/shared'
 import { useAdminStore } from '@/stores/admin'
-import { GAME_OPTIONS, gameLabel, type KpiChip } from '@/utils/labels'
+import { CLOSED_FLOW_COLOR, GAME_OPTIONS, gameLabel, type KpiChip } from '@/utils/labels'
 
 const store = useAdminStore()
 const router = useRouter()
-const isAgentSide = computed(() => {
+const isAdminOrBranch = computed(() => {
   const r = store.profile?.role
-  return r === 'AGENT' || r === 'PROXY'
+  return r === 'ADMIN' || r === 'BRANCH'
+})
+const isGeneralUser = computed(() => isGeneralSide(store.profile?.role, store.profile?.parentRole))
+/** 注单没写房间号：不摊进任何一间房，也不进结账，摆出来让人去查 */
+const unattributedCount = computed(() => Number(summary.value?.unattributedBetCount || 0))
+const unattributedFlow = computed(() => Number(summary.value?.unattributedBetFlow || 0))
+
+/** 三个角色同样三格、同样名字；结账口径的数值范围各自不同 */
+const settleKpis = computed<KpiChip[]>(() => {
+  const s = summary.value
+  const agentSide = !isAdminOrBranch.value && !isGeneralUser.value
+  const flow = agentSide ? Number(s?.agentFlyBetFlow || 0) : Number(s?.flownBetFlow || 0)
+  const pnl = agentSide ? Number(s?.agentFlyHousePnl || 0) : Number(s?.flownHousePnl || 0)
+  return [
+    { label: '结账投注额', value: fmt(flow), color: 'var(--desk-accent, #38bdf8)' },
+    { label: '结账庄家盈亏', value: fmt(pnl), color: pnlColor(pnl) },
+    { label: shareLabel.value, value: fmt(s?.myShareAmount), color: pnlColor(s?.myShareAmount) },
+  ]
 })
 
+function goSettle() {
+  void router.push({ name: 'settle' })
+}
+
+function displayFlownFlow(s?: {
+  flownBetFlow?: number
+  agentFlyBetFlow?: number
+  flownBetFlowLive?: number
+  agentFlyBetFlowLive?: number
+} | null) {
+  if (isAdminOrBranch.value || isGeneralUser.value) {
+    return Number(s?.flownBetFlowLive ?? s?.flownBetFlow ?? 0)
+  }
+  return Number(s?.agentFlyBetFlowLive ?? s?.agentFlyBetFlow ?? s?.flownBetFlow ?? 0)
+}
+const isAgentSide = computed(() => {
+  const r = store.profile?.role
+  if (isGeneralSide(r, store.profile?.parentRole)) return false
+  return r === 'AGENT' || r === 'PROXY'
+})
+const canListClosed = computed(() => {
+  const r = store.profile?.role
+  return r === 'ADMIN' || r === 'BRANCH'
+})
 const loading = ref(false)
 const exporting = ref(false)
 const betLoading = ref(false)
@@ -665,13 +811,19 @@ const showRoomDlg = ref(false)
 const dlgRoomIds = ref<string[]>([])
 const hideIdleRooms = ref(false)
 
-/** 注单明细弹窗 */
+/** 游戏明细弹窗 */
 const showGameDetailDlg = ref(false)
 const gameDlgLoading = ref(false)
 const gameDlgRangeKey = ref('today')
 const gameDlgCustomRange = ref<[string, string] | null>(null)
 const gameDlgGameCode = ref('')
+const gameDlgRoomId = ref('')
 const gameDlgRows = ref<ReportSummary['byGame']>([])
+const gameDlgBetLoading = ref(false)
+const gameDlgBets = ref<ReportRoomBetRow[]>([])
+const gameDlgBetTotal = ref(0)
+const gameDlgBetPage = ref(1)
+const gameDlgBetPageSize = ref(20)
 
 /** 最近注单弹窗 */
 const showBetDetailDlg = ref(false)
@@ -730,7 +882,7 @@ const customShortcuts = [
 
 function fmt(n?: number | null) {
   if (n == null) return '—'
-  return Number(n).toLocaleString('zh-CN', { minimumFractionDigits: 2 })
+  return formatMoney(n)
 }
 function pnlColor(n?: number | null) {
   if (n == null) return '#0f172a'
@@ -787,12 +939,17 @@ const currentRoomLabel = computed(() => {
   return `${r.name} · ${r.roomNo}`
 })
 
-/** 弹窗类别：本房启用游戏 + 当前汇总已出现的游戏 */
+/** 弹窗类别：当前房间启用游戏 + 汇总已出现的游戏 */
 const gameFilterOptions = computed(() => {
-  const room = rooms.value.find((x) => x.id === agentRoomId.value)
   const codes = new Set<string>()
-  for (const c of room?.enabledGames || []) {
-    if (c) codes.add(c)
+  const roomIds = isAgentSide.value
+    ? [agentRoomId.value]
+    : (gameDlgRoomId.value ? [gameDlgRoomId.value] : selectedRoomIds.value)
+  for (const id of roomIds) {
+    const room = rooms.value.find((x) => x.id === id)
+    for (const c of room?.enabledGames || []) {
+      if (c) codes.add(c)
+    }
   }
   for (const g of summary.value?.byGame || []) {
     if (g.gameCode) codes.add(g.gameCode)
@@ -804,12 +961,10 @@ const gameFilterOptions = computed(() => {
   }))
 })
 
-const netPnl = computed(() => {
-  if (summary.value?.netPnl != null) return summary.value.netPnl
-  const base = summary.value?.platformShareAmount ?? summary.value?.housePnl
-  const commission = summary.value?.commissionAmount
-  if (base == null && commission == null) return null
-  return Number(base ?? 0) - Number(commission ?? 0)
+const gameDlgRoomOptions = computed(() => {
+  const selected = new Set(selectedRoomIds.value)
+  const list = rooms.value.filter((r) => selected.has(r.id))
+  return list.length ? list : rooms.value
 })
 
 function summaryCols(n: number) {
@@ -817,27 +972,34 @@ function summaryCols(n: number) {
   return { gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }
 }
 
-/** 代理：与经营概况同一套核心指标 */
-const agentCoreKpis = computed(() => [
-  { label: '挂靠支出', value: fmt(summary.value?.commissionAmount), color: '#f59e0b' },
-  { label: '玩家盈亏', value: fmt(summary.value?.playerPnl), color: pnlColor(summary.value?.playerPnl) },
-  { label: '本房盈亏', value: fmt(summary.value?.housePnl), color: pnlColor(summary.value?.housePnl) },
-  { label: '流水', value: fmt(summary.value?.betFlow), color: 'var(--desk-accent, #38bdf8)' },
-  { label: '派彩', value: fmt(summary.value?.payout) },
-  { label: '活跃玩家', value: String(summary.value?.activePlayers ?? '—') },
-])
+function stakeFlow(s?: { betFlow?: number; pendingBetFlow?: number } | null) {
+  return Number(s?.betFlow || 0) + Number(s?.pendingBetFlow || 0)
+}
 
-const agentBetKpis = computed<KpiChip[]>(() => [
-  { label: '注单数', value: String(summary.value?.betCount ?? '—') },
-  { label: '佣金笔数', value: String(summary.value?.commissionCount ?? '—') },
-  { label: '未结算注单', value: String(summary.value?.pendingBetCount ?? '—') },
-  { label: '未结算流水', value: fmt(summary.value?.pendingBetFlow) },
-])
+/** 管理/总监看平台那份；总代、代理看自己的占成 */
+const shareLabel = computed(() => (isAdminOrBranch.value ? '平台占成' : '占成盈亏'))
+const netLabel = '本期盈亏'
 
-const agentCashKpis = computed(() => [
-  { label: '上分合计', value: fmt(summary.value?.upAmount), color: '#f59e0b' },
+/**
+ * 本期经营：与工作台完全同一套六格，管理／总代／代理看到的格子数、名字、顺序一致。
+ * 取数范围由后端按各自账本算好，前端不再自己拼。
+ */
+const coreKpis = computed<KpiChip[]>(() => {
+  const v = summary.value
+  return [
+    { label: '流水', value: fmt(stakeFlow(v)), color: 'var(--desk-accent, #38bdf8)' },
+    { label: '飞盘', value: fmt(displayFlownFlow(v)), color: 'var(--desk-accent, #38bdf8)' },
+    { label: '关盘', value: fmt(v?.closedBetFlow), color: CLOSED_FLOW_COLOR },
+    { label: '庄家盈亏', value: fmt(v?.satHousePnl), color: pnlColor(v?.satHousePnl) },
+    { label: shareLabel.value, value: fmt(v?.myShareAmount), color: pnlColor(v?.myShareAmount) },
+    { label: netLabel, value: fmt(v?.myNetEarning), color: pnlColor(v?.myNetEarning), hot: true },
+  ]
+})
+
+const cashKpis = computed<KpiChip[]>(() => [
+  { label: '上分合计', value: fmt(summary.value?.upAmount), color: 'var(--ops-gold)' },
   { label: '上分笔数', value: String(summary.value?.upCount ?? '—') },
-  { label: '下分合计', value: fmt(summary.value?.downAmount), color: '#f56c6c' },
+  { label: '下分合计', value: fmt(summary.value?.downAmount), color: '#ef4444' },
   { label: '下分笔数', value: String(summary.value?.downCount ?? '—') },
   {
     label: '待审上分',
@@ -853,34 +1015,13 @@ const agentCashKpis = computed(() => [
   },
 ])
 
-/** 总代看自己的成数差，管理/总监看平台那份 */
-const shareLabel = computed(() =>
-  summary.value?.shareBasis === 'GENERAL_DIFF' ? '我的成数差' : '平台占成',
-)
-
-/** 管理/房主/总代：核心指标（净盈亏已扣占成与佣金） */
-const adminCoreKpis = computed(() => [
-  { label: '净盈亏', value: fmt(netPnl.value), color: pnlColor(netPnl.value) },
-  {
-    label: shareLabel.value,
-    value: fmt(summary.value?.platformShareAmount),
-    color: pnlColor(summary.value?.platformShareAmount),
-  },
-  { label: '庄家盈亏', value: fmt(summary.value?.housePnl), color: pnlColor(summary.value?.housePnl) },
-  { label: '玩家盈亏', value: fmt(summary.value?.playerPnl), color: pnlColor(summary.value?.playerPnl) },
-  { label: '流水', value: fmt(summary.value?.betFlow), color: 'var(--desk-accent, #38bdf8)' },
-  { label: '派彩', value: fmt(summary.value?.payout) },
-  { label: '挂靠支出', value: fmt(summary.value?.commissionAmount), color: '#f59e0b' },
-])
-
-const activeKpis = computed((): Array<{ label: string; value: string; color?: string }> => [
+const betKpis = computed<KpiChip[]>(() => [
   { label: '注单数', value: String(summary.value?.betCount ?? '—') },
+  { label: '派彩', value: fmt(summary.value?.payout) },
+  { label: '玩家盈亏', value: fmt(summary.value?.playerPnl), color: pnlColor(summary.value?.playerPnl) },
+  { label: '挂靠支出', value: fmt(summary.value?.commissionAmount), color: '#f59e0b' },
+  { label: '未结算流水', value: fmt(summary.value?.pendingBetFlow) },
   { label: '活跃玩家', value: String(summary.value?.activePlayers ?? '—') },
-  { label: '房间成员', value: String(summary.value?.playerCount ?? '—') },
-  {
-    label: '有流水房间',
-    value: String(byRoomList.value.filter((r) => r.betFlow > 0 || r.commissionAmount > 0).length),
-  },
 ])
 
 const displayRoomList = computed(() => {
@@ -892,27 +1033,27 @@ function sumField(list: ReportByRoomRow[], key: keyof ReportByRoomRow) {
   return list.reduce((acc, r) => acc + Number(r[key] || 0), 0)
 }
 
-function roomSummary({ columns }: { columns: { property?: string }[] }) {
+function roomSummary({ columns }: { columns: { property?: string; label?: string }[] }) {
   const list = displayRoomList.value
-  const moneyIdx: Record<number, keyof ReportByRoomRow> = {
-    3: 'betFlow',
-    4: 'payout',
-    5: 'housePnl',
-    6: 'playerPnl',
-    7: 'commissionAmount',
-    8: 'platformShareAmount',
-    9: 'netPnl',
-    10: 'betCount',
-    11: 'activePlayers',
-    12: 'memberCount',
-  }
-  return columns.map((_col, i) => {
+  return columns.map((col, i) => {
     if (i === 0) return '合计'
-    const key = moneyIdx[i]
-    if (!key) return ''
-    const n = sumField(list, key)
-    if (key === 'betCount' || key === 'activePlayers' || key === 'memberCount') return String(n)
-    return fmt(n)
+    const label = String(col.label || '')
+    const byLabel: Record<string, () => string> = {
+      流水: () => fmt(list.reduce((a, r) => a + stakeFlow(r), 0)),
+      飞盘: () => fmt(sumField(list, 'flownBetFlow')),
+      关盘: () => fmt(sumField(list, 'closedBetFlow')),
+      派彩: () => fmt(sumField(list, 'payout')),
+      庄家盈亏: () => fmt(sumField(list, 'housePnl')),
+      玩家盈亏: () => fmt(sumField(list, 'playerPnl')),
+      挂靠支出: () => fmt(sumField(list, 'commissionAmount')),
+      净盈亏: () => fmt(sumField(list, 'netPnl')),
+      注单: () => String(sumField(list, 'betCount')),
+      活跃: () => String(sumField(list, 'activePlayers')),
+      成员: () => String(sumField(list, 'memberCount')),
+    }
+    if (byLabel[label]) return byLabel[label]()
+    if (label.includes('占成')) return fmt(sumField(list, 'platformShareAmount'))
+    return ''
   })
 }
 
@@ -1024,6 +1165,12 @@ function openGameDetailDlg() {
   gameDlgRangeKey.value = rangeKey.value
   gameDlgCustomRange.value = customRange.value ? [...customRange.value] as [string, string] : null
   gameDlgGameCode.value = ''
+  gameDlgBetPage.value = 1
+  if (isAgentSide.value) {
+    gameDlgRoomId.value = agentRoomId.value
+  } else {
+    gameDlgRoomId.value = selectedRoomIds.value[0] || rooms.value[0]?.id || ''
+  }
   showGameDetailDlg.value = true
   void loadGameDetail()
 }
@@ -1034,27 +1181,80 @@ function onGameDlgRangePreset() {
       gameDlgCustomRange.value = shanghaiBoundPair(0, 1)
     }
   }
+  gameDlgBetPage.value = 1
   void loadGameDetail()
 }
 
+function onGameDlgRoomChange() {
+  gameDlgBetPage.value = 1
+  void loadGameDetail()
+}
+
+function onGameDlgQuery() {
+  gameDlgBetPage.value = 1
+  void loadGameDetail()
+}
+
+function gameDlgTime() {
+  return dlgTimeParams(gameDlgRangeKey.value, gameDlgCustomRange.value)
+}
+
 async function loadGameDetail() {
-  if (!agentRoomId.value) {
+  const time = gameDlgTime()
+  if (!time) return
+  const roomId = isAgentSide.value ? agentRoomId.value : gameDlgRoomId.value
+  if (isAgentSide.value && !roomId) {
     ElMessage.warning('暂无房间')
     return
   }
-  const time = dlgTimeParams(gameDlgRangeKey.value, gameDlgCustomRange.value)
-  if (!time) return
+  if (!isAgentSide.value && !selectedRoomIds.value.length) {
+    ElMessage.warning('请至少勾选一个房间')
+    return
+  }
   gameDlgLoading.value = true
   try {
-    const s = await consoleApi.reportSummary({ roomId: agentRoomId.value, ...time })
+    const params = isAgentSide.value || roomId
+      ? { roomId, ...time }
+      : { roomIds: selectedRoomIds.value.join(','), ...time }
+    const s = await consoleApi.reportSummary(params)
     const list = s.byGame || []
     const code = gameDlgGameCode.value.trim()
     gameDlgRows.value = code ? list.filter((g) => g.gameCode === code) : list
   } catch (e: unknown) {
     gameDlgRows.value = []
-    ElMessage.error((e as Error).message || '加载注单明细失败')
+    ElMessage.error((e as Error).message || '加载游戏明细失败')
   } finally {
     gameDlgLoading.value = false
+  }
+  await loadGameDlgBets()
+}
+
+async function loadGameDlgBets() {
+  const time = gameDlgTime()
+  if (!time) return
+  const roomId = isAgentSide.value ? agentRoomId.value : gameDlgRoomId.value
+  if (!roomId) {
+    gameDlgBets.value = []
+    gameDlgBetTotal.value = 0
+    return
+  }
+  gameDlgBetLoading.value = true
+  try {
+    const res = await consoleApi.reportRoomBets({
+      roomId,
+      ...time,
+      page: gameDlgBetPage.value,
+      pageSize: gameDlgBetPageSize.value,
+      gameCode: gameDlgGameCode.value.trim() || undefined,
+    })
+    gameDlgBets.value = res.list
+    gameDlgBetTotal.value = res.total
+  } catch (e: unknown) {
+    gameDlgBets.value = []
+    gameDlgBetTotal.value = 0
+    ElMessage.error((e as Error).message || '加载注单失败')
+  } finally {
+    gameDlgBetLoading.value = false
   }
 }
 
@@ -1181,7 +1381,7 @@ async function onExport() {
 
 onMounted(async () => {
   try {
-    rooms.value = await consoleApi.rooms({ includeClosed: isAgentSide.value ? false : true })
+    rooms.value = await consoleApi.rooms({ includeClosed: canListClosed.value })
     if (isAgentSide.value) {
       const open = rooms.value.find((r) => r.status === 'OPEN') || rooms.value[0]
       agentRoomId.value = open?.id || ''
@@ -1250,7 +1450,6 @@ onMounted(async () => {
   max-width: 560px;
 }
 .custom-picker :deep(.el-input__wrapper) { width: 100%; }
-.tip { font-size: 12px; color: #64748b; }
 
 .range-bar {
   display: flex;
@@ -1294,6 +1493,32 @@ onMounted(async () => {
   flex-direction: column;
   gap: 10px;
 }
+.report-alert {
+  margin-bottom: 12px;
+  border-radius: 8px;
+}
+/* 结账口径整块描边，跟下面的经营数据分开，避免拿错数去付钱 */
+.settle-sec {
+  padding: 12px 14px;
+  margin-bottom: 6px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 10px;
+}
+.sec-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: #92400e;
+}
+.sec-divider {
+  margin: 16px 0 4px;
+  padding-left: 10px;
+  border-left: 3px solid #cbd5e1;
+  font-size: 13px;
+  font-weight: 600;
+  color: #64748b;
+}
 .sec-head {
   display: flex;
   flex-wrap: wrap;
@@ -1317,6 +1542,12 @@ onMounted(async () => {
   display: flex;
   justify-content: flex-end;
   margin-top: 12px;
+}
+.dlg-sec-title {
+  margin: 4px 0 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #334155;
 }
 .sec-title {
   margin: 0;

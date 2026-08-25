@@ -3,6 +3,8 @@ import { ref, computed } from 'vue'
 
 export interface AdminProfile {
   id: string; uid: string; username: string; nickname: string; role: string
+  parentId?: string | null
+  parentRole?: string | null
 }
 
 /**

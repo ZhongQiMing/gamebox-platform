@@ -28,37 +28,26 @@
         </header>
 
         <div class="rp-well">
-          <div class="rp-stepper">
-            <button
-              type="button"
-              class="rp-step"
-              aria-label="减少"
-              :disabled="readonly || savingCode === row.gameCode || draftOf(row) <= 0"
-              @click="nudge(row, -1)"
-            >−</button>
-            <div class="rp-figure" :class="{ off: draftOf(row) <= 0 }">
-              <strong>{{ draftOf(row) > 0 ? draftOf(row) : '关' }}</strong>
-              <span>{{ draftOf(row) > 0 ? '高峰人数' : '托人' }}</span>
-            </div>
-            <button
-              type="button"
-              class="rp-step"
-              aria-label="增加"
-              :disabled="readonly || savingCode === row.gameCode || draftOf(row) >= 50"
-              @click="nudge(row, 1)"
-            >+</button>
+          <div class="rp-figure" :class="{ off: draftOf(row) <= 0 }">
+            <strong>{{ draftOf(row) > 0 ? liveRangeText(row) : '关' }}</strong>
+            <span>{{ draftOf(row) > 0 ? '此刻随机人数' : '托人' }}</span>
           </div>
 
           <div class="rp-seg">
             <button
-              v-for="n in quicks"
-              :key="n"
               type="button"
               class="rp-seg-btn"
-              :class="{ on: draftOf(row) === n }"
+              :class="{ on: draftOf(row) <= 0 }"
               :disabled="readonly || savingCode === row.gameCode"
-              @click="setDraft(row, n)"
-            >{{ n === 0 ? '关' : n }}</button>
+              @click="setDraft(row, 0)"
+            >关</button>
+            <button
+              type="button"
+              class="rp-seg-btn"
+              :class="{ on: slotsEqual(draftSlots(row), PLATFORM_DEFAULT_SLOTS) }"
+              :disabled="readonly || savingCode === row.gameCode"
+              @click="restoreDefault(row)"
+            >默认时段</button>
           </div>
 
           <div v-if="draftOf(row) > 0" class="rp-slots">
@@ -97,13 +86,23 @@
                   min="0"
                   max="50"
                   :disabled="readonly || savingCode === row.gameCode"
-                  :value="slot.count"
-                  @change="onSlotCount(row, slot.key, $event)"
+                  :value="slotMin(slot)"
+                  @change="onSlotBound(row, slot.key, 'min', $event)"
+                >
+                <span>–</span>
+                <input
+                  class="rp-num wide"
+                  type="number"
+                  min="0"
+                  max="50"
+                  :disabled="readonly || savingCode === row.gameCode"
+                  :value="slotMax(slot)"
+                  @change="onSlotBound(row, slot.key, 'max', $event)"
                 >
                 <span>人</span>
               </div>
             </div>
-            <p class="rp-slot-tip">此刻生效 {{ liveCount(row) }} 人 · 每期约刷满该人数</p>
+            <p class="rp-slot-tip">此刻 {{ liveRangeText(row) }}</p>
           </div>
         </div>
 
@@ -140,8 +139,15 @@ import {
 import { GAME_OPTIONS, gameLabel } from '@/utils/labels'
 
 const NO_ROBOT_GAMES = new Set(['fruit-machine', 'bcbm'])
-const quicks = [0, 6, 12, 20] as const
-const SLOT_KEYS = ['morning', 'afternoon', 'peak', 'night'] as const
+const SLOT_KEYS = ['night', 'morning', 'noon', 'afternoon', 'peak'] as const
+
+const PLATFORM_DEFAULT_SLOTS: RobotDaySlot[] = [
+  { key: 'night', startHour: 0, endHour: 6, count: 40, countMin: 35, countMax: 45 },
+  { key: 'morning', startHour: 6, endHour: 10, count: 5, countMin: 3, countMax: 8 },
+  { key: 'noon', startHour: 10, endHour: 12, count: 8, countMin: 5, countMax: 12 },
+  { key: 'afternoon', startHour: 12, endHour: 18, count: 30, countMin: 25, countMax: 35 },
+  { key: 'peak', startHour: 18, endHour: 24, count: 45, countMin: 40, countMax: 50 },
+]
 
 const props = defineProps<{
   roomId: string
@@ -161,18 +167,44 @@ type Row = {
   slots: RobotDaySlot[]
 }
 
-/** 上午8–12、下午12–18、高峰18–24、夜间0–8；高峰20 → 10/12/20/15 */
+/** 建房默认五段随机人数；n<=0 全关 */
 function defaultSlots(n: number): RobotDaySlot[] {
-  const peak = Math.min(50, Math.max(0, Math.floor(n) || 0))
-  const morning = peak <= 0 ? 0 : Math.min(50, Math.max(1, Math.round((peak * 10) / 20)))
-  const afternoon = peak <= 0 ? 0 : Math.min(50, Math.max(1, Math.round((peak * 12) / 20)))
-  const night = peak <= 0 ? 0 : Math.min(50, Math.max(1, Math.round((peak * 15) / 20)))
-  return [
-    { key: 'morning', startHour: 8, endHour: 12, count: morning },
-    { key: 'afternoon', startHour: 12, endHour: 18, count: afternoon },
-    { key: 'peak', startHour: 18, endHour: 24, count: peak },
-    { key: 'night', startHour: 0, endHour: 8, count: night },
-  ]
+  if (n <= 0) {
+    return PLATFORM_DEFAULT_SLOTS.map((s) => ({
+      ...s,
+      count: 0,
+      countMin: 0,
+      countMax: 0,
+    }))
+  }
+  return PLATFORM_DEFAULT_SLOTS.map((s) => ({ ...s }))
+}
+
+function clampCount(n: number) {
+  return Math.min(50, Math.max(0, Math.floor(n)))
+}
+
+function slotMin(slot: RobotDaySlot) {
+  const a = slot.countMin != null ? clampCount(slot.countMin) : clampCount(slot.count)
+  const b = slot.countMax != null ? clampCount(slot.countMax) : clampCount(slot.count)
+  return Math.min(a, b)
+}
+
+function slotMax(slot: RobotDaySlot) {
+  const a = slot.countMin != null ? clampCount(slot.countMin) : clampCount(slot.count)
+  const b = slot.countMax != null ? clampCount(slot.countMax) : clampCount(slot.count)
+  return Math.max(a, b)
+}
+
+function withRange(slot: RobotDaySlot, min: number, max: number): RobotDaySlot {
+  const lo = clampCount(Math.min(min, max))
+  const hi = clampCount(Math.max(min, max))
+  return {
+    ...slot,
+    countMin: lo,
+    countMax: hi,
+    count: Math.round((lo + hi) / 2),
+  }
 }
 
 function migrateSlotKey(raw: string): RobotDaySlot['key'] | null {
@@ -183,10 +215,15 @@ function migrateSlotKey(raw: string): RobotDaySlot['key'] | null {
 
 function readCount(cfg: RoomGameCfg): number {
   const p = cfg.robotPlan
-  if (p && typeof p === 'object' && p.robotCount != null) {
-    return Math.max(0, Math.floor(Number(p.robotCount) || 0))
+  if (p && typeof p === 'object') {
+    if (String(p.scheme || '').toUpperCase() === 'OFF') return 0
+    if (Array.isArray(p.daySlots) && p.daySlots.length) {
+      const m = Math.max(0, ...p.daySlots.map((s) => slotMax(s)))
+      if (m > 0) return m
+    }
+    if (p.robotCount != null) return clampCount(Number(p.robotCount) || 0)
   }
-  return Math.max(0, Math.floor(Number(cfg.robotCount) || 0))
+  return clampCount(Number(cfg.robotCount) || 0)
 }
 
 function readSlots(cfg: RoomGameCfg): RobotDaySlot[] {
@@ -208,14 +245,22 @@ function readSlots(cfg: RoomGameCfg): RobotDaySlot[] {
       endHour: fromDay
         ? fb.endHour
         : Math.min(24, Math.max(0, Math.floor(Number(s.endHour) || fb.endHour))),
-      count: Math.min(50, Math.max(0, Math.floor(Number(s.count) || 0))),
+      count: clampCount(Number(s.count) || 0),
+      countMin: s.countMin != null ? clampCount(Number(s.countMin)) : undefined,
+      countMax: s.countMax != null ? clampCount(Number(s.countMax)) : undefined,
     })
   }
   return SLOT_KEYS.map((k) => byKey.get(k) ?? { ...fbAll.find((x) => x.key === k)! })
 }
 
 function slotLabel(key: RobotDaySlot['key']) {
-  return ({ morning: '上午', afternoon: '下午', peak: '高峰', night: '夜间' } as const)[key]
+  return ({
+    night: '凌晨',
+    morning: '上午',
+    noon: '午前',
+    afternoon: '下午',
+    peak: '晚间',
+  } as const)[key]
 }
 
 function shanghaiHour() {
@@ -264,7 +309,13 @@ function slotsEqual(a: RobotDaySlot[], b: RobotDaySlot[]) {
   for (let i = 0; i < a.length; i++) {
     const x = a[i]!
     const y = b[i]!
-    if (x.key !== y.key || x.startHour !== y.startHour || x.endHour !== y.endHour || x.count !== y.count) {
+    if (
+      x.key !== y.key
+      || x.startHour !== y.startHour
+      || x.endHour !== y.endHour
+      || slotMin(x) !== slotMin(y)
+      || slotMax(x) !== slotMax(y)
+    ) {
       return false
     }
   }
@@ -276,20 +327,23 @@ function isDirty(row: Row): boolean {
   return !slotsEqual(draftSlots(row), row.slots)
 }
 
-function liveCount(row: Row): number {
+function liveRange(row: Row): { min: number; max: number } {
   const h = shanghaiHour()
   const slots = draftSlots(row)
   for (const s of slots) {
-    if (hourInSlot(h, s.startHour, s.endHour)) return s.count
+    if (hourInSlot(h, s.startHour, s.endHour)) return { min: slotMin(s), max: slotMax(s) }
   }
-  return draftOf(row)
+  const n = draftOf(row)
+  return { min: n, max: n }
+}
+
+function liveRangeText(row: Row) {
+  const { min, max } = liveRange(row)
+  return min === max ? `${min} 人` : `${min}–${max} 人`
 }
 
 function schemeOf(count: number): RobotPlan['scheme'] {
   if (count <= 0) return 'OFF'
-  if (count === 6) return 'LIGHT'
-  if (count === 12) return 'NORMAL'
-  if (count === 20) return 'HEAVY'
   return 'CUSTOM'
 }
 
@@ -302,18 +356,33 @@ function ensureDraftSlots(row: Row) {
 function setDraft(row: Row, n: number) {
   if (props.readonly) return
   const count = Math.min(50, Math.max(0, Math.floor(n)))
-  draftCount[row.gameCode] = count
-  draftSlotMap[row.gameCode] = defaultSlots(count)
+  const slots = defaultSlots(count)
+  draftSlotMap[row.gameCode] = slots
+  draftCount[row.gameCode] = count <= 0 ? 0 : Math.max(...slots.map((s) => slotMax(s)))
 }
 
-function nudge(row: Row, delta: number) {
+function restoreDefault(row: Row) {
+  setDraft(row, 50)
+}
+
+function onSlotBound(
+  row: Row,
+  key: RobotDaySlot['key'],
+  bound: 'min' | 'max',
+  ev: Event,
+) {
   if (props.readonly) return
-  const cur = draftOf(row)
-  if (cur <= 0 && delta > 0) {
-    setDraft(row, 6)
-    return
-  }
-  setDraft(row, Math.min(50, Math.max(0, cur + delta)))
+  ensureDraftSlots(row)
+  const raw = Math.floor(Number((ev.target as HTMLInputElement).value))
+  const slots = draftSlotMap[row.gameCode]!.map((s) => ({ ...s }))
+  const i = slots.findIndex((s) => s.key === key)
+  if (i < 0) return
+  const cur = slots[i]!
+  const lo = bound === 'min' ? (Number.isFinite(raw) ? raw : 0) : slotMin(cur)
+  const hi = bound === 'max' ? (Number.isFinite(raw) ? raw : 0) : slotMax(cur)
+  slots[i] = withRange(cur, lo, hi)
+  draftSlotMap[row.gameCode] = slots
+  draftCount[row.gameCode] = Math.max(...slots.map((s) => slotMax(s)))
 }
 
 function onSlotHour(
@@ -336,25 +405,14 @@ function onSlotHour(
   draftSlotMap[row.gameCode] = slots
 }
 
-function onSlotCount(row: Row, key: RobotDaySlot['key'], ev: Event) {
-  if (props.readonly) return
-  ensureDraftSlots(row)
-  const raw = Math.floor(Number((ev.target as HTMLInputElement).value))
-  const slots = draftSlotMap[row.gameCode]!.map((s) => ({ ...s }))
-  const i = slots.findIndex((s) => s.key === key)
-  if (i < 0) return
-  slots[i]!.count = Math.min(50, Math.max(0, Number.isFinite(raw) ? raw : 0))
-  draftSlotMap[row.gameCode] = slots
-  const peak = slots.find((s) => s.key === 'peak')?.count ?? 0
-  draftCount[row.gameCode] = Math.max(peak, ...slots.map((s) => s.count))
-}
-
 async function saveRow(row: Row) {
   if (props.readonly || !isDirty(row)) return
   const count = draftOf(row)
-  const slots = count <= 0
-    ? defaultSlots(0)
-    : draftSlots(row).map((s) => ({ ...s, count: count <= 0 ? 0 : s.count }))
+  const slots = (count <= 0 ? defaultSlots(0) : draftSlots(row)).map((s) => {
+    const lo = count <= 0 ? 0 : slotMin(s)
+    const hi = count <= 0 ? 0 : slotMax(s)
+    return withRange(s, lo, hi)
+  })
   savingCode.value = row.gameCode
   try {
     const plan: RobotPlan = {
@@ -370,7 +428,7 @@ async function saveRow(row: Row) {
       robotPlan: plan,
     })
     ElMessage.success(
-      count <= 0 ? `${row.label} 已关掉托人` : `${row.label} 已保存：高峰 ${count} 人`,
+      count <= 0 ? `${row.label} 已关掉托人` : `${row.label} 已保存时段人数`,
     )
     draftCount[row.gameCode] = count
     draftSlotMap[row.gameCode] = slots.map((s) => ({ ...s }))
@@ -570,7 +628,7 @@ onMounted(() => void load())
 .rp-figure.off strong { color: #94a3b8; font-size: 28px; }
 .rp-seg {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: 1fr 1fr;
   gap: 4px;
   padding: 3px;
   background: #e2e8f0;
@@ -604,7 +662,7 @@ onMounted(() => void load())
 }
 .rp-slot {
   display: grid;
-  grid-template-columns: 36px 1fr auto;
+  grid-template-columns: 40px 1fr auto;
   align-items: center;
   gap: 6px;
   font-size: 12px;

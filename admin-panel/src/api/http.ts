@@ -71,10 +71,19 @@ http.interceptors.response.use(
     if (status === 401 && !isAuthSessionCall(err.config)) {
       sessionExpired = true
       const store = useAdminStore()
-      const msg = normalizeAuthMessage(
-        Array.isArray(rawMsg) ? rawMsg.join('; ') : String(rawMsg || ''),
-      )
+      const serverMsg = Array.isArray(rawMsg) ? rawMsg.join('; ') : String(rawMsg || '')
       const onLogin = router.currentRoute.value.name === 'login'
+      /*
+       * 登录接口本身也会 401（密码错、账号冻结等）。这时不能当成「会话过期」：
+       * 否则会被 LoginView 吞掉 AUTH_EXPIRED，页面上完全没提示，像点了没反应。
+       */
+      if (onLogin) {
+        const m = serverMsg.trim()
+        const isGeneric =
+          !m || m === 'Unauthorized' || m.toLowerCase() === 'unauthorized'
+        return Promise.reject(new Error(isGeneric ? '账号或密码错误' : m))
+      }
+      const msg = normalizeAuthMessage(serverMsg)
       /* 已登出后轮询仍会 401：只在「当时还有会话」时提示一次，避免连弹 */
       const hadSession = store.hadSession
       store.logout()
@@ -85,21 +94,16 @@ http.interceptors.response.use(
           lastAuthToastAt = now
           ElMessage.error(msg)
         }
-        if (!onLogin) {
-          void router.replace('/login').finally(() => {
-            authRedirecting = false
-          })
-        } else {
+        void router.replace('/login').finally(() => {
           authRedirecting = false
-        }
+        })
       }
       return Promise.reject(new Error('AUTH_EXPIRED'))
     }
-    return Promise.reject(
-      new Error(
-        (Array.isArray(rawMsg) ? rawMsg.join('; ') : rawMsg) || '网络异常',
-      ),
-    )
+    const msg = Array.isArray(rawMsg) ? rawMsg.join('; ') : rawMsg
+    /* 403 兜底不能报「网络异常」——越权和断网得让人分得清 */
+    if (status === 403) return Promise.reject(new Error(msg || '无权限执行该操作'))
+    return Promise.reject(new Error(msg || '网络异常'))
   },
 )
 

@@ -71,6 +71,7 @@
                   <b>{{ s.nickname }}</b>
                   <em>{{ fmtShort(s.lastAt) }}</em>
                 </span>
+                <span class="crow-preview">{{ s.username || '—' }} · {{ s.uid }}</span>
                 <span class="crow-preview">
                   <i v-if="s.unread" class="dot sm">{{ s.unread > 99 ? '99+' : s.unread }}</i>
                   {{ previewSender(s.lastSender) }}{{ sessionPreviewText(s.lastText) }}
@@ -101,7 +102,7 @@
                   <b>{{ row.nickname }}</b>
                   <em class="gold">{{ fmtNum(row.validFlow) }}</em>
                 </span>
-                <span class="crow-preview">{{ row.uid }} · {{ row.betCount }} 注</span>
+                <span class="crow-preview">{{ row.username || '—' }} · {{ row.uid }} · {{ row.betCount }} 注</span>
               </span>
               <span
                 class="tea-hit"
@@ -124,7 +125,10 @@
                 <div class="room-meta">
                   <div class="room-name">{{ selectedDisplay?.nickname || '玩家' }}</div>
                   <div class="room-sub">
-                    {{ selectedDisplay?.uid }}
+                    {{ selectedDisplay?.username || selectedDisplay?.uid }}
+                    <template v-if="selectedDisplay?.username && selectedDisplay?.uid">
+                      · {{ selectedDisplay.uid }}
+                    </template>
                     <template v-if="!isCs && selectedYesterdayFlow != null">
                       · 昨日流水 {{ fmtNum(selectedYesterdayFlow) }}
                     </template>
@@ -288,7 +292,7 @@
                   <div class="av">{{ avatarLetter }}</div>
                   <div>
                     <div class="name">{{ selectedDisplay?.nickname || '玩家' }}</div>
-                    <div class="uid">UID {{ selectedDisplay?.uid }}</div>
+                    <div class="uid">{{ selectedDisplay?.username || '—' }} · UID {{ selectedDisplay?.uid }}</div>
                   </div>
                 </div>
               </div>
@@ -311,7 +315,7 @@
                       <el-tag size="small" :type="row.type === 'UP' ? 'success' : 'warning'">
                         {{ row.type === 'UP' ? '上分' : '下分' }}
                       </el-tag>
-                      <b class="gold amt">{{ row.amount.toLocaleString() }}</b>
+                      <b class="gold amt">{{ formatMoney(row.amount) }}</b>
                       <el-tag
                         v-if="payChannelLabel(row.channel)"
                         size="small"
@@ -408,13 +412,13 @@
               </el-tag>
             </div>
             <div class="qrow-mid">
-              <span class="gold">{{ row.amount.toLocaleString() }}</span>
+              <span class="gold">{{ formatMoney(row.amount) }}</span>
               <el-tag size="small" :type="statusType(row.status)" effect="plain">
                 {{ statusText(row.status) }}
               </el-tag>
             </div>
             <div class="qrow-bot">
-              <span>{{ row.channel }} · {{ fmtClock(row.createdAt) }}</span>
+              <span>{{ row.player.username || row.player.uid }} · {{ row.channel }} · {{ fmtClock(row.createdAt) }}</span>
               <span v-if="row.status === 'PENDING'" class="qops" @click.stop>
                 <a @click="approve(row)">通过</a>
                 <a class="danger" @click="openReject(row)">拒绝</a>
@@ -440,7 +444,7 @@
 
     <el-dialog v-model="teaVisible" title="发早茶通知" width="420px" @closed="onTeaClosed">
       <div v-if="teaTarget" class="tea-meta">
-        <div><b>{{ teaTarget.nickname }}</b> · {{ teaTarget.uid }}</div>
+        <div><b>{{ teaTarget.nickname }}</b> · {{ teaTarget.username || teaTarget.uid }}</div>
         <div class="dim">
           昨日流水 <span class="gold">{{ fmtNum(teaTarget.validFlow) }}</span>
           · {{ teaTarget.betCount }} 注
@@ -635,7 +639,7 @@ import {
 } from '@/api/admin'
 import { consoleApi, type CsWageBillRow, type PlayerFlowRow } from '@/api/console'
 import { useAdminStore } from '@/stores/admin'
-import { PLAYER_DOWN_MIN, PLAYER_FUND_MAX, PLAYER_UP_MIN } from '@gamebox/shared'
+import { formatMoney, PLAYER_DOWN_MIN, PLAYER_FUND_MAX, PLAYER_UP_MIN } from '@gamebox/shared'
 import { newFundOrderNo } from '@/utils/fundOrderNo'
 import PrivateMediaImage from '@/components/PrivateMediaImage.vue'
 
@@ -652,7 +656,7 @@ const csBalance = ref<number | null>(null)
 const csBalanceText = computed(() =>
   csBalance.value == null
     ? '—'
-    : csBalance.value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+    : formatMoney(csBalance.value),
 )
 
 const wageVisible = ref(false)
@@ -1112,7 +1116,7 @@ async function submitCsFund() {
   const dir = csFundMode.value === 'up' ? '充值' : '下分'
   try {
     await ElMessageBox.confirm(
-      `确认给 ${selectedDisplay.value?.nickname || '该玩家'} ${dir} ${amt.toLocaleString()}？`,
+      `确认给 ${selectedDisplay.value?.nickname || '该玩家'} ${dir} ${formatMoney(amt)}？`,
       `${dir}确认`,
       { type: 'warning', confirmButtonText: `确认${dir}`, cancelButtonText: '取消' },
     )
@@ -1237,7 +1241,7 @@ const leftTab = ref<'sessions' | 'flow'>('sessions')
 const sessions = ref<CsSession[]>([])
 const sessionsLoading = ref(false)
 const selectedPlayerId = ref('')
-const selectedMeta = ref<{ uid: string; nickname: string } | null>(null)
+const selectedMeta = ref<{ uid: string; nickname: string; username?: string } | null>(null)
 const messages = ref<CsConsoleMessage[]>([])
 const messagesLoading = ref(false)
 const draft = ref('')
@@ -1279,10 +1283,10 @@ const selectedSession = computed(() =>
 
 const selectedDisplay = computed(() => {
   const s = selectedSession.value
-  if (s) return { uid: s.uid, nickname: s.nickname }
+  if (s) return { uid: s.uid, nickname: s.nickname, username: s.username }
   if (selectedMeta.value) return selectedMeta.value
   const f = flowList.value.find((x) => x.playerId === selectedPlayerId.value)
-  if (f) return { uid: f.uid, nickname: f.nickname }
+  if (f) return { uid: f.uid, nickname: f.nickname, username: f.username }
   return null
 })
 
@@ -1385,7 +1389,7 @@ function bubbleSide(sender: string) {
   return sender === 'PLAYER' ? 'left' : 'right'
 }
 function fmtNum(n: number) {
-  return Number(n || 0).toLocaleString('zh-CN')
+  return formatMoney(n)
 }
 function teaTemplate(amount: number) {
   return `您的早茶 ${amount}，请回复「上分${amount}」申请`
@@ -1580,7 +1584,7 @@ function onComposerKey(e: KeyboardEvent) {
   }
 }
 
-async function selectPlayer(playerId: string, meta?: { uid: string; nickname: string }) {
+async function selectPlayer(playerId: string, meta?: { uid: string; nickname: string; username?: string }) {
   selectionGeneration += 1
   invalidateLane(messagesLane)
   invalidateLane(selectedFlowLane)
@@ -1618,12 +1622,12 @@ async function selectPlayer(playerId: string, meta?: { uid: string; nickname: st
 }
 
 async function selectSession(s: CsSession) {
-  await selectPlayer(s.playerId, { uid: s.uid, nickname: s.nickname })
+  await selectPlayer(s.playerId, { uid: s.uid, nickname: s.nickname, username: s.username })
 }
 
 /** 流水榜点人选人，留在流水 Tab 方便连发早茶 */
 async function pickFlowPlayer(row: PlayerFlowRow) {
-  await selectPlayer(row.playerId, { uid: row.uid, nickname: row.nickname })
+  await selectPlayer(row.playerId, { uid: row.uid, nickname: row.nickname, username: row.username })
 }
 
 function openTeaDialog(row: PlayerFlowRow) {
@@ -1640,6 +1644,7 @@ function openTeaForSelected() {
     playerId: selectedPlayerId.value,
     uid: selectedDisplay.value?.uid || '',
     nickname: selectedDisplay.value?.nickname || '玩家',
+    username: selectedDisplay.value?.username,
     avatar: null,
     validFlow: selectedYesterdayFlow.value ?? 0,
     betCount: 0,
@@ -1662,7 +1667,7 @@ async function sendTea() {
   teaSending.value = true
   try {
     const pid = teaTarget.value.playerId
-    const meta = { uid: teaTarget.value.uid, nickname: teaTarget.value.nickname }
+    const meta = { uid: teaTarget.value.uid, nickname: teaTarget.value.nickname, username: teaTarget.value.username }
     const res = await csConsoleApi.reply(pid, teaText.value.trim())
     teaVisible.value = false
     await selectPlayer(pid, meta)
@@ -1701,7 +1706,7 @@ async function onOrderRowClick(row: ReviewOrder) {
     return
   }
   leftTab.value = 'sessions'
-  await selectPlayer(pid, { uid: row.player.uid, nickname: row.player.nickname })
+  await selectPlayer(pid, { uid: row.player.uid, nickname: row.player.nickname, username: row.player.username })
 }
 
 async function sendReply() {
@@ -1731,7 +1736,7 @@ async function approve(row: ReviewOrder) {
   const kind = row.type === 'UP' ? '上分' : '下分'
   try {
     await ElMessageBox.confirm(
-      `确认通过该 ${kind} 订单？金额 ${row.amount.toLocaleString()}`,
+      `确认通过该 ${kind} 订单？金额 ${formatMoney(row.amount)}`,
       `${kind}确认`,
       {
         type: 'success',
@@ -1765,7 +1770,7 @@ async function openReject(row: ReviewOrder) {
   const kind = row.type === 'UP' ? '上分' : '下分'
   try {
     await ElMessageBox.confirm(
-      `确认拒绝该 ${kind} 订单？金额 ${row.amount.toLocaleString()}`,
+      `确认拒绝该 ${kind} 订单？金额 ${formatMoney(row.amount)}`,
       `${kind}确认`,
       {
         type: 'error',

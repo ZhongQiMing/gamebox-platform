@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
+import { staffMatchesRoles } from '@gamebox/shared'
 import { useAdminStore } from '@/stores/admin'
 import http from '@/api/http'
 
@@ -13,10 +14,18 @@ const routes: RouteRecordRaw[] = [
     children: [
       { path: 'dashboard', name: 'dashboard', component: () => import('@/views/DashboardView.vue'), meta: { roles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'] } },
       { path: 'rooms', name: 'rooms', component: () => import('@/views/RoomsView.vue'), meta: { roles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'] } },
+      { path: 'rooms/general/:id', name: 'general-detail', component: () => import('@/views/GeneralDetailView.vue'), meta: { roles: ['ADMIN', 'BRANCH', 'GENERAL'] } },
       { path: 'rooms/:id', name: 'room-detail', component: () => import('@/views/RoomDetailView.vue'), meta: { roles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'] } },
       {
         path: 'players',
         name: 'players',
+        component: () => import('@/views/PlayerCenterView.vue'),
+        meta: { roles: ['ADMIN', 'BRANCH'] },
+      },
+      {
+        /* 代理/总代仍走房间里的玩家列表，带 roomId 的老链接照旧跳过去 */
+        path: 'players/in-room',
+        name: 'players-in-room',
         redirect: (to) => {
           const roomId = typeof to.query.roomId === 'string' ? to.query.roomId : ''
           const q = typeof to.query.q === 'string' ? to.query.q : undefined
@@ -35,9 +44,10 @@ const routes: RouteRecordRaw[] = [
       { path: 'cs-staff', name: 'cs-staff', component: () => import('@/views/CsStaffManageView.vue'), meta: { roles: ['AGENT'] } },
       { path: 'games', name: 'games', component: () => import('@/views/GameManageView.vue'), meta: { roles: ['ADMIN'] } },
       { path: 'control', name: 'control', component: () => import('@/views/ControlView.vue'), meta: { roles: ['ADMIN'] } },
+      { path: 'live', name: 'live', component: () => import('@/views/LiveDrawsView.vue'), meta: { roles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'] } },
       { path: 'rebate', name: 'rebate', component: () => import('@/views/RebatePolicyView.vue'), meta: { roles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'] } },
-      /* 总代结算：管理/总监看全部总代，总代只看自己 */
-      { path: 'general-settle', name: 'general-settle', component: () => import('@/views/GeneralSettleView.vue'), meta: { roles: ['ADMIN', 'BRANCH', 'GENERAL'] } },
+      { path: 'settle', name: 'settle', component: () => import('@/views/SettleCenterView.vue'), meta: { roles: ['ADMIN', 'BRANCH', 'GENERAL'] } },
+      { path: 'general-settle', redirect: { name: 'settle' } },
       /* 账号列表：管理/总监开总监与总代 */
       { path: 'agents', name: 'agents', component: () => import('@/views/AgentManageView.vue'), meta: { roles: ['ADMIN', 'BRANCH', 'GENERAL'] } },
       { path: 'agents/:id', name: 'agent-detail', component: () => import('@/views/AgentDetailView.vue'), meta: { roles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'] } },
@@ -80,7 +90,11 @@ router.beforeEach(async (to) => {
   }
 
   const roles = to.meta.roles as string[] | undefined
-  if (roles?.length && store.profile && !roles.includes(store.profile.role)) {
+  if (
+    roles?.length
+    && store.profile
+    && !staffMatchesRoles(store.profile.role, roles, store.profile.parentRole)
+  ) {
     return store.profile.role === 'CS' ? { name: 'recharge' } : { name: 'dashboard' }
   }
 
@@ -89,6 +103,14 @@ router.beforeEach(async (to) => {
   }
 })
 
-interface AdminProfile { id: string; uid: string; username: string; nickname: string; role: string }
+interface AdminProfile {
+  id: string
+  uid: string
+  username: string
+  nickname: string
+  role: string
+  parentId?: string | null
+  parentRole?: string | null
+}
 
 export default router

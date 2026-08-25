@@ -36,15 +36,14 @@
       </div>
       <div class="titlebar-right">
         <el-tag size="small" effect="plain">{{ roleLabel }}</el-tag>
-        <!-- 信用盘：佣金账户 / 代理桌额度 / 客服 / 剩余信用(=代理+客服) / 玩家 -->
-        <span v-if="isAgent && isCreditBook" class="stat-chip gold">佣金账户 {{ balanceText }}</span>
-        <span v-if="isAgent && isCreditBook" class="stat-chip gold">代理额度 {{ agentDeskText }}</span>
-        <span v-if="isAgent && isCreditBook" class="stat-chip">客服额度 {{ csBalancesText }}</span>
-        <span v-if="isAgent && isCreditBook" class="stat-chip">剩余信用 {{ creditUnusedText }}</span>
-        <!-- 现金盘：余额=代理桌盘分；客服额度分开；可飞=余额+客服 -->
-        <span v-if="isAgent && !isCreditBook" class="stat-chip gold">代理余额 {{ balanceText }}</span>
-        <span v-if="isAgent && !isCreditBook" class="stat-chip">客服额度 {{ csBalancesText }}</span>
-        <span v-if="isAgent && !isCreditBook" class="stat-chip">上盘可飞 {{ coverText || '0.00' }}</span>
+        <!-- 余额=手上的盘分；额度=合同/剩余信用。两个词不许混用 -->
+        <span v-if="isGeneralUser" class="stat-chip gold">总代余额 {{ agentBalanceText }}</span>
+        <span v-if="isGeneralUser" class="stat-chip" :title="roomBalanceHint">房间余额 {{ roomBalanceText }}</span>
+        <span v-if="isGeneralUser" class="stat-chip">上盘可飞 {{ coverText || '0.00' }}</span>
+        <!-- 现金/信用同一套：代理余额 / 客服额度 / 上盘可飞 / 玩家持分 -->
+        <span v-if="isAgent" class="stat-chip gold">代理余额 {{ agentBalanceText }}</span>
+        <span v-if="isAgent" class="stat-chip">客服额度 {{ csBalancesText }}</span>
+        <span v-if="isAgent" class="stat-chip">上盘可飞 {{ coverText || '0.00' }}</span>
         <span v-if="isAgent && playersText" class="stat-chip">玩家持分 {{ playersText }}</span>
         <span v-if="displayName" class="nick">{{ displayName }}</span>
         <button type="button" class="tb-link" @click="pwdVisible = true">改密码</button>
@@ -55,34 +54,37 @@
     <!-- 主项：每个页面入口（大号工具按钮） -->
     <nav class="desk-mainnav" aria-label="页面主项">
       <div class="mainnav-pages">
-        <button
-          v-for="m in menus"
-          :key="m.name"
-          type="button"
-          class="main-btn"
-          :class="{
-            active: activeMenu === m.name,
-            alert:
-              (m.name === 'risk' && riskUnhandled > 0)
-              || (m.name === 'recharge' && rechargePending > 0),
-          }"
-          @click="router.push({ name: m.name })"
-        >
-          <el-icon :size="24"><component :is="m.icon" /></el-icon>
-          <span class="main-btn-text">{{ m.title }}</span>
-          <el-badge
-            v-if="m.name === 'risk' && riskUnhandled > 0"
-            :value="riskUnhandled"
-            :max="99"
-            class="main-badge"
-          />
-          <el-badge
-            v-else-if="m.name === 'recharge' && rechargePending > 0"
-            :value="rechargePending"
-            :max="99"
-            class="main-badge"
-          />
-        </button>
+        <template v-for="(g, gi) in menuGroups" :key="g.id">
+          <span v-if="gi > 0" class="mainnav-split" aria-hidden="true" />
+          <button
+            v-for="m in g.items"
+            :key="m.name"
+            type="button"
+            class="main-btn"
+            :class="{
+              active: activeMenu === m.name,
+              alert:
+                (m.name === 'risk' && riskCritical > 0)
+                || (m.name === 'recharge' && rechargePending > 0),
+            }"
+            @click="router.push({ name: m.name })"
+          >
+            <el-icon :size="24"><component :is="m.icon" /></el-icon>
+            <span class="main-btn-text">{{ m.title }}</span>
+            <el-badge
+              v-if="m.name === 'risk' && riskUnhandled > 0"
+              :value="riskUnhandled"
+              :max="99"
+              class="main-badge"
+            />
+            <el-badge
+              v-else-if="m.name === 'recharge' && rechargePending > 0"
+              :value="rechargePending"
+              :max="99"
+              class="main-badge"
+            />
+          </button>
+        </template>
       </div>
       <div class="mainnav-utils">
         <button
@@ -113,7 +115,7 @@
     <footer class="desk-status">
       <span>就绪</span>
       <span class="sep">|</span>
-      <span>{{ roleLabel }} · {{ store.profile?.nickname || '—' }}</span>
+      <span>{{ roleLabel }} · {{ store.profile?.nickname || '—' }} · {{ store.profile?.username || '' }}</span>
       <span class="sep">|</span>
       <span>当前：{{ activeTitle }}</span>
       <span class="status-grow" />
@@ -126,7 +128,7 @@
       <el-form-item label="当前密码">
         <el-input v-model="pwdForm.oldPassword" type="password" show-password autocomplete="current-password" />
       </el-form-item>
-      <el-form-item label="新密码（至少 6 位）">
+      <el-form-item :label="`新密码（${OPS_PASSWORD_HINT}）`">
         <el-input v-model="pwdForm.newPassword" type="password" show-password autocomplete="new-password" />
       </el-form-item>
       <el-form-item label="确认新密码">
@@ -145,7 +147,7 @@
       ref="searchInputRef"
       v-model="searchQ"
       clearable
-      placeholder="昵称 / 账号 / UID / 房间名"
+      placeholder="登录账号 / 昵称 / UID / 房间名"
       @keyup.enter="runSearch"
     >
       <template #append>
@@ -179,7 +181,7 @@
           @click="goAgent(a)"
         >
           <b>{{ a.nickname }}</b>
-          <span>{{ a.role }} · {{ a.username }} · {{ a.uid }}</span>
+          <span>{{ staffRoleLabel(a.role) }} · {{ a.username }} · {{ a.uid }}</span>
         </button>
       </div>
     </div>
@@ -190,10 +192,10 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, markRaw, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { staffRoleLabel, validateOpsPassword } from '@gamebox/shared'
+import { formatMoney, isGeneralSide, OPS_PASSWORD_HINT, staffMatchesRoles, staffRoleLabel, validateOpsPassword } from '@gamebox/shared'
 import {
   DataAnalysis, Wallet, Warning, Document, Finished,
-  Trophy, OfficeBuilding, TrendCharts, Aim, Coin, Avatar, Headset, Tickets,
+  Trophy, OfficeBuilding, TrendCharts, Aim, Coin, Avatar, Headset, Tickets, Monitor, User,
 } from '@element-plus/icons-vue'
 import { consoleApi } from '@/api/console'
 import { riskApi, reviewApi } from '@/api/admin'
@@ -208,11 +210,14 @@ const balance = ref<number | null>(null)
 const pointsQuota = ref<number | null>(null)
 const csBalances = ref<number | null>(null)
 const flyCover = ref<number | null>(null)
+const roomBalance = ref<number | null>(null)
 const playerPointsTotal = ref<number | null>(null)
 const overIssueUsed = ref<number | null>(null)
 const fakeExposure = ref<number | null>(null)
 const bookMode = ref<'CASH' | 'CREDIT' | string | null>(null)
 const riskUnhandled = ref(0)
+/** 只有严重告警才让主项闪红；警告级别给个安静的角标就够 */
+const riskCritical = ref(0)
 const rechargePending = ref(0)
 let riskTimer: ReturnType<typeof setInterval> | null = null
 let rechargeTimer: ReturnType<typeof setInterval> | null = null
@@ -245,7 +250,9 @@ const searchAgents = ref<Array<{
   roomId?: string
 }>>([])
 
-const roleLabel = computed(() => staffRoleLabel(store.profile?.role))
+const roleLabel = computed(() =>
+  staffRoleLabel(store.profile?.role, store.profile?.parentRole),
+)
 
 /** 昵称若与角色标签相同（如 seed 的「管理员」），改显示账号，避免顶栏两个一样的字 */
 const displayName = computed(() => {
@@ -256,15 +263,20 @@ const displayName = computed(() => {
 })
 
 const isCs = computed(() => store.profile?.role === 'CS')
-const isAgent = computed(() => store.profile?.role === 'AGENT' || store.profile?.role === 'PROXY' || store.profile?.role === 'GENERAL')
-/** 仅代理/客服有余额 chip（信用=佣金账户）；管理员/房主无个人余额 */
+const isGeneralUser = computed(() => isGeneralSide(store.profile?.role, store.profile?.parentRole))
+const isAgent = computed(() => {
+  if (isGeneralUser.value) return false
+  const r = store.profile?.role
+  return r === 'AGENT' || r === 'PROXY'
+})
+/** 仅代理/客服有余额 chip；管理员/房主无个人余额 */
 const showWalletBalance = computed(() => {
   const r = store.profile?.role
-  return r === 'AGENT' || r === 'GENERAL' || r === 'CS'
+  return r === 'AGENT' || r === 'GENERAL' || r === 'CS' || isGeneralSide(r, store.profile?.parentRole)
 })
 const canGlobalSearch = computed(() => {
   const r = store.profile?.role
-  return r === 'ADMIN' || r === 'BRANCH' || r === 'GENERAL'
+  return r === 'ADMIN' || r === 'BRANCH' || isGeneralSide(r, store.profile?.parentRole)
 })
 
 const envTag = computed(() => {
@@ -278,56 +290,75 @@ const envTag = computed(() => {
 
 const activeMenu = computed(() => {
   const name = String(route.name || '')
-  if (name === 'room-detail') return 'rooms'
+  if (name === 'general-detail') return route.query.from === 'agents' ? 'agents' : 'rooms'
   if (name === 'agent-detail') return 'agents'
+  if (name === 'general-settle') return 'settle'
   return name
 })
 
 function fmtBal(n: number | null) {
-  return n == null ? '' : n.toLocaleString('en-US', { minimumFractionDigits: 2 })
+  return n == null ? '' : formatMoney(n)
 }
-const isCreditBook = computed(() => bookMode.value === 'CREDIT')
 const balanceText = computed(() => (balance.value == null ? '—' : fmtBal(balance.value)))
 const coverText = computed(() => fmtBal(flyCover.value))
+const roomBalanceText = computed(() => fmtBal(roomBalance.value ?? 0))
 const playersText = computed(() => fmtBal(playerPointsTotal.value))
+const roomBalanceHint = computed(() => {
+  const room = Number(roomBalance.value ?? 0)
+  const players = Number(playerPointsTotal.value ?? 0)
+  const hands = Math.round((room - players) * 100) / 100
+  return `代理手上 ${fmtBal(hands)} + 玩家持分 ${fmtBal(players)}`
+})
 /** 客服额度合计；为 0 时也显示便于对账 */
 const csBalancesText = computed(() => fmtBal(csBalances.value ?? 0))
-/** 信用：代理桌剩余额度（pointsQuota） */
-const agentDeskText = computed(() => fmtBal(pointsQuota.value))
-/** 信用未发总额（代理桌+客服）；兼容旧字段 */
-const creditUnused = ref<number | null>(null)
-const creditUnusedText = computed(() => {
-  if (creditUnused.value != null) return fmtBal(creditUnused.value)
-  const desk = Number(pointsQuota.value ?? 0)
-  const cs = Number(csBalances.value ?? 0)
-  return fmtBal(desk + cs)
+const agentBalance = ref<number | null>(null)
+const agentBalanceText = computed(() => {
+  if (agentBalance.value != null) return fmtBal(agentBalance.value)
+  return fmtBal(Number(balance.value ?? 0))
 })
 
-type MenuItem = { name: string; title: string; icon: unknown; roles: string[] }
+type MenuGroup = 'ops' | 'money' | 'look' | 'game' | 'audit'
+type MenuItem = { name: string; title: string; icon: unknown; roles: string[]; group: MenuGroup }
 
+const MENU_GROUP_ORDER: MenuGroup[] = ['ops', 'money', 'look', 'game', 'audit']
+
+/*
+ * 主项按业务链排，一组一事：
+ * 经营：看今日、管房、管人
+ * 账务：占成结账、资金对账（只在这里结，不在房间里再做一份）
+ * 盘面：报表、开奖
+ * 玩法：游戏、控奖、回水
+ * 合规：风控、日志
+ */
 const allMenus: MenuItem[] = [
-  { name: 'dashboard', title: '工作台', icon: markRaw(DataAnalysis), roles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'] },
-  { name: 'rooms', title: '房间中心', icon: markRaw(OfficeBuilding), roles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'] },
-  { name: 'reports', title: '报表中心', icon: markRaw(TrendCharts), roles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'] },
-  { name: 'recharge', title: '客服上下分', icon: markRaw(Wallet), roles: ['AGENT', 'CS'] },
-  { name: 'cs-staff', title: '客服账号', icon: markRaw(Headset), roles: ['AGENT'] },
-  { name: 'games', title: '游戏管理', icon: markRaw(Trophy), roles: ['ADMIN'] },
-  { name: 'control', title: '控奖中心', icon: markRaw(Aim), roles: ['ADMIN'] },
-  { name: 'agents', title: '账号中心', icon: markRaw(Avatar), roles: ['ADMIN', 'BRANCH', 'GENERAL'] },
-  { name: 'general-settle', title: '总代结算', icon: markRaw(Tickets), roles: ['ADMIN', 'BRANCH', 'GENERAL'] },
-  { name: 'rebate', title: '回水规则', icon: markRaw(Coin), roles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'] },
-  { name: 'risk', title: '风控告警', icon: markRaw(Warning), roles: ['ADMIN', 'BRANCH'] },
-  { name: 'fund-recon', title: '资金对账', icon: markRaw(Finished), roles: ['ADMIN'] },
-  { name: 'logs', title: '操作日志', icon: markRaw(Document), roles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'] },
+  { name: 'dashboard', title: '工作台', icon: markRaw(DataAnalysis), roles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'], group: 'ops' },
+  { name: 'rooms', title: '房间中心', icon: markRaw(OfficeBuilding), roles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'], group: 'ops' },
+  { name: 'agents', title: '账号中心', icon: markRaw(Avatar), roles: ['ADMIN', 'BRANCH', 'GENERAL'], group: 'ops' },
+  { name: 'players', title: '玩家中心', icon: markRaw(User), roles: ['ADMIN', 'BRANCH'], group: 'ops' },
+  { name: 'recharge', title: '客服上下分', icon: markRaw(Wallet), roles: ['AGENT', 'CS'], group: 'ops' },
+  { name: 'cs-staff', title: '客服账号', icon: markRaw(Headset), roles: ['AGENT'], group: 'ops' },
+  { name: 'settle', title: '结算中心', icon: markRaw(Tickets), roles: ['ADMIN', 'BRANCH', 'GENERAL'], group: 'money' },
+  { name: 'fund-recon', title: '资金对账', icon: markRaw(Finished), roles: ['ADMIN'], group: 'money' },
+  { name: 'reports', title: '报表中心', icon: markRaw(TrendCharts), roles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'], group: 'look' },
+  { name: 'live', title: '实时开奖', icon: markRaw(Monitor), roles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'], group: 'look' },
+  { name: 'games', title: '游戏管理', icon: markRaw(Trophy), roles: ['ADMIN'], group: 'game' },
+  { name: 'control', title: '控奖中心', icon: markRaw(Aim), roles: ['ADMIN'], group: 'game' },
+  { name: 'rebate', title: '回水规则', icon: markRaw(Coin), roles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'], group: 'game' },
+  { name: 'risk', title: '风控告警', icon: markRaw(Warning), roles: ['ADMIN', 'BRANCH'], group: 'audit' },
+  { name: 'logs', title: '操作日志', icon: markRaw(Document), roles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'], group: 'audit' },
 ]
 
 const menus = computed(() => {
   const role = store.profile?.role || ''
-  const agentSide = role === 'AGENT' || role === 'PROXY' || role === 'GENERAL'
-  return allMenus
-    .filter((m) => m.roles.includes(role))
-    .map((m) => (m.name === 'rooms' && agentSide ? { ...m, title: '我的房间' } : m))
+  const parentRole = store.profile?.parentRole
+  return allMenus.filter((m) => staffMatchesRoles(role, m.roles, parentRole))
 })
+
+const menuGroups = computed(() =>
+  MENU_GROUP_ORDER
+    .map((id) => ({ id, items: menus.value.filter((m) => m.group === id) }))
+    .filter((g) => g.items.length > 0),
+)
 
 const activeTitle = computed(() => {
   const m = menus.value.find((x) => x.name === activeMenu.value)
@@ -345,8 +376,9 @@ async function refreshBalance() {
     balance.value = null
     pointsQuota.value = null
     csBalances.value = null
-    creditUnused.value = null
+    agentBalance.value = null
     flyCover.value = null
+    roomBalance.value = null
     playerPointsTotal.value = null
     overIssueUsed.value = null
     fakeExposure.value = null
@@ -358,8 +390,9 @@ async function refreshBalance() {
     balance.value = w.balance
     pointsQuota.value = w.pointsQuota ?? null
     csBalances.value = w.csBalances ?? 0
-    creditUnused.value = w.creditUnused ?? w.diskPoolRemaining ?? null
+    agentBalance.value = w.agentBalance ?? null
     flyCover.value = w.flyCover ?? null
+    roomBalance.value = w.roomBalance ?? null
     playerPointsTotal.value = w.playerPointsTotal ?? null
     overIssueUsed.value = w.overIssueUsed ?? w.fakeExposure ?? null
     fakeExposure.value = w.fakeExposure ?? null
@@ -377,9 +410,10 @@ async function refreshBalance() {
     balance.value = null
     pointsQuota.value = null
     csBalances.value = null
-    creditUnused.value = null
+    agentBalance.value = null
     bookMode.value = null
     flyCover.value = null
+    roomBalance.value = null
     playerPointsTotal.value = null
     overIssueUsed.value = null
     fakeExposure.value = null
@@ -413,11 +447,13 @@ async function refreshRiskBadge() {
   const role = store.profile?.role
   if (role !== 'ADMIN' && role !== 'BRANCH') {
     riskUnhandled.value = 0
+    riskCritical.value = 0
     return
   }
   try {
     const s = await riskApi.summary()
-    riskUnhandled.value = s.unhandled
+    riskUnhandled.value = s.actionable ?? s.critical + s.warn
+    riskCritical.value = s.critical
   } catch {
     /* ignore */
   }
@@ -492,16 +528,25 @@ async function runSearch() {
   searchDone.value = false
   try {
     const isAdmin = store.profile?.role === 'ADMIN'
-    const [players, agents, branches] = await Promise.all([
+    const isLandlord = isAdmin || store.profile?.role === 'BRANCH'
+    const generalSide = isGeneralSide(store.profile?.role, store.profile?.parentRole)
+    type AgentHit = {
+      id: string; nickname: string; username: string; uid: string; role: string
+      rooms?: Array<{ id: string }>
+    }
+    const emptyAgents = Promise.resolve({ list: [] as AgentHit[] })
+    const [players, agents, generals, branches, proxies] = await Promise.all([
       consoleApi.players({ page: 1, pageSize: 8, q }),
       consoleApi.agents({ page: 1, pageSize: 8, role: 'AGENT', q, boundOnly: false }),
-      // 房主检索只查玩家/代理；房主账号列表仍仅管理员
+      isLandlord || generalSide
+        ? consoleApi.agents({ page: 1, pageSize: 8, role: 'GENERAL', q, boundOnly: false })
+        : emptyAgents,
       isAdmin
         ? consoleApi.agents({ page: 1, pageSize: 8, role: 'BRANCH', q, boundOnly: false })
-        : Promise.resolve({ list: [] as Array<{
-            id: string; nickname: string; username: string; uid: string; role: string
-            rooms?: Array<{ id: string }>
-          }> }),
+        : emptyAgents,
+      isLandlord || generalSide
+        ? consoleApi.agents({ page: 1, pageSize: 8, role: 'PROXY', q, boundOnly: false })
+        : emptyAgents,
     ])
     const base = (players.list || []).map((p) => ({
       id: p.id,
@@ -529,7 +574,7 @@ async function runSearch() {
       }),
     )
     searchPlayers.value = details
-    const ag = [...(agents.list || []), ...(branches.list || [])]
+    const ag = [...(agents.list || []), ...(generals.list || []), ...(branches.list || []), ...(proxies.list || [])]
     const seen = new Set<string>()
     searchAgents.value = ag
       .filter((a) => {
@@ -575,6 +620,10 @@ function goPlayer(p: {
 
 function goAgent(a: { id: string; role: string; roomId?: string; nickname: string }) {
   searchVisible.value = false
+  if (a.role === 'GENERAL') {
+    router.push({ name: 'general-detail', params: { id: a.id }, query: { tab: 'basic' } })
+    return
+  }
   if (a.role === 'BRANCH') {
     router.push({ name: 'agent-detail', params: { id: a.id } })
     return
@@ -594,21 +643,40 @@ watch(
   },
 )
 
+/*
+ * 后台常年挂在浏览器标签里不关。风控 / 充值角标和秒表原来不管标签是否可见都在跑，
+ * 一台机器一天就是几千次没人看的请求。切回来时立刻补一次，角标不会是旧的。
+ */
+function onVisibilityChange() {
+  if (document.hidden) return
+  tickClock()
+  void refreshRiskBadge()
+  void refreshRechargeBadge()
+}
+
 onMounted(() => {
   tickClock()
-  clockTimer = setInterval(tickClock, 1000)
+  clockTimer = setInterval(() => {
+    if (!document.hidden) tickClock()
+  }, 1000)
   void refreshBalance()
   void refreshRiskBadge()
   void refreshRechargeBadge()
-  riskTimer = setInterval(() => void refreshRiskBadge(), 60_000)
-  rechargeTimer = setInterval(() => void refreshRechargeBadge(), 30_000)
+  riskTimer = setInterval(() => {
+    if (!document.hidden) void refreshRiskBadge()
+  }, 60_000)
+  rechargeTimer = setInterval(() => {
+    if (!document.hidden) void refreshRechargeBadge()
+  }, 30_000)
   window.addEventListener('keydown', onGlobalKeydown)
+  document.addEventListener('visibilitychange', onVisibilityChange)
 })
 onUnmounted(() => {
   if (riskTimer) clearInterval(riskTimer)
   if (rechargeTimer) clearInterval(rechargeTimer)
   if (clockTimer) clearInterval(clockTimer)
   window.removeEventListener('keydown', onGlobalKeydown)
+  document.removeEventListener('visibilitychange', onVisibilityChange)
 })
 </script>
 
@@ -689,31 +757,55 @@ onUnmounted(() => {
   flex-shrink: 0;
   display: flex;
   align-items: stretch;
-  justify-content: space-between;
   gap: 12px;
   min-height: 78px;
   padding: 8px 12px 10px;
   background: rgba(8, 12, 22, 0.62);
   border-bottom: 1px solid rgba(148, 163, 184, 0.16);
   backdrop-filter: blur(12px);
-  overflow-x: auto;
 }
 .mainnav-pages,
 .mainnav-utils {
   display: flex;
   align-items: stretch;
   gap: 8px;
+}
+/*
+ * 横向滚动只挂在页面按钮这一段，右边的检索/时钟单独占位、永不压缩。
+ * 原先滚动挂在整条导航上，按钮一多就顶穿容器，直接盖到检索按钮上面。
+ */
+.mainnav-pages {
+  flex: 1 1 auto;
   min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.mainnav-pages::-webkit-scrollbar { height: 6px; }
+.mainnav-pages::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.3);
+}
+.mainnav-utils {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+.mainnav-split {
+  width: 1px;
+  align-self: stretch;
+  margin: 8px 4px;
+  background: rgba(148, 163, 184, 0.28);
+  flex-shrink: 0;
 }
 .main-btn {
   position: relative;
+  flex: none;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  min-width: 78px;
-  padding: 8px 12px 6px;
+  min-width: 72px;
+  padding: 8px 10px 6px;
   border: 1px solid transparent;
   border-radius: 10px;
   background: transparent;
@@ -759,6 +851,7 @@ onUnmounted(() => {
   50% { box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.45), 0 0 22px rgba(239, 68, 68, 0.5); }
 }
 .main-util {
+  flex: none;
   display: flex;
   flex-direction: column;
   align-items: center;

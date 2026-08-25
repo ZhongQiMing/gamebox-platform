@@ -1,33 +1,47 @@
 <template>
   <div class="desk-work rooms-page" v-loading="loading">
     <div class="desk-panel">
-      <PageHeader :title="isAgentSide ? '我的房间' : '房间中心'">
+      <PageHeader title="房间中心">
         <template #actions>
           <el-button v-if="!redirecting" :loading="loading" @click="load">刷新</el-button>
           <el-button v-if="canCreate" type="primary" @click="openCreate">创建房间</el-button>
         </template>
       </PageHeader>
 
-      <div v-if="!isAgentSide && !redirecting" class="rooms-summary">
-        <div class="sum-chip">
-          <span class="sum-label">房间</span>
-          <span class="sum-val">{{ roomStats.total }}</span>
+      <div v-if="!redirecting" class="rooms-summary">
+        <template v-if="!isAgentSide">
+          <div class="sum-chip">
+            <span class="sum-label">房间</span>
+            <span class="sum-val">{{ roomStats.total }}</span>
+          </div>
+          <div class="sum-chip">
+            <span class="sum-label">营业中</span>
+            <span class="sum-val ok">{{ roomStats.open }}</span>
+          </div>
+          <div class="sum-chip">
+            <span class="sum-label">A 现金盘</span>
+            <span class="sum-val">{{ roomStats.cash }}</span>
+          </div>
+          <div class="sum-chip">
+            <span class="sum-label">B 信用盘</span>
+            <span class="sum-val warn">{{ roomStats.credit }}</span>
+          </div>
+          <div class="sum-chip" :class="{ hot: roomStats.alert > 0 }">
+            <span class="sum-label">需关注</span>
+            <span class="sum-val" :class="{ hot: roomStats.alert > 0 }">{{ roomStats.alert }}</span>
+          </div>
+        </template>
+        <div class="sum-chip hot">
+          <span class="sum-label">今日流水</span>
+          <span class="sum-val">{{ fmtMoney(flowTotals.betFlow) }}</span>
         </div>
-        <div class="sum-chip">
-          <span class="sum-label">营业中</span>
-          <span class="sum-val ok">{{ roomStats.open }}</span>
+        <div v-if="!isAdminOrBranch" class="sum-chip">
+          <span class="sum-label">飞盘</span>
+          <span class="sum-val">{{ fmtMoney(flowTotals.flown) }}</span>
         </div>
-        <div class="sum-chip">
-          <span class="sum-label">A 现金盘</span>
-          <span class="sum-val">{{ roomStats.cash }}</span>
-        </div>
-        <div class="sum-chip">
-          <span class="sum-label">B 信用盘</span>
-          <span class="sum-val warn">{{ roomStats.credit }}</span>
-        </div>
-        <div class="sum-chip" :class="{ hot: roomStats.alert > 0 }">
-          <span class="sum-label">需关注</span>
-          <span class="sum-val" :class="{ hot: roomStats.alert > 0 }">{{ roomStats.alert }}</span>
+        <div v-if="!isAdminOrBranch" class="sum-chip">
+          <span class="sum-label">关盘</span>
+          <span class="sum-val">{{ fmtMoney(flowTotals.closed) }}</span>
         </div>
       </div>
 
@@ -36,7 +50,7 @@
           v-model="keyword"
           clearable
           size="small"
-          placeholder="搜进房码 / 房间名 / 代理 / 总代"
+          placeholder="搜进房码 / 房间名 / 代理账号 / 总代账号"
           class="filter-search"
         />
         <el-select v-model="statusFilter" clearable size="small" placeholder="全部状态" class="filter-status">
@@ -61,7 +75,7 @@
           <el-option
             v-for="g in generalOptions"
             :key="g.userId"
-            :label="g.nickname"
+            :label="`${g.nickname}${g.username ? `（${g.username}）` : ''}`"
             :value="g.userId"
           />
         </el-select>
@@ -69,42 +83,46 @@
           显示已关闭
         </el-checkbox>
       </div>
-
       <div v-if="isAgentSide && !loading && !redirecting && filteredList.length === 0" class="agent-empty">
         暂无绑定房间
       </div>
 
       <div v-else-if="!redirecting" class="panel-body">
         <el-table
+          ref="roomsTableRef"
           :data="displayList"
           v-loading="loading"
           class="rooms-table"
+          :class="{ 'chain-table': grouped }"
           empty-text="暂无房间"
-          stripe
+          :stripe="!grouped"
           border
           size="small"
           height="100%"
           row-key="_key"
           :tree-props="{ children: 'children' }"
+          :indent="8"
           default-expand-all
-          @row-click="onRowClick"
+          :row-class-name="rowClassName"
+          @row-click="onGroupRowClick"
         >
-          <el-table-column label="房间" min-width="200">
+          <el-table-column label="链路" min-width="280">
             <template #default="{ row }: { row: any }">
-              <div v-if="row._group" class="group-cell">
-                <span class="group-name">{{ row.nickname }}</span>
-                <el-tag size="small" effect="plain" :type="row.userId ? 'warning' : 'info'">
-                  {{ row.userId ? '总代' : '直挂平台' }}
-                </el-tag>
-                <span class="sub">{{ row.children.length }} 间</span>
+              <div class="cell-name">{{ rowTitle(row) }}</div>
+              <div class="cell-meta">
+                {{ rowChain(row) }}
+                <button
+                  v-if="!row._group"
+                  type="button"
+                  class="copy-chip"
+                  @click.stop="copyText(row.roomNo)"
+                >复制</button>
               </div>
-              <div v-else class="room-cell">
-                <div class="room-name">{{ row.name }}</div>
-                <div class="room-code">
-                  <span class="mono">{{ row.roomNo }}</span>
-                  <button type="button" class="copy-chip" @click.stop="copyText(row.roomNo)">复制</button>
-                </div>
-              </div>
+            </template>
+          </el-table-column>
+          <el-table-column v-if="grouped" label="下级" min-width="140">
+            <template #default="{ row }: { row: any }">
+              <span class="count-line">{{ rowCountText(row) }}</span>
             </template>
           </el-table-column>
           <el-table-column label="状态" min-width="118">
@@ -126,11 +144,49 @@
               </div>
             </template>
           </el-table-column>
-          <el-table-column v-if="!isAgentSide && !grouped" label="总代" min-width="120">
+          <el-table-column label="成员" min-width="88" align="right">
+            <template #default="{ row }: { row: any }">
+              <template v-if="row._group">
+                <div class="stat-val group-stat">{{ row.stats.memberCount }}</div>
+                <div v-if="row.stats.activePlayers" class="sub">今日 {{ row.stats.activePlayers }} 人下注</div>
+              </template>
+              <template v-else>
+                <div>{{ row.memberCount }}</div>
+                <div v-if="row.todayStats?.activePlayers" class="sub">今日 {{ row.todayStats.activePlayers }} 人</div>
+              </template>
+            </template>
+          </el-table-column>
+          <el-table-column label="今日流水" min-width="120" align="right">
+            <template #default="{ row }: { row: any }">
+              <span
+                class="stat-val"
+                :class="{ 'group-stat': row._group }"
+                :style="{ color: 'var(--desk-accent, #38bdf8)' }"
+              >{{ fmtMoney(rowStats(row).betFlow) }}</span>
+              <!-- 三个角色同一套措辞：飞＝我飞给上家的，关＝我自己坐庄的 -->
+              <div v-if="!row._group && !isAdminOrBranch" class="sub">
+                飞 {{ fmtMoney(row.todayStats?.flownBetFlow) }}
+                · <span class="closed-flow">关 {{ fmtMoney(row.todayStats?.closedBetFlow) }}</span>
+              </div>
+              <div v-if="!row._group && Number(row.todayStats?.pendingBetFlow || 0)" class="sub">
+                未开奖 {{ fmtMoney(row.todayStats.pendingBetFlow) }}
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="庄家盈亏" min-width="100" align="right">
+            <template #default="{ row }: { row: any }">
+              <span
+                class="stat-val"
+                :class="{ 'group-stat': row._group }"
+                :style="{ color: pnlColor(rowStats(row).housePnl) }"
+              >{{ fmtMoney(rowStats(row).housePnl) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column v-if="!isAgentSide && !grouped && !isGeneralUser" label="总代" min-width="120">
             <template #default="{ row }: { row: any }">
               <template v-if="row.general">
                 <div class="agent-name">{{ row.general.nickname }}</div>
-                <div class="sub">占成 {{ Math.round(Number(row.general.shareRate || 0) * 100) }}%</div>
+                <div class="sub">{{ row.general.username }} · 占成 {{ Math.round(Number(row.general.shareRate || 0) * 100) }}%</div>
               </template>
               <span v-else class="muted">直挂平台</span>
             </template>
@@ -161,7 +217,7 @@
                   {{ row.bookMode === 'CREDIT' ? 'B · 信用盘' : 'A · 现金盘' }}
                 </el-tag>
                 <div class="sub">占成 {{ sharePct(row) }}% · {{ settleShort(row) }}</div>
-                <div v-if="row.bookMode === 'CREDIT'" class="sub">信用额 {{ fmtMoney(row.creditLimit) }}</div>
+                <div v-if="row.bookMode === 'CREDIT'" class="sub">合同额度 {{ fmtMoney(row.creditLimit) }}</div>
               </div>
             </template>
           </el-table-column>
@@ -175,12 +231,11 @@
               <span v-else class="muted">—</span>
             </template>
           </el-table-column>
-          <el-table-column label="操作" :width="canStatus || canDelete ? 168 : 72" fixed="right">
+          <el-table-column label="操作" :width="canStatus || canDelete ? 220 : 72" fixed="right">
             <template #default="{ row }: { row: any }">
               <div v-if="row._group" class="ops" @click.stop>
-                <el-button v-if="row.userId" link type="primary" @click="goGeneral(row.userId)">
-                  总代详情
-                </el-button>
+                <el-button v-if="row.userId" link type="primary" @click="goGeneral(row.userId)">详情</el-button>
+                <span v-else class="muted">—</span>
               </div>
               <div v-else class="ops" @click.stop>
                 <el-button link type="primary" @click="goDetail(row.id)">详情</el-button>
@@ -200,6 +255,12 @@
                   type="danger"
                   @click="onDelete(row)"
                 >删除</el-button>
+                <el-button
+                  v-if="canDelete && row.status === 'CLOSED'"
+                  link
+                  type="danger"
+                  @click="onPurge(row)"
+                >彻底删除</el-button>
               </div>
             </template>
           </el-table-column>
@@ -265,7 +326,6 @@
                   <div class="create-icon-actions">
                     <el-button size="small" @click="pickCreateIcon">选择图片</el-button>
                     <el-button v-if="form.iconImage" size="small" text type="danger" @click="clearCreateIcon">恢复默认</el-button>
-                    <div class="create-icon-hint">可选；不选则用默认图。代理登录后也可自行更换。</div>
                   </div>
                   <input
                     ref="createIconInput"
@@ -304,9 +364,6 @@
                     :value="g.id"
                   />
                 </el-select>
-                <div class="muted" style="margin-top:6px;line-height:1.4">
-                  挂总代后，代理流水不能超过总代整包，占成不能超过总代成数。
-                </div>
               </el-form-item>
               <el-form-item label="盘口类型" required>
                 <el-radio-group v-model="form.bookMode">
@@ -319,7 +376,7 @@
                   <div class="row-inline">
                     <el-input-number
                       v-model="form.agentFlowPercent"
-                      :min="1.8"
+                      :min="agentFlowMin"
                       :max="agentFlowMax"
                       :step="0.1"
                       :precision="1"
@@ -343,6 +400,9 @@
                   </div>
                 </el-form-item>
               </div>
+              <div class="create-note">
+                上限 流水 {{ agentFlowMax }}% · 占成 {{ agentShareMax }}%，{{ capSourceText }}。
+              </div>
               <el-form-item v-if="form.bookMode === 'CREDIT'" label="合同额度" required>
                 <el-input-number
                   v-model="form.creditLimit"
@@ -354,12 +414,27 @@
                   class="field-control"
                 />
               </el-form-item>
+              <div v-if="form.bookMode === 'CREDIT'" class="create-note">
+                <template v-if="hungToGeneral">
+                  建房时<b>从总代的剩余信用里划出</b>这笔额度给本房代理。
+                  总代额度不够也照划，会变成负数——那就是他超发，结账时找他要。
+                </template>
+                <template v-else>
+                  直挂房由<b>平台直接授信</b>，不扣任何人的额度。
+                </template>
+              </div>
               <el-form-item label="结账日" required>
                 <el-select v-model="form.settleCycle" class="field-control" style="width:100%">
                   <el-option label="礼拜一" value="WEEKLY_MON" />
                   <el-option label="每月 15 号与月末" value="MONTHLY_15_30" />
                   <el-option label="每月 1 号" value="MONTHLY_1" />
                 </el-select>
+                <div class="create-note" style="margin-top:6px">
+                  本房代理跟<b>{{ hungToGeneral ? '总代' : '平台' }}</b>按这个周期结账。
+                  <template v-if="hungToGeneral">
+                    总代跟平台另有自己的账期，互不影响。
+                  </template>
+                </div>
               </el-form-item>
             </template>
 
@@ -374,7 +449,7 @@
                 </el-form-item>
                 <el-form-item label="密码" required>
                   <div class="row-inline">
-                    <el-input v-model="form.agentPassword" placeholder="至少 6 位" maxlength="32" show-password />
+                    <el-input v-model="form.agentPassword" :placeholder="OPS_PASSWORD_HINT" maxlength="32" show-password />
                     <el-button @click="regenPassword">随机</el-button>
                   </div>
                 </el-form-item>
@@ -384,16 +459,27 @@
               </el-form-item>
               <template v-if="isAdmin">
                 <div class="win-pane-title" style="margin-top:18px">可见总监</div>
-                <el-form-item label="授权总监">
-                  <el-checkbox-group v-if="branchList.length" v-model="form.ownerUserIds" class="check-grid">
+                <!--
+                  挂总代的房不按房设可见性，整块藏掉比摆一个锁死的勾选框清楚：
+                  留着只会让人以为「这里还是能设的，只是这次不行」。
+                -->
+                <el-form-item v-if="form.generalAgentUserId" label="可见范围">
+                  <div class="muted" style="line-height:1.5">
+                    本房挂了总代，可见性由该总代统一决定——他对哪些总监可见，名下所有房间就对哪些总监可见，
+                    不能按房单独关。要改请到「账号中心 → 该总代详情 → 可见总监」，那里一改名下所有房跟着变。
+                  </div>
+                </el-form-item>
+                <el-form-item v-else label="授权总监">
+                  <el-checkbox-group
+                    v-if="branchList.length"
+                    v-model="form.ownerUserIds"
+                    class="check-grid"
+                  >
                     <el-checkbox v-for="a in branchList" :key="a.id" :value="a.id">
                       {{ a.nickname }}
                     </el-checkbox>
                   </el-checkbox-group>
                   <span v-else class="muted">暂无总监账号</span>
-                  <div class="muted" style="margin-top:6px;line-height:1.4">
-                    未勾选的总监在手机端/后台都看不到该房间，该房平台利润也不计入。
-                  </div>
                 </el-form-item>
               </template>
             </template>
@@ -407,44 +493,101 @@
                   </el-checkbox>
                 </el-checkbox-group>
               </el-form-item>
-              <el-form-item label="机器人">
-                <el-input-number v-model="form.robotCount" :min="0" :max="50" controls-position="right" />
+              <el-form-item label="机器人托">
+                <div class="robot-default-tip">
+                  <ul>
+                    <li>6 点–10 点：3–8 人</li>
+                    <li>10 点–12 点：5–12 人</li>
+                    <li>12 点–18 点：25–35 人</li>
+                    <li>18 点–24 点：40–50 人</li>
+                    <li>0 点–6 点：35–45 人</li>
+                  </ul>
+                </div>
               </el-form-item>
             </template>
 
-            <template v-else>
+            <template v-else-if="createTab === 'billing'">
               <div class="win-pane-title">月费账单</div>
-              <el-alert
-                v-if="form.bookMode === 'CREDIT'"
-                type="info"
-                :closable="false"
-                show-icon
-                class="create-credit-fee-tip"
-                title="信用盘月费不自动扣余额：距下次月费≤7天则本期结整笔，大于7天则下期再结。"
-              />
               <div class="form-row2">
                 <el-form-item label="月费金额">
-                  <el-input-number
-                    v-model="form.monthlyFee"
-                    :min="0"
-                    :max="10000000"
-                    :precision="0"
-                    :step="1"
-                    controls-position="right"
-                    class="field-control"
-                  />
+                  <div class="row-inline">
+                    <el-input-number
+                      v-model="form.monthlyFee"
+                      :min="roomFeeFloor"
+                      :max="10000000"
+                      :precision="0"
+                      :step="1"
+                      controls-position="right"
+                      class="field-control"
+                    />
+                    <span v-if="roomFeeFloor > 0" class="field-unit">最低 {{ roomFeeFloor }}</span>
+                  </div>
                 </el-form-item>
-                <el-form-item :label="form.bookMode === 'CREDIT' ? '下次月费日' : '起始日期'">
+                <el-form-item label="首次月费日">
                   <el-date-picker
                     v-model="form.billStartDate"
                     type="date"
-                    :placeholder="form.bookMode === 'CREDIT' ? '结账判断用' : '选择日期'"
+                    placeholder="默认建房当天"
                     value-format="YYYY-MM-DD"
                     class="field-control"
                     @change="onBillStartChange"
                   />
                 </el-form-item>
               </div>
+            </template>
+
+            <template v-else>
+              <div class="win-pane-title">确认创建</div>
+              <el-alert type="warning" :closable="false" show-icon class="mb12">
+                <template #title>建好之后这几件事就已经发生了，不能撤回</template>
+                <ul class="create-warn-list">
+                  <li>会开出一个<b>真的代理账号</b>，密码只在建完那一次显示</li>
+                  <li v-if="form.bookMode === 'CREDIT' && hungToGeneral">
+                    会从总代「{{ pickedGeneralName }}」的剩余信用里
+                    <b>划走 {{ form.creditLimit }}</b> 作为本房期初额度（额度不够会变成负数，即他超发）
+                  </li>
+                  <li v-else-if="form.bookMode === 'CREDIT'">
+                    平台直接给本房代理 <b>{{ form.creditLimit }}</b> 期初信用额度，不扣任何人
+                  </li>
+                  <li v-if="hungToGeneral">
+                    平台从<b>今天起</b>按每间房单价向总代收月费
+                  </li>
+                  <li>房间号建好后不可更改</li>
+                </ul>
+              </el-alert>
+
+              <el-descriptions :column="2" border size="small" class="create-review">
+                <el-descriptions-item label="进房码">{{ form.roomNo || '—' }}</el-descriptions-item>
+                <el-descriptions-item label="房间名称">{{ form.name || '—' }}</el-descriptions-item>
+                <el-descriptions-item label="挂靠">
+                  <el-tag v-if="hungToGeneral" size="small" type="warning">
+                    总代 · {{ pickedGeneralName }}
+                  </el-tag>
+                  <el-tag v-else size="small">直挂平台</el-tag>
+                </el-descriptions-item>
+                <el-descriptions-item label="盘口">
+                  {{ form.bookMode === 'CREDIT' ? 'B · 信用盘' : 'A · 现金盘' }}
+                </el-descriptions-item>
+                <el-descriptions-item label="代理流水">{{ form.agentFlowPercent }}%</el-descriptions-item>
+                <el-descriptions-item label="代理占成">{{ form.agentSharePercent }}%</el-descriptions-item>
+                <el-descriptions-item v-if="form.bookMode === 'CREDIT'" label="合同额度">
+                  {{ form.creditLimit }}
+                </el-descriptions-item>
+                <el-descriptions-item label="结账">
+                  {{ settleCycleText }} · 跟{{ hungToGeneral ? '总代' : '平台' }}结
+                </el-descriptions-item>
+                <el-descriptions-item label="代理账号">
+                  <span class="mono">{{ form.agentUsername || '—' }}</span>
+                </el-descriptions-item>
+                <el-descriptions-item label="月费">
+                  {{ form.monthlyFee > 0 ? `${form.monthlyFee} / 月` : '不收' }}
+                  <span class="muted">（{{ hungToGeneral ? '交总代' : '交平台' }}）</span>
+                </el-descriptions-item>
+                <el-descriptions-item label="开通游戏">
+                  {{ form.enabledGames.length }} / {{ GAME_OPTIONS.length }} 款
+                </el-descriptions-item>
+                <el-descriptions-item label="可见总监">{{ visibilityText }}</el-descriptions-item>
+              </el-descriptions>
             </template>
           </el-form>
         </div>
@@ -453,8 +596,8 @@
         <el-button @click="showCreate = false">取消</el-button>
         <span class="win-footer-grow" />
         <el-button v-if="createTab !== 'basic'" @click="prevCreateTab">上一步</el-button>
-        <el-button v-if="createTab !== 'billing'" type="primary" @click="nextCreateTab">下一步</el-button>
-        <el-button v-else type="primary" :loading="saving" @click="onCreate">创建房间</el-button>
+        <el-button v-if="createTab !== 'review'" type="primary" @click="nextCreateTab">下一步</el-button>
+        <el-button v-else type="primary" :loading="saving" @click="onCreate">确认创建</el-button>
       </template>
     </DeskDialog>
 
@@ -488,7 +631,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { validateOpsPassword } from '@gamebox/shared'
+import { formatMoney, isGeneralSide, OPS_PASSWORD_HINT, validateOpsPassword } from '@gamebox/shared'
 import PageHeader from '@/components/PageHeader.vue'
 import DeskDialog from '@/components/DeskDialog.vue'
 import { consoleApi, type ConsoleRoom, type WalletMe } from '@/api/console'
@@ -505,13 +648,17 @@ type StaffOpt = {
   role: string
   flowRate?: number
   shareRate?: number
+  downlineFlowRate?: number
   bookMode?: string
+  /** 平台向该总代收的每间房月费单价；也是名下房间月费的下限 */
+  roomMonthlyFee?: number
 }
-type CreateTabKey = 'basic' | 'book' | 'agent' | 'games' | 'billing'
+type CreateTabKey = 'basic' | 'book' | 'agent' | 'games' | 'billing' | 'review'
 type AlertTag = { text: string; type: 'danger' | 'warning' | 'info' }
 
 const store = useAdminStore()
 const router = useRouter()
+const roomsTableRef = ref<{ toggleRowExpansion: (row: unknown) => void } | null>(null)
 const list = ref<ConsoleRoom[]>([])
 const staffList = ref<StaffOpt[]>([])
 /** 总代登录时的自身档案：费率决定建房表单上限，额度用于提示 */
@@ -544,6 +691,8 @@ const createTabs = [
   { key: 'agent' as const, idx: '3', title: '绑定代理' },
   { key: 'games' as const, idx: '4', title: '游戏机器人' },
   { key: 'billing' as const, idx: '5', title: '月费账单' },
+  /* 建房会开真账号、扣总代额度，都是不可撤回的，最后一步先摆出来对一遍 */
+  { key: 'review' as const, idx: '6', title: '确认创建' },
 ]
 const createTabOrder = createTabs.map((t) => t.key)
 const createTabIndex = computed(() => createTabOrder.indexOf(createTab.value))
@@ -557,7 +706,6 @@ const form = reactive({
   ownerUserIds: [] as string[],
   generalAgentUserId: '' as string,
   enabledGames: [...allGameCodes] as string[],
-  robotCount: 10,
   status: 'OPEN',
   monthlyFee: 0,
   billingDay: 1,
@@ -576,25 +724,44 @@ const isAdminOrBranch = computed(() => {
   const r = store.profile?.role
   return r === 'ADMIN' || r === 'BRANCH'
 })
-const isGeneralUser = computed(() => store.profile?.role === 'GENERAL')
+const isGeneralUser = computed(() => isGeneralSide(store.profile?.role, store.profile?.parentRole))
 const isAgentSide = computed(() => {
   const r = store.profile?.role
-  return r === 'AGENT' || r === 'PROXY'
+  if (r === 'AGENT') return true
+  if (r === 'PROXY' && !isGeneralUser.value) return list.value.length <= 1
+  return false
 })
 const canCreate = computed(() => isAdminOrBranch.value || isGeneralUser.value)
+const flowTotals = computed(() => {
+  let betFlow = 0
+  let flown = 0
+  let closed = 0
+  for (const r of list.value) {
+    const s = r.todayStats
+    if (!s) continue
+    betFlow += Number(s.betFlow || 0)
+    flown += Number(s.flownBetFlow || 0)
+    closed += Number(s.closedBetFlow || 0)
+  }
+  return { betFlow, flown, closed }
+})
 
 const canDelete = computed(() => isAdmin.value)
 const canStatus = computed(() => {
   const r = store.profile?.role
-  return r === 'ADMIN' || r === 'BRANCH' || r === 'GENERAL' || r === 'AGENT'
+  return r === 'ADMIN' || r === 'BRANCH' || isGeneralUser.value || r === 'AGENT'
 })
 const branchList = computed(() => staffList.value.filter((a) => a.role === 'BRANCH'))
 const generalList = computed(() => staffList.value.filter((a) => a.role === 'GENERAL'))
 const generalOptions = computed(() => {
-  const map = new Map<string, { userId: string; nickname: string }>()
+  const map = new Map<string, { userId: string; nickname: string; username?: string }>()
   for (const r of list.value) {
     if (r.general?.userId) {
-      map.set(r.general.userId, { userId: r.general.userId, nickname: r.general.nickname })
+      map.set(r.general.userId, {
+        userId: r.general.userId,
+        nickname: r.general.nickname,
+        username: r.general.username,
+      })
     }
   }
   return [...map.values()].sort((a, b) => a.nickname.localeCompare(b.nickname, 'zh-CN'))
@@ -607,6 +774,12 @@ function pctNum(n?: number | null) {
   if (!Number.isFinite(v)) return 0
   return Number(((v > 1 ? v : v * 100)).toFixed(1))
 }
+const rebateBounds = reactive({
+  agentMin: 1.8,
+  agentMax: 7,
+  agentDefault: 5,
+})
+const agentFlowMin = computed(() => rebateBounds.agentMin)
 /* 总代自己建房时，上限是他自己的成数与整包；后端也按这两个值卡 */
 const agentShareMax = computed(() => {
   if (isGeneralUser.value) {
@@ -617,12 +790,51 @@ const agentShareMax = computed(() => {
   return Math.min(70, Math.round(pctNum(g.shareRate) || 50))
 })
 const agentFlowMax = computed(() => {
+  const platMax = rebateBounds.agentMax
   if (isGeneralUser.value) {
-    return Math.min(10, pctNum(myGeneral.value?.flowRate) || 7)
+    return Math.min(platMax, pctNum(myGeneral.value?.flowRate) || platMax)
   }
   const g = pickedGeneral.value
-  if (!g) return 5
-  return Math.min(10, pctNum(g.flowRate) || 7)
+  if (!g) return platMax
+  return Math.min(platMax, pctNum(g.flowRate) || platMax)
+})
+/**
+ * 挂总代的房，月费下限 = 平台给该总代定的每间房单价。
+ * 低于它总代每月要倒贴差额，所以后端直接拒；直挂房没有这层，下限是 0。
+ */
+const roomFeeFloor = computed(() => {
+  const g = isGeneralUser.value ? myGeneral.value : pickedGeneral.value
+  return Math.max(0, Math.floor(Number(g?.roomMonthlyFee ?? 0) || 0))
+})
+
+/* ── 确认页用的几个说明文案 ── */
+const hungToGeneral = computed(() => isGeneralUser.value || !!form.generalAgentUserId)
+const pickedGeneralName = computed(() => {
+  if (isGeneralUser.value) return store.profile?.nickname || '本人'
+  return pickedGeneral.value?.nickname || '—'
+})
+const settleCycleText = computed(() => {
+  const map: Record<string, string> = {
+    WEEKLY_MON: '每周一',
+    MONTHLY_1: '每月 1 号',
+    MONTHLY_15_30: '每月 15 号与月末',
+  }
+  return map[form.settleCycle] || form.settleCycle
+})
+/** 可见范围：挂总代跟着总代那份名单，直挂房才看这里勾了谁 */
+const visibilityText = computed(() => {
+  if (hungToGeneral.value) return '跟随该总代的可见总监名单'
+  if (!isAdmin.value) return '全部总监可见'
+  const picked = form.ownerUserIds.length
+  if (!picked) return '无总监可见（仅管理直管）'
+  if (picked === branchList.value.length) return `全部 ${picked} 位总监可见`
+  return `${picked} 位总监可见`
+})
+/** 流水/占成上限的来路，写在输入框旁边，别让人猜为什么是这个数 */
+const capSourceText = computed(() => {
+  const g = isGeneralUser.value ? myGeneral.value : pickedGeneral.value
+  if (!g) return `平台上限 ${agentFlowMax.value}% / 50%`
+  return `不超过总代（整包 ${pctNum(g.flowRate)}% · 成数 ${pctNum(g.shareRate)}%）`
 })
 
 const filteredList = computed(() => {
@@ -653,10 +865,11 @@ const filteredList = computed(() => {
 })
 
 /*
- * 平台侧按总代分组成两级：父节点是总代，展开是他名下的房。
- * 代理侧只有自己那几间，分组反而多一层，保持平铺。
+ * 管理/总监：按总代分组成两级，父节点是总代，展开是名下房间。
+ * 总代登录只看自己名下房间，不再套一层总代父项。
+ * 房间代理侧只有自己那几间，分组反而多一层，保持平铺。
  */
-const grouped = computed(() => !isAgentSide.value && !isGeneralUser.value)
+const grouped = computed(() => isAdminOrBranch.value)
 
 type GroupRow = {
   _key: string
@@ -666,32 +879,67 @@ type GroupRow = {
   bookMode?: string
   shareRate?: number
   openCount: number
+  stats: { betFlow: number; housePnl: number; memberCount: number; activePlayers: number }
   children: (ConsoleRoom & { _key: string })[]
+}
+
+function aggregateRoomStats(children: ConsoleRoom[]) {
+  let betFlow = 0
+  let housePnl = 0
+  let memberCount = 0
+  let activePlayers = 0
+  for (const r of children) {
+    memberCount += Number(r.memberCount || 0)
+    const s = r.todayStats
+    if (!s) continue
+    betFlow += Number(s.betFlow || 0)
+    housePnl += Number(s.housePnl || 0)
+    activePlayers += Number(s.activePlayers || 0)
+  }
+  return { betFlow, housePnl, memberCount, activePlayers }
+}
+
+function rowStats(row: GroupRow | ConsoleRoom) {
+  if ((row as GroupRow)._group) return (row as GroupRow).stats
+  const s = (row as ConsoleRoom).todayStats
+  return {
+    betFlow: Number(s?.betFlow || 0),
+    housePnl: Number(s?.housePnl || 0),
+    memberCount: Number((row as ConsoleRoom).memberCount || 0),
+    activePlayers: Number(s?.activePlayers || 0),
+  }
 }
 
 const displayList = computed((): Array<GroupRow | (ConsoleRoom & { _key: string })> => {
   const rows = filteredList.value.map((r) => ({ ...r, _key: `room:${r.id}` }))
   if (!grouped.value) return rows
 
+  const selfId = isGeneralUser.value
+    ? (store.profile?.role === 'GENERAL' ? store.profile.id : store.profile?.parentId || '')
+    : ''
   const groups = new Map<string, GroupRow>()
   for (const r of rows) {
-    const key = r.general?.userId || '__none__'
+    const key = r.general?.userId || (selfId || '__none__')
     let g = groups.get(key)
     if (!g) {
       g = {
         _key: `general:${key}`,
         _group: true,
-        userId: r.general?.userId ?? null,
-        nickname: r.general?.nickname || '直挂平台（未挂总代）',
-        bookMode: generalBookOf(r.general?.userId),
+        userId: r.general?.userId ?? (selfId || null),
+        nickname: r.general?.nickname || store.profile?.nickname || '直挂平台（未挂总代）',
+        bookMode: generalBookOf(r.general?.userId || selfId),
         shareRate: r.general?.shareRate,
         openCount: 0,
+        stats: { betFlow: 0, housePnl: 0, memberCount: 0, activePlayers: 0 },
         children: [],
       }
       groups.set(key, g)
     }
     g.children.push(r)
     if (r.status === 'OPEN') g.openCount += 1
+  }
+  for (const g of groups.values()) {
+    g.stats = aggregateRoomStats(g.children)
   }
   /* 未挂总代的那一组固定排最后 */
   return [...groups.values()].sort((a, b) => {
@@ -703,20 +951,49 @@ const displayList = computed((): Array<GroupRow | (ConsoleRoom & { _key: string 
 
 function generalBookOf(userId?: string | null) {
   if (!userId) return undefined
-  return staffList.value.find((s) => s.id === userId)?.bookMode
+  const fromStaff = staffList.value.find((s) => s.id === userId)?.bookMode
+  if (fromStaff) return fromStaff
+  if (isGeneralUser.value) return myGeneral.value?.bookMode
+  return undefined
 }
 
-function onRowClick(row: GroupRow | ConsoleRoom) {
+function rowClassName({ row }: { row: GroupRow | ConsoleRoom }) {
   if ((row as GroupRow)._group) {
-    const uid = (row as GroupRow).userId
-    if (uid) goGeneral(uid)
-    return
+    return (row as GroupRow).userId ? 'is-general is-fold' : 'is-group is-fold'
   }
-  goDetail((row as ConsoleRoom).id)
+  return 'is-child'
 }
 
-function goGeneral(userId: string) {
-  router.push({ name: 'agent-detail', params: { id: userId } })
+function onGroupRowClick(row: GroupRow | ConsoleRoom, _col: unknown, ev: Event) {
+  if ((ev.target as HTMLElement | null)?.closest?.('.el-table__expand-icon, .ops, .copy-chip, button, a')) return
+  if (!(row as GroupRow)._group) return
+  roomsTableRef.value?.toggleRowExpansion(row)
+}
+
+function rowTitle(row: GroupRow | ConsoleRoom) {
+  if ((row as GroupRow)._group) {
+    const g = row as GroupRow
+    return g.userId ? `总代 · ${g.nickname}` : `直挂平台（${g.children.length}）`
+  }
+  return (row as ConsoleRoom).name
+}
+
+function rowChain(row: GroupRow | ConsoleRoom) {
+  if ((row as GroupRow)._group) {
+    const g = row as GroupRow
+    if (!g.userId) return '平台直对代理，不经总代'
+    const book = g.bookMode === 'CREDIT' ? '信用盘' : '现金盘'
+    return `平台 → 总代${g.nickname} · ${book}`
+  }
+  const r = row as ConsoleRoom
+  const agent = r.agent?.nickname ? `代理${r.agent.nickname}` : '未绑定代理'
+  return `${r.roomNo} · ${agent}`
+}
+
+function rowCountText(row: GroupRow | ConsoleRoom) {
+  if (!(row as GroupRow)._group) return '—'
+  const g = row as GroupRow
+  return `房间 ${g.children.length} · 营业 ${g.openCount}`
 }
 
 const roomStats = computed(() => {
@@ -735,7 +1012,13 @@ const roomStats = computed(() => {
 })
 
 function fmtMoney(n?: number) {
-  return Number(n || 0).toLocaleString('zh-CN', { maximumFractionDigits: 2 })
+  return formatMoney(n ?? 0)
+}
+function pnlColor(n?: number | null) {
+  const v = Number(n || 0)
+  if (v > 0) return '#16a34a'
+  if (v < 0) return '#ef4444'
+  return 'var(--el-text-color-regular)'
 }
 function sharePct(row: ConsoleRoom) {
   return Math.round(Number(row.agentShareRate ?? 0) * 100)
@@ -773,7 +1056,7 @@ function roomAlerts(row: ConsoleRoom): AlertTag[] {
   const a = row.agent
   if (row.bookMode === 'CREDIT') {
     const limit = Number(row.creditLimit || 0)
-    if (limit <= 0) tags.push({ text: '无信用额', type: 'danger' })
+    if (limit <= 0) tags.push({ text: '无合同额度', type: 'danger' })
   }
   if (a) {
     const bal = Number(a.balance || 0)
@@ -808,12 +1091,11 @@ function suggestAgentUsername() {
 function pad2(n: number) {
   return String(n).padStart(2, '0')
 }
+/* 月费锚在建房那天：第一次结账就收第一笔，之后每满一个自然月收一笔 */
 function defaultBillStart() {
   const d = new Date()
-  d.setMonth(d.getMonth() + 1)
-  const day = Math.min(28, d.getDate())
-  form.billingDay = day
-  form.billStartDate = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(day)}`
+  form.billingDay = Math.min(28, d.getDate())
+  form.billStartDate = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
 }
 function onBillStartChange(v: string | null) {
   if (!v) return
@@ -828,8 +1110,8 @@ function validateCreateStep(key: CreateTabKey): string | null {
     return null
   }
   if (key === 'book') {
-    if (form.agentFlowPercent < 1.8 || form.agentFlowPercent > agentFlowMax.value + 1e-9) {
-      return `代理流水须在 1.8%～${agentFlowMax.value}%`
+    if (form.agentFlowPercent < agentFlowMin.value - 1e-9 || form.agentFlowPercent > agentFlowMax.value + 1e-9) {
+      return `代理流水须在 ${agentFlowMin.value}%～${agentFlowMax.value}%`
     }
     if (form.agentSharePercent < 0 || form.agentSharePercent > agentShareMax.value) {
       return `代理占成须在 0%～${agentShareMax.value}%`
@@ -850,15 +1132,13 @@ function validateCreateStep(key: CreateTabKey): string | null {
   }
   if (key === 'games') {
     if (!form.enabledGames.length) return '请至少开通一个游戏'
-    if (form.robotCount < 0 || form.robotCount > 50) return '机器人人数须在 0～50'
     return null
   }
   if (key === 'billing') {
     if (form.monthlyFee < 0) return '月费不能为负数'
-    if (form.monthlyFee > 0 && !form.billStartDate) {
-      return form.bookMode === 'CREDIT'
-        ? '请选择下次月费日（结账判断用）'
-        : '收费时请选择月费起始日期'
+    /* 挂总代的房：月费低于平台单价的话总代每月倒贴，后端也会拒 */
+    if (roomFeeFloor.value > 0 && form.monthlyFee < roomFeeFloor.value) {
+      return `该总代名下房间月费不得低于平台单价 ${roomFeeFloor.value}`
     }
     return null
   }
@@ -879,6 +1159,7 @@ function nextCreateTab() {
   if (i < createTabOrder.length - 1) {
     createMaxStep.value = Math.max(createMaxStep.value, i + 1)
     createTab.value = createTabOrder[i + 1]
+    if (createTab.value === 'billing') applyRoomFeeFloor()
   }
 }
 
@@ -886,7 +1167,9 @@ async function load() {
   loading.value = true
   redirecting.value = false
   try {
-    list.value = await consoleApi.rooms({ includeClosed: includeClosed.value })
+    list.value = await consoleApi.rooms({
+      includeClosed: includeClosed.value && isAdminOrBranch.value,
+    })
     if (isAgentSide.value && list.value.length === 1) {
       redirecting.value = true
       await router.replace({ name: 'room-detail', params: { id: list.value[0].id } })
@@ -907,14 +1190,35 @@ async function loadMyGeneral() {
     myGeneral.value = null
   }
 }
+async function loadRebateBounds() {
+  try {
+    const p = await consoleApi.rebatePolicy()
+    const plat = p.chain?.platform
+    rebateBounds.agentMin = Number((((plat?.agentMin ?? p.agentMinRate ?? 0.018) * 100)).toFixed(1))
+    rebateBounds.agentMax = Number((((plat?.agentMax ?? p.agentMaxRate ?? 0.07) * 100)).toFixed(1))
+    rebateBounds.agentDefault = Number((((plat?.agentDefault ?? p.agentDefaultRate ?? 0.05) * 100)).toFixed(1))
+  } catch {
+    /* keep defaults */
+  }
+}
+function defaultAgentFlowPercent() {
+  if (isGeneralUser.value) {
+    const mine = pctNum(myGeneral.value?.downlineFlowRate)
+    if (mine > 0) return Math.min(mine, agentFlowMax.value)
+  }
+  const g = pickedGeneral.value
+  const fromGeneral = pctNum(g?.downlineFlowRate)
+  if (fromGeneral > 0) return Math.min(fromGeneral, agentFlowMax.value)
+  return Math.min(rebateBounds.agentDefault, agentFlowMax.value)
+}
 async function loadStaff() {
   if (!isAdminOrBranch.value) return
   try {
     const [branches, generals] = await Promise.all([
       isAdmin.value
-        ? consoleApi.agents({ page: 1, pageSize: 200, role: 'BRANCH', boundOnly: false })
+        ? consoleApi.agentsAll({ role: 'BRANCH', boundOnly: false })
         : Promise.resolve({ list: [] as { id: string; uid: string; nickname: string; role: string; flowRate?: number; shareRate?: number }[] }),
-      consoleApi.agents({ page: 1, pageSize: 200, role: 'GENERAL', boundOnly: false }),
+      consoleApi.agentsAll({ role: 'GENERAL', boundOnly: false }),
     ])
     staffList.value = [
       ...branches.list.map((a) => ({
@@ -924,6 +1228,8 @@ async function loadStaff() {
       ...generals.list.map((a) => ({
         id: a.id, uid: a.uid, nickname: a.nickname, role: a.role,
         flowRate: a.flowRate, shareRate: a.shareRate, bookMode: a.bookMode,
+        downlineFlowRate: a.downlineFlowRate,
+        roomMonthlyFee: a.roomMonthlyFee,
       })),
     ]
   } catch {
@@ -931,6 +1237,7 @@ async function loadStaff() {
   }
 }
 function goDetail(id: string) { router.push({ name: 'room-detail', params: { id } }) }
+function goGeneral(userId: string) { router.push({ name: 'general-detail', params: { id: userId } }) }
 
 const createIconInput = ref<HTMLInputElement | null>(null)
 function pickCreateIcon() {
@@ -968,9 +1275,14 @@ async function onCreateIconPicked(e: Event) {
   }
 }
 
+function applyRoomFeeFloor() {
+  if (form.monthlyFee < roomFeeFloor.value) form.monthlyFee = roomFeeFloor.value
+}
+
 function onGeneralPicked() {
   if (form.agentSharePercent > agentShareMax.value) form.agentSharePercent = agentShareMax.value
-  if (form.agentFlowPercent > agentFlowMax.value) form.agentFlowPercent = agentFlowMax.value
+  form.agentFlowPercent = defaultAgentFlowPercent()
+  applyRoomFeeFloor()
 }
 
 async function openCreate() {
@@ -978,11 +1290,9 @@ async function openCreate() {
   form.agentNickname = ''
   form.generalAgentUserId = ''
   form.enabledGames = [...allGameCodes]
-  form.robotCount = 10
   form.status = 'OPEN'
   form.monthlyFee = 0
   form.bookMode = 'CASH'
-  form.agentFlowPercent = isGeneralUser.value ? 5 : 5
   form.agentSharePercent = 50
   form.settleCycle = 'WEEKLY_MON'
   form.creditLimit = 100000
@@ -993,16 +1303,19 @@ async function openCreate() {
   regenUsername()
   regenPassword()
   showCreate.value = true
+  await loadRebateBounds()
   if (isAdminOrBranch.value) {
     await loadStaff()
-    form.ownerUserIds = []
+    form.ownerUserIds = branchList.value.map((a) => a.id)
+    form.agentFlowPercent = defaultAgentFlowPercent()
     onGeneralPicked()
   } else {
     form.ownerUserIds = []
     /* 总代：上限跟着自己的费率，开窗前先取一次，免得停在默认值 */
     await loadMyGeneral()
-    form.agentFlowPercent = Math.min(form.agentFlowPercent, agentFlowMax.value)
+    form.agentFlowPercent = defaultAgentFlowPercent()
     form.agentSharePercent = Math.min(form.agentSharePercent, agentShareMax.value)
+    applyRoomFeeFloor()
   }
 }
 
@@ -1033,7 +1346,6 @@ async function onCreate() {
         ? undefined
         : (form.generalAgentUserId || undefined),
       enabledGames: form.enabledGames,
-      robotCount: form.robotCount,
       status: form.status,
       monthlyFee: form.monthlyFee,
       billingDay: form.billingDay,
@@ -1152,6 +1464,39 @@ async function onDelete(row: ConsoleRoom) {
   }
 }
 
+async function onPurge(row: ConsoleRoom) {
+  let pwd: string
+  try {
+    const { value } = await ElMessageBox.prompt(
+      `彻底删除「${row.name}」？空房和空壳代理会从库里抹掉，不可恢复。\n有过注单或账本的房间不能真删。\n请输入管理员密码确认。`,
+      '彻底删除',
+      {
+        type: 'warning',
+        confirmButtonText: '确认抹掉',
+        cancelButtonText: '取消',
+        inputType: 'password',
+        inputPlaceholder: '管理员登录密码',
+        inputValidator: (v: string) => (v ? true : '请输入管理员密码'),
+      },
+    )
+    pwd = value
+  } catch {
+    return
+  }
+  try {
+    const res = await consoleApi.purgeRoom(row.id, pwd)
+    ElMessage.success(res.message || '已彻底删除')
+    await load()
+  } catch (e: unknown) {
+    ElMessage.error(
+      (e as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message
+      || (e as Error).message
+      || '彻底删除失败',
+    )
+    await load()
+  }
+}
+
 onMounted(async () => {
   await load()
   await Promise.all([loadStaff(), loadMyGeneral()])
@@ -1218,10 +1563,60 @@ onMounted(async () => {
 }
 .panel-body :deep(.el-table th.el-table__cell) { color: #475569; font-weight: 600; }
 .rooms-table { width: 100%; }
-.rooms-table :deep(.el-table__cell) { padding: 14px 16px; }
-.rooms-table :deep(.el-table__row) { cursor: pointer; }
-.group-cell { display: flex; align-items: center; gap: 8px; }
-.group-name { font-weight: 700; }
+.rooms-table :deep(.el-table__cell) { padding: 12px 14px; }
+.rooms-table :deep(.el-table__row) { cursor: default; }
+.rooms-table.chain-table :deep(.is-fold) { cursor: pointer; }
+.rooms-table.chain-table :deep(.el-table__body .el-table__row > td) {
+  border-bottom: 8px solid #e8edf3 !important;
+}
+.rooms-table.chain-table :deep(.el-table__row--level-1 > td:first-child) {
+  border-left: 22px solid #e8edf3 !important;
+}
+.rooms-table.chain-table :deep(.el-table__row--level-2 > td:first-child) {
+  border-left: 44px solid #e8edf3 !important;
+}
+.rooms-table.chain-table :deep(.is-group td) {
+  background: #f8fafc !important;
+}
+.rooms-table.chain-table :deep(.is-general td) {
+  background: #e8eef6 !important;
+  font-weight: 650;
+}
+.rooms-table.chain-table :deep(.is-child td) {
+  background: #f0f7ff !important;
+}
+.rooms-table.chain-table :deep(.is-child td:first-child) {
+  box-shadow: inset 3px 0 0 #38bdf8;
+}
+.rooms-table.chain-table :deep(.is-child .cell-name) {
+  font-size: 13px;
+  font-weight: 600;
+}
+.rooms-table.chain-table :deep(.is-child:hover td) {
+  background: #e0f2fe !important;
+}
+.cell-name {
+  font-size: 14px;
+  font-weight: 650;
+  color: #0f172a;
+  line-height: 1.35;
+}
+.cell-meta {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #64748b;
+  line-height: 1.35;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.count-line {
+  font-size: 13px;
+  color: #334155;
+  font-variant-numeric: tabular-nums;
+}
+.stat-val { font-variant-numeric: tabular-nums; }
+.group-stat { font-weight: 700; }
 .agent-empty {
   margin: 48px 0;
   text-align: center;
@@ -1266,6 +1661,15 @@ onMounted(async () => {
 .fee { font-size: 13px; color: #0f172a; }
 .warn-text { color: #f59e0b; font-weight: 600; font-size: 13px; }
 .muted { color: #94a3b8; }
+.robot-default-tip {
+  font-size: 13px;
+  color: #475569;
+  line-height: 1.55;
+}
+.robot-default-tip ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
 .ops {
   display: inline-flex;
   align-items: center;
@@ -1353,5 +1757,36 @@ onMounted(async () => {
   font-size: 12px;
   color: var(--el-text-color-secondary);
   line-height: 1.4;
+}
+
+/*
+ * 字段下方的口径说明。缩进对齐 label 宽度（92px + 12px 间距），
+ * 让它看着是挂在上面那一行下面，而不是另起一段无主的文字。
+ */
+.create-note {
+  margin: -6px 0 14px 104px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.6;
+}
+.create-note b {
+  color: var(--el-text-color-primary);
+  font-weight: 600;
+}
+.create-warn-list {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  line-height: 1.7;
+}
+.create-review {
+  margin-top: 4px;
+}
+.create-review :deep(.el-descriptions__label) {
+  width: 92px;
+  white-space: nowrap;
+}
+.mb12 { margin-bottom: 12px; }
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 </style>

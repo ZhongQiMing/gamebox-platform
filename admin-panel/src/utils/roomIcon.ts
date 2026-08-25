@@ -1,5 +1,5 @@
 /** 与玩家端一致的默认房间图路径（接口也可能直接返回这个） */
-export const DEFAULT_ROOM_ICON_PATH = '/images/rooms/default-room.png'
+export const DEFAULT_ROOM_ICON_PATH = '/images/rooms/default-room.webp'
 
 /**
  * 管理端展示用房间图标地址。

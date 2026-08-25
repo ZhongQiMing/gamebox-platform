@@ -3,7 +3,7 @@
     <div class="panel-toolbar">
       <el-input
         v-model="q"
-        placeholder="UID / 昵称 / 账号"
+        placeholder="搜登录账号 / 昵称 / UID"
         clearable
         size="small"
         class="filter-search"
@@ -27,6 +27,13 @@
           <template #default="{ row }: { row: any }">
             <div class="cell-block">
               <span class="mono">{{ row.uid }}</span>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="登录账号" min-width="140" class-name="col-block">
+          <template #default="{ row }: { row: any }">
+            <div class="cell-block">
+              <span class="mono">{{ row.username || '—' }}</span>
             </div>
           </template>
         </el-table-column>
@@ -427,7 +434,6 @@
 
     <!-- 挂靠下级：把某人挂到当前玩家名下 -->
     <DeskDialog v-model="hangDlg" title="挂靠下级" width="440px">
-      <p class="hang-tip">仅本房玩家可挂靠；挂靠按房间独立，跨房不返挂靠佣金。</p>
       <el-form label-position="top">
         <el-form-item label="推荐人（当前玩家）">
           <el-input :model-value="hangUnder?.uid || ''" disabled />
@@ -453,7 +459,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { PLAYER_DOWN_MIN, PLAYER_FUND_MAX, PLAYER_UP_MIN } from '@gamebox/shared'
+import { formatMoney, isGeneralSide, PLAYER_DOWN_MIN, PLAYER_FUND_MAX, PLAYER_UP_MIN } from '@gamebox/shared'
 import DeskDialog from '@/components/DeskDialog.vue'
 import {
   consoleApi,
@@ -478,10 +484,12 @@ const isCreditBook = computed(() => props.bookMode === 'CREDIT')
 const canWritePlayer = computed(() => store.profile?.role === 'AGENT')
 const canHang = computed(() => store.profile?.role === 'AGENT')
 const canFundPlayer = computed(() => store.profile?.role === 'AGENT')
-/** 仅管理 / 房主：重置密码并解冻 */
-const canResetPlayerPwd = computed(() =>
-  ['ADMIN', 'BRANCH'].includes(store.profile?.role || ''),
-)
+/** 管理/总监全部可见玩家；总代（含分身）仅名下房间 */
+const canResetPlayerPwd = computed(() => {
+  const r = store.profile?.role
+  if (r === 'ADMIN' || r === 'BRANCH') return true
+  return isGeneralSide(r, store.profile?.parentRole)
+})
 
 const q = ref(props.initialQ ?? '')
 
@@ -538,9 +546,10 @@ const rebateTarget = ref<{ id: string; nickname: string; uid?: string; username?
 const rebatePct = ref(1.8)
 const rebateTotal = ref(0.05)
 const rebateMinRate = ref(0.018)
+const rebateMaxRate = ref(0.05)
 
 const rebateMinPct = computed(() => Number((rebateMinRate.value * 100).toFixed(2)))
-const rebateMaxPct = computed(() => Number(((rebateTotal.value / 2) * 100).toFixed(2)))
+const rebateMaxPct = computed(() => Number((rebateMaxRate.value * 100).toFixed(2)))
 const agentSharePct = computed(() => {
   const t = Number((rebateTotal.value * 100).toFixed(2))
   const p = Number(rebatePct.value || 0)
@@ -557,14 +566,14 @@ const agentBarWidth = computed(() => {
   return `${Math.min(100, (agentSharePct.value / t) * 100)}%`
 })
 const examplePlayer = computed(() =>
-  (10000 * Number(rebatePct.value || 0) / 100).toLocaleString('zh-CN', { maximumFractionDigits: 2 }),
+  formatMoney(10000 * Number(rebatePct.value || 0) / 100),
 )
 const exampleAgent = computed(() =>
-  (10000 * agentSharePct.value / 100).toLocaleString('zh-CN', { maximumFractionDigits: 2 }),
+  formatMoney(10000 * agentSharePct.value / 100),
 )
 
 function fmt(n: number) {
-  return Number(n || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  return formatMoney(n)
 }
 function pctText(rate: number) {
   return Number((rate * 100).toFixed(2))
@@ -586,6 +595,10 @@ async function load() {
     })
     list.value = res.list
     total.value = res.total
+  } catch (e: unknown) {
+    list.value = []
+    total.value = 0
+    ElMessage.error((e as Error)?.message || '加载玩家失败')
   } finally {
     loading.value = false
   }
@@ -684,22 +697,48 @@ function statusLabel(status?: string): string {
   return '停用'
 }
 
-async function toggleStatus(row: { id: string; status: string }) {
+/**
+ * 停用会把玩家直接踢下线，跟改昵称不是一个量级，所以要二次确认；
+ * statusBusy 防连点——菜单项没有 loading 态，重复请求会连着刷两次列表。
+ */
+const statusBusy = ref(false)
+
+async function toggleStatus(row: { id: string; status: string; nickname?: string }) {
   if (row.status === 'CLOSED') {
     ElMessage.warning('该账号已由玩家注销，不能再改状态')
     return
   }
+  if (statusBusy.value) return
   const next = row.status === 'ACTIVE' ? 'DISABLED' : 'ACTIVE'
-  await consoleApi.setPlayerStatus(row.id, next)
-  ElMessage.success('已更新')
-  await load()
+  const who = row.nickname ? `「${row.nickname}」` : '该玩家'
+  try {
+    await ElMessageBox.confirm(
+      next === 'DISABLED'
+        ? `停用后${who}将无法登录，已在游戏中的会被踢下线。确认停用？`
+        : `确认恢复${who}的登录权限？`,
+      next === 'DISABLED' ? '停用玩家' : '启用玩家',
+      { type: 'warning', confirmButtonText: '确认', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
+  statusBusy.value = true
+  try {
+    await consoleApi.setPlayerStatus(row.id, next)
+    ElMessage.success('已更新')
+    await load()
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '操作失败')
+  } finally {
+    statusBusy.value = false
+  }
 }
 
 async function onResetPlayerPwd(row: { id: string; nickname: string; username: string; loginLocked?: boolean }) {
   try {
     await ElMessageBox.confirm(
       row.loginLocked
-        ? `玩家「${row.nickname}」已冻结。重置密码后将解冻并可重新登录，旧登录失效（仅房主/管理员可解冻）。`
+        ? `玩家「${row.nickname}」已冻结。重置密码后将解冻并可重新登录，旧登录失效。`
         : `重置玩家「${row.nickname}」密码？旧登录将失效；若曾冻结也会一并解冻。`,
       '重置密码',
       { type: 'warning', confirmButtonText: '重置', cancelButtonText: '取消' },
@@ -746,10 +785,10 @@ async function toggleFly(row: {
     await ElMessageBox.confirm(
       nowOn
         ? (isCreditBook.value
-          ? `关闭「${row.nickname}」的飞盘后：输赢跟你（代理）结算；占成仍按信用账本在结账时轧差。`
+          ? `关闭「${row.nickname}」的飞盘后：输赢跟你（代理）结算，不再进平台占成。信用上分欠款每周不冲。`
           : `关闭「${row.nickname}」的飞盘后：只改玩家房间分，不动上盘额度，不再进平台盘口。`)
         : (isCreditBook.value
-          ? `开启「${row.nickname}」的飞盘后：输赢跟平台盘口结算；占成在结账时按信用账本轧差。`
+          ? `开启「${row.nickname}」的飞盘后：输赢跟平台结算，结账按飞盘上缴+已发佣金；未结上分每周不冲。`
           : `开启「${row.nickname}」的飞盘后：上盘额度充足时跟平台结算；额度耗尽则软关盘。`),
       nowOn ? '关闭飞盘' : '开启飞盘',
       {
@@ -788,14 +827,20 @@ async function editRebate(row: {
   rebateTarget.value = row
   const roomFlow = Number(props.agentFlowRate)
   try {
-    const policy = await consoleApi.rebatePolicy()
-    rebateMinRate.value = Number(policy.playerMinRate ?? 0.018)
+    const policy = await consoleApi.rebatePolicy(props.roomId)
+    rebateMinRate.value = Number(policy.chain?.effective.playerMin ?? policy.playerMinRate ?? 0.018)
+    rebateMaxRate.value = Number(policy.chain?.effective.playerMax ?? policy.playerMaxRate ?? 0.05)
     rebateTotal.value = Number.isFinite(roomFlow) && roomFlow > 0
       ? roomFlow
-      : Number(policy.agentDefaultRate ?? 0.05)
+      : Number(policy.chain?.effective.agentPkg ?? policy.agentDefaultRate ?? 0.05)
   } catch {
-    rebateTotal.value = Number.isFinite(roomFlow) && roomFlow > 0 ? roomFlow : 0.05
-    rebateMinRate.value = 0.018
+    /*
+     * 拿不到回水政策就不能猜上限：以前退回「代理整包」，
+     * 而整包（如 5%）通常高于玩家上限（如 3%），弹窗会放你填一个后端必拒的数。
+     * 与其让人填完再被打回，不如直接说清楚拉取失败。
+     */
+    ElMessage.error('回水政策拉取失败，暂时不能改玩家回水，请刷新后重试')
+    return
   }
   rebatePct.value = row.playerRebateRate != null
     ? Number((row.playerRebateRate * 100).toFixed(2))
@@ -809,6 +854,15 @@ async function submitRebate() {
   if (Number.isNaN(pct)) return ElMessage.warning('请填写玩家回水')
   if (pct < rebateMinPct.value || pct > rebateMaxPct.value) {
     return ElMessage.warning(`玩家回水须在 ${rebateMinPct.value}% ~ ${rebateMaxPct.value}%`)
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确认把「${rebateTarget.value.nickname || rebateTarget.value.uid}」的回水改成 ${pct}%？改完之后的流水按新比例算。`,
+      '修改玩家回水',
+      { type: 'warning', confirmButtonText: '保存', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
   }
   rebateSaving.value = true
   try {

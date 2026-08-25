@@ -1,27 +1,31 @@
 <template>
-  <div class="gs-page">
-    <PageHeader title="总代结算">
+  <div class="gs-page" :class="{ embedded }" v-loading="loading">
+    <PageHeader v-if="!embedded" title="总代结算">
       <template #extra>
-        <el-select
-          v-if="canPickGeneral"
-          v-model="generalUserId"
-          placeholder="选择总代"
-          filterable
-          style="width: 220px"
-          @change="reload"
-        >
-          <el-option
-            v-for="g in generalList"
-            :key="g.id"
-            :label="`${g.nickname}（${g.username}）`"
-            :value="g.id"
-          />
-        </el-select>
-        <el-radio-group v-model="period" @change="reload">
-          <el-radio-button label="last">上一期</el-radio-button>
-          <el-radio-button label="current">本期</el-radio-button>
-        </el-radio-group>
-        <el-button :loading="loading" @click="reload">刷新</el-button>
+        <div class="gs-tools">
+          <el-select
+            v-if="canPickGeneral && !props.forcedId"
+            v-model="generalUserId"
+            placeholder="选择总代"
+            filterable
+            style="width: 220px"
+            @change="reload"
+          >
+            <el-option
+              v-for="g in generalList"
+              :key="g.id"
+              :label="`${g.nickname}（${g.username}）`"
+              :value="g.id"
+            />
+          </el-select>
+          <el-radio-group v-model="period" @change="reload">
+            <el-radio-button label="current">本期</el-radio-button>
+            <el-radio-button label="last">上期</el-radio-button>
+            <el-radio-button label="early">提前结账</el-radio-button>
+          </el-radio-group>
+          <el-button :loading="loading" @click="reload">刷新</el-button>
+          <el-button type="primary" :loading="exporting" @click="onExport">导出工资条</el-button>
+        </div>
       </template>
     </PageHeader>
 
@@ -30,112 +34,219 @@
       type="info"
       :closable="false"
       show-icon
+      class="gs-alert"
       title="还没有总代，或该总代名下暂无房间"
     />
 
     <template v-if="stmt">
-      <!-- 第一行：总代跟平台的账 -->
-      <section class="gs-head" :class="payTone">
-        <div class="gs-head-main">
-          <div class="gs-who">
-            <span class="gs-name">{{ stmt.general.nickname }}</span>
-            <el-tag size="small" effect="plain" :type="isCredit ? 'warning' : 'success'">
-              {{ isCredit ? 'B · 信用盘' : 'A · 现金盘' }}
-            </el-tag>
-            <span class="gs-meta">占成 {{ pct(stmt.general.shareRate) }}% · {{ stmt.general.settleLabel }}结</span>
+      <div class="bill">
+        <div class="bill-meta">
+          <div class="bill-meta-main">
+            <span class="meta-item">
+              <em>账期状态</em>
+              <el-tag
+                size="small"
+                effect="plain"
+                :type="stmt.period.status === 'SETTLED' ? 'success' : 'warning'"
+              >
+                {{ stmt.period.status === 'SETTLED' ? '已结清' : '未结' }}
+              </el-tag>
+            </span>
+            <span class="meta-item">
+              <em>总代</em>{{ stmt.general.nickname }} / {{ stmt.general.username }}
+            </span>
+            <span class="meta-item">
+              <em>盘口</em>{{ isCredit ? 'B 信用盘' : 'A 现金盘' }}
+            </span>
+            <span class="meta-item">
+              <em>账单时间</em>{{ fmtYmd(stmt.period.periodStart) }} ～ {{ fmtYmd(stmt.period.periodEnd) }}
+            </span>
+            <span class="meta-item">
+              <em>房间数</em>{{ stmt.totals.roomCount }}
+            </span>
+            <span class="meta-item">
+              <em>占成</em>{{ pct(stmt.general.shareRate) }}%
+            </span>
           </div>
-          <div class="gs-range">
-            {{ fmtDay(stmt.period.periodStart) }} ～ {{ fmtDay(stmt.period.periodEnd) }}
-            <el-tag
-              size="small"
-              effect="plain"
-              :type="stmt.period.status === 'SETTLED' ? 'success' : 'info'"
-            >
-              {{ stmt.period.status === 'SETTLED' ? '已结清' : '未结' }}
-            </el-tag>
+          <el-button
+            v-if="stmt.canSettle && stmt.period.status !== 'SETTLED'"
+            type="primary"
+            size="small"
+            :loading="settling"
+            @click="doSettle"
+          >{{ settleBtnText }}</el-button>
+        </div>
+        <div class="hero-row slip">
+          <div class="hero-card">
+            <span class="hero-label">结账投注额</span>
+            <span class="hero-val">{{ fmt(stmt.totals.betFlow) }}</span>
+          </div>
+          <div class="hero-card">
+            <span class="hero-label">派彩</span>
+            <span class="hero-val">{{ fmt(stmt.totals.payout) }}</span>
+          </div>
+          <div class="hero-card">
+            <span class="hero-label">庄家盈亏</span>
+            <span class="hero-val" :class="tone(stmt.totals.housePnl)">{{ fmt(stmt.totals.housePnl) }}</span>
+          </div>
+          <div class="hero-card">
+            <span class="hero-label">上分</span>
+            <span class="hero-val">{{ fmt(stmt.totals.upAmount) }}</span>
+          </div>
+          <div class="hero-card">
+            <span class="hero-label">下分</span>
+            <span class="hero-val">{{ fmt(stmt.totals.downAmount) }}</span>
+          </div>
+          <div class="hero-card">
+            <span class="hero-label">房间月费</span>
+            <span class="hero-val">{{ fmt(stmt.totals.roomFee) }}</span>
+          </div>
+          <div class="hero-card">
+            <span class="hero-label">整包佣金</span>
+            <span class="hero-val" :class="tone(generalPkgGross)">{{ fmt(generalPkgGross) }}</span>
+          </div>
+          <template v-if="isAdminBill">
+            <div class="hero-card">
+              <span class="hero-label">总代占成 {{ generalSharePct }}%</span>
+              <span class="hero-val" :class="tone(generalShareToPay)">{{ fmt(generalShareToPay) }}</span>
+            </div>
+            <div class="hero-card">
+              <span class="hero-label">平台占成 {{ platformSharePct }}%</span>
+              <span class="hero-val" :class="tone(stmt.totals.platformShareAmount)">
+                {{ fmt(stmt.totals.platformShareAmount) }}
+              </span>
+            </div>
+          </template>
+          <template v-else>
+            <div class="hero-card">
+              <span class="hero-label">总代佣金</span>
+              <span class="hero-val" :class="tone(stmt.totals.generalWageKeep)">
+                {{ fmt(stmt.totals.generalWageKeep) }}
+              </span>
+            </div>
+            <div class="hero-card">
+              <span class="hero-label">代理佣金</span>
+              <span class="hero-val" :class="tone(stmt.totals.agentWageAmount)">
+                {{ fmt(stmt.totals.agentWageAmount) }}
+              </span>
+            </div>
+            <div class="hero-card">
+              <span class="hero-label">总代占成</span>
+              <span class="hero-val" :class="tone(stmt.totals.generalShareAmount)">
+                {{ fmt(stmt.totals.generalShareAmount) }}
+              </span>
+            </div>
+            <div class="hero-card">
+              <span class="hero-label">代理占成</span>
+              <span class="hero-val" :class="tone(stmt.totals.agentShareAmount)">
+                {{ fmt(stmt.totals.agentShareAmount) }}
+              </span>
+            </div>
+          </template>
+          <template v-if="isCredit">
+            <div class="hero-card">
+              <span class="hero-label">往来·未结上分</span>
+              <span class="hero-val">{{ fmt(stmt.totals.unsettledIssueDebt ?? 0) }}</span>
+            </div>
+          </template>
+          <div class="result-card">
+            <span class="hero-label">{{ settlePayWho }}</span>
+            <span class="hero-val" :class="tone(-payAmount(stmt.totals))">{{ fmt(settlePayAbs) }}</span>
           </div>
         </div>
+      </div>
 
-        <div class="gs-kpis">
-          <div class="gs-kpi">
-            <span class="k">名下房间</span>
-            <b>{{ stmt.totals.roomCount }}</b>
-          </div>
-          <div class="gs-kpi">
-            <span class="k">有效流水</span>
-            <b>{{ fmt(stmt.totals.betFlow) }}</b>
-          </div>
-          <div class="gs-kpi">
-            <span class="k">庄家盈亏</span>
-            <b :class="tone(stmt.totals.housePnl)">{{ fmt(stmt.totals.housePnl) }}</b>
-          </div>
-          <div class="gs-kpi">
-            <span class="k">总代成数差</span>
-            <b :class="tone(stmt.totals.generalShareAmount)">{{ fmt(stmt.totals.generalShareAmount) }}</b>
-          </div>
-          <div class="gs-kpi main">
-            <span class="k">{{ payLabel }}</span>
-            <b :class="payTone">{{ fmt(Math.abs(stmt.totals.platformShareAmount)) }}</b>
-          </div>
+      <el-alert
+        v-if="isCredit"
+        type="info"
+        :closable="false"
+        show-icon
+        class="gs-alert"
+      >
+        <template #title>
+          合同额度 {{ fmt(stmt.general.creditLimit) }} · 剩余信用 {{ fmt(stmt.general.pointsQuota) }}
+        </template>
+      </el-alert>
+
+      <section class="settle-sec">
+        <div class="settle-sec-hd">
+          <span>名下房间明细</span>
         </div>
-
-        <div v-if="stmt.pendingFromAgents !== 0" class="gs-pending">
-          其中 <b>{{ fmt(stmt.pendingFromAgents) }}</b> 还没跟代理结清（下表标「未结」的房），由总代先垫给平台
-        </div>
-
-        <div v-if="isCredit" class="gs-credit">
-          合同额度 {{ fmt(stmt.general.creditLimit) }} · 当前剩余 {{ fmt(stmt.general.pointsQuota) }}
-          <span class="gs-credit-tip">
-            结清后按「当前剩余 + 本期已结」补额度，封账之后的输赢自动留到下一期
-          </span>
-        </div>
-
-        <div v-if="stmt.canSettle && stmt.period.status !== 'SETTLED'" class="gs-actions">
-          <el-button type="primary" :loading="settling" @click="doSettle">结清本期</el-button>
-        </div>
-      </section>
-
-      <!-- 下面每行：总代跟各房代理的账 -->
-      <section class="gs-rooms">
-        <div class="gs-rooms-hd">名下房间明细（总代与代理之间的账，按各房自己的周期各结各的）</div>
-        <el-table :data="stmt.rooms" size="small" empty-text="本期名下没有房间">
-          <el-table-column label="房间" min-width="170">
+        <el-table
+          :data="stmt.rooms"
+          size="small"
+          border
+          stripe
+          class="settle-table"
+          empty-text="本期名下没有房间"
+          show-summary
+          :summary-method="roomSummary"
+        >
+          <el-table-column label="房间" min-width="148">
             <template #default="{ row }: { row: any }">
               <div class="cell-name">{{ row.name }}</div>
               <div class="cell-meta">{{ row.roomNo }} · {{ row.bookMode === 'CREDIT' ? '信用' : '现金' }}</div>
             </template>
           </el-table-column>
-          <el-table-column label="代理" min-width="140">
+          <el-table-column label="代理" min-width="122">
             <template #default="{ row }: { row: any }">
               <div class="cell-name">{{ row.agentNickname || '—' }}</div>
-              <div class="cell-meta">占成 {{ pct(row.agentShareRate) }}%</div>
+              <div class="cell-meta">{{ row.agentUsername || '—' }} · 占成 {{ pct(row.agentShareRate) }}%</div>
             </template>
           </el-table-column>
-          <el-table-column label="有效流水" min-width="110" align="right">
+          <el-table-column prop="betFlow" label="结账投注额" min-width="104" align="right">
             <template #default="{ row }: { row: any }">{{ fmt(row.betFlow) }}</template>
           </el-table-column>
-          <el-table-column label="派彩" min-width="110" align="right">
+          <el-table-column prop="payout" label="派彩" min-width="88" align="right">
             <template #default="{ row }: { row: any }">{{ fmt(row.payout) }}</template>
           </el-table-column>
-          <el-table-column label="庄家盈亏" min-width="110" align="right">
+          <el-table-column prop="housePnl" label="庄家盈亏" min-width="104" align="right">
             <template #default="{ row }: { row: any }">
               <span :class="tone(row.housePnl)">{{ fmt(row.housePnl) }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="代理占成" min-width="110" align="right">
-            <template #default="{ row }: { row: any }">{{ fmt(row.agentShareAmount) }}</template>
+          <el-table-column prop="upAmount" label="上分" min-width="88" align="right">
+            <template #default="{ row }: { row: any }">{{ fmt(row.upAmount) }}</template>
           </el-table-column>
-          <el-table-column label="总代成数差" min-width="110" align="right">
+          <el-table-column prop="downAmount" label="下分" min-width="88" align="right">
+            <template #default="{ row }: { row: any }">{{ fmt(row.downAmount) }}</template>
+          </el-table-column>
+          <el-table-column prop="roomFee" label="月费" min-width="88" align="right">
+            <template #default="{ row }: { row: any }">{{ fmt(roomFeeOf(row.roomId)) }}</template>
+          </el-table-column>
+          <el-table-column label="整包佣金" min-width="104" align="right">
+            <template #default="{ row }: { row: any }">
+              {{ fmt((row.generalWageAmount || 0) + (row.playerRebate || 0)) }}
+            </template>
+          </el-table-column>
+          <el-table-column prop="generalWageKeep" label="总代佣金" min-width="104" align="right">
+            <template #default="{ row }: { row: any }">
+              <span :class="tone(row.generalWageKeep)">{{ fmt(row.generalWageKeep) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="agentWageAmount" label="代理佣金" min-width="104" align="right">
+            <template #default="{ row }: { row: any }">
+              <span :class="tone(row.agentWageAmount)">{{ fmt(row.agentWageAmount) }}</span>
+            </template>
+          </el-table-column>
+          <!-- 与 hero 卡片同一字段，必须同名，不能一处叫「成数差」一处叫「总代占成」 -->
+          <el-table-column prop="generalShareAmount" label="总代占成" min-width="104" align="right">
             <template #default="{ row }: { row: any }">
               <span :class="tone(row.generalShareAmount)">{{ fmt(row.generalShareAmount) }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="平台应得" min-width="110" align="right">
+          <el-table-column prop="agentShareAmount" label="代理占成" min-width="104" align="right">
             <template #default="{ row }: { row: any }">
-              <b :class="tone(row.platformShareAmount)">{{ fmt(row.platformShareAmount) }}</b>
+              <span :class="tone(row.agentShareAmount)">{{ fmt(row.agentShareAmount) }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="与代理" min-width="150">
+          <el-table-column prop="payToPlatform" label="与平台" min-width="120" align="right">
+            <template #default="{ row }: { row: any }">
+              <b :class="tone(row.payToPlatform)">{{ fmt(Math.abs(Number(row.payToPlatform || 0))) }}</b>
+              <div class="cell-meta">{{ payWho(Number(row.payToPlatform || 0)) }}</div>
+            </template>
+          </el-table-column>
+          <el-table-column label="与代理" min-width="100" align="center">
             <template #default="{ row }: { row: any }">
               <el-tag
                 size="small"
@@ -147,7 +258,7 @@
               <div class="cell-meta">{{ row.settleLabel }}结</div>
             </template>
           </el-table-column>
-          <el-table-column label="" width="72" align="right">
+          <el-table-column label="操作" width="72" align="right" fixed="right">
             <template #default="{ row }: { row: any }">
               <el-button link type="primary" @click="goRoom(row.roomId)">详情</el-button>
             </template>
@@ -155,9 +266,9 @@
         </el-table>
       </section>
 
-      <section v-if="history.length" class="gs-history">
-        <div class="gs-rooms-hd">历史账期</div>
-        <el-table :data="history" size="small">
+      <section v-if="history.length" class="settle-sec">
+        <div class="settle-sec-hd">历史账期</div>
+        <el-table :data="history" size="small" border stripe class="settle-table">
           <el-table-column label="账期" min-width="180">
             <template #default="{ row }: { row: any }">
               {{ fmtDay(row.periodStart) }} ～ {{ fmtDay(row.periodEnd) }}
@@ -169,11 +280,26 @@
           <el-table-column label="庄家盈亏" min-width="110" align="right">
             <template #default="{ row }: { row: any }">{{ fmt(row.housePnl) }}</template>
           </el-table-column>
-          <el-table-column label="总代成数差" min-width="110" align="right">
+          <!-- 合并值，与单列的「总代占成」不是同一个数，必须换名 -->
+          <el-table-column v-if="isAdminBill" label="总代侧占成合计" min-width="120" align="right">
+            <template #default="{ row }: { row: any }">
+              {{ fmt(Number(row.generalShareAmount || 0) + Number(row.agentShareAmount || 0)) }}
+            </template>
+          </el-table-column>
+          <el-table-column v-if="isAdminBill" label="平台占成" min-width="110" align="right">
+            <template #default="{ row }: { row: any }">{{ fmt(row.platformShareAmount) }}</template>
+          </el-table-column>
+          <el-table-column v-if="!isAdminBill" label="总代占成" min-width="110" align="right">
             <template #default="{ row }: { row: any }">{{ fmt(row.generalShareAmount) }}</template>
           </el-table-column>
-          <el-table-column label="平台应得" min-width="110" align="right">
-            <template #default="{ row }: { row: any }">{{ fmt(row.platformShareAmount) }}</template>
+          <el-table-column v-if="!isAdminBill" label="代理占成" min-width="110" align="right">
+            <template #default="{ row }: { row: any }">{{ fmt(row.agentShareAmount) }}</template>
+          </el-table-column>
+          <el-table-column label="与平台交割" min-width="140" align="right">
+            <template #default="{ row }: { row: any }">
+              <b :class="tone(row.settlePay)">{{ fmt(Math.abs(Number(row.settlePay || 0))) }}</b>
+              <div class="cell-meta">{{ payWho(Number(row.settlePay || 0)) }}</div>
+            </template>
           </el-table-column>
           <el-table-column label="状态" min-width="90" align="center">
             <template #default="{ row }: { row: any }">
@@ -192,7 +318,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
@@ -200,8 +326,16 @@ import {
   consoleApi,
   type GeneralSettleHistoryRow,
   type GeneralSettleStatement,
+  type SettlePeriod,
 } from '@/api/console'
+import { formatMoney } from '@gamebox/shared'
 import { useAdminStore } from '@/stores/admin'
+
+const props = defineProps<{
+  embedded?: boolean
+  forcedId?: string
+  period?: SettlePeriod
+}>()
 
 type HistoryRow = GeneralSettleHistoryRow
 
@@ -210,32 +344,47 @@ const router = useRouter()
 
 const loading = ref(false)
 const settling = ref(false)
+const exporting = ref(false)
 const stmt = ref<GeneralSettleStatement | null>(null)
 const history = ref<HistoryRow[]>([])
-const period = ref<'current' | 'last'>('last')
+const period = ref<SettlePeriod>(props.period || 'current')
+
+const settleBtnText = computed(() => (period.value === 'last' ? '结清上期' : '提前清账'))
 const generalUserId = ref('')
 const generalList = ref<{ id: string; nickname: string; username: string }[]>([])
 
 const canPickGeneral = computed(
   () => store.profile?.role === 'ADMIN' || store.profile?.role === 'BRANCH',
 )
+/** 管理/总监跟总代结：只看平台↔总代。总代自己看的是拆开的佣金和代理占成。 */
+const isAdminBill = computed(() => canPickGeneral.value)
 const isCredit = computed(() => stmt.value?.general.bookMode === 'CREDIT')
-/** 平台应得为正=总代要付平台 */
-const payLabel = computed(() => {
-  const v = stmt.value?.totals.platformShareAmount ?? 0
-  if (v > 0) return '总代应付平台'
-  if (v < 0) return '平台应付总代'
+/** 总代整包佣金 = 实发总代 + 玩家回水 */
+const generalPkgGross = computed(() =>
+  Number(stmt.value?.totals.generalWageAmount || 0) + Number(stmt.value?.totals.playerRebate || 0),
+)
+/** 总表跟总代结：下家占成并进总代 */
+const generalShareToPay = computed(() =>
+  Number(stmt.value?.totals.generalShareAmount || 0) + Number(stmt.value?.totals.agentShareAmount || 0),
+)
+const generalSharePct = computed(() => pct(stmt.value?.general.shareRate))
+const platformSharePct = computed(() =>
+  Math.round((1000 - generalSharePct.value * 10)) / 10,
+)
+/** 交割净额：正=总代应付平台，负=平台应付总代 */
+function payAmount(totals?: { payToPlatform?: number; platformShareAmount?: number }) {
+  return Number(totals?.payToPlatform ?? totals?.platformShareAmount ?? 0)
+}
+function payWho(n: number) {
+  if (n > 0) return '总代付平台'
+  if (n < 0) return '平台付总代'
   return '互不找补'
-})
-const payTone = computed(() => {
-  const v = stmt.value?.totals.platformShareAmount ?? 0
-  if (v > 0) return 'is-in'
-  if (v < 0) return 'is-out'
-  return ''
-})
+}
+const settlePayAbs = computed(() => Math.abs(payAmount(stmt.value?.totals)))
+const settlePayWho = computed(() => `本期交割 · ${payWho(payAmount(stmt.value?.totals))}`)
 
 function fmt(n?: number) {
-  return Number(n || 0).toLocaleString('zh-CN', { maximumFractionDigits: 2 })
+  return formatMoney(n ?? 0)
 }
 function pct(n?: number) {
   const v = Number(n)
@@ -254,6 +403,16 @@ function fmtDay(v?: string) {
   if (Number.isNaN(d.getTime())) return '—'
   return `${d.getMonth() + 1}-${d.getDate()}`
 }
+/* 提前结账的账期不落在整日上，这时要把时分显示出来，否则两段看着是同一天 */
+function fmtYmd(v?: string) {
+  if (!v) return '—'
+  const d = new Date(v)
+  if (Number.isNaN(d.getTime())) return '—'
+  const p = (n: number) => String(n).padStart(2, '0')
+  const date = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+  const midnight = d.getHours() === 0 && d.getMinutes() === 0
+  return midnight ? date : `${date} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
 function fmtTime(v?: string | null) {
   if (!v) return '—'
   const d = new Date(v)
@@ -266,14 +425,71 @@ function fmtTime(v?: string | null) {
 }
 
 function goRoom(id: string) {
+  if (props.embedded) {
+    void router.replace({
+      name: 'settle',
+      query: {
+        roomId: id,
+        period: period.value,
+        ...(generalUserId.value ? { generalUserId: generalUserId.value } : {}),
+      },
+    })
+    return
+  }
   router.push({ name: 'room-detail', params: { id } })
 }
 
+function roomFeeOf(roomId: string) {
+  const line = stmt.value?.roomFee?.lines?.find((l) => l.roomId === roomId)
+  return Number(line?.amount || 0)
+}
+
+function roomSummary({ columns }: { columns: Array<{ property?: string }> }) {
+  const t = stmt.value?.totals
+  return columns.map((col, i) => {
+    if (i === 0) return '合计'
+    const key = col.property
+    if (!t || !key || !(key in t)) return ''
+    const v = (t as Record<string, unknown>)[key]
+    return typeof v === 'number' ? fmt(v) : ''
+  })
+}
+
+function downloadCsv(res: { filename: string; csv: string }) {
+  const body = res.csv.startsWith('\uFEFF') ? res.csv : `\uFEFF${res.csv}`
+  const blob = new Blob([body], { type: 'text/csv;charset=utf-8;' })
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = res.filename || '工资条.csv'
+  a.click()
+  URL.revokeObjectURL(a.href)
+  ElMessage.success('已导出，可用 Excel 打开')
+}
+
+async function onExport() {
+  exporting.value = true
+  try {
+    const res = await consoleApi.exportGeneralSettle({
+      period: period.value,
+      ...(canPickGeneral.value ? { generalUserId: generalUserId.value } : {}),
+    })
+    downloadCsv(res)
+  } catch (e: unknown) {
+    ElMessage.error((e as Error).message || '导出失败')
+  } finally {
+    exporting.value = false
+  }
+}
+
 async function loadGenerals() {
+  if (props.forcedId) {
+    generalUserId.value = props.forcedId
+    return
+  }
   if (!canPickGeneral.value) return
   try {
-    const res = await consoleApi.agents({
-      page: 1, pageSize: 200, role: 'GENERAL', boundOnly: false,
+    const res = await consoleApi.agentsAll({
+      role: 'GENERAL', boundOnly: false,
     })
     generalList.value = res.list.map((a) => ({
       id: a.id, nickname: a.nickname, username: a.username || '',
@@ -318,12 +534,13 @@ async function reload() {
 
 async function doSettle() {
   if (!stmt.value) return
-  const v = stmt.value.totals.platformShareAmount
+  const v = payAmount(stmt.value.totals)
   const who = v > 0 ? `总代应付平台 ${fmt(v)}` : v < 0 ? `平台应付总代 ${fmt(-v)}` : '互不找补'
   try {
     await ElMessageBox.confirm(
-      `确认结清 ${fmtDay(stmt.value.period.periodStart)} ～ ${fmtDay(stmt.value.period.periodEnd)} 这一期？`
-      + `\n名下 ${stmt.value.totals.roomCount} 间房，${who}。结清后本期数字定格，不再随后续改档变动。`,
+      `确认${period.value === 'last' ? '结清' : '提前结清'} `
+      + `${fmtYmd(stmt.value.period.periodStart)} ～ ${fmtYmd(stmt.value.period.periodEnd)} 这一期？`
+      + `\n名下 ${stmt.value.totals.roomCount} 间房，${who}。结清后这一期数字定格，不再随后续改档变动。`,
       '结清总代账期',
       { type: 'warning', confirmButtonText: '确认结清' },
     )
@@ -336,6 +553,8 @@ async function doSettle() {
       period: period.value,
     }) as { message?: string }
     ElMessage.success(res.message || '已结清')
+    /* 结完跳回本期：这里是刚封那一段之后新起的余量，一眼能看出确实结掉了 */
+    period.value = 'current'
     await reload()
   } catch (e: unknown) {
     ElMessage.error(
@@ -347,86 +566,187 @@ async function doSettle() {
   }
 }
 
+watch(
+  () => props.forcedId,
+  async (id) => {
+    if (!id) return
+    generalUserId.value = id
+    await reload()
+  },
+)
+watch(
+  () => props.period,
+  async (p) => {
+    if (!p || p === period.value) return
+    period.value = p
+    await reload()
+  },
+)
+
 onMounted(async () => {
   await loadGenerals()
   await reload()
 })
+
+defineExpose({ reload })
 </script>
 
 <style scoped>
 .gs-page {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  min-height: 100%;
 }
-
-.gs-head {
-  border: 1px solid var(--el-border-color-light);
-  border-radius: 10px;
-  padding: 16px 18px;
-  background: var(--el-bg-color);
+.gs-tools {
   display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.gs-head.is-in { border-left: 4px solid var(--el-color-success); }
-.gs-head.is-out { border-left: 4px solid var(--el-color-danger); }
-
-.gs-head-main {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
   flex-wrap: wrap;
   gap: 8px;
+  align-items: center;
 }
-.gs-who { display: flex; align-items: center; gap: 10px; }
-.gs-name { font-size: 17px; font-weight: 700; }
-.gs-meta { color: var(--el-text-color-secondary); font-size: 13px; }
-.gs-range { color: var(--el-text-color-secondary); font-size: 13px; display: flex; align-items: center; gap: 8px; }
 
-.gs-kpis {
+.bill {
+  padding: 16px 16px 8px;
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
+}
+.bill-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 16px;
+  margin-bottom: 14px;
+  padding: 12px 16px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+.bill-meta-main {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 6px 20px;
+  flex: 1;
+  min-width: 0;
 }
-.gs-kpi {
-  min-width: 128px;
-  padding: 10px 12px;
+.meta-item {
+  font-size: 13px;
+  color: #0f172a;
+  font-weight: 650;
+}
+.meta-item em {
+  margin-right: 6px;
+  font-style: normal;
+  font-weight: 500;
+  color: #94a3b8;
+}
+.bill-block { margin-bottom: 14px; }
+.bill-hd {
+  margin-bottom: 8px;
+  padding: 0 2px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+}
+.period-tip {
+  margin: -6px 0 14px;
+  padding: 8px 14px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: #64748b;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
   border-radius: 8px;
-  background: var(--el-fill-color-lighter);
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
 }
-.gs-kpi .k { font-size: 12px; color: var(--el-text-color-secondary); }
-.gs-kpi b { font-size: 17px; }
-.gs-kpi.main { background: var(--el-color-primary-light-9); min-width: 160px; }
-
-.gs-pending,
-.gs-credit {
-  font-size: 13px;
-  color: var(--el-text-color-secondary);
-  background: var(--el-fill-color-lighter);
-  border-radius: 6px;
-  padding: 8px 10px;
+.hero-row,
+.result-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
 }
-.gs-credit-tip { display: block; margin-top: 4px; opacity: 0.85; }
-.gs-actions { display: flex; justify-content: flex-end; }
-
-.gs-rooms,
-.gs-history {
-  border: 1px solid var(--el-border-color-light);
-  border-radius: 10px;
-  padding: 12px 14px;
-  background: var(--el-bg-color);
+.hero-row.slip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.hero-row.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.hero-row.cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.hero-sub {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  color: #94a3b8;
 }
-.gs-rooms-hd {
-  font-size: 13px;
-  color: var(--el-text-color-secondary);
+.result-row {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   margin-bottom: 8px;
 }
-.cell-name { font-weight: 600; }
-.cell-meta { font-size: 12px; color: var(--el-text-color-secondary); }
-.num-up { color: var(--el-color-success); }
-.num-down { color: var(--el-color-danger); }
+.result-row.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.hero-card,
+.result-card {
+  padding: 16px 18px 14px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+}
+.result-card.main {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+.hero-label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: #64748b;
+}
+.hero-val {
+  display: block;
+  font-size: 26px;
+  font-weight: 750;
+  letter-spacing: -0.02em;
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+}
+.hero-val.num-up { color: #16a34a; }
+.hero-val.num-down { color: #ef4444; }
+
+.gs-alert {
+  margin: 0;
+  border-radius: 0;
+  border-left: 0;
+  border-right: 0;
+}
+.gs-alert + .gs-alert { border-top: 0; }
+
+.settle-sec { background: #fff; }
+.settle-sec + .settle-sec { border-top: 1px solid #e2e8f0; }
+.settle-sec-hd {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
+}
+.settle-sec-tip { font-size: 12px; font-weight: 600; color: #2563eb; }
+.settle-foot {
+  padding: 10px 14px 12px;
+  font-size: 13px;
+  color: #64748b;
+  border-top: 1px solid #f1f5f9;
+  background: #fff;
+}
+.settle-foot b {
+  font-size: 15px;
+  color: #ef4444;
+  font-variant-numeric: tabular-nums;
+}
+.settle-table { width: 100%; }
+.settle-table :deep(.el-table__header th) {
+  color: #475569;
+  font-weight: 600;
+  background: #f1f5f9 !important;
+}
+.cell-name { font-weight: 650; }
+.cell-meta { margin-top: 2px; font-size: 12px; color: #64748b; }
+.num-up { color: #16a34a; }
+.num-down { color: #ef4444; }
 </style>

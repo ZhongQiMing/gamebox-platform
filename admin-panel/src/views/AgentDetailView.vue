@@ -1,7 +1,11 @@
 <template>
   <div class="desk-work agent-detail-page" v-loading="loading">
     <div class="desk-panel">
-    <template v-if="unboundAgent">
+    <template v-if="jumping">
+      <div class="empty-box">正在打开房间…</div>
+    </template>
+
+    <template v-else-if="unboundAgent">
       <PageHeader title="未绑定房间">
         <template #actions>
           <el-button @click="router.push({ name: 'agents' })">返回账号中心</el-button>
@@ -15,6 +19,10 @@
       <PageHeader :title="detail.nickname || (detail.role === 'GENERAL' ? '总代详情' : '总监详情')">
         <template #actions>
           <el-button @click="goBack">返回</el-button>
+          <template v-if="canFundGeneral">
+            <el-button type="primary" @click="openFund('up')">上分</el-button>
+            <el-button type="warning" @click="openFund('down')">下分</el-button>
+          </template>
           <el-button v-if="isAdmin" type="warning" :loading="busy" @click="onResetPwd">重置密码</el-button>
           <el-button
             v-if="isAdmin"
@@ -40,13 +48,23 @@
           <div class="k">{{ detail.role === 'GENERAL' ? '名下房间' : '授权可见房间' }}</div>
           <div class="v">{{ detail.roomTotal ?? detail.rooms.length }}</div>
         </div>
-        <div class="card">
-          <div class="k">给代理上分合计</div>
-          <div class="v gold">{{ fmt(summary?.quotaOut) }}</div>
+        <div v-if="detail.role === 'GENERAL'" class="card">
+          <div class="k">与平台盘口</div>
+          <div class="v">{{ isCreditGeneral ? 'B · 信用盘' : 'A · 现金盘' }}</div>
+          <div class="card-tip">流水 {{ pct(detail.flowRate) }}% · 占成 {{ pct(detail.shareRate) }}%</div>
+        </div>
+        <div v-if="detail.role === 'GENERAL'" class="card">
+          <div class="k">{{ isCreditGeneral ? '剩余信用' : '可用额度' }}</div>
+          <div class="v gold">{{ fmt(detail.pointsQuota) }}</div>
+          <div v-if="isCreditGeneral" class="card-tip">合同 {{ fmt(detail.creditLimit) }}</div>
         </div>
         <div class="card">
-          <div class="k">从代理回收合计</div>
-          <div class="v">{{ fmt(summary?.quotaIn) }}</div>
+          <div class="k">{{ detail.role === 'GENERAL' ? '平台上分合计' : '给代理上分合计' }}</div>
+          <div class="v gold">{{ fmt(detail.role === 'GENERAL' ? summary?.quotaIn : summary?.quotaOut) }}</div>
+        </div>
+        <div class="card">
+          <div class="k">{{ detail.role === 'GENERAL' ? '平台回收合计' : '从代理回收合计' }}</div>
+          <div class="v">{{ fmt(detail.role === 'GENERAL' ? summary?.quotaOut : summary?.quotaIn) }}</div>
         </div>
       </div>
 
@@ -88,11 +106,12 @@
           <div class="hd-title">操作与资金记录</div>
         </div>
         <el-alert
+          v-if="detail.role === 'GENERAL'"
           type="info"
           :closable="false"
           show-icon
           class="fund-tip"
-          title="现金盘代理用「上下分」；信用盘代理请在对应房间「调整信用额度」（本列表含信用调整记录）。名下若有信用房，不能再用上下分加款。"
+          title="总代在此上分/下分。信用盘上分会记欠平台，每周结账不冲，人不干了再扣。房间代理的加减分由总代自己做。"
         />
         <el-tabs v-model="auditTab" @tab-change="onAuditTab">
           <el-tab-pane label="额度往来" name="fund" />
@@ -154,6 +173,26 @@
           <el-button type="primary" @click="copyCreds">复制</el-button>
         </template>
       </DeskDialog>
+
+      <DeskDialog
+        v-model="fundVisible"
+        :title="fundMode === 'up' ? '总代上分' : '总代下分'"
+        width="400px"
+      >
+        <el-form label-width="72px">
+          <el-form-item label="金额">
+            <el-input-number v-model="fundAmount" :min="1" :max="10000000" style="width:100%" />
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="fundVisible = false">取消</el-button>
+          <span class="win-footer-grow" />
+          <el-button :type="fundMode === 'up' ? 'primary' : 'warning'" :loading="fundBusy" @click="doFund">
+            确认{{ fundMode === 'up' ? '上分' : '下分' }}
+          </el-button>
+        </template>
+      </DeskDialog>
+
       </div>
     </template>
     </div>
@@ -172,18 +211,26 @@ import {
   type AgentAuditRow,
   type AgentDetail,
 } from '@/api/console'
-import { staffRoleLabel } from '@gamebox/shared'
+import { formatMoney, formatSignedMoney, staffRoleLabel } from '@gamebox/shared'
 import { useAdminStore } from '@/stores/admin'
+import { newFundOrderNo } from '@/utils/fundOrderNo'
 
 const route = useRoute()
 const router = useRouter()
 const store = useAdminStore()
 const isAdmin = computed(() => store.profile?.role === 'ADMIN')
+const isAdminOrBranch = computed(() => {
+  const r = store.profile?.role
+  return r === 'ADMIN' || r === 'BRANCH'
+})
+const canFundGeneral = computed(() => isAdminOrBranch.value && detail.value?.role === 'GENERAL')
+const isCreditGeneral = computed(() => detail.value?.bookMode === 'CREDIT')
 
 const loading = ref(false)
 const busy = ref(false)
 const detail = ref<AgentDetail | null>(null)
 const unboundAgent = ref(false)
+const jumping = ref(false)
 const showCreds = ref(false)
 const creds = ref<{ username: string; password: string } | null>(null)
 
@@ -195,6 +242,11 @@ const auditPage = ref(1)
 const auditPageSize = 20
 const summary = ref<AgentAuditPage['summary'] | null>(null)
 
+const fundVisible = ref(false)
+const fundBusy = ref(false)
+const fundMode = ref<'up' | 'down'>('up')
+const fundAmount = ref(10000)
+
 function goBack() {
   router.push({ name: 'agents' })
 }
@@ -205,7 +257,13 @@ function roleShort(r?: string) {
   return staffRoleLabel(r) || r || ''
 }
 function fmt(n?: number | null) {
-  return Number(n || 0).toLocaleString('zh-CN', { maximumFractionDigits: 2 })
+  return formatMoney(n ?? 0)
+}
+function pct(n?: number | null) {
+  const v = Number(n)
+  if (!Number.isFinite(v)) return '—'
+  const x = v > 1 ? v : v * 100
+  return Number(x.toFixed(1))
 }
 function fmtTime(s?: string | null) {
   if (!s) return '—'
@@ -216,14 +274,15 @@ function fmtTime(s?: string | null) {
 }
 function amountClass(row: AgentAuditRow) {
   if (row.action === 'QUOTA_RECALL' || row.action === 'CONSOLE_DEBIT') return 'down'
+  if (row.action === 'GENERAL_CREDIT_LIMIT_BUMP' && row.detail?.direction === 'down') return 'down'
   if (row.amount != null && row.amount < 0) return 'down'
   return 'up'
 }
 function amountText(row: AgentAuditRow) {
   if (row.amount == null) return '—'
   const n = Number(row.amount)
-  const sign = row.action === 'QUOTA_RECALL' ? '-' : n < 0 ? '' : '+'
-  return `${sign}${Math.abs(n).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}`
+  if (row.action === 'QUOTA_RECALL') return `-${formatMoney(Math.abs(n))}`
+  return formatSignedMoney(n)
 }
 function targetHint(row: AgentAuditRow) {
   const t = row.detail?.roomId || row.detail?.roomNo || row.action
@@ -268,14 +327,28 @@ async function load() {
   if (!id) return
   loading.value = true
   unboundAgent.value = false
+  jumping.value = false
   detail.value = null
   summary.value = null
   auditRows.value = []
   try {
     const d = await consoleApi.agentDetail(id)
+    if (d.role === 'GENERAL') {
+      jumping.value = true
+      await router.replace({
+        name: 'general-detail',
+        params: { id },
+        query: {
+          from: typeof route.query.from === 'string' ? route.query.from : 'agents',
+          tab: 'basic',
+        },
+      })
+      return
+    }
     if (d.role === 'AGENT' || d.role === 'PROXY') {
-      const roomId = d.rooms?.[0]?.id
+      const roomId = d.rooms?.find((r) => r.status !== 'CLOSED')?.id ?? d.rooms?.[0]?.id
       if (roomId) {
+        jumping.value = true
         await router.replace({
           name: 'room-detail',
           params: { id: roomId },
@@ -300,7 +373,7 @@ async function load() {
       || '加载失败',
     )
   } finally {
-    loading.value = false
+    if (!jumping.value) loading.value = false
   }
 }
 
@@ -358,6 +431,39 @@ async function copyCreds() {
     ElMessage.success('已复制')
   } catch {
     ElMessage.error('复制失败')
+  }
+}
+
+function openFund(mode: 'up' | 'down') {
+  fundMode.value = mode
+  fundAmount.value = 10000
+  fundVisible.value = true
+}
+async function doFund() {
+  const id = detail.value?.id
+  const amount = Number(fundAmount.value)
+  if (!id || !(amount > 0)) return
+  const orderNo = newFundOrderNo(fundMode.value)
+  try {
+    await ElMessageBox.confirm(
+      `确认给总代「${detail.value?.nickname}」${fundMode.value === 'up' ? '上分' : '下分回收'} ${formatMoney(amount)}？订单号 ${orderNo}`,
+      fundMode.value === 'up' ? '总代上分' : '总代下分',
+      { type: fundMode.value === 'up' ? 'info' : 'warning' },
+    )
+  } catch {
+    return
+  }
+  fundBusy.value = true
+  try {
+    if (fundMode.value === 'up') await consoleApi.issue(id, amount, orderNo)
+    else await consoleApi.recall(id, amount, orderNo)
+    ElMessage.success(fundMode.value === 'up' ? '已上分' : '已下分回收')
+    fundVisible.value = false
+    await load()
+  } catch (e: unknown) {
+    ElMessage.error((e as Error).message || '操作失败')
+  } finally {
+    fundBusy.value = false
   }
 }
 
@@ -432,5 +538,11 @@ onMounted(() => { void load() })
   border: 1px dashed var(--el-border-color);
   border-radius: 8px;
   text-align: center;
+}
+.fund-tip-text {
+  margin: 0 0 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #64748b;
 }
 </style>

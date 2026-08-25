@@ -40,6 +40,8 @@ html, body, #app {
   --ops-text-2: #475569;
   --ops-muted: #64748b;
   --ops-gold: #f59e0b;
+  /* 关盘＝下级自己坐庄，平台不参与分成，配色要和飞盘（蓝）明显分开 */
+  --ops-closed-flow: #fb923c;
   --ops-gap: 14px;
   --ops-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px rgba(15, 23, 42, 0.04);
 }
@@ -347,6 +349,8 @@ html, body, #app {
 .muted { color: var(--ops-muted); font-size: 12px; }
 .ops-gold,
 .gold { color: var(--ops-gold); }
+/* 关盘流水：平台赚不到钱的那部分，全站统一橙色 */
+.closed-flow { color: var(--ops-closed-flow); }
 .ops-mono,
 .mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;

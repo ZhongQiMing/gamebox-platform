@@ -146,18 +146,51 @@
       </div>
     </div>
 
-    <!-- 基础设置 -->
-    <DeskDialog v-model="basicsVisible" :title="`基础设置 · ${basicsGame?.name || ''}`" width="480px">
-      <el-form label-width="96px">
+    <!-- 基础设置：每个玩法单独限红 -->
+    <DeskDialog
+      v-model="basicsVisible"
+      :title="`基础设置 · ${basicsGame?.name || ''}`"
+      width="720px"
+      dialog-class="gsc-param-dlg"
+    >
+      <el-form label-width="80px" class="basics-form">
         <el-form-item label="显示名称">
           <el-input v-model="basicsForm.name" maxlength="40" />
         </el-form-item>
-        <el-form-item label="最小下注">
-          <el-input-number v-model="basicsForm.minBet" :min="0.01" :precision="2" :step="1" style="width:100%" />
-        </el-form-item>
-        <el-form-item label="最大下注">
-          <el-input-number v-model="basicsForm.maxBet" :min="1" :precision="2" :step="100" style="width:100%" />
-        </el-form-item>
+        <div class="basics-fill">
+          <span class="basics-fill-lab">填到全部玩法</span>
+          <el-input-number v-model="basicsFill.minBet" :min="0.01" :precision="2" :step="1" />
+          <span class="basics-fill-tilde">~</span>
+          <el-input-number v-model="basicsFill.maxBet" :min="1" :precision="2" :step="100" />
+          <el-button size="small" @click="applyBasicsFill">应用</el-button>
+        </div>
+        <el-table
+          :data="basicsPlays"
+          size="small"
+          border
+          stripe
+          max-height="420"
+          class="basics-table"
+          v-loading="basicsLoading"
+          empty-text="该游戏没有可单独设置的玩法"
+        >
+          <el-table-column label="玩法" min-width="180">
+            <template #default="{ row }: { row: any }">
+              <div class="cell-name">{{ row.label }}</div>
+              <div class="cell-meta">{{ row.key }}<template v-if="row.hint"> · {{ row.hint }}</template></div>
+            </template>
+          </el-table-column>
+          <el-table-column label="最小下注" width="160">
+            <template #default="{ row }: { row: any }">
+              <el-input-number v-model="row.minBet" :min="0.01" :precision="2" :step="1" size="small" style="width:100%" />
+            </template>
+          </el-table-column>
+          <el-table-column label="最大下注" width="180">
+            <template #default="{ row }: { row: any }">
+              <el-input-number v-model="row.maxBet" :min="1" :precision="2" :step="100" size="small" style="width:100%" />
+            </template>
+          </el-table-column>
+        </el-table>
       </el-form>
       <template #footer>
         <el-button @click="basicsVisible = false">取消</el-button>
@@ -284,7 +317,7 @@
                 <el-button size="small" @click="addArcadeRow">增加奖项</el-button>
               </div>
               <el-table :data="arcadeRows" size="small" class="pay-table">
-                <el-table-column label="奖项键" min-width="140">
+                <el-table-column label="奖项名" min-width="140">
                   <template #default="{ row }: { row: any }">
                     <el-input v-model="row.key" size="small" />
                   </template>
@@ -319,7 +352,10 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
 import DeskDialog from '@/components/DeskDialog.vue'
+import { formatDateTime, formatMoney } from '@gamebox/shared'
 import { gameAdminApi, type GameAdmin, type GameConfigAdmin, type GameOpsSchedule } from '@/api/admin'
+
+type BasicsPlayRow = { key: string; label: string; minBet: number; maxBet: number; hint?: string }
 
 type ChipFilter = 'ONLINE' | 'MAINTENANCE' | 'OFFLINE' | 'noConfig' | ''
 
@@ -334,12 +370,16 @@ const catFilter = ref('ALL')
 const chipFilter = ref<ChipFilter>('')
 
 const basicsVisible = ref(false)
+const basicsLoading = ref(false)
 const basicsGame = ref<GameAdmin | null>(null)
 const basicsForm = reactive({
   name: '',
+})
+const basicsFill = reactive({
   minBet: 1,
   maxBet: 100000,
 })
+const basicsPlays = ref<BasicsPlayRow[]>([])
 
 const configVisible = ref(false)
 const configGame = ref<GameAdmin | null>(null)
@@ -497,10 +537,10 @@ function pct(n: number) {
   return `${(Number(n) * 100).toFixed(1)}%`
 }
 function fmtNum(n: number) {
-  return Number(n || 0).toLocaleString('zh-CN')
+  return formatMoney(n)
 }
 function fmtTime(s: string) {
-  return new Date(s).toLocaleString('zh-CN', { hour12: false })
+  return formatDateTime(s)
 }
 
 async function load() {
@@ -563,23 +603,64 @@ async function onRestoreAll() {
   }
 }
 
-function openBasics(row: GameAdmin) {
+async function openBasics(row: GameAdmin) {
   basicsGame.value = row
   basicsForm.name = row.name
-  basicsForm.minBet = Number(row.minBet)
-  basicsForm.maxBet = Number(row.maxBet)
+  basicsFill.minBet = Number(row.minBet) || 1
+  basicsFill.maxBet = Number(row.maxBet) || 100000
+  basicsPlays.value = []
   basicsVisible.value = true
+  basicsLoading.value = true
+  try {
+    const cat = await gameAdminApi.listPlays(row.code)
+    basicsForm.name = cat.name || row.name
+    basicsPlays.value = cat.plays.map((p) => ({
+      key: p.key,
+      label: p.label,
+      minBet: Number(p.minBet),
+      maxBet: Number(p.maxBet),
+      hint: p.hint,
+    }))
+  } catch (e: unknown) {
+    ElMessage.error((e as Error).message || '加载玩法失败')
+    basicsVisible.value = false
+  } finally {
+    basicsLoading.value = false
+  }
+}
+
+function applyBasicsFill() {
+  if (basicsFill.minBet > basicsFill.maxBet) {
+    ElMessage.warning('最小下注不能大于最大下注')
+    return
+  }
+  for (const row of basicsPlays.value) {
+    row.minBet = basicsFill.minBet
+    row.maxBet = basicsFill.maxBet
+  }
 }
 
 async function saveBasics() {
   if (!basicsGame.value) return
-  if (basicsForm.minBet > basicsForm.maxBet) {
-    ElMessage.warning('最小下注不能大于最大下注')
+  if (!basicsPlays.value.length) {
+    ElMessage.warning('没有可保存的玩法')
     return
   }
+  for (const row of basicsPlays.value) {
+    if (row.minBet > row.maxBet) {
+      ElMessage.warning(`${row.label} 最小下注不能大于最大下注`)
+      return
+    }
+  }
+  const playLimits = Object.fromEntries(
+    basicsPlays.value.map((p) => [p.key, { minBet: p.minBet, maxBet: p.maxBet }]),
+  )
   opLoading.value = true
   try {
-    await gameAdminApi.updateBasics(basicsGame.value.code, { ...basicsForm })
+    await gameAdminApi.updateBasics(basicsGame.value.code, {
+      name: basicsForm.name,
+      playLimits,
+    })
     ElMessage.success('已保存')
     basicsVisible.value = false
     await load()
@@ -870,6 +951,22 @@ onMounted(load)
 .cfg-sub { font-size: 12px; font-weight: 400; color: #64748b; }
 .pay-toolbar { margin-bottom: 8px; }
 .pay-table { width: 100%; }
+.basics-form :deep(.el-form-item) { margin-bottom: 12px; }
+.basics-fill {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+.basics-fill-lab { font-size: 12px; font-weight: 650; color: #475569; }
+.basics-fill-tilde { color: #94a3b8; }
+.basics-table { width: 100%; }
+.cell-name { font-weight: 650; color: #0f172a; }
+.cell-meta { margin-top: 2px; font-size: 12px; color: #64748b; }
 
 @media (max-width: 900px) {
   .rooms-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }

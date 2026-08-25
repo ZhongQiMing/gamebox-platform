@@ -21,7 +21,8 @@
           <span class="sum-val gold">{{ fmt(totalCsBalance) }}</span>
         </div>
         <div class="sum-chip">
-          <span class="sum-label">{{ isCreditBook ? '剩余信用' : '我的余额' }}</span>
+          <!-- 与顶栏同一个数，必须同一个名字：现金=代理余额，信用=剩余信用 -->
+          <span class="sum-label">{{ isCreditBook ? '剩余信用' : '代理余额' }}</span>
           <span class="sum-val gold">{{ agentSpendable == null ? '—' : fmt(agentSpendable) }}</span>
         </div>
       </div>
@@ -31,7 +32,7 @@
           v-model="keyword"
           clearable
           size="small"
-          placeholder="搜昵称 / 账号"
+          placeholder="搜登录账号 / 昵称 / UID"
           class="filter-search"
         />
         <span class="toolbar-grow" />
@@ -154,7 +155,7 @@
 
         <div class="bal-pair">
           <div class="bal-box">
-            <div class="k">{{ isCreditBook ? '剩余信用' : '我的余额' }}</div>
+            <div class="k">{{ isCreditBook ? '剩余信用' : '代理余额' }}</div>
             <div class="v gold">{{ agentSpendable == null ? '—' : fmt(agentSpendable) }}</div>
           </div>
           <div class="bal-arrow">{{ moneyMode === 'up' ? '→' : '←' }}</div>
@@ -191,7 +192,7 @@
 
         <div class="preview" :class="{ warn: !moneyPreview.ok }">
           <template v-if="moneyPreview.ok">
-            确认后：{{ isCreditBook ? '剩余信用' : '我的余额' }}
+            确认后：{{ isCreditBook ? '剩余信用' : '代理余额' }}
             <b>{{ fmt(moneyPreview.agentAfter) }}</b>
             · 客服额度 <b>{{ fmt(moneyPreview.csAfter) }}</b>
           </template>
@@ -253,7 +254,6 @@
               :format-tooltip="(v: number) => `${Number(v).toFixed(1)}%`"
               @input="syncWagePerWanFromPct"
             />
-            <div class="wage-tip">右边填「每流水 10000 抽多少」；例如填 50 → 比例 0.5%</div>
           </el-form-item>
         </el-form>
       </div>
@@ -274,7 +274,7 @@
               <div>
                 <div class="who-name">{{ row.nickname }}</div>
                 <div class="who-meta">
-                  {{ row.workStatus === 'IDLE' ? '接单中' : '休息中' }}
+                  {{ row.username || '—' }} · {{ row.workStatus === 'IDLE' ? '接单中' : '休息中' }}
                 </div>
               </div>
             </div>
@@ -315,11 +315,12 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
 import DeskDialog from '@/components/DeskDialog.vue'
+import { formatMoney } from '@gamebox/shared'
 import { consoleApi, type CsStaffRow } from '@/api/console'
 import { newFundOrderNo } from '@/utils/fundOrderNo'
 
 type MoneyMode = 'up' | 'down'
-type WeightRow = { id: string; nickname: string; workStatus: string; pct: number }
+type WeightRow = { id: string; nickname: string; username?: string; workStatus: string; pct: number }
 
 const loading = ref(false)
 const busy = ref(false)
@@ -420,10 +421,7 @@ const weightSum = computed(() =>
 )
 
 function fmt(n: number) {
-  return Number(n || 0).toLocaleString('en-US', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })
+  return formatMoney(n)
 }
 
 function wageLabel(rate: number) {
@@ -451,6 +449,7 @@ function toPercentRows(rows: CsStaffRow[]): WeightRow[] {
     return rows.map((r, i) => ({
       id: r.id,
       nickname: r.nickname,
+      username: r.username,
       workStatus: r.workStatus,
       pct: base + (i < left ? 1 : 0),
     }))
@@ -469,6 +468,7 @@ function toPercentRows(rows: CsStaffRow[]): WeightRow[] {
   return rows.map((r, i) => ({
     id: r.id,
     nickname: r.nickname,
+    username: r.username,
     workStatus: r.workStatus,
     pct: pcts[i] ?? 0,
   }))
@@ -525,6 +525,18 @@ function syncMoneyAmount(mode: MoneyMode, row: CsStaffRow) {
 async function doMoney() {
   if (!moneyTarget.value || !moneyPreview.value.ok) return
   const amount = Number(moneyAmount.value)
+  const source = isCreditBook.value ? '剩余信用' : '盘分'
+  try {
+    await ElMessageBox.confirm(
+      moneyMode.value === 'up'
+        ? `确认给「${moneyTarget.value.nickname}」划额度 ${fmt(amount)}？将从你的${source}扣出。`
+        : `确认从「${moneyTarget.value.nickname}」收回额度 ${fmt(amount)}？将退回你的${source}。`,
+      moneyMode.value === 'up' ? '划额度' : '收回额度',
+      { type: 'warning', confirmButtonText: '确认', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
   busy.value = true
   try {
     const orderNo = moneyOrderNo.value || newFundOrderNo(moneyMode.value)

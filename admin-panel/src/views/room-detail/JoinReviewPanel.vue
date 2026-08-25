@@ -4,7 +4,6 @@
       <span class="join-meta">待审 {{ rows.length }} 人</span>
       <el-button size="small" :loading="loading" @click="load">刷新</el-button>
     </div>
-    <p v-if="readonly" class="join-hint">子账号只读查看；通过/拒绝请主代理操作。</p>
     <el-table :data="rows" stripe border size="small" empty-text="暂无进房申请" class="join-table">
       <el-table-column label="玩家" min-width="160">
         <template #default="{ row }: { row: any }">
@@ -44,6 +43,7 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { formatDateTime } from '@gamebox/shared'
 import { consoleApi, type JoinPendingRow } from '@/api/console'
 
 const props = defineProps<{
@@ -73,10 +73,7 @@ function applyFilter() {
 }
 
 function fmtTime(iso?: string) {
-  if (!iso) return '—'
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return '—'
-  return d.toLocaleString('zh-CN', { hour12: false })
+  return formatDateTime(iso)
 }
 
 async function load() {
@@ -94,6 +91,15 @@ async function load() {
 
 async function approve(row: JoinPendingRow) {
   if (props.readonly || busyId.value) return
+  try {
+    await ElMessageBox.confirm(
+      `通过「${row.player?.nickname || row.player?.uid}」的进房申请？通过后立即进房并按默认挂靠归属。`,
+      '通过进房',
+      { type: 'warning', confirmButtonText: '通过', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
   busyId.value = row.id
   try {
     await consoleApi.joinApprove(row.id)

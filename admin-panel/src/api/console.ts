@@ -5,6 +5,27 @@ import {
   type NumericValue,
 } from './number'
 
+/** 账号树翻页块大小；不够就继续翻，不设房间总数上限 */
+export const OPS_TREE_PAGE_SIZE = 10_000
+
+/** 结算页签：房间结账与总代结算共用同一组，顺序与文案都以此为准 */
+export type SettlePeriod = 'current' | 'last' | 'early'
+
+export interface GeneralOwnerRow {
+  ownerUserId: string
+  uid: string
+  nickname: string
+  username: string | null
+  status: string
+  createdAt?: string
+}
+/** 某总代的可见范围：已授权的总监 + 全部总监（用于勾选） */
+export interface GeneralOwners {
+  generalUserId: string
+  granted: GeneralOwnerRow[]
+  allBranches: GeneralOwnerRow[]
+}
+
 /** 运营控制台 API（console/...）；与 client-app staffConsole 路径对齐，并含管理端专有接口 */
 export const consoleApi = {
   // ── 钱包 / 上下分 ──
@@ -162,6 +183,19 @@ export const consoleApi = {
   revokeOwner: (roomId: string, ownerUserId: string) =>
     http.post(`/console/rooms/${roomId}/revoke-owner`, { ownerUserId }),
 
+  /** 某总代当前对哪些总监可见（含全部总监名单，供勾选） */
+  generalOwners: (generalUserId: string) =>
+    http.get<GeneralOwners, GeneralOwners>(
+      `/console/generals/${generalUserId}/owners`,
+    ),
+
+  /** 开/关某个总监对该总代的可见性（仅管理） */
+  setGeneralOwner: (generalUserId: string, ownerUserId: string, visible: boolean) =>
+    http.post<
+      { ok: boolean; visible: boolean; remaining: number },
+      { ok: boolean; visible: boolean; remaining: number }
+    >(`/console/generals/${generalUserId}/owner`, { ownerUserId, visible }),
+
   setRoomStatus: (roomId: string, status: string) =>
     http.patch(`/console/rooms/${roomId}/status`, { status }),
 
@@ -191,10 +225,15 @@ export const consoleApi = {
       message?: string
     }>(`/console/rooms/${roomId}/general-fly`, { flyEnabled }),
 
-  /** 信用盘：永久加减合同额度与剩余信用 */
+  /** 信用盘：永久加减合同额度与剩余信用；clientRequestId 作幂等锚点，重放不会加两次 */
   bumpCreditLimit: (
     roomId: string,
-    data: { amount: number; direction?: 'up' | 'down'; remark?: string },
+    data: {
+      amount: number
+      direction?: 'up' | 'down'
+      remark?: string
+      clientRequestId: string
+    },
   ) =>
     http.post<{
       ok: boolean
@@ -220,6 +259,12 @@ export const consoleApi = {
       { adminPassword },
     ),
 
+  purgeRoom: (roomId: string, adminPassword: string) =>
+    http.post<{ ok: boolean; mode: string; message: string }, { ok: boolean; mode: string; message: string }>(
+      `/console/rooms/${roomId}/purge`,
+      { adminPassword },
+    ),
+
   roomGames: (roomId: string) =>
     http.get<RoomGameCfg[], RoomGameCfg[]>(`/console/rooms/${roomId}/games`),
 
@@ -242,7 +287,7 @@ export const consoleApi = {
 
   roomWeekSettleStatement: (
     roomId: string,
-    params?: { period?: 'current' | 'last' | 'early'; weekStart?: string },
+    params?: { period?: SettlePeriod; weekStart?: string },
   ) =>
     http.get<RoomSettleStatement, RoomSettleStatement>(
       `/console/rooms/${roomId}/week-settle/statement`,
@@ -251,7 +296,7 @@ export const consoleApi = {
 
   exportRoomWeekSettle: (
     roomId: string,
-    params?: { period?: 'current' | 'last' | 'early'; weekStart?: string },
+    params?: { period?: SettlePeriod; weekStart?: string },
   ) =>
     http.get<{ filename: string; csv: string }, { filename: string; csv: string }>(
       `/console/rooms/${roomId}/week-settle/export`,
@@ -270,13 +315,25 @@ export const consoleApi = {
   ) => http.post(`/console/rooms/${roomId}/week-settle/confirm-payment`, data),
 
   // ── 玩家 / 代理 ──
-  players: (params?: { page?: number; pageSize?: number; q?: string; roomId?: string }) =>
-    http.get<PlayerPage, PlayerPage>('/console/players', { params }),
+  players: (params?: {
+    page?: number
+    pageSize?: number
+    q?: string
+    roomId?: string
+    /** positive=持分>0；zero=持分为 0 */
+    points?: string
+  }) => http.get<PlayerPage, PlayerPage>('/console/players', { params }),
 
   playerDetail: (id: string, params?: { roomId?: string }) =>
     http
       .get<PlayerDetailWire, PlayerDetailWire>(`/console/players/${id}`, { params })
       .then(normalizePlayerDetail),
+
+  /** 玩家画像：资金/风险/游戏偏好；仅管理与总监。roomId 为空看各房合计 */
+  playerProfile: (id: string, roomId?: string) =>
+    http.get<PlayerProfile, PlayerProfile>(`/console/players/${id}/profile`, {
+      params: roomId ? { roomId } : undefined,
+    }),
 
   /** 把 friendUid（下级）挂到 underUid（推荐人）名下；仅主代理；按 roomId 隔离 */
   hangPlayer: (friendUid: string, underUid: string, roomId?: string) =>
@@ -309,6 +366,33 @@ export const consoleApi = {
           params?.boundOnly === false ? '0' : params?.boundOnly === true ? '1' : undefined,
       },
     }),
+
+  /** 账号树/结算对象用：按 total 翻页拉完，房间再多也不会截断 */
+  agentsAll: async (params?: {
+    role?: string
+    q?: string
+    boundOnly?: boolean
+  }): Promise<AgentPage> => {
+    const pageSize = OPS_TREE_PAGE_SIZE
+    const first = await consoleApi.agents({ ...params, page: 1, pageSize })
+    const total = Number(first.total) || 0
+    const list = [...(first.list || [])]
+    /* 页数上限跟着 total 走，不再用固定 50 页；+2 是给翻页期间新增的行留余量 */
+    const maxPages = Math.min(500, Math.ceil(total / pageSize) + 2)
+    let page = 2
+    while (list.length < total && page <= maxPages) {
+      const next = await consoleApi.agents({ ...params, page, pageSize })
+      const chunk = next.list || []
+      if (!chunk.length) break
+      list.push(...chunk)
+      page += 1
+    }
+    if (list.length < total) {
+      /* 账号树按「拿全了」渲染，少一批人就会整棵子树消失，必须留痕 */
+      console.warn(`[agentsAll] 只取到 ${list.length}/${total} 条，账号树可能不完整`)
+    }
+    return { ...first, list, total, page: 1, pageSize: list.length }
+  },
 
   agentDetail: (userId: string) =>
     http.get<AgentDetail, AgentDetail>(`/console/agents/${userId}`),
@@ -382,11 +466,24 @@ export const consoleApi = {
     parentAgentUserId?: string
     flowRate?: number
     shareRate?: number
-    /** 以下三项仅总代：与平台的盘口、合同额度、结算周期 */
+    /** 以下四项仅总代：与平台的盘口、合同额度、结算周期、每间房月费单价 */
     bookMode?: 'CASH' | 'CREDIT'
     creditLimit?: number
     settleCycle?: string
+    roomMonthlyFee?: number
+    /**
+     * 建总代时勾选哪些总监可见（仅管理有效）。
+     * 不传 = 全部在职总监可见。
+     */
+    ownerUserIds?: string[]
   }) => http.post('/console/agents', data),
+
+  /** 改总代每间房缴给平台的月费单价 */
+  setGeneralRoomMonthlyFee: (userId: string, amount: number) =>
+    http.patch<{ ok: boolean; roomMonthlyFee: number }>(
+      `/console/agents/${userId}/room-monthly-fee`,
+      { amount },
+    ),
 
   setCommissionRate: (userId: string, rate: number) =>
     http.patch(`/console/agents/${userId}/commission-rate`, { rate }),
@@ -585,7 +682,7 @@ export const consoleApi = {
   // ── 总代账期结算（平台 ↔ 总代）──
   generalSettleStatement: (params?: {
     generalUserId?: string
-    period?: 'current' | 'last'
+    period?: SettlePeriod
     periodStart?: string
   }) =>
     http.get<GeneralSettleStatement, GeneralSettleStatement>(
@@ -599,21 +696,48 @@ export const consoleApi = {
       { params },
     ),
 
+  exportGeneralSettle: (params?: {
+    generalUserId?: string
+    period?: SettlePeriod
+    periodStart?: string
+  }) =>
+    http.get<{ filename: string; csv: string }, { filename: string; csv: string }>(
+      '/console/general-settle/export',
+      { params },
+    ),
+
+  directSettleStatement: (params?: { period?: 'current' | 'last' }) =>
+    http.get<DirectSettleStatement, DirectSettleStatement>(
+      '/console/general-settle/direct-statement',
+      { params },
+    ),
+
+  exportDirectSettle: (params?: { period?: 'current' | 'last' }) =>
+    http.get<{ filename: string; csv: string }, { filename: string; csv: string }>(
+      '/console/general-settle/direct-export',
+      { params },
+    ),
+
   settleGeneralPeriod: (
     generalUserId: string,
-    data: { period?: 'current' | 'last'; note?: string },
+    data: { period?: SettlePeriod; note?: string },
   ) => http.post(`/console/general-settle/${generalUserId}/settle`, data),
 
   bumpGeneralCreditLimit: (
     userId: string,
-    data: { amount: number; direction: 'up' | 'down'; remark?: string },
+    data: { amount: number; direction: 'up' | 'down'; remark?: string; clientRequestId: string },
   ) => http.post(`/console/agents/${userId}/credit-limit/bump`, data),
 
   // ── 回水策略 ──
-  rebatePolicy: () => http.get<RebatePolicy, RebatePolicy>('/console/rebate-policy'),
+  rebatePolicy: (roomId?: string) =>
+    http.get<RebatePolicy, RebatePolicy>('/console/rebate-policy', {
+      params: roomId ? { roomId } : undefined,
+    }),
 
-  patchRebatePolicy: (data: Partial<RebatePolicy>) =>
-    http.patch('/console/rebate-policy', data),
+  patchRebatePolicy: (data: RebatePolicyPatch) =>
+    http.patch<RebatePolicy, RebatePolicy>('/console/rebate-policy', data),
+
+  liveDraws: () => http.get<LiveDrawsPayload, LiveDrawsPayload>('/console/live-draws'),
 }
 
 // ─── 类型 ───────────────────────────────────────────────
@@ -666,6 +790,17 @@ export interface WalletMe {
   diskPoolRemaining?: number
   /** 信用盘顶栏：未发总额 */
   creditUnused?: number
+  /**
+   * 对外唯一的「代理余额」：信用盘=剩余信用+未结佣金，现金盘=余额。
+   * 页面一律显示这个，别再自己拿 balance / pointsQuota 相加。
+   */
+  agentBalance?: number
+  /** 合并数里「已挣到、待结账轧掉」的那一截；仅结账相关页面需要拆开说明 */
+  unsettledWage?: number
+  /** 总代：名下各代理房间那一支合计（代理盘分 + 客服 + 玩家），不含总代自己 */
+  roomBalance?: number
+  /** 总代：平台向他收的每间房月费单价，同时是名下房间月费的下限 */
+  roomMonthlyFee?: number
   overIssueUsed?: number
   overIssueLimit?: number
   fakeExposure?: number
@@ -678,6 +813,7 @@ export interface WalletMe {
   /** 总代自己的费率：建房时代理的流水/占成上限就是这两个值 */
   flowRate?: number
   shareRate?: number
+  downlineFlowRate?: number
 }
 
 export interface ConsoleRoomFly {
@@ -686,6 +822,19 @@ export interface ConsoleRoomFly {
   memberCount: number
   effective: boolean
   flyCover: number
+}
+
+export interface ConsoleRoomTodayStats {
+  betFlow: number
+  pendingBetFlow?: number
+  /** 该角色视角的飞盘投注额（管理/总代=飞上台，代理=飞出去） */
+  flownBetFlow?: number
+  /** 该角色视角的关盘投注额 */
+  closedBetFlow?: number
+  payout: number
+  housePnl: number
+  betCount: number
+  activePlayers: number
 }
 
 export interface ConsoleRoom {
@@ -715,6 +864,7 @@ export interface ConsoleRoom {
     shareRate?: number
   } | null
   fly?: ConsoleRoomFly
+  todayStats?: ConsoleRoomTodayStats
   agent: {
     agentId: string
     userId: string
@@ -725,18 +875,25 @@ export interface ConsoleRoom {
     pointsQuota?: number
     pointsUsed?: number
     flyCover?: number
+    /** 对外唯一的「代理余额」：信用盘=剩余信用+未结佣金 */
+    agentBalance?: number
+    unsettledWage?: number
     diskPoolRemaining?: number
     csBalances?: number
+    /** 该房玩家持分合计；与 pointsQuota、csBalances 相加即 flyCover */
+    playerBalances?: number
   } | null
   owners: { userId: string; uid: string; nickname: string }[]
   createdAt: string
 }
 
 export interface RobotDaySlot {
-  key: 'morning' | 'afternoon' | 'peak' | 'night'
+  key: 'night' | 'morning' | 'noon' | 'afternoon' | 'peak'
   startHour: number
   endHour: number
   count: number
+  countMin?: number
+  countMax?: number
 }
 
 export interface RobotPlan {
@@ -849,6 +1006,77 @@ export interface PlayerPage {
   }[]
 }
 
+export interface PlayerProfile {
+  member: {
+    id: string
+    uid: string
+    username: string
+    nickname: string
+    status: string
+    createdAt: string
+    lastLoginAt: string | null
+    lastLoginIp: string | null
+    /** 持分按房隔离，这里是各房合计 */
+    totalBalance: number
+    rooms: Array<{
+      roomId: string
+      roomNo: string
+      name: string
+      bookMode: string
+      agentNickname: string | null
+      agentUsername: string | null
+      balance: number
+    }>
+  }
+  /** 空串=各房合计；否则下面的资金与偏好只算这一间 */
+  scopeRoomId: string
+  funds: {
+    /** 累计充值＝累计上分毛额，不扣下分 */
+    upAmount: number
+    downAmount: number
+    totalBet: number
+    winAmount: number
+    loseAmount: number
+    /** 下分 ÷ 上分，百分数；上分为 0 时为 null */
+    rip: number | null
+  }
+  risk: {
+    alerts: Array<{
+      id: string
+      type: string
+      level: string
+      handled: boolean
+      summary: string
+      createdAt: string
+    }>
+    sameIpAccounts: Array<{
+      id: string
+      uid: string
+      nickname: string
+      username: string
+      lastLoginAt: string | null
+    }>
+    softBias: Array<{
+      id: string
+      kind: string
+      enabled: boolean
+      goalAmount: number
+      progressAmount: number
+      roomNo: string | null
+      roomName: string | null
+      createdAt: string
+    }>
+  }
+  preferences: Array<{
+    gameCode: string
+    name: string
+    category: string | null
+    amount: number
+    betCount: number
+    pct: number
+  }>
+}
+
 export interface JoinPendingRow {
   id: string
   playerId: string
@@ -874,6 +1102,8 @@ export interface AgentRoomBrief {
   memberCount?: number
   openGames?: number
   bookMode?: string
+  generalUserId?: string
+  generalNickname?: string
 }
 
 export interface AgentPage {
@@ -894,10 +1124,14 @@ export interface AgentPage {
     rebateRate?: number
     flowRate?: number
     shareRate?: number
-    /** 仅总代：与平台的盘口、合同额度、结算周期 */
+    downlineFlowRate?: number
+    playerMinRate?: number | null
+    playerMaxRate?: number | null
+    /** 仅总代：与平台的盘口、合同额度、结算周期、每间房月费单价 */
     bookMode?: 'CASH' | 'CREDIT'
     creditLimit?: number
     settleCycle?: string
+    roomMonthlyFee?: number
     pointsQuota?: number
     pointsUsed?: number
     flyCover?: number
@@ -906,6 +1140,7 @@ export interface AgentPage {
     roomCount?: number
     memberCount?: number
     staffCount?: number
+    csCount?: number
     onDuty?: boolean
     dutyUserId?: string | null
     createdAt?: string
@@ -928,6 +1163,11 @@ export interface AgentDetail {
   pointsQuota: number
   pointsUsed: number
   flyCover: number
+  flowRate?: number
+  shareRate?: number
+  bookMode?: 'CASH' | 'CREDIT'
+  creditLimit?: number
+  settleCycle?: string
   createdAt: string
   lastLoginAt?: string | null
   parent?: { id: string; nickname: string; username: string; role: string; uid: string } | null
@@ -1311,6 +1551,16 @@ export interface GlobalSoftControlOverview {
     exitPct: number
     minCycleFlow: number
   }
+  /**
+   * 服务端如实交代的「界面 vs 实际」差异。
+   * 界面显示的必须等于实际执行的，否则运营会基于错误认知做决策。
+   */
+  truth?: {
+    /** 后台能配、但当前不参与任何判断的项 */
+    ineffective: Array<{ key: string; label: string; why: string }>
+    /** 每个开关的适用游戏类别；不是每项都全站生效 */
+    scopes: Array<{ key: string; label: string; applies: string[]; note?: string }>
+  }
   updatedAt: string
 }
 
@@ -1327,9 +1577,27 @@ export interface ReportSummary {
   roomCount: number
   upCount?: number
   downCount?: number
-  /** 未结算注单（不计入流水/盈亏） */
+  /** 未开奖投注额（已计入「流水」展示，不进盈亏） */
   pendingBetFlow?: number
   pendingBetCount?: number
+  /** 注单缺房间号：报表与账单都不认，>0 说明有单要排查 */
+  unattributedBetFlow?: number
+  unattributedBetCount?: number
+  /** 飞上台（平台坐庄，已结；占成/结账用） */
+  flownBetFlow?: number
+  flownPayout?: number
+  flownHousePnl?: number
+  flownBetCount?: number
+  /** 代理飞盘：上台 + 飞到总代（已结） */
+  agentFlyBetFlow?: number
+  agentFlyPayout?: number
+  agentFlyHousePnl?: number
+  /** 飞上台（已结 + 未开奖，经营展示） */
+  flownBetFlowLive?: number
+  /** 代理飞盘（已结 + 未开奖，经营展示） */
+  agentFlyBetFlowLive?: number
+  /** 该角色视角的关盘流水（经营展示含未开奖） */
+  closedBetFlow?: number
   activePlayers?: number
   playerCount?: number | null
   agentCount?: number
@@ -1339,6 +1607,12 @@ export interface ReportSummary {
   commissionCount?: number
   /** 按 shareBasis 变含义：平台那份 / 总代成数差 / 整房庄家盈亏 */
   platformShareAmount?: number
+  /** 我自己坐庄那部分的毛输赢 */
+  satHousePnl?: number
+  /** 我分到的那份：平台=平台占成；总代=成数差+坐庄留存；代理=飞出去部分的占成 */
+  myShareAmount?: number
+  /** 我今日净赚：代理已扣挂靠佣金 */
+  myNetEarning?: number
   shareBasis?: 'PLATFORM' | 'GENERAL_DIFF' | 'HOUSE'
   netChange?: number
   netPnl?: number
@@ -1390,6 +1664,7 @@ export interface PlayerFlowRow {
   playerId: string
   uid: string
   nickname: string
+  username?: string
   avatar: string | null
   validFlow: number
   betCount: number
@@ -1427,11 +1702,16 @@ export interface ReportByRoomRow {
   activePlayers: number
   betCount: number
   betFlow: number
+  pendingBetFlow?: number
+  flownBetFlow?: number
+  closedBetFlow?: number
   payout: number
   housePnl: number
   playerPnl: number
   agentShareRate: number
   agentShareAmount: number
+  /** 挂总代时总代那份；直挂房恒为 0。三段相加 = flownHousePnl */
+  generalShareAmount: number
   platformShareAmount: number
   upAmount: number
   upCount: number
@@ -1479,6 +1759,7 @@ export interface DashboardData {
   recentLogs: {
     id: string
     action: string
+    actionLabel?: string
     target: string | null
     detail: unknown
     createdAt: string
@@ -1543,8 +1824,26 @@ export interface GeneralSettleRoomLine {
   agentShareAmount: number
   generalShareAmount: number
   platformShareAmount: number
+  payToPlatform: number
+  /** 该房代理收益：正=应付给他，负=应从他那收。只含占成 */
+  agentPnl: number
   agentSettleStatus: 'SETTLED' | 'PENDING'
   agentSettledAt: string | null
+  agentWageAmount?: number
+  generalWageAmount?: number
+  generalWageKeep?: number
+  playerRebate?: number
+  wageCount?: number
+}
+
+/** 工资条一格：上行项目名、下行金额 */
+export interface SettlePayslipCell {
+  key: string
+  label: string
+  kind: 'text' | 'money' | 'count'
+  amount?: number
+  text?: string
+  emphasis?: boolean
 }
 
 export interface GeneralSettleStatement {
@@ -1576,8 +1875,44 @@ export interface GeneralSettleStatement {
     agentShareAmount: number
     generalShareAmount: number
     platformShareAmount: number
+    payToPlatform: number
+    /** 占成+月费，与 payToPlatform 相同（每周不冲欠） */
+    sharePayToPlatform?: number
+    /** 平台给该信用总代的未结上分（往来，不进本期交割） */
+    unsettledIssueDebt?: number
+    agentPnl: number
+    /** 本期房间月费，已含在 payToPlatform 里 */
+    roomFee: number
+    wageCount?: number
+    agentWageAmount?: number
+    generalWageAmount?: number
+    generalWageKeep?: number
+    playerRebate?: number
+    /** 与房间详情同一口径：庄家盈亏 − 占成 − 整包净额 − 回水 */
+    platformNet?: number
+    upAmount?: number
+    downAmount?: number
   }
+  payslip: SettlePayslipCell[]
   rooms: GeneralSettleRoomLine[]
+  /** 分房明细的用途说明：账期不一致时合计对不上属正常 */
+  roomsNote?: string
+  /** 本期房间月费逐房明细：平台按单价向总代收 */
+  roomFee?: {
+    unitFee: number
+    total: number
+    roomCount: number
+    monthCount: number
+    note: string
+    lines: Array<{
+      roomId: string
+      roomNo: string
+      name: string
+      months: number
+      unitFee: number
+      amount: number
+    }>
+  }
   /** 平台应得里还没从代理收上来的部分，总代先垫 */
   pendingFromAgents: number
   canSettle: boolean
@@ -1601,6 +1936,105 @@ export interface GeneralSettleHistoryRow {
   note: string | null
 }
 
+export interface DirectSettleStatement {
+  kind: 'direct'
+  period: {
+    key: string
+    periodStart: string
+    periodEnd: string
+    settleLabel: string
+  }
+  totals: GeneralSettleStatement['totals']
+  rooms: GeneralSettleRoomLine[]
+  roomsNote?: string
+}
+
+export interface RebateGameRule {
+  gameCode: string
+  name: string
+  category: string
+  status: string
+  generalMin: number
+  generalDefault: number
+  generalMax: number
+  agentMin: number
+  agentDefault: number
+  agentMax: number
+  playerMin: number
+  playerDefault: number
+  playerMax: number
+  adminGeneralMin?: number
+  adminGeneralDefault?: number
+  adminGeneralMax?: number
+  adminAgentMin?: number
+  adminAgentDefault?: number
+  adminAgentMax?: number
+  adminPlayerMin?: number
+  adminPlayerDefault?: number
+  adminPlayerMax?: number
+  capAgentMin?: number
+  capAgentMax?: number
+  capPlayerMin?: number
+  capPlayerMax?: number
+  editGeneral?: boolean
+  editAgent?: boolean
+  editPlayer?: boolean
+  generalPkg?: number
+  agentPkg?: number
+  minRate: number
+  maxRate: number
+  playerRate: number
+}
+
+export interface RebateChainPlatform {
+  generalMin: number
+  generalMax: number
+  generalDefault: number
+  agentMin: number
+  agentMax: number
+  agentDefault: number
+  playerMin: number
+  playerMax: number
+}
+
+export interface RebateChainDownline {
+  userId: string
+  uid: string
+  nickname: string
+  username: string
+  roomId: string
+  roomNo: string
+  roomName: string
+  flowRate: number
+  rebateRate: number
+  playerMin: number
+  playerMax: number
+}
+
+export interface RebatePolicyChain {
+  canEdit: 'platform' | 'general' | 'agent' | 'none'
+  platform: RebateChainPlatform
+  mine: {
+    userId?: string
+    flowRate?: number
+    downlineFlowRate?: number
+    rebateRate?: number
+    playerMin?: number
+    playerMax?: number
+    roomId?: string | null
+    roomName?: string | null
+    roomNo?: string | null
+  } | null
+  downlines: RebateChainDownline[]
+  effective: {
+    agentPkg: number
+    generalPkg: number
+    playerMin: number
+    playerMax: number
+    defaultPlayerRate: number
+  }
+}
+
 export interface RebatePolicy {
   id: number
   minRate: number
@@ -1608,9 +2042,70 @@ export interface RebatePolicy {
   defaults: unknown
   totalRate?: number
   playerMinRate?: number
+  playerMaxRate?: number
+  generalMinRate?: number
   generalDefaultRate?: number
   generalMaxRate?: number
+  agentMinRate?: number
   agentDefaultRate?: number
+  agentMaxRate?: number
+  games?: RebateGameRule[]
+  chain?: RebatePolicyChain
+}
+
+export interface RebatePolicyPatch {
+  generalMinRate?: number
+  generalMaxRate?: number
+  generalDefaultRate?: number
+  totalRate?: number
+  agentMinRate?: number
+  agentMaxRate?: number
+  agentDefaultRate?: number
+  playerMinRate?: number
+  playerMaxRate?: number
+  games?: Array<{
+    gameCode: string
+    generalMin?: number
+    generalDefault?: number
+    generalMax?: number
+    agentMin?: number
+    agentDefault?: number
+    agentMax?: number
+    playerMin?: number
+    playerDefault?: number
+    playerMax?: number
+  }>
+}
+
+export interface LiveDrawGame {
+  code: string
+  name: string
+  category: string
+  status: string
+  phase: string
+  phaseLabel: string
+  issueNo: string
+  remainSec: number
+  lastDraw: string
+  lastIssueNo: string
+  currentBetAmount: number
+  currentBetCount: number
+  todayBetAmount: number
+  todayBetCount: number
+  todayPayout: number
+  sortOrder?: number
+}
+
+export interface LiveDrawsPayload {
+  ts: number
+  maint?: {
+    windowActive: boolean
+    disabled?: boolean
+    window: string
+    timezone: string
+    remainSec: number
+  }
+  games: LiveDrawGame[]
 }
 
 /** 信用盘实时账本快照 */
@@ -1712,6 +2207,7 @@ export interface RoomSettleStatement {
     agentSharePct: number
     platformSharePct: number
     creditLimit: number
+    generalUserId?: string | null
     agent: { userId: string; uid: string; nickname: string; username: string } | null
   }
   period: {
@@ -1721,6 +2217,9 @@ export interface RoomSettleStatement {
     weekEnd: string
     fromText: string
     toText: string
+    /** 这一段是否已经封成账单 */
+    settled: boolean
+    settledAt: string | null
   }
   ops: {
     betFlow: number
@@ -1747,6 +2246,7 @@ export interface RoomSettleStatement {
     commissionCount: number
     flyRebateToAgent: number
     playerRebateClaimed: number
+    playerRebateAccrued?: number
     playerRebateCount: number
     /** 合同月费（整月） */
     monthlyFee?: number
@@ -1764,6 +2264,49 @@ export interface RoomSettleStatement {
     generalShareAmount?: number
     platformShareAmount: number
     platformPayToAgent: number
+  }
+  /** 三方对账：流水/输赢/各家分成/谁付谁 */
+  sheet: {
+    basisLabel: string
+    betFlow: number
+    payout: number
+    housePnl: number
+    /** 平台最终落到手的：庄家盈亏 − 下家占成 − 平台出的整包与玩家回水 */
+    platformNet: number
+    /** 工资条：一行项目名、一行金额横排下去；页面与导出 CSV 共用这一份 */
+    payslip: SettlePayslipCell[]
+    parties: Array<{
+      key: 'AGENT' | 'GENERAL' | 'PLATFORM'
+      role: string
+      name: string
+      sharePct: number
+      amount: number
+      note: string
+    }>
+    transfers: Array<{
+      key: string
+      scope: '本单' | '另结'
+      from: string | null
+      to: string | null
+      amount: number
+      label: string
+      note: string
+    }>
+    /** 流水佣金：按有效流水另算，下注当场发放 */
+    wages: {
+      rows: Array<{
+        key: string
+        label: string
+        from: string
+        to: string
+        amount: number
+        count: number
+      }>
+      platformOut: number
+      generalKeep: number
+      agentGet: number
+      note: string
+    }
   }
   lines: RoomSettleStatementLine[]
   settlement: {

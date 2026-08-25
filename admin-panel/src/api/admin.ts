@@ -29,7 +29,7 @@ export interface ReviewOrder {
   id: string; orderNo: string; type: string; amount: number; status: string
   channel: string; rejectReason: string | null; createdAt: string; reviewedAt: string | null
   playerId?: string
-  player: { uid: string; nickname: string }
+  player: { uid: string; nickname: string; username?: string }
 }
 export interface ReviewPage { total: number; page: number; pageSize: number; list: ReviewOrder[] }
 
@@ -85,6 +85,7 @@ export interface CsSession {
   playerId: string
   uid: string
   nickname: string
+  username?: string
   avatar: string | null
   lastText: string
   lastSender: string
@@ -119,8 +120,11 @@ export const gameAdminApi = {
     minBet?: number
     maxBet?: number
     name?: string
+    playLimits?: Record<string, { minBet: number; maxBet: number }>
   }) =>
     http.patch<{ ok: boolean }, { ok: boolean }>(`/admin/games/${code}`, data),
+  listPlays: (code: string) =>
+    http.get<GamePlayCatalog, GamePlayCatalog>(`/admin/games/${code}/plays`),
   createConfig: (code: string, data: { rtp: number; payTable: unknown }) =>
     http.post<{ ok: boolean; version?: number }, { ok: boolean; version?: number }>(
       `/admin/games/${code}/config`,
@@ -142,6 +146,18 @@ export interface GameAdmin {
   sortOrder?: number
   drawIntervalSec?: number | null
   configs: { version: number; rtp: number; active: boolean }[]
+}
+export interface GamePlayRow {
+  key: string
+  label: string
+  minBet: number
+  maxBet: number
+  hint?: string
+}
+export interface GamePlayCatalog {
+  code: string
+  name: string
+  plays: GamePlayRow[]
 }
 export interface GameConfigAdmin {
   id: string; version: number; rtp: number; active: boolean
@@ -199,6 +215,8 @@ export interface RiskSummary {
   unhandled: number
   critical: number
   warn: number
+  /** 要人去看的：严重 + 警告，不含逐笔下注写的 INFO 噪音 */
+  actionable: number
   todayNew: number
   byType: Record<string, number>
 }
@@ -210,25 +228,58 @@ export interface RiskMeta {
 
 // ─── Fund reconciliation ─────────────────────────────────────
 export const fundReconApi = {
-  last: () => http.get<{ report: ReconReport | null }, { report: ReconReport | null }>(
-    '/admin/fund-recon',
-  ),
+  last: () => http.get<ReconLastResp, ReconLastResp>('/admin/fund-recon'),
   run: () => http.post<{ report: ReconReport }, { report: ReconReport }>('/admin/fund-recon/run'),
-  /* 补记等于人工承认一笔差额，服务端要求二次验密 */
-  fixPoints: (id: string, reason: string, adminPassword: string) =>
-    http.post<ReconFixResult, ReconFixResult>(
-      '/admin/fund-recon/fix-points', { id, reason, adminPassword },
+  /** 历次对账记录：重启也不会丢，用来回溯「什么时候开始不平的」 */
+  history: (page = 1, pageSize = 20) =>
+    http.get<ReconHistoryResp, ReconHistoryResp>(
+      `/admin/fund-recon/history?page=${page}&pageSize=${pageSize}`,
     ),
-  fixQuota: (id: string, reason: string, adminPassword: string) =>
-    http.post<ReconFixResult, ReconFixResult>(
-      '/admin/fund-recon/fix-quota', { id, reason, adminPassword },
+  payoutGate: () => http.get<PayoutGate, PayoutGate>('/admin/fund-recon/payout-gate'),
+  /** 知情放行：账不平时临时允许出款，必须写原因 + 二次验密 */
+  releaseGate: (reason: string, hours: number, adminPassword: string) =>
+    http.post<{ id: string; expiresAt: string; hours: number }, { id: string; expiresAt: string; hours: number }>(
+      '/admin/fund-recon/payout-gate/release', { reason, hours, adminPassword },
     ),
+  revokeGate: () => http.post<{ ok: boolean }, { ok: boolean }>(
+    '/admin/fund-recon/payout-gate/revoke',
+  ),
+  /*
+   * 「补记差额」两个接口已在服务端删除：它只写流水不动余额，
+   * 真相是「余额多了」时会把流水一起改错，等于抹掉证据。
+   * 对不上要查原因，再走正常上下分把钱调平。
+   */
 }
-export interface ReconFixResult {
+export interface PayoutGate {
+  allowed: boolean
+  /** ok=账平 | drift=账本异常拦截 | released=人工放行中 | no_report/recon_unavailable=暂无结论 */
+  reason: 'ok' | 'drift' | 'released' | 'no_report' | 'recon_unavailable'
+  release?: { reason: string; expiresAt: string; createdById: string }
+  lastCheckedAt?: string
+  totalBad?: number
+  /** 具体是哪几项在拦 */
+  blocking?: string[]
+  staleHours?: number
+}
+export interface ReconLastResp {
+  report: ReconReport | null
+  /** 内存里没有、从库里读出来的那次 */
+  persisted?: { trigger: string; checkedAt: string } | null
+  gate?: PayoutGate
+}
+export interface ReconHistoryItem {
+  id: string
+  trigger: 'cron' | 'manual' | 'gate'
   ok: boolean
-  drift: number
-  balance?: number
-  pointsQuota?: number
+  totalBad: number
+  durationMs: number
+  checkedAt: string
+}
+export interface ReconHistoryResp {
+  total: number
+  page: number
+  pageSize: number
+  items: ReconHistoryItem[]
 }
 export interface ReconRow {
   scope: 'ACCOUNT' | 'AGENT' | 'NONE'
@@ -238,13 +289,26 @@ export interface ReconRow {
   expected: number
   drift: number
 }
+export type ReconCheckKey =
+  | 'points_sum'
+  | 'quota_sum'
+  | 'frozen_orders'
+  | 'negative_balance'
+  | 'credit_conservation'
+  | 'swallowed_bets'
+  | 'bet_debit_voucher'
+  | 'duplicate_payout'
+  | 'global_ledger_net'
+  | 'bet_without_room'
+  | 'platform_apply_backlog'
 export interface ReconCheck {
-  key: 'points_sum' | 'quota_sum' | 'frozen_orders' | 'negative_balance'
+  key: ReconCheckKey
   label: string
   hint: string
   bad: number
   rows: ReconRow[]
-  fixable: boolean
+  /** 是否作为出款闸门的判据；只告警的项为 false */
+  gating: boolean
 }
 export interface ReconReport {
   checkedAt: string
@@ -282,6 +346,8 @@ export interface AdminLogItem {
   target: string | null
   targetLabel: string | null
   detail: unknown
+  /** detail 里出现过的 ID → 房间名 / 玩家名 */
+  detailNames?: Record<string, string>
   summary: string
   ip: string | null
   createdAt: string

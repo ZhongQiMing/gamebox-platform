@@ -6,6 +6,14 @@ export interface KpiChip {
   hot?: boolean
 }
 
+/**
+ * 关盘流水专用色（橙）。
+ *
+ * 关盘＝下级自己坐庄，这部分平台不参与分成、赚不到钱，所以要和飞盘（蓝）
+ * 一眼区分开，方便盯住关盘占比。改这个值会同步影响所有页面的关盘数字。
+ */
+export const CLOSED_FLOW_COLOR = 'var(--ops-closed-flow, #fb923c)'
+
 /** 房间状态 */
 export const ROOM_STATUS_LABEL: Record<string, string> = {
   OPEN: '营业中',

@@ -8,8 +8,9 @@
         <slot name="subtitle">{{ subtitle }}</slot>
       </p>
     </div>
-    <div v-if="$slots.actions" class="ops-header__actions">
+    <div v-if="$slots.actions || $slots.extra" class="ops-header__actions">
       <slot name="actions" />
+      <slot name="extra" />
     </div>
   </div>
 </template>
