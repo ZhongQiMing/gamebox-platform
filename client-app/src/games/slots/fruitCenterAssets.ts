@@ -33,7 +33,7 @@ export interface CenterSheetSpec {
  */
 export const CENTER_SHEETS: Record<string, CenterSheetSpec> = {
   idle: {
-    url: `${SHEETS}/idle.png`,
+    url: `${SHEETS}/idle.webp`,
     cols: 4,
     rows: 3,
     fps: 10,
@@ -41,21 +41,21 @@ export const CENTER_SHEETS: Record<string, CenterSheetSpec> = {
   },
   // 猜大小仍复用 idle；下列 gamble-* 仅作历史兼容，不再参与舞台
   gamble_roll: {
-    url: `${SHEETS}/gamble-roll.png`,
+    url: `${SHEETS}/gamble-roll.webp`,
     cols: 4,
     rows: 3,
     fps: 10,
     loop: true,
   },
   gamble_win: {
-    url: `${SHEETS}/gamble-win.png`,
+    url: `${SHEETS}/gamble-win.webp`,
     cols: 4,
     rows: 3,
     fps: 10,
     loop: false,
   },
   gamble_lose: {
-    url: `${SHEETS}/gamble-lose.png`,
+    url: `${SHEETS}/gamble-lose.webp`,
     cols: 4,
     rows: 3,
     fps: 10,
@@ -87,15 +87,15 @@ export function centerSheetKeyForMode(
  * 不是从 24 格裁下来的按钮图。倍率数字仍由 HTML 叠。
  */
 export const CENTER_SYMBOL_SHEETS: Record<string, CenterSheetSpec> = {
-  apple: { url: `${SYM}/apple.png`, cols: 2, rows: 2, fps: 8, loop: true },
-  orange: { url: `${SYM}/orange.png`, cols: 2, rows: 2, fps: 8, loop: true },
-  lemon: { url: `${SYM}/lemon.png`, cols: 2, rows: 2, fps: 8, loop: true },
-  melon: { url: `${SYM}/melon.png`, cols: 2, rows: 2, fps: 8, loop: true },
-  bell: { url: `${SYM}/bell.png`, cols: 2, rows: 2, fps: 8, loop: true },
-  star: { url: `${SYM}/star.png`, cols: 2, rows: 2, fps: 8, loop: true },
-  seven: { url: `${SYM}/seven.png`, cols: 2, rows: 2, fps: 8, loop: true },
-  bar: { url: `${SYM}/bar.png`, cols: 2, rows: 2, fps: 8, loop: true },
-  luck: { url: `${SYM}/luck.png`, cols: 2, rows: 2, fps: 8, loop: true },
+  apple: { url: `${SYM}/apple.webp`, cols: 2, rows: 2, fps: 8, loop: true },
+  orange: { url: `${SYM}/orange.webp`, cols: 2, rows: 2, fps: 8, loop: true },
+  lemon: { url: `${SYM}/lemon.webp`, cols: 2, rows: 2, fps: 8, loop: true },
+  melon: { url: `${SYM}/melon.webp`, cols: 2, rows: 2, fps: 8, loop: true },
+  bell: { url: `${SYM}/bell.webp`, cols: 2, rows: 2, fps: 8, loop: true },
+  star: { url: `${SYM}/star.webp`, cols: 2, rows: 2, fps: 8, loop: true },
+  seven: { url: `${SYM}/seven.webp`, cols: 2, rows: 2, fps: 8, loop: true },
+  bar: { url: `${SYM}/bar.webp`, cols: 2, rows: 2, fps: 8, loop: true },
+  luck: { url: `${SYM}/luck.webp`, cols: 2, rows: 2, fps: 8, loop: true },
 }
 
 export function centerSymbolSheetKey(
@@ -109,13 +109,13 @@ export function centerSymbolUrl(
   symbol: FruitBetSymbolId | 'luck' | null | undefined,
   size: 'big' | 'small' | 'luck' = 'big',
 ): string {
-  if (!symbol || symbol === 'luck' || size === 'luck') return `${SYM}/luck.png`
-  if (size === 'big') return `${SYM}/${symbol}.png`
-  return `${SYM}/${symbol}_small.png`
+  if (!symbol || symbol === 'luck' || size === 'luck') return `${SYM}/luck.webp`
+  if (size === 'big') return `${SYM}/${symbol}.webp`
+  return `${SYM}/${symbol}_small.webp`
 }
 
 export function centerKindUrl(kind: string): string {
-  return `${SYM}/${kind}.png`
+  return `${SYM}/${kind}.webp`
 }
 
 export function awardTitleForCenter(awardType: FruitAwardType | 'bar' | string): string {
@@ -142,7 +142,7 @@ export function awardTitleForCenter(awardType: FruitAwardType | 'bar' | string):
 }
 
 /** 用户抠好的 24 格纯符号图（1024×1024，真透明底） */
-export const RING_ICONS_SHEET = `${SYM}/fruit-ring-icons-clean.png`
+export const RING_ICONS_SHEET = `${SYM}/fruit-ring-icons-clean.webp`
 export const RING_ICONS_W = 1024
 export const RING_ICONS_H = 1024
 

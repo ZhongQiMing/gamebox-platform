@@ -163,15 +163,15 @@
     <!-- 与牌桌聊天室同一套侧栏图标：历史 / 玩法 / 设置 -->
     <div class="fruit-top-right" aria-label="快捷操作">
       <button type="button" class="fruit-rail-btn" title="历史记录" @click="openBetRecords">
-        <img class="fruit-rail-ic" src="/images/table-rail/rail-history.png" alt="" draggable="false" />
+        <img class="fruit-rail-ic" src="/images/table-rail/rail-history.webp" alt="" draggable="false" />
         <span class="fruit-rail-lb">历史</span>
       </button>
       <button type="button" class="fruit-rail-btn" title="玩法规则" @click="showRules = true">
-        <img class="fruit-rail-ic" src="/images/table-rail/rail-rules.png" alt="" draggable="false" />
+        <img class="fruit-rail-ic" src="/images/table-rail/rail-rules.webp" alt="" draggable="false" />
         <span class="fruit-rail-lb">玩法</span>
       </button>
       <button type="button" class="fruit-rail-btn" title="设置" @click="openSettings">
-        <img class="fruit-rail-ic" src="/images/table-rail/rail-settings.png" alt="" draggable="false" />
+        <img class="fruit-rail-ic" src="/images/table-rail/rail-settings.webp" alt="" draggable="false" />
         <span class="fruit-rail-lb">设置</span>
       </button>
     </div>
@@ -243,7 +243,7 @@
             <ul>
               <li><b>普通中奖</b>：灯停在某一水果格。若已押该符号，按该格赔率结算；未押则本局不得分。</li>
               <li>
-                <b>幸运送灯</b>：开到好运格并发放送灯。随机 1～N 个水果格为中奖格，                对每个已押中的符号分别计分后累加。              </li>
+                <b>幸运送灯</b>：开到好运格并发放送灯。随机 1～5 个水果格为中奖格，                对每个已押中的符号分别计分后累加。              </li>
               <li><b>幸运吃灯</b>：开到好运格但触发吃灯。本局全部押注无效，不得分。</li>
               <li>
                 <b>开火车</b>：从停点起连续命中若干格（跳过好运格），凡已押中的符号均计分。              </li>
@@ -333,6 +333,7 @@ import { useWalletStore } from '@/stores/wallet'
 import { useRoomStore } from '@/stores/room'
 import { useToast } from '@/composables/useToast'
 import { useGameSpinSession } from '@/composables/useGameSpinSession'
+import { leaveGameToLobby } from '@/composables/lobbyAfterGame'
 
 /** 七段数码管单字 */
 const SEG_MAP: Record<string, string[]> = {
@@ -453,6 +454,8 @@ const {
 const totalScore = ref(0)
 const winScore = ref(0)
 const busy = ref(false)
+/** 赢分已显示但服务端尚未入账：锁住比大小，等补救结算回来再放行 */
+const settling = ref(false)
 const selectedBet = ref<FruitBetSymbolId>('apple')
 
 /** 标题弧槽跑马灯：常灭，报奖时追跑 */
@@ -492,6 +495,8 @@ function isControlDisabled(id: ControlId) {
   if (id === 'refund') return busy.value || autoPlaying.value
   // 自动中允许点「停止」；未开自动时转盘忙则不可点
   if (id === 'auto') return busy.value && !autoPlaying.value
+  // 分未入账时：比大小会被服务端拒，开新局会冲掉这笔额度，一并置灰
+  if (settling.value && (id === 'big' || id === 'small' || id === 'start')) return true
   return busy.value || autoPlaying.value
 }
 
@@ -779,7 +784,7 @@ async function goBack() {
     abandonOnUnmount = false
     await abandonGambleAndLeaveUi()
     stopFruitBgm()
-    router.replace('/lobby')
+    await leaveGameToLobby(router)
     return
   }
 
@@ -802,7 +807,7 @@ async function goBack() {
 
   stopFruitBgm()
   // replace 回大厅，去掉游戏页历史，避免大厅返回再次进入游戏
-  router.replace('/lobby')
+  await leaveGameToLobby(router)
 }
 
 function openSettings() {
@@ -844,11 +849,16 @@ function buildBetPayload(): Record<string, number> {
   return out
 }
 
+/** 退币在飞：不进 busy（不占开奖态），单独一个闸 */
+let refunding = false
+
 async function onControlClick(id: ControlId) {
   unlockFruitAudio()
   startFruitBgm()
   if (id === 'refund') {
-    if (busy.value || autoPlaying.value) return
+    /* 只判 busy 挡不住连点：整段是异步的，两次点都能穿过去各发一次退币 */
+    if (busy.value || autoPlaying.value || refunding) return
+    refunding = true
     stopAutoPlay()
     playFruitSfx('cashout')
     // 退币：放弃猜大小资格，盘面押分退回，赢分已在开奖时入账
@@ -860,6 +870,8 @@ async function onControlClick(id: ControlId) {
     } catch {
       try { await walletStore.fetchBalance() } catch { /* 忽略 */ }
       syncScoreFromWallet()
+    } finally {
+      refunding = false
     }
     clearHitLit()
     setCursor(-1)
@@ -879,6 +891,11 @@ async function onControlClick(id: ControlId) {
     return
   }
   if (id === 'start') {
+    if (settling.value) {
+      /* 开新局会清掉上一局的待再赌额度，入账没落地前先拦住 */
+      toast('入账中，请稍候')
+      return
+    }
     // 空押：第一次开始 = 重复上一局注数；再点开始才开跑
     if (!hasAnyBet()) {
       if (restoreLastBets()) return
@@ -936,6 +953,14 @@ async function onAutoClick() {
     }
 
     await doSpin()
+
+    if (!autoPlaying.value || token !== autoRunToken) break
+
+    /* 上一局的分还没入账就接着开，会把这笔待再赌额度冲掉；等补救结算完再继续 */
+    for (let i = 0; i < 40 && settling.value; i += 1) {
+      await sleep(500)
+      if (!autoPlaying.value || token !== autoRunToken) break
+    }
 
     if (!autoPlaying.value || token !== autoRunToken) break
 
@@ -1004,6 +1029,11 @@ function onMultClick(value: MultValue) {
 }
 
 async function doGamble(choice: 'big' | 'small') {
+  if (settling.value) {
+    /* 分尚未入账，服务端此刻没有可再赌额度，放行只会白吃一个报错 */
+    toast('入账中，请稍候')
+    return
+  }
   if (winScore.value <= 0) {
     toast('没有可再赌的当局赢分')
     playFruitSfx(choice === 'big' ? 'big' : 'small')
@@ -1080,6 +1110,77 @@ const awardFx = createFruitAwardFx({
 })
 const { runLightTo, revealHits } = awardFx
 
+/**
+ * 揭晓派彩。揭晓失败不等于本局没开出来：注已经扣了、灯也停在中奖格上，
+ * 服务端一分钟内会兜底揭晓。所以这里最多重试一次就放行，绝不能把异常抛回
+ * doSpin —— 那会让一局正常的中奖被当成「开奖失败」回滚掉。
+ */
+async function revealFruitRound(roundId: string) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const revealed = await gamesApi.fruitReveal(roundId)
+      if (typeof revealed.balance === 'number') {
+        walletStore.balance = Math.round(revealed.balance * 100) / 100
+      }
+      return true
+    } catch {
+      /* 再试一次，仍失败则走下面的兜底 */
+    }
+  }
+  try {
+    await walletStore.fetchBalance()
+  } catch {
+    /* 保持当前显示，服务端揭晓后重进游戏会对上 */
+  }
+  return false
+}
+
+/**
+ * 揭晓失败后的补救。
+ *
+ * 此时赢分已经在屏幕上，但服务端还没入账，可再赌额度也还是 0；
+ * 若放行比大小，玩家点下去只会吃一个「没有可再赌的当局赢分」，
+ * 看着有钱却用不了。所以先锁住比大小，同时主动催服务端结算。
+ *
+ * 催的办法是查一次待再赌额度 —— 服务端在这个接口里会先把未揭晓的局
+ * 强制结算，比干等每分钟一次的兜底快得多。拿到额度即恢复正常。
+ */
+async function recoverSettlement() {
+  const roomNo = String(roomStore.roomNo || '').trim()
+  const room = /^\d{6}$/.test(roomNo) ? roomNo : undefined
+  const delays = [800, 1500, 2500, 4000, 6000, 8000]
+
+  for (const wait of delays) {
+    if (spinSession.disposed.value) return
+    await sleep(wait)
+    if (spinSession.disposed.value) return
+    try {
+      const pend = await gamesApi.fruitPendingGamble(room)
+      if (typeof pend.balance === 'number') {
+        walletStore.balance = Math.round(pend.balance * 100) / 100
+      }
+      const amt = Math.max(0, Number(pend.pendingGambleAmount) || 0)
+      settling.value = false
+      winScore.value = amt
+      syncScoreFromWallet()
+      enterGambleOrIdle()
+      return
+    } catch {
+      /* 还没通，按退避继续催 */
+    }
+  }
+
+  /* 催不动就交给服务端每分钟的兜底；分不会丢，但这一局不再放行比大小 */
+  settling.value = false
+  try {
+    await walletStore.fetchBalance()
+  } catch {
+    /* 网络仍未恢复，保持现有显示 */
+  }
+  syncScoreFromWallet()
+  toast('入账延迟，积分稍后到账')
+}
+
 async function doSpin() {
   const payload = buildBetPayload()
   if (Object.keys(payload).length === 0) {
@@ -1153,15 +1254,7 @@ async function doSpin() {
     await revealHits(award, result.stopIndex, result.hitIndexes, wins)
 
     // 动画结束再入账，注单才出盈亏
-    if (result.roundId) {
-      try {
-        const revealed = await gamesApi.fruitReveal(result.roundId)
-        if (typeof revealed.balance === 'number') walletStore.balance = revealed.balance
-      } catch {
-        const revealed = await gamesApi.fruitReveal(result.roundId)
-        if (typeof revealed.balance === 'number') walletStore.balance = revealed.balance
-      }
-    }
+    const revealOk = result.roundId ? await revealFruitRound(result.roundId) : true
 
     const win = result.totalWin ?? 0
     winScore.value = win
@@ -1183,7 +1276,16 @@ async function doSpin() {
     }
 
     await sleep(isSpecial ? 450 : 320)
-    enterGambleOrIdle()
+    if (!revealOk && win > 0) {
+      /* 分还没真正入账，先别放行比大小，改为催服务端结算 */
+      settling.value = true
+      stageMode.value = 'idle'
+      stageAwardType.value = 'normal'
+      toast('入账中，请稍候')
+      void recoverSettlement()
+    } else {
+      enterGambleOrIdle()
+    }
     await sleep(isSpecial ? 200 : 280)
   } catch (e) {
     spinSession.clearClientRequestId()
@@ -1209,6 +1311,8 @@ async function doSpin() {
 
 onMounted(async () => {
   initFruitMuteFromStorage()
+  unlockFruitAudio()
+  startFruitBgm()
   try {
     await walletStore.fetchBalance()
   } catch {
@@ -1249,8 +1353,9 @@ watch([stageMode, flashAll, stageAwardType, busy], () => {
 
 onUnmounted(() => {
   // 开奖进行中勿抢 abandon（结算后 pending 可由下次进页恢复）。
+  // 入账未落地时同理：此刻 abandon 只会把还没生成的额度白清一次。
   // 主动点返回/历史时由 goBack、openBetRecords 控制 abandonOnUnmount
-  if (abandonOnUnmount && !busy.value) {
+  if (abandonOnUnmount && !busy.value && !settling.value) {
     const roomNo = String(roomStore.roomNo || '').trim()
     void gamesApi.fruitAbandonGamble(/^\d{6}$/.test(roomNo) ? roomNo : undefined).catch(() => {})
   }

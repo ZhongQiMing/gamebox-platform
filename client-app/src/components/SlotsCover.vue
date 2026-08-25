@@ -12,10 +12,11 @@
       type="button"
       class="start-btn"
       aria-label="开始"
+      :disabled="started"
       @click="handleStart"
     >
       <img
-        src="/images/games/slots/开始按钮.png"
+        src="/images/games/slots/开始按钮.webp"
         class="start-btn-img"
         alt=""
         draggable="false"
@@ -25,6 +26,7 @@
 </template>
 
 <script setup lang="ts">
+import { ref } from 'vue'
 import GameCoverShell from './GameCoverShell.vue'
 
 defineProps({
@@ -33,7 +35,12 @@ defineProps({
 
 const emit = defineEmits(['start', 'close'])
 
+/* 进游戏要等路由分块下载，这期间连点会 push 两次 */
+const started = ref(false)
+
 function handleStart() {
+  if (started.value) return
+  started.value = true
   emit('start')
 }
 </script>

@@ -20,7 +20,7 @@
           <div class="fcs-idle-rays" aria-hidden="true">
             <img
               class="fcs-idle-rays-img"
-              src="/images/games/slots/center/idle-rays.png"
+              src="/images/games/slots/center/idle-rays.webp"
               alt=""
               draggable="false"
             />
@@ -609,7 +609,7 @@ onUnmounted(() => {
 /*
   橙色安全区：对齐参考图四行比例
   1 图标+算式 / 2 赢分 / 3 倍数 / 4 总额
-  黑框保持 idle-led-box 素材比例，不做瘦扁拉伸
+  黑框保持原素材比例，不做瘦扁拉伸
 */
 .fcs-idle-layout {
   position: absolute;
@@ -747,7 +747,14 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   container-type: size;
-  background: url('/images/games/slots/center/idle-led-box.png') center / 100% 100% no-repeat;
+  /* 原来指向 idle-led-box.png，素材从未入库，线上是个没有边框的裸数字。
+     数码管黑框用 CSS 画，几何仍由上面的 aspect-ratio 决定，不依赖外部图。 */
+  border: 1px solid rgba(120, 96, 40, 0.75);
+  border-radius: 3px;
+  background: #0a0704;
+  box-shadow:
+    inset 0 1px 3px rgba(0, 0, 0, 0.9),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.6);
 }
 
 .fcs-idle-led-num {

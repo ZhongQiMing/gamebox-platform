@@ -16,7 +16,7 @@ export interface PixelBox {
 
 export const cabinetBodyUrl = '/images/games/slots/fruit-cabinet-base.webp'
 export const cabinetAmbientUrl = '/images/games/slots/fruit-cabinet-bg-ambient.webp'
-export const fruitRingUrl = '/images/games/slots/24格.png'
+export const fruitRingUrl = '/images/games/slots/24格.webp'
 
 /** 24 格盘面（位置不动） */
 export const fruitRingBox: PixelBox = { x: 139, y: 421, w: 752, h: 680 }
@@ -114,14 +114,14 @@ export interface BetButton extends PixelBox {
 }
 
 export const betButtons: BetButton[] = [
-  { id: 'bar', label: '天门', src: '/images/games/slots/1.png', x: 75, y: 1270, w: 118, h: 100 },
-  { id: 'seven', label: '77', src: '/images/games/slots/2.png', x: 185, y: 1269, w: 113, h: 101 },
-  { id: 'star', label: '双星', src: '/images/games/slots/3.png', x: 295, y: 1269, w: 108, h: 101 },
-  { id: 'melon', label: '西瓜', src: '/images/games/slots/4.png', x: 402, y: 1269, w: 106, h: 101 },
-  { id: 'bell', label: '铃铛', src: '/images/games/slots/5.png', x: 510, y: 1269, w: 109, h: 101 },
-  { id: 'lemon', label: '芒果', src: '/images/games/slots/6.png', x: 618, y: 1269, w: 111, h: 101 },
-  { id: 'orange', label: '橘子', src: '/images/games/slots/7.png', x: 726, y: 1269, w: 114, h: 101 },
-  { id: 'apple', label: '苹果', src: '/images/games/slots/8.png', x: 832, y: 1269, w: 120, h: 101 },
+  { id: 'bar', label: '天门', src: '/images/games/slots/1.webp', x: 75, y: 1270, w: 118, h: 100 },
+  { id: 'seven', label: '77', src: '/images/games/slots/2.webp', x: 185, y: 1269, w: 113, h: 101 },
+  { id: 'star', label: '双星', src: '/images/games/slots/3.webp', x: 295, y: 1269, w: 108, h: 101 },
+  { id: 'melon', label: '西瓜', src: '/images/games/slots/4.webp', x: 402, y: 1269, w: 106, h: 101 },
+  { id: 'bell', label: '铃铛', src: '/images/games/slots/5.webp', x: 510, y: 1269, w: 109, h: 101 },
+  { id: 'lemon', label: '芒果', src: '/images/games/slots/6.webp', x: 618, y: 1269, w: 111, h: 101 },
+  { id: 'orange', label: '橘子', src: '/images/games/slots/7.webp', x: 726, y: 1269, w: 114, h: 101 },
+  { id: 'apple', label: '苹果', src: '/images/games/slots/8.webp', x: 832, y: 1269, w: 120, h: 101 },
 ]
 
 export const betLeds: Array<PixelBox & { id: BetId }> = [
@@ -144,12 +144,12 @@ export interface MultButton extends PixelBox {
 }
 
 export const multButtons: MultButton[] = [
-  { value: 1, src: '/images/games/slots/X1.png', x: 242, y: 1435, w: 89, h: 66 },
-  { value: 5, src: '/images/games/slots/X5.png', x: 354, y: 1435, w: 89, h: 66 },
-  { value: 10, src: '/images/games/slots/X10.png', x: 470, y: 1435, w: 89, h: 66 },
-  { value: 20, src: '/images/games/slots/X20.png', x: 586, y: 1435, w: 92, h: 66 },
-  { value: 50, src: '/images/games/slots/X50.png', x: 703, y: 1435, w: 92, h: 66 },
-  { value: 100, src: '/images/games/slots/X100.png', x: 823, y: 1435, w: 92, h: 66 },
+  { value: 1, src: '/images/games/slots/X1.webp', x: 242, y: 1435, w: 89, h: 66 },
+  { value: 5, src: '/images/games/slots/X5.webp', x: 354, y: 1435, w: 89, h: 66 },
+  { value: 10, src: '/images/games/slots/X10.webp', x: 470, y: 1435, w: 89, h: 66 },
+  { value: 20, src: '/images/games/slots/X20.webp', x: 586, y: 1435, w: 92, h: 66 },
+  { value: 50, src: '/images/games/slots/X50.webp', x: 703, y: 1435, w: 92, h: 66 },
+  { value: 100, src: '/images/games/slots/X100.webp', x: 823, y: 1435, w: 92, h: 66 },
 ]
 
 export function boxStyle(box: PixelBox) {
@@ -172,18 +172,18 @@ export function titleMarqueeBulbStyle(bulb: { x: number; y: number }) {
 
 export function buildControlButtons(autoPlaying: boolean): ControlButton[] {
   return [
-    { id: 'refund', label: '退币', src: '/images/games/slots/退币.png', x: 139, y: 1136, w: 129, h: 64 },
+    { id: 'refund', label: '退币', src: '/images/games/slots/退币.webp', x: 139, y: 1136, w: 129, h: 64 },
     {
       id: 'auto',
       label: autoPlaying ? '停止' : '自动',
-      src: autoPlaying ? '/images/games/slots/停止.png' : '/images/games/slots/自动.png',
+      src: autoPlaying ? '/images/games/slots/停止.webp' : '/images/games/slots/自动.webp',
       x: 297,
       y: 1136,
       w: 127,
       h: 63,
     },
-    { id: 'small', label: '小', src: '/images/games/slots/小.png', x: 451, y: 1136, w: 109, h: 63 },
-    { id: 'big', label: '大', src: '/images/games/slots/大.png', x: 587, y: 1136, w: 109, h: 63 },
-    { id: 'start', label: '开始', src: '/images/games/slots/开始.png', x: 726, y: 1137, w: 159, h: 62 },
+    { id: 'small', label: '小', src: '/images/games/slots/小.webp', x: 451, y: 1136, w: 109, h: 63 },
+    { id: 'big', label: '大', src: '/images/games/slots/大.webp', x: 587, y: 1136, w: 109, h: 63 },
+    { id: 'start', label: '开始', src: '/images/games/slots/开始.webp', x: 726, y: 1137, w: 159, h: 62 },
   ]
 }
