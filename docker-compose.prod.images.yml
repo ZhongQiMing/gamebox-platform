@@ -5,6 +5,10 @@
 # 跑哪个版本由 .env.prod 里的 GAMEBOX_VERSION 决定，两个应用镜像必须同版本。
 # 别把它改回 latest：latest 是同名覆盖，load 新镜像会把旧镜像的标签摘掉，
 # 服务器上就再也找不到上一版，出事只能回本机重新构建（十几分钟起）。
+#
+# 这台生产机（CentOS 7）与仓库默认的差异只允许这几处，不能改回 Docker 命名卷：
+#   1. pg/redis/uploads 绑到 /opt/gamebox-data，数据不进 docker volume
+#   2. postgres、web 需要 seccomp:unconfined（3.10 内核对 PG15 / nginx 会 EPERM）
 
 # 日志轮转：Docker 默认 json-file 无上限，一个刷屏的报错能在几天里吃掉整块盘，
 # 而磁盘满会先把 Postgres 写挂。所有服务共用这一份配置。
@@ -20,6 +24,8 @@ services:
     container_name: gamebox-postgres
     restart: unless-stopped
     logging: *default-logging
+    security_opt:
+      - seccomp:unconfined
     environment:
       POSTGRES_USER: gamebox
       POSTGRES_PASSWORD: ${DB_PASSWORD}
@@ -27,7 +33,7 @@ services:
       # 容器默认 UTC，日志和 psql 里的时间会跟业务（上海时区）对不上，排障时很误导
       TZ: ${TZ:-Asia/Shanghai}
     volumes:
-      - gamebox_pgdata:/var/lib/postgresql/data
+      - /opt/gamebox-data/pg:/var/lib/postgresql/data
     networks: [backend]
     deploy:
       resources:
@@ -54,7 +60,7 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       TZ: ${TZ:-Asia/Shanghai}
     volumes:
-      - gamebox_redisdata:/data
+      - /opt/gamebox-data/redis:/data
     networks: [backend]
     deploy:
       resources:
@@ -89,8 +95,8 @@ services:
         condition: service_healthy
     networks: [frontend, backend]
     volumes:
-      - gamebox_uploads:/repo/server/uploads
-      - gamebox_private_uploads:/repo/server/private-uploads
+      - /opt/gamebox-data/uploads:/repo/server/uploads
+      - /opt/gamebox-data/private-uploads:/repo/server/private-uploads
     user: "1000:1000"
     read_only: true
     init: true
@@ -134,8 +140,11 @@ services:
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
+      # CentOS 7（内核 3.10）+ Docker 默认 seccomp 会拦新版 nginx 用到的写盘系统调用
+      - seccomp:unconfined
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=32m
+      - /var/cache/nginx:rw,nosuid,nodev,size=32m
     healthcheck:
       # 三个 Origin 入口都必须真正返回 HTTP；任一端口失败都不能算 web 健康。
       test:
@@ -143,7 +152,7 @@ services:
         - >-
           wget -q -O /dev/null http://127.0.0.1:8080/
           && wget -q -O /dev/null http://127.0.0.1:8081/
-          && wget -q -O /dev/null http://127.0.0.1:8082/
+          && wget -q -O /dev/null http://127.0.0.1:8082/games-assets/bjsc/index.html
       interval: 10s
       timeout: 5s
       retries: 12
@@ -160,9 +169,3 @@ networks:
   backend:
     driver: bridge
     internal: true
-
-volumes:
-  gamebox_pgdata:
-  gamebox_redisdata:
-  gamebox_uploads:
-  gamebox_private_uploads:

@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
   本机构建生产镜像，打上不可变版本号，压成可上传的 tar 包。
 
@@ -25,7 +25,9 @@ param(
   [string]$PlayerOrigin = $env:PLAYER_ORIGIN,
   [string]$GameOrigin = $env:GAME_ORIGIN,
   [switch]$AllowDirty,
-  [string]$DirtyReason
+  [string]$DirtyReason,
+  # 本机访问 deb.debian.org 失败时传入 mirrors.aliyun.com
+  [string]$DebianMirror
 )
 
 $ErrorActionPreference = 'Stop'
@@ -89,11 +91,15 @@ if ($dirty) {
 # 两个 Dockerfile 的构建上下文都是仓库根：server 要 packages/shared 和根 lockfile，
 # web 要根级 games-assets
 Step "构建 server 镜像"
-docker build -f server/Dockerfile -t "gamebox-server:$version" -t 'gamebox-server:latest' .
+$serverBuildArgs = @('-f', 'server/Dockerfile', '--provenance=false', '--sbom=false', '-t', "gamebox-server:$version", '-t', 'gamebox-server:latest')
+if ($DebianMirror) { $serverBuildArgs += @('--build-arg', "DEBIAN_MIRROR=$DebianMirror") }
+$serverBuildArgs += '.'
+docker build @serverBuildArgs
 if ($LASTEXITCODE -ne 0) { Fail 'server 镜像构建失败' }
 
 Step "构建 web 镜像（含玩家端 + 管理后台，要跑两次类型检查，比较慢）"
 docker build -f client-app/Dockerfile `
+  --provenance=false --sbom=false `
   --build-arg "PLAYER_ORIGIN=$PlayerOrigin" `
   --build-arg "GAME_ORIGIN=$GameOrigin" `
   -t "gamebox-web:$version" -t 'gamebox-web:latest' .

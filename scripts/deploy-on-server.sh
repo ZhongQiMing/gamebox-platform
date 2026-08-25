@@ -544,6 +544,29 @@ dc_version "$NEW_VERSION" run --rm --no-deps \
   -e "DATABASE_URL=postgresql://gamebox:${DB_PASSWORD}@postgres:5432/gamebox?schema=public" \
   server node ../node_modules/prisma/build/index.js migrate deploy
 
+# 迁移只建空表。游戏目录、各游戏赔率、代理等级、平台 1 亿开账、管理员账号全在
+# seed 里，而生产从不自动 seed。全新库不初始化的结果是：后台没有任何账号可登录，
+# 就算进去也一个游戏都没有；postgres 又只挂在 internal 网络上，没法从外面补数据。
+# 这种状态必须吵出来，不能让它静默通过成一次「成功」的发布。
+echo "==> 检查平台基础数据（游戏目录 / 管理员）..."
+BOOTSTRAP_NEEDED=0
+set +e
+SEED_PROBE=$(dc exec -T postgres psql -U gamebox -d gamebox -tAc \
+  "SELECT (SELECT COUNT(*) FROM \"Game\") || ':' || (SELECT COUNT(*) FROM \"User\" WHERE role::text = 'ADMIN')" 2>/dev/null)
+SEED_PROBE_RC=$?
+set -e
+if [ "$SEED_PROBE_RC" = 0 ] && [ -n "$SEED_PROBE" ]; then
+  SEED_PROBE=$(echo "$SEED_PROBE" | tr -d '[:space:]')
+  GAME_COUNT=${SEED_PROBE%%:*}
+  ADMIN_COUNT=${SEED_PROBE##*:}
+  if [ "${GAME_COUNT:-0}" = 0 ] || [ "${ADMIN_COUNT:-0}" = 0 ]; then
+    BOOTSTRAP_NEEDED=1
+    add_warning "平台基础数据缺失（游戏 ${GAME_COUNT} 个、管理员 ${ADMIN_COUNT} 个），须先跑一次初始化，否则后台登不进去且没有游戏"
+  fi
+else
+  add_warning "无法探测平台基础数据，请手动确认游戏目录与管理员账号是否存在"
+fi
+
 echo "==> 启动应用容器..."
 dc up -d
 
@@ -743,7 +766,24 @@ echo "  玩家端：${PUBLIC_BASE_URL}"
 echo "  管理端：${ADMIN_BASE_URL}"
 echo "  游戏域：${GAME_BASE_URL}"
 echo "出问题回滚：bash $DEPLOY_DIR/rollback-on-server.sh"
-echo "（生产环境不自动 seed；测试账号请自行创建）"
+if [ "${BOOTSTRAP_NEEDED:-0}" = 1 ]; then
+  echo ""
+  echo "!! 这个库还没初始化：没有游戏目录 / 没有管理员，现在打开后台是登不进去的。"
+  echo "   补一次（只需一次，脚本幂等，已有数据会自动跳过）："
+  echo ""
+  # 这里必须用 ACTIVE_* 持久路径：WORK_* 在 mktemp 目录里，脚本一退出就被清掉，
+  # 打出去的命令你隔天复制来跑会找不到文件。
+  # 不要显式传 DATABASE_URL：server 服务已通过 env_file 加载 server/.env.production，
+  # 里面就有正确的连接串。显式 -e 会覆盖它，而你的 shell 里没有 DB_PASSWORD，
+  # 展开成空密码后只会得到一个认证失败。
+  echo "   cd $DEPLOY_DIR && SEED_ADMIN_PASSWORD='换成你自己的强口令' \\"
+  echo "     docker compose --project-directory $DEPLOY_DIR -f $ACTIVE_COMPOSE --env-file $ACTIVE_ENV \\"
+  echo "     run --rm --no-deps -e SEED_ADMIN_PASSWORD server node dist-seed/prisma/seed.js"
+  echo ""
+  echo "   跑完用 admin + 该口令登录后台。忘记口令只能改库，系统没有重置管理员密码的接口。"
+else
+  echo "（生产环境不自动 seed；测试账号请自行创建）"
+fi
 if [ "${#DEPLOY_WARNINGS[@]}" -gt 0 ]; then
   echo ""
   echo "!! 发布完成但有 ${#DEPLOY_WARNINGS[@]} 项高可见告警（已写入 $HISTORY_FILE）："
