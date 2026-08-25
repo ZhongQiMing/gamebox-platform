@@ -16,7 +16,7 @@ body.dn-body {
   overflow: hidden;
   min-height: 0 !important;
   max-height: 100%;
-  background: #0a0806 url('../assets/ui/stage-bg.jpg') center / cover no-repeat;
+  background: #0a0806 url('../assets/ui/stage-bg.webp') center / cover no-repeat;
 }
 
 html.dn-in-iframe,
@@ -34,7 +34,7 @@ html.dn-in-iframe body.dn-body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: #0a0806 url('../assets/ui/stage-bg.jpg') center / cover no-repeat;
+  background: #0a0806 url('../assets/ui/stage-bg.webp') center / cover no-repeat;
 }
 
 /* ---------- ??????/????????? ---------- */
@@ -57,7 +57,7 @@ html.dn-in-iframe body.dn-body {
   display: flex;
   align-items: center;
   gap: 4px;
-  flex-shrink: 0;
+  flex: 0 1 auto;
   min-width: 0;
 }
 
@@ -100,8 +100,10 @@ html.dn-in-iframe body.dn-body {
 .dn-head-title {
   margin: 0;
   white-space: nowrap;
-  font-size: 17px;
-  letter-spacing: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: clamp(14px, 4.2vw, 17px);
+  letter-spacing: clamp(1px, 0.6vw, 3px);
   font-family: 'Noto Serif SC', 'Songti SC', serif;
   font-weight: 700;
   background: linear-gradient(180deg, #e8f8ff 0%, #d4af37 55%, #1a5a78 100%);
@@ -113,40 +115,49 @@ html.dn-in-iframe body.dn-body {
 
 .dn-stats {
   margin-left: auto;
-  flex-shrink: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: min(100%, 300px);
   display: grid;
   grid-auto-flow: column;
-  grid-template-columns: repeat(2, max-content);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   grid-template-rows: auto auto;
-  gap: 5px 16px;
+  column-gap: clamp(8px, 2.4vw, 14px);
+  row-gap: 4px;
   padding: 2px 0;
-  justify-items: end;
+  justify-content: end;
+  align-content: center;
 }
 
 .dn-stat {
   display: grid;
-  grid-template-columns: 30px 64px;
-  column-gap: 6px;
+  grid-template-columns: max-content var(--tb-stat-vw, 13ch);
+  justify-content: end;
+  column-gap: 4px;
   align-items: baseline;
   line-height: 1.3;
+  min-width: 0;
+  width: 100%;
 }
 
 .dn-stat .k {
-  font-size: 11px;
+  font-size: clamp(10px, 2.7vw, 11px);
   color: rgba(200, 190, 170, 0.72);
-  letter-spacing: 1px;
+  letter-spacing: 0;
   text-align: right;
-  justify-self: end;
+  white-space: nowrap;
 }
 
 .dn-stat .v {
-  font-size: 13px;
+  font-size: clamp(11px, 3.1vw, 13px);
   font-weight: 600;
   color: #e8c76a;
   font-family: ui-monospace, Consolas, monospace;
   font-variant-numeric: tabular-nums;
   text-align: right;
-  justify-self: end;
+  white-space: nowrap;
+  min-width: 0;
+  overflow: visible;
 }
 
 .dn-stat .v.is-plus { color: #8ee8a8; }
@@ -1634,7 +1645,7 @@ html.dn-in-iframe body.dn-body {
   margin: 0;
   transform: translate(-50%, -50%) rotate(0deg);
   transform-origin: center center;
-  background: url('../assets/ui/chips/chip-select-ring.png?v=5') center / contain no-repeat;
+  background: url('../assets/ui/chips/chip-select-ring.webp?v=5') center / contain no-repeat;
   opacity: 0;
   pointer-events: none;
   z-index: 0;
@@ -1741,6 +1752,11 @@ html.dn-in-iframe body.dn-body {
 .dn-phase-banner.is-hide {
   visibility: visible;
   animation: dn-banner-out 0.3s ease-in forwards;
+}
+
+/* hidden 属性要显式声明：上面的 display:block 优先级高过浏览器默认的 [hidden]{display:none} */
+.dn-phase-banner__img[hidden] {
+  display: none;
 }
 
 .dn-phase-banner__img {

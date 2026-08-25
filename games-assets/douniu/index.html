@@ -2,10 +2,12 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <link rel="stylesheet" href="/fonts/gamebox-fonts.css">
+  <link rel="preload" as="style" href="/fonts/gamebox-fonts.css"
+        onload="this.onload=null;this.rel='stylesheet'">
+  <noscript><link rel="stylesheet" href="/fonts/gamebox-fonts.css"></noscript>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>斗牛</title>
-<link rel="stylesheet" href="./css/dn.css?v=55">
+<link rel="stylesheet" href="./css/dn.css?v=60">
   <link rel="stylesheet" href="/games-assets/_table-common/table-ui.css?v=7">
   <script>
     (function () {
@@ -52,8 +54,8 @@
 <div class="dn-room tb-room">
   <!-- 顶栏发牌器 + 其上扑克 -->
   <div class="dn-shoe" id="shoeBox" aria-hidden="true">
-    <img class="dn-shoe__body" src="./assets/ui/shoe-dealer-live.png?v=1" alt="" draggable="false">
-    <img class="dn-shoe__cards" src="./assets/ui/shoe-cards-live.png?v=2" alt="" draggable="false">
+    <img class="dn-shoe__body" src="./assets/ui/shoe-dealer-live.webp?v=1" alt="" draggable="false">
+    <img class="dn-shoe__cards" src="./assets/ui/shoe-cards-live.webp?v=2" alt="" draggable="false">
   </div>
 
   <!-- 倒计时：下注秒数 / 开奖中 / 派奖中 -->
@@ -66,32 +68,32 @@
     <div class="dn-hand dn-hand--banker" id="bankerHand">
       <div class="dn-card" data-slot="b1">
         <div class="dn-card__inner">
-          <div class="dn-card__face dn-card__face--back"><img src="./assets/cards/card-back.png?v=5" alt="" draggable="false"></div>
-          <div class="dn-card__face dn-card__face--front"><img src="./assets/cards/card-back.png?v=5" alt="" draggable="false"></div>
+          <div class="dn-card__face dn-card__face--back"><img src="./assets/cards/card-back.webp?v=5" alt="" draggable="false"></div>
+          <div class="dn-card__face dn-card__face--front"><img src="./assets/cards/card-back.webp?v=5" alt="" draggable="false"></div>
         </div>
       </div>
       <div class="dn-card" data-slot="b2">
         <div class="dn-card__inner">
-          <div class="dn-card__face dn-card__face--back"><img src="./assets/cards/card-back.png?v=5" alt="" draggable="false"></div>
-          <div class="dn-card__face dn-card__face--front"><img src="./assets/cards/card-back.png?v=5" alt="" draggable="false"></div>
+          <div class="dn-card__face dn-card__face--back"><img src="./assets/cards/card-back.webp?v=5" alt="" draggable="false"></div>
+          <div class="dn-card__face dn-card__face--front"><img src="./assets/cards/card-back.webp?v=5" alt="" draggable="false"></div>
         </div>
       </div>
       <div class="dn-card" data-slot="b3">
         <div class="dn-card__inner">
-          <div class="dn-card__face dn-card__face--back"><img src="./assets/cards/card-back.png?v=5" alt="" draggable="false"></div>
-          <div class="dn-card__face dn-card__face--front"><img src="./assets/cards/card-back.png?v=5" alt="" draggable="false"></div>
+          <div class="dn-card__face dn-card__face--back"><img src="./assets/cards/card-back.webp?v=5" alt="" draggable="false"></div>
+          <div class="dn-card__face dn-card__face--front"><img src="./assets/cards/card-back.webp?v=5" alt="" draggable="false"></div>
         </div>
       </div>
       <div class="dn-card" data-slot="b4">
         <div class="dn-card__inner">
-          <div class="dn-card__face dn-card__face--back"><img src="./assets/cards/card-back.png?v=5" alt="" draggable="false"></div>
-          <div class="dn-card__face dn-card__face--front"><img src="./assets/cards/card-back.png?v=5" alt="" draggable="false"></div>
+          <div class="dn-card__face dn-card__face--back"><img src="./assets/cards/card-back.webp?v=5" alt="" draggable="false"></div>
+          <div class="dn-card__face dn-card__face--front"><img src="./assets/cards/card-back.webp?v=5" alt="" draggable="false"></div>
         </div>
       </div>
       <div class="dn-card" data-slot="b5">
         <div class="dn-card__inner">
-          <div class="dn-card__face dn-card__face--back"><img src="./assets/cards/card-back.png?v=5" alt="" draggable="false"></div>
-          <div class="dn-card__face dn-card__face--front"><img src="./assets/cards/card-back.png?v=5" alt="" draggable="false"></div>
+          <div class="dn-card__face dn-card__face--back"><img src="./assets/cards/card-back.webp?v=5" alt="" draggable="false"></div>
+          <div class="dn-card__face dn-card__face--front"><img src="./assets/cards/card-back.webp?v=5" alt="" draggable="false"></div>
         </div>
       </div>
       <div class="dn-hand-type" id="bankerType" hidden></div>
@@ -99,32 +101,32 @@
     <div class="dn-hand dn-hand--player" id="playerHand">
       <div class="dn-card" data-slot="p1">
         <div class="dn-card__inner">
-          <div class="dn-card__face dn-card__face--back"><img src="./assets/cards/card-back.png?v=5" alt="" draggable="false"></div>
-          <div class="dn-card__face dn-card__face--front"><img src="./assets/cards/card-back.png?v=5" alt="" draggable="false"></div>
+          <div class="dn-card__face dn-card__face--back"><img src="./assets/cards/card-back.webp?v=5" alt="" draggable="false"></div>
+          <div class="dn-card__face dn-card__face--front"><img src="./assets/cards/card-back.webp?v=5" alt="" draggable="false"></div>
         </div>
       </div>
       <div class="dn-card" data-slot="p2">
         <div class="dn-card__inner">
-          <div class="dn-card__face dn-card__face--back"><img src="./assets/cards/card-back.png?v=5" alt="" draggable="false"></div>
-          <div class="dn-card__face dn-card__face--front"><img src="./assets/cards/card-back.png?v=5" alt="" draggable="false"></div>
+          <div class="dn-card__face dn-card__face--back"><img src="./assets/cards/card-back.webp?v=5" alt="" draggable="false"></div>
+          <div class="dn-card__face dn-card__face--front"><img src="./assets/cards/card-back.webp?v=5" alt="" draggable="false"></div>
         </div>
       </div>
       <div class="dn-card" data-slot="p3">
         <div class="dn-card__inner">
-          <div class="dn-card__face dn-card__face--back"><img src="./assets/cards/card-back.png?v=5" alt="" draggable="false"></div>
-          <div class="dn-card__face dn-card__face--front"><img src="./assets/cards/card-back.png?v=5" alt="" draggable="false"></div>
+          <div class="dn-card__face dn-card__face--back"><img src="./assets/cards/card-back.webp?v=5" alt="" draggable="false"></div>
+          <div class="dn-card__face dn-card__face--front"><img src="./assets/cards/card-back.webp?v=5" alt="" draggable="false"></div>
         </div>
       </div>
       <div class="dn-card" data-slot="p4">
         <div class="dn-card__inner">
-          <div class="dn-card__face dn-card__face--back"><img src="./assets/cards/card-back.png?v=5" alt="" draggable="false"></div>
-          <div class="dn-card__face dn-card__face--front"><img src="./assets/cards/card-back.png?v=5" alt="" draggable="false"></div>
+          <div class="dn-card__face dn-card__face--back"><img src="./assets/cards/card-back.webp?v=5" alt="" draggable="false"></div>
+          <div class="dn-card__face dn-card__face--front"><img src="./assets/cards/card-back.webp?v=5" alt="" draggable="false"></div>
         </div>
       </div>
       <div class="dn-card" data-slot="p5">
         <div class="dn-card__inner">
-          <div class="dn-card__face dn-card__face--back"><img src="./assets/cards/card-back.png?v=5" alt="" draggable="false"></div>
-          <div class="dn-card__face dn-card__face--front"><img src="./assets/cards/card-back.png?v=5" alt="" draggable="false"></div>
+          <div class="dn-card__face dn-card__face--back"><img src="./assets/cards/card-back.webp?v=5" alt="" draggable="false"></div>
+          <div class="dn-card__face dn-card__face--front"><img src="./assets/cards/card-back.webp?v=5" alt="" draggable="false"></div>
         </div>
       </div>
       <div class="dn-hand-type" id="playerType" hidden></div>
@@ -135,21 +137,21 @@
   <!-- 下注区：上庄闲，下五个牛型区 -->
   <div class="dn-bet dn-bet--hotspot tb-bet" id="betArea" aria-label="下注区">
     <button type="button" class="dn-bet-btn dn-bet-btn--banker" data-bet="banker">
-      <img class="dn-bet-btn__frame" src="./assets/ui/bet-btns/banker.png?v=14" alt="" draggable="false">
+      <img class="dn-bet-btn__frame" src="./assets/ui/bet-btns/banker.webp?v=14" alt="" draggable="false">
       <span class="dn-bet-btn__name">庄</span>
       <span class="dn-bet-btn__odds">1:0.95</span>
       <span class="dn-bet-btn__chips" aria-hidden="true"></span>
       <span class="dn-bet-btn__stake" hidden>0</span>
     </button>
     <button type="button" class="dn-bet-btn dn-bet-btn--player" data-bet="player">
-      <img class="dn-bet-btn__frame" src="./assets/ui/bet-btns/player.png?v=14" alt="" draggable="false">
+      <img class="dn-bet-btn__frame" src="./assets/ui/bet-btns/player.webp?v=14" alt="" draggable="false">
       <span class="dn-bet-btn__name">闲</span>
       <span class="dn-bet-btn__odds">1:1</span>
       <span class="dn-bet-btn__chips" aria-hidden="true"></span>
       <span class="dn-bet-btn__stake" hidden>0</span>
     </button>
     <button type="button" class="dn-bet-btn dn-bet-btn--span dn-bet-btn--gold" data-bet="small">
-      <img class="dn-bet-btn__frame" src="./assets/ui/bet-btns/small.png?v=21" alt="" draggable="false">
+      <img class="dn-bet-btn__frame" src="./assets/ui/bet-btns/small.webp?v=21" alt="" draggable="false">
       <span class="dn-bet-btn__label">
         <span class="dn-bet-btn__name">小牛牛</span>
         <span class="dn-bet-btn__odds">1:100</span>
@@ -158,7 +160,7 @@
       <span class="dn-bet-btn__stake" hidden>0</span>
     </button>
     <button type="button" class="dn-bet-btn dn-bet-btn--span dn-bet-btn--gold" data-bet="niuniu">
-      <img class="dn-bet-btn__frame" src="./assets/ui/bet-btns/niuniu.png?v=21" alt="" draggable="false">
+      <img class="dn-bet-btn__frame" src="./assets/ui/bet-btns/niuniu.webp?v=21" alt="" draggable="false">
       <span class="dn-bet-btn__label">
         <span class="dn-bet-btn__name">牛牛</span>
         <span class="dn-bet-btn__odds">1:6.84</span>
@@ -167,16 +169,16 @@
       <span class="dn-bet-btn__stake" hidden>0</span>
     </button>
     <button type="button" class="dn-bet-btn dn-bet-btn--span dn-bet-btn--gold" data-bet="niu79">
-      <img class="dn-bet-btn__frame" src="./assets/ui/bet-btns/niu79.png?v=21" alt="" draggable="false">
+      <img class="dn-bet-btn__frame" src="./assets/ui/bet-btns/niu79.webp?v=21" alt="" draggable="false">
       <span class="dn-bet-btn__label">
-        <span class="dn-bet-btn__name is-stack"><b>无牛</b><i>～</i><b>牛6</b></span>
+        <span class="dn-bet-btn__name is-stack"><b>牛7</b><i>～</i><b>牛9</b></span>
         <span class="dn-bet-btn__odds">1:2.98</span>
       </span>
       <span class="dn-bet-btn__chips" aria-hidden="true"></span>
       <span class="dn-bet-btn__stake" hidden>0</span>
     </button>
     <button type="button" class="dn-bet-btn dn-bet-btn--span dn-bet-btn--gold" data-bet="niu06">
-      <img class="dn-bet-btn__frame" src="./assets/ui/bet-btns/niu06.png?v=21" alt="" draggable="false">
+      <img class="dn-bet-btn__frame" src="./assets/ui/bet-btns/niu06.webp?v=21" alt="" draggable="false">
       <span class="dn-bet-btn__label">
         <span class="dn-bet-btn__name is-stack"><b>无牛</b><i>～</i><b>牛6</b></span>
         <span class="dn-bet-btn__odds">1:1.82</span>
@@ -185,7 +187,7 @@
       <span class="dn-bet-btn__stake" hidden>0</span>
     </button>
     <button type="button" class="dn-bet-btn dn-bet-btn--span dn-bet-btn--gold" data-bet="flower">
-      <img class="dn-bet-btn__frame" src="./assets/ui/bet-btns/flower.png?v=21" alt="" draggable="false">
+      <img class="dn-bet-btn__frame" src="./assets/ui/bet-btns/flower.webp?v=21" alt="" draggable="false">
       <span class="dn-bet-btn__label">
         <span class="dn-bet-btn__name">五花牛</span>
         <span class="dn-bet-btn__odds">1:90</span>
@@ -245,16 +247,16 @@
   <!-- 桌边下方左右：撤销 / 续押 -->
   <div class="dn-actions" id="actionBar" aria-label="操作">
     <button type="button" class="dn-action dn-action--undo" data-action="undo" aria-label="撤销">
-      <img src="./assets/ui/action-btns/undo.png?v=4" alt="撤销" draggable="false">
+      <img src="./assets/ui/action-btns/undo.webp?v=4" alt="撤销" draggable="false">
     </button>
     <button type="button" class="dn-action dn-action--rebet" data-action="rebet" aria-label="续押">
-      <img src="./assets/ui/action-btns/rebet.png?v=4" alt="续押" draggable="false">
+      <img src="./assets/ui/action-btns/rebet.webp?v=4" alt="续押" draggable="false">
     </button>
   </div>
 
   <!-- 牌桌顶部桌边右侧：在线人数（底部动态数字） -->
   <div class="dn-players tb-players" id="playersBox" aria-label="气氛人数（非实时在线）" title="桌面气氛人数，非实时在线">
-    <img class="dn-players__icon" src="./assets/ui/action-btns/players.png?v=2" alt="" draggable="false">
+    <img class="dn-players__icon" src="./assets/ui/action-btns/players.webp?v=2" alt="" draggable="false">
     <span class="dn-players__count" id="playersCount">43</span>
   </div>
 
@@ -262,27 +264,27 @@
   <div class="dn-chips" id="chipBar" aria-label="筹码">
     <button type="button" class="dn-chip is-selected" data-chip="1" aria-label="1">
       <span class="dn-chip__glow" aria-hidden="true"></span>
-      <img src="./assets/ui/chips/chip-1.png?v=4" alt="1" draggable="false">
+      <img src="./assets/ui/chips/chip-1.webp?v=4" alt="1" draggable="false">
     </button>
     <button type="button" class="dn-chip" data-chip="5" aria-label="5">
       <span class="dn-chip__glow" aria-hidden="true"></span>
-      <img src="./assets/ui/chips/chip-5.png?v=4" alt="5" draggable="false">
+      <img src="./assets/ui/chips/chip-5.webp?v=4" alt="5" draggable="false">
     </button>
     <button type="button" class="dn-chip" data-chip="10" aria-label="10">
       <span class="dn-chip__glow" aria-hidden="true"></span>
-      <img src="./assets/ui/chips/chip-10.png?v=4" alt="10" draggable="false">
+      <img src="./assets/ui/chips/chip-10.webp?v=4" alt="10" draggable="false">
     </button>
     <button type="button" class="dn-chip" data-chip="50" aria-label="50">
       <span class="dn-chip__glow" aria-hidden="true"></span>
-      <img src="./assets/ui/chips/chip-50.png?v=4" alt="50" draggable="false">
+      <img src="./assets/ui/chips/chip-50.webp?v=4" alt="50" draggable="false">
     </button>
     <button type="button" class="dn-chip" data-chip="100" aria-label="100">
       <span class="dn-chip__glow" aria-hidden="true"></span>
-      <img src="./assets/ui/chips/chip-100.png?v=4" alt="100" draggable="false">
+      <img src="./assets/ui/chips/chip-100.webp?v=4" alt="100" draggable="false">
     </button>
     <button type="button" class="dn-chip" data-chip="500" aria-label="500">
       <span class="dn-chip__glow" aria-hidden="true"></span>
-      <img src="./assets/ui/chips/chip-500.png?v=4" alt="500" draggable="false">
+      <img src="./assets/ui/chips/chip-500.webp?v=4" alt="500" draggable="false">
     </button>
     <button type="button" class="dn-chip-more tb-chip-more" id="chipPageBtn" aria-label="切换筹码页" title="切换筹码">
       <span class="dn-chip-more__dot"></span>
@@ -305,31 +307,35 @@
     </button>
     <div class="dn-rail-stack" id="dnRailStack">
       <button type="button" class="dn-rail-btn" id="railCs" title="客服">
-        <img class="dn-rail-ic" src="/images/table-rail/rail-cs.png?v=3" alt="" draggable="false">
+        <img class="dn-rail-ic" src="/images/table-rail/rail-cs.webp?v=3" alt="" draggable="false">
         <span class="dn-rail-lb">客服</span>
       </button>
       <button type="button" class="dn-rail-btn" id="railHistory" title="历史记录">
-        <img class="dn-rail-ic" src="/images/table-rail/rail-history.png?v=3" alt="" draggable="false">
+        <img class="dn-rail-ic" src="/images/table-rail/rail-history.webp?v=3" alt="" draggable="false">
         <span class="dn-rail-lb">历史</span>
       </button>
       <button type="button" class="dn-rail-btn" id="railRecords" title="下注记录">
-        <img class="dn-rail-ic" src="/images/table-rail/rail-records.png?v=3" alt="" draggable="false">
+        <img class="dn-rail-ic" src="/images/table-rail/rail-records.webp?v=3" alt="" draggable="false">
         <span class="dn-rail-lb">记录</span>
       </button>
       <button type="button" class="dn-rail-btn" id="railRules" title="玩法规则">
-        <img class="dn-rail-ic" src="/images/table-rail/rail-rules.png?v=3" alt="" draggable="false">
+        <img class="dn-rail-ic" src="/images/table-rail/rail-rules.webp?v=3" alt="" draggable="false">
         <span class="dn-rail-lb">玩法</span>
       </button>
       <button type="button" class="dn-rail-btn" id="railSettings" title="设置">
-        <img class="dn-rail-ic" src="/images/table-rail/rail-settings.png?v=3" alt="" draggable="false">
+        <img class="dn-rail-ic" src="/images/table-rail/rail-settings.webp?v=3" alt="" draggable="false">
         <span class="dn-rail-lb">设置</span>
       </button>
     </div>
   </aside>
 </div><!-- /.dn-stage -->
   <div class="dn-payout-fly" id="payoutFlyLayer" aria-hidden="true"></div>
+  <!-- 两张图各自常驻：显示时只切换哪个可见，绝不改 src（改 src 会出现声画错位） -->
   <div class="dn-phase-banner" id="phaseBanner" aria-hidden="true">
-    <img class="dn-phase-banner__img" id="phaseBannerImg" alt="" draggable="false">
+    <img class="dn-phase-banner__img" id="phaseBannerStart"
+         src="./assets/ui/banners/bet-start.webp?v=4" alt="开始下注" draggable="false" hidden>
+    <img class="dn-phase-banner__img" id="phaseBannerStop"
+         src="./assets/ui/banners/bet-stop.webp?v=4" alt="停止下注" draggable="false" hidden>
   </div>
 
   <!-- 通用弹层：历史 / 玩法 / 设置 -->
@@ -343,8 +349,8 @@
   </section>
 </div><!-- /.dn-viewport -->
 
-<script src="/legacy/js/games-common.js?v=33"></script>
-<script src="/games-assets/_table-common/table-shell.js?v=12"></script>
+<script src="/legacy/js/games-common.js?v=36"></script>
+<script src="/games-assets/_table-common/table-shell.js?v=24"></script>
 <script src="/games-assets/_lottery-common/app-audio-level.js?v=1"></script>
 <script src="/games-assets/_table-common/table-audio.js?v=3"></script>
 <script>
@@ -355,7 +361,7 @@
   if (window.__dnPlayersTimer) { clearInterval(window.__dnPlayersTimer); window.__dnPlayersTimer = null; }
   if (window.__dnBooted) return;
 
-  /* 总周期 60s：下注 + 开奖流程(10 张发牌翻牌报牌≈17s) + 派奖 4s */
+  /* 总周期 66s：下注 + 开奖流程(10 张发牌翻牌报牌≈17s) + 派奖 4s */
   /* 下注统一 45s；发牌/派奖时长本游戏不变；整局 = 45+17+4=66s */
   var BETTING_SEC = 45;
   var DRAW_EST_SEC = 17;
@@ -363,37 +369,52 @@
   var ROUND_SEC = BETTING_SEC + DRAW_EST_SEC + PAYOUT_SECS;
   var TOTAL = BETTING_SEC;
   var SERVER_GAME = 'douniu';
-  var alignWaitTimer = null;
-  var alignWaiting = false;
-  /* 与服务端 alignedBettingEndsAt 一致：Unix epoch 60s 网格 */
-  function getAlignedBetRemain() {
-    var cycleMs = ROUND_SEC * 1000;
-    var bettingMs = TOTAL * 1000;
-    var now = Date.now();
-    var cycleStart = Math.floor(now / cycleMs) * cycleMs;
-    var end = cycleStart + bettingMs;
-    if (now >= end) return 0;
-    return (end - now) / 1000;
-  }
-  function getAlignedWaitRemain() {
-    var cycleMs = ROUND_SEC * 1000;
-    var bettingMs = TOTAL * 1000;
-    var now = Date.now();
-    var cycleStart = Math.floor(now / cycleMs) * cycleMs;
-    var end = cycleStart + bettingMs;
-    if (now < end) return 0;
-    return (cycleStart + cycleMs - now) / 1000;
-  }
-  function clearAlignWait() {
-    if (alignWaitTimer) {
-      clearTimeout(alignWaitTimer);
-      alignWaitTimer = null;
-    }
-  }
 
   var serverClock = (window.TableShell && TableShell.createServerClock)
     ? TableShell.createServerClock()
     : { phase: '', secondsLeft: 0, syncedAt: 0, roundNo: '', timing: null };
+
+  /*
+   * ───────── 时间基准 ─────────
+   *
+   * 整局时序只认服务端的钟：每一局的绝对起点由局号唯一确定，界面永远只回答
+   * 「按服务端的钟，现在走到本局第几毫秒」，本地不再自己累加倒计时。
+   * 这样丢包、慢网、切后台、机器卡顿都只影响画面追赶的快慢，不会让流程错乱。
+   *
+   * 本游戏整局 66s（下注 45 + 开奖 17 + 派奖 4），具体数值以服务端 timing 为准。
+   */
+  function localFallbackPosition() {
+    var cycleMs = ROUND_SEC * 1000;
+    var bettingMs = TOTAL * 1000;
+    var now = Date.now();
+    var startAt = Math.floor(now / cycleMs) * cycleMs;
+    var tIn = now - startAt;
+    var drawMs = DRAW_EST_SEC * 1000;
+    var phase = tIn < bettingMs
+      ? 'BETTING'
+      : (tIn < bettingMs + drawMs ? 'DRAWING' : 'SETTLED');
+    return {
+      startAt: startAt,
+      tIn: tIn,
+      cycleMs: cycleMs,
+      phase: phase,
+      betLeftMs: phase === 'BETTING' ? bettingMs - tIn : 0,
+      drawElapsedMs: phase === 'BETTING' ? 0 : tIn - bettingMs,
+    };
+  }
+
+  function roundPosition() {
+    if (window.TableShell && TableShell.roundPositionOf) {
+      var pos = TableShell.roundPositionOf(serverClock);
+      if (pos) return pos;
+    }
+    return localFallbackPosition();
+  }
+
+  /** 下注剩余秒（只给 UI 用；流程判断一律用 roundPosition） */
+  function getBetRemainSec() {
+    return roundPosition().betLeftMs / 1000;
+  }
 
   var atmosphereRobotCount = 14;
 
@@ -410,7 +431,10 @@
     }
   }
 
-  function applyServerSnap(snap) {
+  /**
+   * @param meta 轮询给的 { sentAt, recvAt }，用来扣掉半个往返再校时
+   */
+  function applyServerSnap(snap, meta) {
     if (!snap) return;
     if (window.TableShell && TableShell.applyServerSnap) {
       TableShell.applyServerSnap(serverClock, snap);
@@ -428,16 +452,13 @@
       ROUND_SEC = BETTING_SEC + DRAW_EST_SEC + PAYOUT_SECS;
       TOTAL = BETTING_SEC;
     }
+    /* 校时要在 timing 落定之后：整局时长是反推开局时刻的前提 */
+    if (window.TableShell && TableShell.syncClock) {
+      TableShell.syncClock(serverClock, snap, meta && meta.sentAt, meta && meta.recvAt);
+    }
     if (snap.roundNo && typeof setRoundNoLabel === 'function') {
       setRoundNoLabel(snap.roundNo);
     }
-  }
-
-  function getBetRemainSec() {
-    if (window.TableShell && TableShell.bettingLeftSec) {
-      return TableShell.bettingLeftSec(serverClock, getAlignedBetRemain);
-    }
-    return getAlignedBetRemain();
   }
   var BANNER_MS = 1500;
   var FLY_MS = 360;
@@ -453,7 +474,7 @@
   var phase = 'bet'; /* bet | draw | payout */
   var roundBusy = false;
   var roundSeq = 0; /* 局序号：作废过期的发牌/报牌链 */
-  var betDeadline = 0;
+  /** 派奖倒计时的截止时刻，仅用于派奖动画自身节奏；换局由时间基准决定 */
   var payoutDeadline = 0;
   var lastBeatSec = -1;
   var lastRoundResult = null;
@@ -470,29 +491,37 @@
   var playerTypeEl = document.getElementById('playerType');
 
   /* ---------- 两路音频：music=背景音乐 / sfx=游戏音效+语音 ---------- */
+  /*
+   * 报牌音真实时长（毫秒），必须与 assets/audio/yoplay-ymbn 下的 mp3 对得上。
+   *
+   * 时间轴按这里的值给每句报牌排档期，档期一到就播下一句，而 playVoice 会先掐掉
+   * 上一句。所以值比真实音频短就等于把话砍掉：原先无牛写 450（真实 1512），
+   * 「无牛」每次只播了一半多就被下一句打断，而无牛是本游戏最常见的牌型。
+   */
   var VOICE_MS = {
-    'voice/none': 450,
-    'voice/niu1': 400,
-    'voice/niu2': 400,
-    'voice/niu3': 400,
-    'voice/niu4': 400,
-    'voice/niu5': 400,
-    'voice/niu6': 400,
-    'voice/niu7': 400,
-    'voice/niu8': 400,
-    'voice/niu9': 400,
-    'voice/niuniu': 400,
-    'voice/flower': 600,
-    'voice/start-bet': 1100,
-    'voice/banker-win': 1700,
-    'voice/player-win': 1700,
-    'voice/tie': 1500
+    'voice/none': 1520,
+    'voice/niu1': 720,
+    'voice/niu2': 720,
+    'voice/niu3': 650,
+    'voice/niu4': 720,
+    'voice/niu5': 800,
+    'voice/niu6': 800,
+    'voice/niu7': 720,
+    'voice/niu8': 650,
+    'voice/niu9': 800,
+    'voice/niuniu': 650,
+    'voice/flower': 630,
+    'voice/start-bet': 2210,
+    'voice/stop-bet': 920,
+    'voice/banker-win': 1550,
+    'voice/player-win': 1550,
+    'voice/tie': 1310
   };
   var TA = (window.TableAudio && TableAudio.create)
     ? TableAudio.create({
         prefKey: 'dn_audio',
         base: './assets/audio/yoplay-ymbn/',
-        ver: '2',
+        ver: '3',
         voiceTimeoutMs: function (name) { return (VOICE_MS[name] || 1400) + 400; },
         exportAs: 'DnAudio',
       })
@@ -550,9 +579,17 @@
     if (TOTAL_ODDS_KEYS[key]) return Math.floor(stake * odds);
     return stake + Math.floor(stake * odds);
   }
+  /* 单边限红兜底与 @gamebox/shared table-paytable 的 sideMaxBet 同源 */
+  var sideLimits = window.TableShell
+    ? TableShell.createSideLimits(
+        { banker: '庄', player: '闲', small: '小牛牛', niuniu: '牛牛', niu79: '牛7-牛9', niu06: '无牛-牛6', flower: '五花牛' },
+        { small: 200, flower: 200, niuniu: 2000 },
+      )
+    : null;
   if (window.TableShell) {
     TableShell.loadPayTable(SERVER_GAME, { odds: BET_ODDS, domRoot: document.getElementById('betArea') })
       .then(function (pt) {
+        if (sideLimits) sideLimits.apply(pt);
         if (!pt || !pt.totalOddsSides) return;
         TOTAL_ODDS_KEYS = {};
         for (var i = 0; i < pt.totalOddsSides.length; i++) TOTAL_ODDS_KEYS[pt.totalOddsSides[i]] = 1;
@@ -566,8 +603,13 @@
   var CARD_V = '5';
   var roundCards = null; /* { b1..p5 / p1..p5 } */
 
-  function isBetting() { return phase === 'bet' && !roundBusy; }
-  function isClosed() { return phase !== 'bet'; }
+  /*
+   * roundBusy 是「本局已经在走开奖流程」的闸。
+   * 原来它只写在没人调用的 isBetting() 里，真正把门的 isClosed() 漏了，
+   * 于是 phase 还没翻成 draw 的那段过渡里点注单能穿过去，白跑一次会被服务端拒的请求。
+   * 与百家乐 / 龙虎保持同一个判断。
+   */
+  function isClosed() { return phase !== 'bet' || roundBusy; }
 
   function pad(n) { return n < 10 ? '0' + n : '' + n; }
   function fmt(s) { return pad(s); }
@@ -707,7 +749,7 @@
       card.classList.remove('is-dealt', 'is-flipped');
       card.removeAttribute('data-group');
       var front = card.querySelector('.dn-card__face--front img');
-      if (front) front.src = './assets/cards/card-back.png?v=' + CARD_V;
+      if (front) front.src = './assets/cards/card-back.webp?v=' + CARD_V;
     }
     if (bankerHand) bankerHand.classList.remove('is-winner', 'is-loser', 'is-split');
     if (playerHand) playerHand.classList.remove('is-winner', 'is-loser', 'is-split');
@@ -752,7 +794,7 @@
       fly.style.top = startY + 'px';
       fly.style.setProperty('--fly-x', dx + 'px');
       fly.style.setProperty('--fly-y', dy + 'px');
-      fly.innerHTML = '<img src="./assets/cards/card-back.png?v=' + CARD_V + '" alt="" draggable="false">';
+      fly.innerHTML = '<img src="./assets/cards/card-back.webp?v=' + CARD_V + '" alt="" draggable="false">';
       flyLayer.appendChild(fly);
 
       shoe.classList.remove('is-dealing');
@@ -1139,7 +1181,7 @@
     var st = getStats(user.uid);
     st.turnover = (st.turnover || 0) + (settlement.stakeTotal || 0);
     st.winloss = (st.winloss || 0) + (settlement.profit || 0);
-    st.rebate = (st.rebate || 0) + Math.floor((settlement.stakeTotal || 0) * 0.005);
+    st.rebate = (st.rebate || 0) + ((window.App && App.calcRebate) ? App.calcRebate(settlement.stakeTotal || 0) : 0);
     try {
       localStorage.setItem('dn_stats_' + user.uid, JSON.stringify(st));
     } catch (e) { /* ignore */ }
@@ -1353,9 +1395,9 @@
   function paint(doBeat) {
     box.classList.remove('is-urgent', 'is-critical', 'is-draw', 'is-payout');
     timeEl.classList.remove('is-beat');
-    if (alignWaiting) {
+    if (phase === 'paused') {
       box.classList.add('is-payout');
-      timeEl.textContent = '准备中';
+      timeEl.textContent = '维护中';
       if (window.TableShell && TableShell.syncFocusUi) TableShell.syncFocusUi(roomEl, 'payout');
       return;
     }
@@ -1383,15 +1425,32 @@
     if (window.TableShell && TableShell.syncFocusUi) TableShell.syncFocusUi(roomEl, 'bet');
   }
 
+  var bannerStartImg = document.getElementById('phaseBannerStart');
+  var bannerStopImg = document.getElementById('phaseBannerStop');
+  if (window.TableShell && TableShell.warmBannerImages) {
+    TableShell.warmBannerImages([bannerStartImg, bannerStopImg]);
+  }
+
+  /** 立刻收掉横幅（进维护、异常复位时用），不走淡出动画 */
+  function hidePhaseBanner() {
+    var box = document.getElementById('phaseBanner');
+    if (!box) return;
+    if (box._bannerTimer) { clearTimeout(box._bannerTimer); box._bannerTimer = null; }
+    if (box._bannerHideTimer) { clearTimeout(box._bannerHideTimer); box._bannerHideTimer = null; }
+    box.classList.remove('is-show', 'is-hide');
+    box.setAttribute('aria-hidden', 'true');
+    if (bannerStartImg) bannerStartImg.hidden = true;
+    if (bannerStopImg) bannerStopImg.hidden = true;
+  }
+
+  /**
+   * 两张横幅图各自常驻一个 <img>，这里只切换哪个可见，绝不改 src。
+   * 改 src 是异步的，新图解码完成前元素还在画上一张，会出现「报开始下注、显示停止下注」。
+   */
   function showPhaseBanner(kind) {
     var box = document.getElementById('phaseBanner');
-    var img = document.getElementById('phaseBannerImg');
-    if (!box || !img) return Promise.resolve();
+    if (!box || !bannerStartImg || !bannerStopImg) return Promise.resolve();
     var isStop = kind === 'stop';
-    img.src = isStop
-      ? './assets/ui/banners/bet-stop.png?v=4'
-      : './assets/ui/banners/bet-start.png?v=4';
-    img.alt = isStop ? '停止下注' : '开始下注';
     if (box._bannerTimer) {
       clearTimeout(box._bannerTimer);
       box._bannerTimer = null;
@@ -1400,12 +1459,30 @@
       clearTimeout(box._bannerHideTimer);
       box._bannerHideTimer = null;
     }
+    bannerStartImg.hidden = isStop;
+    bannerStopImg.hidden = !isStop;
     box.classList.remove('is-show', 'is-hide');
     void box.offsetWidth;
     box.classList.add('is-show');
     box.setAttribute('aria-hidden', 'false');
-    if (isStop) sfx('stop-bet', { vol: 0.95, dedupeMs: 800 });
-    else sfx('voice/start-bet', { vol: 1, dedupeMs: 800 });
+    /*
+     * 两句都走 voice 通道：playVoice 会先掐掉上一句，正好把上一局没播完的报牌尾音
+     * 收干净。走 sfx 通道的话两路各播各的，会和报点数叠在一起。
+     * 停止下注另配一声提示音（stop-bet），跟龙虎/百家乐一致。
+     */
+    if (isStop) {
+      sfx('stop-bet', { vol: 0.95, dedupeMs: 800 });
+      if (!document.hidden) playVoice('voice/stop-bet');
+    } else {
+      playVoice('voice/start-bet');
+    }
+    /*
+     * 停止下注固定 BANNER_MS：发牌基准就锚在它后面，改了会把整条开奖时间轴一起挪。
+     * 开始下注不参与时间轴，让图标至少留到语音说完（本游戏这句 2.2 秒，比横幅长）。
+     */
+    var holdMs = isStop
+      ? BANNER_MS
+      : Math.max(BANNER_MS, VOICE_MS['voice/start-bet'] || 0);
     return new Promise(function (resolve) {
       box._bannerTimer = setTimeout(function () {
         box.classList.remove('is-show');
@@ -1417,47 +1494,78 @@
           box._bannerHideTimer = null;
         }, 340);
         resolve();
-      }, BANNER_MS);
+      }, holdMs);
     });
   }
 
-  function startBetRound() {
-    clearAlignWait();
-    var remain = getBetRemainSec();
-    if (remain <= 0) {
-      alignWaiting = true;
-      phase = 'payout';
-      roundBusy = false;
-      currentBetIssue = '';
-      left = 0;
-      lastBeatSec = -1;
-      var wait = Math.max(0.05, getAlignedWaitRemain());
-      payoutDeadline = Date.now() + wait * 1000;
-      stopOtherBetting();
-      paint(false);
-      syncActionButtons();
-      alignWaitTimer = setTimeout(startBetRound, Math.ceil(wait * 1000));
-      return;
-    }
-    alignWaiting = false;
-    phase = 'bet';
-    roundBusy = false;
+  /* ───────── 单一驱动：换局只由时间基准触发 ───────── */
+
+  /** 当前这一局的绝对起点（服务端钟）；靠它识别换局，不靠倒计时归零 */
+  var curRoundStartAt = 0;
+
+  /**
+   * 本局局号。服务端给的那个必须确认属于当前这一局才用，
+   * 否则迟到的快照会把上一局号带进来。
+   */
+  function roundNoAt(pos) {
     var rn = (serverClock && serverClock.roundNo) ? String(serverClock.roundNo) : '';
-    currentBetIssue = rn || '';
-    left = Math.max(1, Math.ceil(remain));
+    if (!rn) return '';
+    if (window.TableShell && TableShell.roundStartAtOf) {
+      var startAt = TableShell.roundStartAtOf(rn, pos.cycleMs);
+      if (startAt != null && startAt !== pos.startAt) return '';
+    }
+    return rn;
+  }
+
+  /**
+   * 进入新的一局。
+   *
+   * 这是整局唯一的复位入口：以前下注开始有三条路能进（本地倒计时、快照轮询、
+   * 切回前台），三方各按各的时间判断，网络一抖就互相打架。现在只认时间基准。
+   */
+  function enterRound(pos) {
+    curRoundStartAt = pos.startAt;
+    roundSeq += 1;
+    drawClock = null;
+    roundBusy = false;
+    phase = 'bet';
     payoutLeft = 0;
-    lastBeatSec = -1;
-    betDeadline = Date.now() + remain * 1000;
     payoutDeadline = 0;
+    lastBeatSec = -1;
+    currentBetIssue = roundNoAt(pos);
+    try { flyLayer.innerHTML = ''; } catch (eFly) { /* ignore */ }
     hideAllCards();
-    var keepPersist = !!(rn && peekPersistedChipRound() === rn);
+    clearWinBetHighlight();
+    /* 同局刷新保留 session 假筹缓存；换局才清空 */
+    var keepPersist = !!(currentBetIssue && peekPersistedChipRound() === currentBetIssue);
     commitRoundBets({ keepPersist: keepPersist });
-    paint(false);
-    syncActionButtons();
-    if (rn) ensureChipsHydrated(rn);
-    startOtherBetting();
+    if (currentBetIssue) {
+      setRoundNoLabel(currentBetIssue);
+      ensureChipsHydrated(currentBetIssue);
+    }
     ensureBgm(true);
-    if (remain >= TOTAL - 1.5) showPhaseBanner('start');
+    syncActionButtons();
+    if (pos.phase === 'BETTING') {
+      startOtherBetting();
+      /*
+       * 只有真从头开始下注才弹「开始下注」：中途进房、切回前台不该看到这块牌子。
+       * 这一局是刚开始还是进行中，由时间基准直接给出，不需要再猜。
+       */
+      if (pos.tIn < 1200) showPhaseBanner('start');
+    }
+  }
+
+  /** 下注期每帧刷新：倒计时纯粹是「服务端还剩多少」的显示 */
+  function runBetting(pos) {
+    if (phase !== 'bet') {
+      phase = 'bet';
+      roundBusy = false;
+      syncActionButtons();
+    }
+    left = Math.max(0, Math.ceil(pos.betLeftMs / 1000));
+    var doBeat = left !== lastBeatSec;
+    if (doBeat) lastBeatSec = left;
+    paint(doBeat);
   }
 
   /* ---------- 开奖时间轴：墙上时钟 seek（刷新/进注单按服务端进度对齐） ---------- */
@@ -1750,88 +1858,6 @@
     return hydrateTableChips({ roundNo: rn, betSummary: {} });
   }
 
-  function joinOrSeekDraw(snap) {
-    if (!snap || !snap.outcome) return false;
-    if (snap.phase !== 'DRAWING' && snap.phase !== 'SETTLED') return false;
-    var rn = snap.roundNo ? String(snap.roundNo) : '';
-    var elapsed = drawElapsedMsFromSnap(snap);
-    clearAlignWait();
-    alignWaiting = false;
-    stopOtherBetting();
-
-    var same =
-      drawClock &&
-      phase === 'draw' &&
-      drawClock.outcome &&
-      (!rn || !drawClock.roundNo || drawClock.roundNo === rn);
-
-    if (!same) {
-      roundSeq += 1;
-      roundBusy = true;
-      phase = 'draw';
-      hideAllCards();
-      clearWinBetHighlight();
-      drawClock = {
-        seq: roundSeq,
-        anchorAt: Date.now() - elapsed,
-        lastAdvAt: 0,
-        roundNo: rn,
-        outcome: null,
-        hands: null,
-        compared: null,
-        dealBaseAt: 0,
-        voiceMs: 4000,
-        dealStarted: {},
-        flipStarted: {},
-        flags: {
-          splitB: false, splitP: false, types: false,
-          compared: false, road: false, voice: false, payout: false
-        }
-      };
-    } else {
-      drawClock.anchorAt = Date.now() - elapsed;
-      if (drawClock.dealBaseAt) {
-        drawClock.dealBaseAt = drawClock.anchorAt + BANNER_MS;
-      }
-    }
-
-    bindDrawOutcome(snap);
-    if (!drawClock.dealBaseAt) drawClock.dealBaseAt = drawClock.anchorAt + BANNER_MS;
-    drawClock.dealStarted = {};
-    drawClock.flipStarted = {};
-    var seqAtJoin = drawClock.seq;
-    hydrateTableChips(snap).then(function () {
-      if (!drawClock || drawClock.seq !== seqAtJoin) return;
-      requestAnimationFrame(function () {
-        requestAnimationFrame(function () {
-          if (!drawClock || drawClock.seq !== seqAtJoin) return;
-          if (!tableHasChipVisuals()) {
-            chipsHydratedRound = '';
-            hydrateTableChips(snap).then(function () {
-              if (!drawClock || drawClock.seq !== seqAtJoin) return;
-              drawClock.forceSeek = true;
-              advanceDrawClock();
-            });
-            return;
-          }
-          drawClock.forceSeek = true;
-          advanceDrawClock();
-        });
-      });
-    });
-    return true;
-  }
-
-  function abortDrawAndRealign() {
-    roundSeq += 1;
-    drawClock = null;
-    roundBusy = false;
-    try { flyLayer.innerHTML = ''; } catch (e0) { /* ignore */ }
-    hideAllCards();
-    clearWinBetHighlight();
-    startBetRound();
-  }
-
   function normalizeDnCards(list) {
     return (list || []).slice(0, 5).map(function (c) {
       return (c && c.niuVal != null) ? c : makeCard(c.suit, c.rank);
@@ -2034,30 +2060,19 @@
 
   function advanceDrawClock() {
     if (!drawClock || drawClock.seq !== roundSeq) return;
-    var now = Date.now();
-    var elapsed = now - drawClock.anchorAt;
+    /*
+     * 时间一律取服务端的钟。仪式的每一步都是「本局第几毫秒该发生什么」，
+     * 所以慢一帧、卡一下、切后台回来，都只是下一帧直接跳到正确位置，
+     * 不会像以前那样把整条时间轴往后推。
+     */
+    var now = (window.TableShell && TableShell.serverNow)
+      ? TableShell.serverNow(serverClock)
+      : Date.now();
+    /* 跳点：主动 seek，或两帧间隔过大（后台/卡顿），此时略过动画直接落位 */
     var jumping = !!drawClock.forceSeek ||
       (!!drawClock.lastAdvAt && (now - drawClock.lastAdvAt) > 420);
     drawClock.forceSeek = false;
     drawClock.lastAdvAt = now;
-
-    if (elapsed > (DRAW_EST_SEC + PAYOUT_SECS + 12) * 1000) {
-      abortDrawAndRealign();
-      return;
-    }
-
-    if (
-      drawClock.outcome &&
-      serverClock.phase === 'BETTING' &&
-      Number(serverClock.secondsLeft) > 0 &&
-      elapsed > BANNER_MS + dealAnimTotalMs() + 500
-    ) {
-      var tCheck = now - drawClock.dealBaseAt;
-      var ceremonyEnd = dealAnimTotalMs() + DEAL_HOLD_MS + flipAnimTotalMs() + (drawClock.voiceMs || 4000);
-      if (tCheck >= ceremonyEnd || elapsed > (DRAW_EST_SEC + 2) * 1000) {
-        if (!drawClock.flags.payout) beginDrawPayout(drawClock, true);
-      }
-    }
 
     if (!drawClock.outcome) {
       paint(false);
@@ -2085,29 +2100,31 @@
     var voicePEnd = splitPEnd + handVoiceMs(pt);
     var makeTenEnd = voicePEnd;
 
+    /*
+     * 牌型标签必须跟本家报点数同一刻出现（先拆牌凑十，再「亮牌型 + 报点数」）。
+     *
+     * 原先庄家标签的条件是 `t >= splitBEnd && !flags.types`，而 flags.types 在
+     * t >= flipEnd 就被置真，splitBEnd 又必定晚于 flipEnd，于是这个分支永远进不去：
+     * 庄家报了点数却不亮牌型，要等最后 showCompare 才和闲家标签一起冒出来。
+     * 闲家则相反，标签比语音早亮一步。
+     */
     if (t >= flipEnd && !drawClock.flags.splitB) {
       drawClock.flags.splitB = true;
       applyMakeTenSplitNow('b', hands.banker, bt);
     }
-    if (t >= splitBEnd && !drawClock.flags.types) {
-      /* types flag marks banker label shown; player label follows */
+    if (t >= splitBEnd && drawClock.flags.splitB && !drawClock.flags.typesB) {
+      drawClock.flags.typesB = true;
       revealTypeLabel(bankerTypeEl, bt.label);
-    }
-    if (t >= splitBEnd && drawClock.flags.splitB && !drawClock._voiceBStarted) {
-      drawClock._voiceBStarted = true;
       if (!jumping && !document.hidden) playHandVoice(bt);
     }
     if (t >= voiceBEnd && !drawClock.flags.splitP) {
       drawClock.flags.splitP = true;
       applyMakeTenSplitNow('p', hands.player, pt);
+    }
+    if (t >= splitPEnd && drawClock.flags.splitP && !drawClock.flags.typesP) {
+      drawClock.flags.typesP = true;
       revealTypeLabel(playerTypeEl, pt.label);
-    }
-    if (t >= splitPEnd && drawClock.flags.splitP && !drawClock._voicePStarted) {
-      drawClock._voicePStarted = true;
       if (!jumping && !document.hidden) playHandVoice(pt);
-    }
-    if (t >= flipEnd) {
-      drawClock.flags.types = true;
     }
 
     if (t >= makeTenEnd && !drawClock.flags.compared) {
@@ -2147,108 +2164,117 @@
     syncActionButtons();
   }
 
-  function startDrawRound() {
-    if (roundBusy || phase !== 'bet') return;
+  /**
+   * 建立本局的开奖时间轴。
+   *
+   * 关键：仪式锚在服务端的开奖起点（开局时刻 + 下注时长），跟客户端什么时候
+   * 察觉到封盘完全无关。以前锚的是「本地发现的那一刻」，于是发现得早晚不同，
+   * 整段发牌翻牌凑十报牌就整体漂移，跟服务端对不上。
+   */
+  function ensureDrawClock(pos) {
+    if (drawClock && drawClock.startAt === pos.startAt) return;
+    stopOtherBetting();
+    /* 封盘瞬间落盘（含气氛假筹），开奖中刷新也能还原 */
+    persistTableChips(currentBetIssue || currentChipRoundNo());
     roundBusy = true;
     phase = 'draw';
-    var seq = ++roundSeq;
-    var roundIssue = currentBetIssue || '';
-    stopOtherBetting();
-    persistTableChips(roundIssue || currentChipRoundNo());
-    paint(false);
-    syncActionButtons();
     hideAllCards();
-
+    var drawStartAt = pos.startAt + Number(BETTING_SEC) * 1000;
     drawClock = {
-      seq: seq,
-      anchorAt: Date.now(),
+      seq: ++roundSeq,
+      startAt: pos.startAt,
+      /* 仪式基准：开奖起点之后先亮横幅，再开始发牌 */
+      anchorAt: drawStartAt,
+      dealBaseAt: drawStartAt + BANNER_MS,
       lastAdvAt: 0,
-      roundNo: roundIssue,
+      roundNo: currentBetIssue || '',
       outcome: null,
       hands: null,
       compared: null,
-      dealBaseAt: 0,
       voiceMs: 4000,
       dealStarted: {},
       flipStarted: {},
+      outcomeAsked: false,
       flags: {
-        splitB: false, splitP: false, types: false,
+        splitB: false, splitP: false, typesB: false, typesP: false,
         compared: false, road: false, voice: false, payout: false
       }
     };
+    /* 刚封盘才亮牌子；中途进来牌都发一半了就别弹 */
+    if (pos.drawElapsedMs < BANNER_MS) showPhaseBanner('stop');
+    syncActionButtons();
+    requestOutcome(drawClock);
+  }
 
-    showPhaseBanner('stop');
-
-    if (!window.App || !App.waitTableOutcome) {
-      if (window.App && App.toast) App.toast('请从大厅进入游戏');
-      abortDrawAndRealign();
-      return;
-    }
-
-    var expectedRound = roundIssue;
-    var prep = expectedRound
-      ? Promise.resolve(expectedRound)
-      : (App.fetchTableSnapshot
-        ? App.fetchTableSnapshot(SERVER_GAME).then(function (pre) {
-            return pre && pre.roundNo ? String(pre.roundNo) : '';
-          }).catch(function () { return ''; })
-        : Promise.resolve(''));
-
-    prep.then(function (rn) {
-      if (!drawClock || drawClock.seq !== seq) return null;
-      expectedRound = rn || expectedRound;
-      if (expectedRound) drawClock.roundNo = expectedRound;
-      return App.waitTableOutcome(SERVER_GAME, {
-        timeoutMs: 25000,
-        roundNo: expectedRound || undefined,
-      });
+  /** 取本局开奖结果。失败不改流程，只是让下一帧重试 */
+  function requestOutcome(dc) {
+    if (!dc || dc.outcomeAsked) return;
+    if (!window.App || !App.waitTableOutcome) return;
+    dc.outcomeAsked = true;
+    var seq = dc.seq;
+    App.waitTableOutcome(SERVER_GAME, {
+      timeoutMs: 25000,
+      roundNo: dc.roundNo || undefined,
     }).then(function (snap) {
       if (!drawClock || drawClock.seq !== seq) return;
       if (!snap || !snap.outcome) throw new Error('开奖结果缺失');
       bindDrawOutcome(snap);
       advanceDrawClock();
-    }).catch(function (err) {
-      console.error(err);
+    }).catch(function () {
       if (!drawClock || drawClock.seq !== seq) return;
-      if (window.App && App.toast) App.toast((err && err.message) || '开奖失败，请稍候');
-      clearBets();
-      currentBetIssue = '';
-      if (window.App && App.refreshBalance) {
-        App.refreshBalance().then(function () { refreshStats(); });
-      }
-      abortDrawAndRealign();
+      /*
+       * 拿不到就下一帧再要，轮询那边拿到同样能补上，本局时间轴不受影响。
+       * 这里不报错：开奖结果晚到几百毫秒是正常的，刷日志反而盖住真问题。
+       */
+      drawClock.outcomeAsked = false;
     });
   }
 
-  function tick() {
-    var now = Date.now();
-    if (phase === 'draw') {
-      advanceDrawClock();
-      return;
-    }
-    if (phase === 'payout' || alignWaiting) {
-      payoutLeft = Math.max(0, Math.ceil((payoutDeadline - now) / 1000));
-      if (alignWaiting && (now >= payoutDeadline || getBetRemainSec() > 0)) {
-        startBetRound();
-        return;
-      }
-      if (!alignWaiting && payoutLeft <= 0) {
-        drawClock = null;
-        startBetRound();
-        return;
-      }
-      paint(false);
-      return;
-    }
-    if (roundBusy) return;
-    left = Math.max(0, Math.ceil(getBetRemainSec()));
-    var doBeat = left !== lastBeatSec;
-    if (doBeat) lastBeatSec = left;
-    paint(doBeat);
-    if (left <= 0) startDrawRound();
+  /**
+   * 牌桌维护（每天 04:00–06:01，或管理端手动下架）。
+   *
+   * 维护期服务端不开局，但时间基准照样一轮轮往前走。不拦住的话画面会每 66 秒
+   * 空转一次「开奖中」，牌却永远发不出来，玩家只能干看两个小时。
+   */
+  function enterPaused() {
+    if (phase === 'paused') return;
+    phase = 'paused';
+    roundBusy = false;
+    drawClock = null;
+    /* 清掉本局标记：维护结束后要当作全新一局重新进入 */
+    curRoundStartAt = 0;
+    stopOtherBetting();
+    hideAllCards();
+    clearWinBetHighlight();
+    hidePhaseBanner();
+    syncActionButtons();
+    paint(false);
   }
 
-  /* 定时器改到全文末尾、startBetRound 之后再启动 */
+  /**
+   * 唯一的心跳。
+   *
+   * 每一帧只做三件事：问时间基准现在是本局第几毫秒、必要时换局、
+   * 然后照着这个位置渲染。没有任何「等某个 setTimeout 到点再切相位」的逻辑，
+   * 所以丢包、卡顿、切后台回来都只是画面追赶，不会把流程带偏。
+   */
+  function tick() {
+    if (serverClock && serverClock.phase === 'PAUSED') {
+      enterPaused();
+      return;
+    }
+    var pos = roundPosition();
+    if (pos.startAt !== curRoundStartAt) enterRound(pos);
+    if (pos.phase === 'BETTING') {
+      runBetting(pos);
+      return;
+    }
+    ensureDrawClock(pos);
+    if (drawClock && !drawClock.outcome) requestOutcome(drawClock);
+    advanceDrawClock();
+  }
+
+  /* 心跳在全文末尾、所有变量就绪后再启动 */
 
   var betArea = document.getElementById('betArea');
   function pressBtn(btn, on) {
@@ -2276,18 +2302,18 @@
   var CHIP_FLY_MS = 420;
   var CHIP_LAND_SCALE = 2 / 3;
   var CHIP_SRC = {
-    1: './assets/ui/chips/chip-1.png?v=4',
-    5: './assets/ui/chips/chip-5.png?v=4',
-    10: './assets/ui/chips/chip-10.png?v=4',
-    50: './assets/ui/chips/chip-50.png?v=4',
-    100: './assets/ui/chips/chip-100.png?v=4',
-    500: './assets/ui/chips/chip-500.png?v=4',
-    1000: './assets/ui/chips/chip-1000.png?v=1',
-    2000: './assets/ui/chips/chip-2000.png?v=1',
-    3000: './assets/ui/chips/chip-3000.png?v=1',
-    4000: './assets/ui/chips/chip-4000.png?v=1',
-    5000: './assets/ui/chips/chip-5000.png?v=1',
-    10000: './assets/ui/chips/chip-10000.png?v=1'
+    1: './assets/ui/chips/chip-1.webp?v=4',
+    5: './assets/ui/chips/chip-5.webp?v=4',
+    10: './assets/ui/chips/chip-10.webp?v=4',
+    50: './assets/ui/chips/chip-50.webp?v=4',
+    100: './assets/ui/chips/chip-100.webp?v=4',
+    500: './assets/ui/chips/chip-500.webp?v=4',
+    1000: './assets/ui/chips/chip-1000.webp?v=1',
+    2000: './assets/ui/chips/chip-2000.webp?v=1',
+    3000: './assets/ui/chips/chip-3000.webp?v=1',
+    4000: './assets/ui/chips/chip-4000.webp?v=1',
+    5000: './assets/ui/chips/chip-5000.webp?v=1',
+    10000: './assets/ui/chips/chip-10000.webp?v=1'
   };
   var CHIP_PAGES = [
     [1, 5, 10, 50, 100, 500],
@@ -2305,7 +2331,7 @@
   var roundPlacements = []; /* 本局每次落筹 {key,value} */
   var lastRoundPlacements = []; /* 仅上一局，不能隔局 */
   var rebetting = false;
-  var usedUndo = false;  /* 当局撤销仅一次 */
+  var undoing = false;   /* 撤销请求在途，避免连点重复提交 */
   var usedRebet = false; /* 当局续押仅一次 */
   var chipBar = document.getElementById('chipBar');
   var actionBar = document.getElementById('actionBar');
@@ -2396,8 +2422,9 @@
     return Number(n).toLocaleString('en-US');
   }
 
-  function paintChipPage() {
+  function paintChipPage(keepVal) {
     var page = CHIP_PAGES[chipPage] || CHIP_PAGES[0];
+    var want = page.indexOf(keepVal) >= 0 ? keepVal : page[0];
     var btns = chipBar.querySelectorAll('.dn-chip');
     for (var i = 0; i < btns.length; i++) {
       var val = page[i];
@@ -2409,14 +2436,54 @@
         img.src = CHIP_SRC[val] || CHIP_SRC[1];
         img.alt = String(val);
       }
-      btns[i].classList.toggle('is-selected', i === 0);
+      btns[i].classList.toggle('is-selected', val === want);
     }
-    selectedChip = page[0];
+    selectedChip = want;
     var more = document.getElementById('chipPageBtn');
     if (more) {
       more.classList.toggle('is-page2', chipPage === 1);
       more.setAttribute('aria-label', chipPage === 0 ? '切换到大额筹码' : '切换到小额筹码');
     }
+  }
+
+  /* 已发出但未回执的下注额，连点时不能重复占用同一笔余额 */
+  var inFlightStake = 0;
+
+  function availableBalance() {
+    if (!window.App || !App.getBalance || !user) return Infinity;
+    var bal = App.getBalance(user.uid);
+    if (typeof bal !== 'number' || !isFinite(bal)) return Infinity;
+    return bal - inFlightStake;
+  }
+
+  function largestAffordableChip(bal) {
+    return TableShell.affordableChip(CHIP_PAGES, bal);
+  }
+
+  function selectChipValue(val) {
+    if (!val || val === selectedChip) return;
+    for (var p = 0; p < CHIP_PAGES.length; p++) {
+      if (CHIP_PAGES[p].indexOf(val) < 0) continue;
+      if (p !== chipPage) {
+        chipPage = p;
+        paintChipPage(val);
+        return;
+      }
+      break;
+    }
+    selectedChip = val;
+    var all = chipBar.querySelectorAll('.dn-chip');
+    for (var i = 0; i < all.length; i++) {
+      all[i].classList.toggle('is-selected', Number(all[i].getAttribute('data-chip')) === val);
+    }
+  }
+
+  /** 余额跌破当前筹码时自动降档，只降不升 */
+  function syncChipToBalance() {
+    var bal = availableBalance();
+    if (!isFinite(bal) || selectedChip <= bal) return;
+    var next = largestAffordableChip(bal);
+    if (next) selectChipValue(next);
   }
 
   function clearBets(opts) {
@@ -2448,19 +2515,15 @@
       lastRoundPlacements.length > 0 && roundPlacements.length === 0;
   }
 
+  function canUndo() {
+    return !isClosed() && !rebetting && roundPlacements.length > 0;
+  }
+
   function syncActionButtons() {
     var undoBtn = actionBar.querySelector('[data-action="undo"]');
     var rebetBtn = actionBar.querySelector('[data-action="rebet"]');
     var r = canRebet();
-    if (undoBtn) {
-      if (window.TableShell && TableShell.disableUndoButton) TableShell.disableUndoButton(undoBtn);
-      else {
-        undoBtn.classList.add('is-disabled');
-        undoBtn.setAttribute('aria-disabled', 'true');
-        undoBtn.setAttribute('aria-label', '真账已锁，不可撤销');
-        undoBtn.setAttribute('title', '真账已提交，不可撤销');
-      }
-    }
+    if (undoBtn) TableShell.syncUndoButton(undoBtn, canUndo(), undoing);
     if (rebetBtn) {
       rebetBtn.classList.toggle('is-disabled', !r);
       rebetBtn.setAttribute('aria-disabled', r ? 'false' : 'true');
@@ -2473,14 +2536,45 @@
       return { key: p.key, value: p.value };
     });
     clearBets(opts);
-    usedUndo = false;
+    undoing = false;
     usedRebet = false;
     rebetting = false;
     syncActionButtons();
   }
 
+  /** 撤销本局我的全部下注：服务端只在封盘前受理，退款由服务端原路退回 */
   function undoAllBets() {
-    if (window.App && App.toast) App.toast('已提交真账，不可撤销');
+    if (undoing || !canUndo()) return;
+    if (!window.App || !App.cancelTableBets) {
+      if (window.App && App.toast) App.toast('请从大厅进入游戏');
+      return;
+    }
+    undoing = true;
+    syncActionButtons();
+    App.cancelTableBets(SERVER_GAME).then(function (res) {
+      undoing = false;
+      /* 只清自己的筹码，别人的气氛筹码留在桌上 */
+      TableShell.removeMyChipVisuals(betArea, '.dn-bet-btn__chips');
+      roundPlacements = [];
+      for (var i = 0; i < BET_CHIP_KEYS.length; i++) {
+        var k = BET_CHIP_KEYS[i];
+        betTotals[k] = 0;
+        var btn = betBtn(k);
+        if (btn) updateStakeUI(btn, 0);
+      }
+      slotStacks = {};
+      if (typeof schedulePersistTableChips === 'function') schedulePersistTableChips();
+      refreshStats();
+      syncChipToBalance();
+      syncActionButtons();
+      if (window.App && App.toast) {
+        App.toast('已撤销本局下注，退回 ' + fmtStake(res && res.refunded || 0));
+      }
+    }).catch(function (e) {
+      undoing = false;
+      syncActionButtons();
+      if (window.App && App.toast) App.toast((e && e.message) || '撤销失败');
+    });
   }
 
   function rebetLastRound() {
@@ -2489,6 +2583,18 @@
     var n = list.length;
     var need = 0;
     for (var t = 0; t < n; t++) need += list[t].value;
+    /* 续押是往本局已有筹码上再加一轮，可能把某一边顶过限红 */
+    if (sideLimits) {
+      var after = {};
+      for (var q = 0; q < n; q++) {
+        after[list[q].key] = (after[list[q].key] || betTotals[list[q].key] || 0) + list[q].value;
+      }
+      var overKey = Object.keys(after).find(function (k) { return !!sideLimits.reject(k, after[k]); });
+      if (overKey) {
+        if (window.App && App.toast) App.toast(sideLimits.reject(overKey, after[overKey]));
+        return;
+      }
+    }
     if (window.App && App.getBalance && user) {
       if (App.getBalance(user.uid) < need) {
         if (App.toast) App.toast('积分不足');
@@ -2713,9 +2819,21 @@
     var key = btn.getAttribute('data-bet');
     if (!key) return;
     var value = selectedChip || 1;
-    if (window.App && App.getBalance && user) {
-      if (App.getBalance(user.uid) < value) {
-        if (App.toast) App.toast('积分不足');
+    /* 余额不够就降到能下的最大一档，这一手即按新筹码下注 */
+    var bal = availableBalance();
+    if (value > bal) {
+      var fallback = largestAffordableChip(bal);
+      if (!fallback) {
+        if (window.App && App.toast) App.toast('积分不足');
+        return;
+      }
+      selectChipValue(fallback);
+      value = fallback;
+    }
+    if (sideLimits) {
+      var capMsg = sideLimits.reject(key, (betTotals[key] || 0) + value);
+      if (capMsg) {
+        if (window.App && App.toast) App.toast(capMsg);
         return;
       }
     }
@@ -2723,7 +2841,9 @@
       if (window.App && App.toast) App.toast('请从大厅进入游戏');
       return;
     }
+    inFlightStake += value;
     App.placeTableBet(SERVER_GAME, key, value).then(function (res) {
+      inFlightStake = Math.max(0, inFlightStake - value);
       if (res && res.roundNo) {
         currentBetIssue = String(res.roundNo);
         setRoundNoLabel(currentBetIssue);
@@ -2737,9 +2857,16 @@
       flyChipToBet(btn, value, slot, landSize, undefined, 'me');
       sfx('bet', { vol: 0.9 });
       refreshStats();
-      if (window.App && App.refreshBalance) App.refreshBalance().then(function () { refreshStats(); });
+      syncChipToBalance();
+      if (window.App && App.refreshBalance) {
+        App.refreshBalance().then(function () {
+          refreshStats();
+          syncChipToBalance();
+        });
+      }
       syncActionButtons();
     }).catch(function (e) {
+      inFlightStake = Math.max(0, inFlightStake - value);
       if (window.App && App.toast) App.toast((e && e.message) || '下注失败');
     });
   }
@@ -3022,20 +3149,28 @@
     }
   }
 
+  var statsFitter = TableShell.createStatsFitter({
+    head: document.querySelector('.dn-head'),
+    stats: document.getElementById('statsBar'),
+    brand: document.querySelector('.dn-head__brand'),
+  });
+
   function refreshStats() {
     if (!window.App || !App.getBalance) return;
     var bal = App.getBalance(user.uid);
     var s = getStats(user.uid);
-    setText('statBalance', bal.toLocaleString('en-US'));
-    setText('statTurnover', Math.round(s.turnover).toLocaleString('en-US'));
-    setText('statRebate', Math.round(s.rebate).toLocaleString('en-US'));
+    setText('statBalance', TableShell.fmtMoney2(bal));
+    setText('statTurnover', TableShell.fmtMoney2(s.turnover));
+    setText('statRebate', TableShell.fmtMoney2(s.rebate));
     var wlEl = document.getElementById('statWinloss');
     if (wlEl) {
-      var wl = Math.round(s.winloss);
-      wlEl.textContent = (wl >= 0 ? '+' : '') + wl.toLocaleString('en-US');
+      var wl = Math.round((Number(s.winloss) || 0) * 100) / 100;
+      /* fmtMoney2 自带负号，只有非负才补 + */
+      wlEl.textContent = (wl >= 0 ? '+' : '') + TableShell.fmtMoney2(wl);
       wlEl.classList.toggle('is-plus', wl > 0);
       wlEl.classList.toggle('is-minus', wl < 0);
     }
+    statsFitter.refit();
   }
 
   var backBtn = document.getElementById('backBtn');
@@ -3052,7 +3187,10 @@
   }
 
   refreshStats();
-  window.addEventListener('gamebox-balance', function () { refreshStats(); });
+  window.addEventListener('gamebox-balance', function () {
+    refreshStats();
+    syncChipToBalance();
+  });
 
   /* ---------- 右侧快捷按钮 + 弹层（客服/历史/记录/玩法/设置） ---------- */
   (function initRail() {
@@ -3201,13 +3339,16 @@
                 ],
               },
             ],
+            oddsIntro: '庄 / 闲 / 小牛牛 / 五花牛按「押 1 净得 X」标注（不含本金）；'
+              + '牛牛 / 牛7-牛9 / 无牛-牛6 标注的是含本总赔率，'
+              + '派彩 = 押注 × 赔率，本金已包含在内。派彩以当局结算为准。',
             oddsRows: [
-              ['庄 / 闲', '押中牌型更大的一方', '1 : ' + BET_ODDS.banker],
-              ['小牛牛', '赢方为五小牛', '1 : ' + BET_ODDS.small],
-              ['牛牛', '赢方为牛牛（不含炸弹/五小/五花）', '1 : ' + BET_ODDS.niuniu],
-              ['牛7-牛9', '赢方为牛七 / 牛八 / 牛九', '1 : ' + BET_ODDS.niu79],
-              ['无牛-牛6', '赢方为无牛或牛一至牛六', '1 : ' + BET_ODDS.niu06],
-              ['五花牛', '赢方为五花牛', '1 : ' + BET_ODDS.flower],
+              ['庄 / 闲', '押中牌型更大的一方', '1 : ' + BET_ODDS.banker + '（净得）'],
+              ['小牛牛', '赢方为五小牛', '1 : ' + BET_ODDS.small + '（净得）'],
+              ['牛牛', '赢方为牛牛（不含炸弹/五小/五花）', '1 : ' + BET_ODDS.niuniu + '（含本）'],
+              ['牛7-牛9', '赢方为牛七 / 牛八 / 牛九', '1 : ' + BET_ODDS.niu79 + '（含本）'],
+              ['无牛-牛6', '赢方为无牛或牛一至牛六', '1 : ' + BET_ODDS.niu06 + '（含本）'],
+              ['五花牛', '赢方为五花牛', '1 : ' + BET_ODDS.flower + '（净得）'],
             ],
             notes: [
               '请理性投注，量力而行。',
@@ -3292,99 +3433,61 @@
 
   /* 全部变量就绪后再开局 + 启动唯一倒计时 */
   hideAllCards();
+  /*
+   * 先拉一份快照把时钟对上，再让心跳接管。
+   * 对不上也不要紧：roundPosition 会先用本地墙钟顶着，下一份快照到手自动切回来。
+   */
   function bootFromServer() {
-    if (!window.App || !App.fetchTableSnapshot) {
-      startBetRound();
-      return;
-    }
+    if (!window.App || !App.fetchTableSnapshot) return;
+    var sentAt = Date.now();
     App.fetchTableSnapshot(SERVER_GAME).then(function (snap) {
-      if (!snap) {
-        startBetRound();
-        return;
-      }
-      applyServerSnap(snap);
-      if (joinOrSeekDraw(snap)) return;
-      startBetRound();
-    }).catch(function () {
-      startBetRound();
-    });
+      if (!snap) return;
+      applyServerSnap(snap, { sentAt: sentAt, recvAt: Date.now() });
+      if (snap.outcome && drawClock && !drawClock.outcome) bindDrawOutcome(snap);
+      tick();
+    }).catch(function () { /* 忽略：心跳会继续尝试 */ });
   }
   bootFromServer();
   if (window.__dnTickTimer) clearInterval(window.__dnTickTimer);
   window.__dnTickTimer = setInterval(tick, 200);
   if (window.TableShell && TableShell.startSnapshotPoll) {
-    window.__dnSnapTimer = TableShell.startSnapshotPoll(SERVER_GAME, function (snap) {
-      applyServerSnap(snap);
-      if (alignWaiting) {
-        if (joinOrSeekDraw(snap)) return;
-        if (snap.phase === 'BETTING' && Number(snap.secondsLeft) > 0) {
-          startBetRound();
-          return;
-        }
-      }
-      if (phase === 'draw' && drawClock) {
-        if (snap.phase === 'BETTING' && Number(snap.secondsLeft) > 0) {
-          if (drawClock.outcome && !drawClock.flags.payout) beginDrawPayout(drawClock, true);
-          else {
-            drawClock = null;
-            roundBusy = false;
-            startBetRound();
-          }
-          return;
-        }
-        if (snap && snap.outcome) bindDrawOutcome(snap);
+    /*
+     * 轮询只干两件事：给时钟校时、把开奖结果补进来。
+     * 它不再有权切换相位——以前它和心跳各自判断「该开奖了/该下注了」，
+     * 两边抢着切，网络一抖就打架。
+     */
+    window.__dnSnapTimer = TableShell.startSnapshotPoll(SERVER_GAME, function (snap, meta) {
+      applyServerSnap(snap, meta);
+      if (snap && snap.outcome && drawClock && !drawClock.outcome) {
+        bindDrawOutcome(snap);
         advanceDrawClock();
-        return;
-      }
-      if (phase === 'bet' && !roundBusy && joinOrSeekDraw(snap)) return;
-      if (phase === 'bet' && !roundBusy) {
-        left = Math.max(0, Math.ceil(getBetRemainSec()));
-        paint(false);
       }
     }, {
       intervalMs: 1000,
-      shouldPoll: function () {
-        return (phase === 'bet' && !roundBusy) || alignWaiting || phase === 'draw';
-      },
+      shouldPoll: function () { return true; },
     });
   }
 
+  /** 切回前台：重新对时并把画面跳到当前应有的位置 */
   function onShellResume() {
     try { flyLayer.innerHTML = ''; } catch (eR) { /* ignore */ }
+    if (drawClock) {
+      drawClock.dealStarted = {};
+      drawClock.flipStarted = {};
+      drawClock.forceSeek = true;
+    }
     if (!window.App || !App.fetchTableSnapshot) {
-      if (phase === 'draw' && drawClock) {
-        drawClock.dealStarted = {};
-        drawClock.flipStarted = {};
-        drawClock.forceSeek = true;
-        advanceDrawClock();
-      }
+      tick();
       return;
     }
+    var sentAt = Date.now();
     App.fetchTableSnapshot(SERVER_GAME).then(function (snap) {
-      if (!snap) return;
-      applyServerSnap(snap);
-      if (snap.phase === 'BETTING' && Number(snap.secondsLeft) > 0) {
-        if (phase === 'draw' || alignWaiting || (phase === 'payout' && drawClock)) {
-          if (drawClock && drawClock.outcome && !drawClock.flags.payout) {
-            beginDrawPayout(drawClock, true);
-          }
-          drawClock = null;
-          roundBusy = false;
-          startBetRound();
-          return;
-        }
+      if (snap) {
+        applyServerSnap(snap, { sentAt: sentAt, recvAt: Date.now() });
+        if (snap.outcome && drawClock && !drawClock.outcome) bindDrawOutcome(snap);
       }
-      if (joinOrSeekDraw(snap)) return;
-      if (phase === 'draw' && drawClock) {
-        if (snap.outcome) bindDrawOutcome(snap);
-        drawClock.dealStarted = {};
-        drawClock.flipStarted = {};
-        drawClock.forceSeek = true;
-        advanceDrawClock();
-      } else if (alignWaiting && snap.phase === 'BETTING' && Number(snap.secondsLeft) > 0) {
-        startBetRound();
-      }
-    }).catch(function () { /* ignore */ });
+      tick();
+    }).catch(function () { tick(); });
   }
 
   window.addEventListener('message', function (ev) {

@@ -16,6 +16,7 @@
     "send-card.mp3": "发牌",
     "open-card.mp3": "翻牌",
     "voice/start-bet.mp3": "荷官口播/开始 ymbn_sd_12",
+    "voice/stop-bet.mp3": "语音：停止下注（合成补录，对齐 start-bet 的 24k 立体声）",
     "voice/none.mp3": "无牛 ymbn_sd_09_non",
     "voice/niu1.mp3": "牛1",
     "voice/niu2.mp3": "牛2",
