@@ -110,7 +110,7 @@
               <div v-if="h.smallUrl" class="his-small">
                 <img
                   class="his-circle"
-                  src="/images/games/bcbm/benz/spin/yben_bg_history_blk_circle.png"
+                  src="/images/games/bcbm/benz/spin/yben_bg_history_blk_circle.webp"
                   alt=""
                   draggable="false"
                 />
@@ -135,7 +135,7 @@
           @click="showHistoryPanel = true"
         >
           <img
-            src="/images/games/bcbm/benz/txt/yben_btn_more_hans.png"
+            src="/images/games/bcbm/benz/txt/yben_btn_more_hans.webp"
             alt="更多"
             draggable="false"
           />
@@ -151,14 +151,14 @@
         >
           <img
             class="press-vfx flip-x"
-            src="/images/games/bcbm/benz/bet/yben_vfx_auto_clear_auto_on.png"
+            src="/images/games/bcbm/benz/bet/yben_vfx_auto_clear_auto_on.webp"
             alt=""
             draggable="false"
           />
           <img
             class="btn-txt"
             :style="{ marginLeft: CLEAR_TXT_HC + 'px' }"
-            src="/images/games/bcbm/benz/txt/yben_txt_clear_off_hans.png"
+            src="/images/games/bcbm/benz/txt/yben_txt_clear_off_hans.webp"
             alt="清零"
             draggable="false"
           />
@@ -179,7 +179,7 @@
         >
           <img
             class="press-vfx"
-            src="/images/games/bcbm/benz/bet/yben_vfx_auto_clear_auto_on.png"
+            src="/images/games/bcbm/benz/bet/yben_vfx_auto_clear_auto_on.webp"
             alt=""
             draggable="false"
           />
@@ -187,7 +187,7 @@
             v-if="!autoOn"
             class="btn-txt"
             :style="{ marginLeft: AUTO_TXT_HC + 'px' }"
-            src="/images/games/bcbm/benz/txt/yben_txt_auto_off_hans.png"
+            src="/images/games/bcbm/benz/txt/yben_txt_auto_off_hans.webp"
             alt="自动"
             draggable="false"
           />
@@ -210,13 +210,13 @@
           >
             <img
               class="auto-opt-bg"
-              src="/images/games/bcbm/benz/bet/yben_btn_autoplay_off.png"
+              src="/images/games/bcbm/benz/bet/yben_btn_autoplay_off.webp"
               alt=""
               draggable="false"
             />
             <img
               class="auto-opt-bg on"
-              src="/images/games/bcbm/benz/bet/yben_btn_autoplay_on.png"
+              src="/images/games/bcbm/benz/bet/yben_btn_autoplay_on.webp"
               alt=""
               draggable="false"
             />
@@ -238,27 +238,27 @@
         >
           <img
             class="all-bg"
-            src="/images/games/bcbm/benz/bet/yben_btn_allbet_off.png"
+            src="/images/games/bcbm/benz/bet/yben_btn_allbet_off.webp"
             alt=""
             draggable="false"
           />
           <img
             class="all-bg on"
-            src="/images/games/bcbm/benz/bet/yben_btn_allbet_on.png"
+            src="/images/games/bcbm/benz/bet/yben_btn_allbet_on.webp"
             alt=""
             draggable="false"
           />
           <img
             v-if="betAllOption === 'all'"
             class="lbl"
-            src="/images/games/bcbm/benz/txt/yben_txt_allbet_off_hans.png"
+            src="/images/games/bcbm/benz/txt/yben_txt_allbet_off_hans.webp"
             alt="全选"
             draggable="false"
           />
           <img
             v-else
             class="brand-icon"
-            :src="`/images/games/bcbm/benz/bet/yben_icon_select_${betAllOption}.png`"
+            :src="`/images/games/bcbm/benz/bet/yben_icon_select_${betAllOption}.webp`"
             alt=""
             draggable="false"
           />
@@ -273,13 +273,13 @@
         >
           <img
             class="undo-circle"
-            src="/images/games/bcbm/benz/spin/yben_bg_history_blk_circle.png"
+            src="/images/games/bcbm/benz/spin/yben_bg_history_blk_circle.webp"
             alt=""
             draggable="false"
           />
           <img
             class="undo-arrow"
-            src="/images/games/bcbm/benz/bet/yben_btn_undo.png"
+            src="/images/games/bcbm/benz/bet/yben_btn_undo.webp"
             alt="撤销"
             draggable="false"
           />
@@ -298,8 +298,8 @@
           <img
             :src="
               chipValue === activeChips[i]
-                ? '/images/games/bcbm/benz/bet/yben_btn_chips_on.png'
-                : '/images/games/bcbm/benz/bet/yben_btn_chips_off.png'
+                ? '/images/games/bcbm/benz/bet/yben_btn_chips_on.webp'
+                : '/images/games/bcbm/benz/bet/yben_btn_chips_off.webp'
             "
             alt=""
             draggable="false"
@@ -323,25 +323,25 @@
         >
           <img
             class="select-bg"
-            src="/images/games/bcbm/benz/bet/yben_btn_select_arrow_off.png"
+            src="/images/games/bcbm/benz/bet/yben_btn_select_arrow_off.webp"
             alt=""
             draggable="false"
           />
           <img
             class="select-bg on"
-            src="/images/games/bcbm/benz/bet/yben_btn_select_arrow_on.png"
+            src="/images/games/bcbm/benz/bet/yben_btn_select_arrow_on.webp"
             alt=""
             draggable="false"
           />
           <img
             class="arrow top"
-            src="/images/games/bcbm/benz/bet/yben_btn_arrow_1_on.png"
+            src="/images/games/bcbm/benz/bet/yben_btn_arrow_1_on.webp"
             alt=""
             draggable="false"
           />
           <img
             class="arrow bottom"
-            src="/images/games/bcbm/benz/bet/yben_btn_arrow_1_on.png"
+            src="/images/games/bcbm/benz/bet/yben_btn_arrow_1_on.webp"
             alt=""
             draggable="false"
           />
@@ -380,7 +380,7 @@
             <img
               v-if="opt === 'all'"
               class="opt-lbl"
-              src="/images/games/bcbm/benz/txt/yben_txt_select_allbet_on_hans.png"
+              src="/images/games/bcbm/benz/txt/yben_txt_select_allbet_on_hans.webp"
               alt="全选"
               draggable="false"
             />
@@ -388,7 +388,7 @@
               v-else
               class="opt-icon"
               :class="`icon-${opt}`"
-              :src="`/images/games/bcbm/benz/bet/yben_icon_select_${opt}.png`"
+              :src="`/images/games/bcbm/benz/bet/yben_icon_select_${opt}.webp`"
               alt=""
               draggable="false"
             />
@@ -412,13 +412,13 @@
           <!-- 官方：底下 40×40 黑圆 + yben_btn_chips_change -->
           <img
             class="chip-set-circle"
-            src="/images/games/bcbm/benz/spin/yben_bg_history_blk_circle.png"
+            src="/images/games/bcbm/benz/spin/yben_bg_history_blk_circle.webp"
             alt=""
             draggable="false"
           />
           <img
             class="chip-set-arrow"
-            src="/images/games/bcbm/benz/bet/yben_btn_chips_change.png"
+            src="/images/games/bcbm/benz/bet/yben_btn_chips_change.webp"
             alt=""
             draggable="false"
           />
@@ -435,13 +435,13 @@
         >
           <img
             class="start-vfx"
-            src="/images/games/bcbm/benz/bet/yben_vfx_start_on.png"
+            src="/images/games/bcbm/benz/bet/yben_vfx_start_on.webp"
             alt=""
             draggable="false"
           />
           <img
             class="start-txt"
-            src="/images/games/bcbm/benz/txt/yben_txt_start_hans.png"
+            src="/images/games/bcbm/benz/txt/yben_txt_start_hans.webp"
             alt="开始"
             draggable="false"
           />
@@ -456,19 +456,19 @@
         >
           <img
             class="stop-circle"
-            src="/images/games/bcbm/benz/spin/yben_bg_history_blk_circle.png"
+            src="/images/games/bcbm/benz/spin/yben_bg_history_blk_circle.webp"
             alt=""
             draggable="false"
           />
           <img
             class="stop-vfx"
-            src="/images/games/bcbm/benz/bet/yben_vfx_stop_on.png"
+            src="/images/games/bcbm/benz/bet/yben_vfx_stop_on.webp"
             alt=""
             draggable="false"
           />
           <img
             class="stop-txt"
-            src="/images/games/bcbm/benz/txt/yben_txt_stop_hans.png"
+            src="/images/games/bcbm/benz/txt/yben_txt_stop_hans.webp"
             alt="停止"
             draggable="false"
           />
@@ -488,7 +488,7 @@
       <div class="hud">
         <button type="button" class="back" @click="goBack" aria-label="返回">
           <img
-            src="/images/games/bcbm/benz/main/yben_btn_back.png"
+            src="/images/games/bcbm/benz/main/yben_btn_back.webp"
             alt="返回"
             draggable="false"
           />
@@ -501,7 +501,7 @@
         <div class="user-profile">
           <img
             class="profile-frame"
-            src="/images/games/bcbm/benz/main/yben_icon_user.png"
+            src="/images/games/bcbm/benz/main/yben_icon_user.webp"
             alt=""
             draggable="false"
           />
@@ -515,14 +515,14 @@
           </div>
           <img
             class="avatar-ring"
-            src="/images/games/bcbm/benz/main/yben_btn_user_own.png"
+            src="/images/games/bcbm/benz/main/yben_btn_user_own.webp"
             alt=""
             draggable="false"
           />
           <div class="amount">
             <img
               class="coin"
-              src="/images/games/bcbm/benz/main/yben_icon_money.png"
+              src="/images/games/bcbm/benz/main/yben_icon_money.webp"
               alt=""
               draggable="false"
             />
@@ -542,7 +542,7 @@
             @click="openCreditRecord"
           >
             <img
-              src="/images/games/bcbm/benz/main/yben_btn_bet.png"
+              src="/images/games/bcbm/benz/main/yben_btn_bet.webp"
               alt="额度记录"
               draggable="false"
             />
@@ -554,7 +554,7 @@
             @click="openBetRecord"
           >
             <img
-              src="/images/games/bcbm/benz/main/yben_btn_bet_record.png"
+              src="/images/games/bcbm/benz/main/yben_btn_bet_record.webp"
               alt="下注记录"
               draggable="false"
             />
@@ -566,7 +566,7 @@
             @click="openGameRules(0)"
           >
             <img
-              src="/images/games/bcbm/benz/main/yben_btn_rule.png"
+              src="/images/games/bcbm/benz/main/yben_btn_rule.webp"
               alt="游戏规则"
               draggable="false"
             />
@@ -578,7 +578,7 @@
             @click="openSettings"
           >
             <img
-              src="/images/games/bcbm/benz/main/yben_btn_setting.png"
+              src="/images/games/bcbm/benz/main/yben_btn_setting.webp"
               alt="设置"
               draggable="false"
             />
@@ -592,11 +592,13 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { formatMoney } from '@gamebox/shared'
 import { useWalletStore } from '@/stores/wallet'
 import { useRoomStore } from '@/stores/room'
 import { useUserStore } from '@/stores/user'
 import { useToast } from '@/composables/useToast'
 import { useGameSpinSession } from '@/composables/useGameSpinSession'
+import { leaveGameToLobby } from '@/composables/lobbyAfterGame'
 import { gamesApi } from '@/api/games'
 import BcbmSpinRing from '@/components/BcbmSpinRing.vue'
 import BcbmFxOverlay from '@/components/BcbmFxOverlay.vue'
@@ -613,6 +615,7 @@ import {
   BCBM_BET_SLOTS,
   BCBM_CHIP_DEFAULT,
   bcbmRingIndexToCarPos,
+  bcbmRingIndexesToCarPositions,
   bcbmSpecialSpinUrl,
   type BcbmBetId,
   type BcbmAwardType,
@@ -633,6 +636,7 @@ import {
   stopBcbmBgm,
   startBcbmPayout,
   clearBcbmPayout,
+  stopAllBcbmSfx,
   isBcbmBonusAward,
   bcbmPayoutLevel,
   initBcbmMuteFromStorage,
@@ -674,7 +678,8 @@ const userStore = useUserStore()
 const { error: toastErr } = useToast()
 const spinSession = useGameSpinSession('bcbm')
 const bcbmMinBet = ref(1)
-const bcbmMaxBet = ref(50_000)
+/* 与 prisma/seed.ts 的 bcbm maxBet 一致；拉不到房间配置时不能比服务端卡得更死 */
+const bcbmMaxBet = ref(100_000)
 
 const avatarSrc = computed(
   () => userStore.profile?.avatar || '/images/avatars/001.jpg',
@@ -782,12 +787,12 @@ function optBgSrc(idx: number, on: boolean) {
   const cap = idx === 0 || idx === BET_ALL_OPTIONS.length - 1
   if (cap) {
     return on
-      ? '/images/games/bcbm/benz/bet/yben_btn_allbet_select_on_1.png'
-      : '/images/games/bcbm/benz/bet/yben_btn_allbet_select_off_1.png'
+      ? '/images/games/bcbm/benz/bet/yben_btn_allbet_select_on_1.webp'
+      : '/images/games/bcbm/benz/bet/yben_btn_allbet_select_off_1.webp'
   }
   return on
-    ? '/images/games/bcbm/benz/bet/yben_btn_allbet_select_on_2.png'
-    : '/images/games/bcbm/benz/bet/yben_btn_allbet_select_off_2.png'
+    ? '/images/games/bcbm/benz/bet/yben_btn_allbet_select_on_2.webp'
+    : '/images/games/bcbm/benz/bet/yben_btn_allbet_select_off_2.webp'
 }
 const winSlots = ref<Set<string>>(new Set())
 const hitIndexes = ref<number[]>([])
@@ -915,11 +920,7 @@ const totalBetDisplay = computed(() => {
   return String(n)
 })
 /** 顶栏余额：千分位，贴合官方 balanceLabel */
-const balanceDisplay = computed(() =>
-  Number(walletStore.balance || 0).toLocaleString('en-US', {
-    maximumFractionDigits: 2,
-  }),
-)
+const balanceDisplay = computed(() => formatMoney(walletStore.balance || 0))
 
 function fit() {
   // 设计稿 480×820；优先铺满宽度，高度不够再压（FIXED_WIDTH）
@@ -933,9 +934,9 @@ function goBack() {
   panelTop.value = MOBILE_PANEL_TOP
   stopAutoBet()
   stopBcbmBgm()
-  stopBcbmSpinLoop()
-  stopBcbmAnticipation()
-  router.back()
+  /* 报奖/派彩/数分是循环音轨，只停转盘声会让它们跟着人一路播到别的页面 */
+  stopAllBcbmSfx()
+  void leaveGameToLobby(router)
 }
 
 function onFirstInteract() {
@@ -1064,40 +1065,16 @@ function awardToFx(award: string): Exclude<BcbmFxKind, 'win' | 'none'> | null {
 }
 
 /**
- * 官方 getResultPositionSet(carPos, carResult) → 灯位高亮
- * 大三元 6 点 / 大四喜 8 点 / 激情连续 5 / 掉头 ±5 / 闪电单点 / 漂移全环
+ * 官方 getResultPositionSet → 灯位高亮。
+ *
+ * 只认服务端给的 hitIndexes，再用 shared 映射换成转盘格位。
+ * 之前是拿停点 carPos 自己在 24 格上加减，激情狂飙 / U 型弯道跨圈时
+ * 会把灯亮到转盘对面那一圈的格子上——钱没错，灯错了，玩家以为少赔。
+ * 见 server/test/bcbm-hit-highlight.spec.ts。
  */
-function resolveHitCarPositions(carPos: number, award: string): number[] {
-  const e = ((carPos % 24) + 24) % 24
-  if (award.startsWith('sanyuan_')) {
-    const brand = award.replace('sanyuan_', '')
-    const brandFile = brand === 'vw' ? 'volkswagen' : brand
-    const hits: number[] = []
-    for (let i = 0; i < 24; i++) {
-      const m = BCBM_PLAYTYPE_META[BCBM_WHEEL_PLAYTYPE[i]]
-      if (m.brand === brandFile || m.betId.startsWith(brand + '_')) hits.push(i)
-    }
-    return hits.length ? hits : [e]
-  }
-  if (award.startsWith('sixi_')) {
-    const color = award.replace('sixi_', '')
-    const hits: number[] = []
-    for (let i = 0; i < 24; i++) {
-      if (BCBM_PLAYTYPE_META[BCBM_WHEEL_PLAYTYPE[i]].color === color) hits.push(i)
-    }
-    return hits.length ? hits : [e]
-  }
-  if (award === 'fast') {
-    return [0, 1, 2, 3, 4].map((n) => (e + n) % 24)
-  }
-  if (award === 'uturn') {
-    return [(((e - 5) % 24) + 24) % 24, e, (e + 5) % 24]
-  }
-  if (award === 'drift') {
-    return Array.from({ length: 24 }, (_, i) => i)
-  }
-  // lightning / free / normal
-  return [e]
+function resolveHitCarPositions(hitIndexes: readonly number[], fallbackCarPos: number): number[] {
+  const positions = bcbmRingIndexesToCarPositions(hitIndexes)
+  return positions.length ? positions : [((fallbackCarPos % 24) + 24) % 24]
 }
 
 /** 服务端 26 格 stopIndex → YoPlay 24 格 carPos（shared 权威映射） */
@@ -1109,7 +1086,7 @@ function resolveCarPos(res: { stopIndex: number; winnerKind: string }): number {
 function historyCarUrl(carPos: number, size: 'l' | 's') {
   const pt = BCBM_WHEEL_PLAYTYPE[((carPos % 24) + 24) % 24]
   const m = BCBM_PLAYTYPE_META[pt]
-  return `/images/games/bcbm/benz/main/yben_icon_history_${size}_${m.brand}_${m.color}.png`
+  return `/images/games/bcbm/benz/main/yben_icon_history_${size}_${m.brand}_${m.color}.webp`
 }
 
 /** 官方 getBonusImageResByCarResult → 特殊奖大图标，右下叠小车标 */
@@ -1156,6 +1133,34 @@ function makeHistoryEntry(
 /** 官方 updateHistoryList：插到最前，超过 200 裁掉尾部；moreBtn 显示 */
 function pushHistory(carPos: number, award: BcbmAwardType) {
   historyRaw.value = [{ carPos, award }, ...historyRaw.value].slice(0, 200)
+}
+
+function historyFromOutcome(outcome: unknown): BcbmHistoryResult | null {
+  if (!outcome || typeof outcome !== 'object') return null
+  const o = outcome as { stopIndex?: unknown; awardType?: unknown; kind?: unknown }
+  const stop = Number(o.stopIndex)
+  if (!Number.isFinite(stop)) return null
+  return {
+    carPos: bcbmRingIndexToCarPos(stop, String(o.kind || '')),
+    award: String(o.awardType || 'normal') as BcbmAwardType,
+  }
+}
+
+async function hydrateHistory() {
+  try {
+    const to = Date.now()
+    const from = to - 30 * 86400000
+    const list = await gamesApi.betHistory({ from, to })
+    const rows = (Array.isArray(list) ? list : [])
+      .filter((x) => x.game?.code === 'bcbm')
+      .map((x) => historyFromOutcome(x.outcome))
+      .filter((x): x is BcbmHistoryResult => !!x)
+    if (rows.length >= historyRaw.value.length) {
+      historyRaw.value = rows.slice(0, 200)
+    }
+  } catch {
+    /* 路单保持本局写入 */
+  }
 }
 
 function onRingStopped() {
@@ -1216,6 +1221,13 @@ async function doSpin() {
   autoMenuOpen.value = false
   winSlots.value = new Set()
   hitIndexes.value = []
+  /*
+   * 顶栏派奖数字必须随新局一起清掉。
+   * 小奖只负责把数字显示上去、不负责收；大奖路径才会在开头重置图层。
+   * 不在这里清的话，上一局的赢分会一直挂着 —— 下一局没中时尤其明显，
+   * 玩家会看到一个跟当前局无关的数字。
+   */
+  fxRef.value?.hideAmount()
   clearAnticipTimer()
   stopBcbmAnticipation()
 
@@ -1223,6 +1235,17 @@ async function doSpin() {
   for (const [k, v] of Object.entries(myBets.value)) {
     if (v && v > 0) bets[k] = v
   }
+
+  /*
+   * 顶栏先按全额扣注。
+   *
+   * 服务端返回的余额是净额（已扣注、已加彩），一拿到就套上去会有两个毛病：
+   * 押 120 中 60 时，玩家看到的是「只扣了 60」；更糟的是响应比轮盘停得早，
+   * 余额少扣就等于提前告诉玩家这局中奖了。
+   * 所以这里先扣满，赢分等派奖动画演到时再加回去（失败路径由 catch 拉回真实余额）。
+   */
+  const balanceBeforeSpin = Number(walletStore.balance || 0)
+  walletStore.balance = Math.round((balanceBeforeSpin - betSum) * 100) / 100
 
   // 官方：点开始立刻 Idle→Spin，等 payoutResp 再允许停；不要先等接口
   void transformPanel(false)
@@ -1232,10 +1255,21 @@ async function doSpin() {
   try {
     if (spinSession.disposed.value) return
     const clientRequestId = spinSession.currentOrNewClientRequestId()
-    const res = await gamesApi.bcbmSpin(bets, clientRequestId, undefined, roomNo)
+    let res
+    try {
+      res = await gamesApi.bcbmSpin(bets, clientRequestId, undefined, roomNo)
+    } catch {
+      /*
+       * 响应丢失时用同一 clientRequestId 再要一次：服务端已落单则回放那一局，
+       * 未落单则照常开。不补这一手的话，这局的结果玩家永远看不到，
+       * 而残留的 id 还会让下一次开始被当成重放，把新押注静默吞掉。
+       */
+      res = await gamesApi.bcbmSpin(bets, clientRequestId, undefined, roomNo)
+    }
     spinSession.clearClientRequestId()
     if (spinSession.disposed.value) return
-    walletStore.balance = res.balance
+    /* 真实余额留到派奖演完再套，别让它抢在轮盘停稳前泄底 */
+    const finalBalance = res.balance
     const award = res.awardType as BcbmAwardType
     const fxKind = awardToFx(award)
     const carPos = resolveCarPos(res)
@@ -1263,8 +1297,8 @@ async function doSpin() {
     fxRef.value?.stopSpeed()
     stopBcbmSpinLoop()
 
-    // 官方 getResultPositionSet：高亮全部中奖灯位
-    hitIndexes.value = resolveHitCarPositions(carPos, award)
+    // 官方 getResultPositionSet：高亮全部中奖灯位（以服务端派彩格为准）
+    hitIndexes.value = resolveHitCarPositions(res.hitIndexes, carPos)
     pushHistory(carPos, award)
 
     winSlots.value = new Set(res.wins.map((w) => w.position))
@@ -1299,10 +1333,15 @@ async function doSpin() {
       clearBcbmPayout()
     }
 
+    /* 赢分并进顶栏：此刻数字已经飞到顶上，余额跟着涨，两者对得上 */
+    if (typeof finalBalance === 'number') walletStore.balance = finalBalance
+
     // 官方派彩结束：spinPanel.transformToIdel() + betBoardPanel.transformPanel(true)
     await Promise.all([ringRef.value?.transformToIdle(), transformPanel(true)])
     hitIndexes.value = []
     winSlots.value = new Set()
+    /* 赢分已并进余额，数字再挂着就是重复信息，随本局一起收掉 */
+    fxRef.value?.hideAmount()
 
     // 官方：0 < autoRoundLeft → startNextBet；==0 → stopAutoBet
     if (autoRoundLeft.value > 0) {
@@ -1318,8 +1357,17 @@ async function doSpin() {
         ? String((e as { message: string }).message)
         : '开奖失败'
     toastErr(msg)
+    /*
+     * 重试也没要回来：丢掉这个 id，别让下一次开始被当成重放而吞掉新押注。
+     * 余额以服务端为准重新拉一次 —— 这一局服务端可能已经扣了分，
+     * 顶栏若还停在下注前的数字，玩家会按虚高的余额继续押，然后吃「余额不足」。
+     */
+    spinSession.clearClientRequestId()
+    void walletStore.fetchBalance()
     clearAnticipTimer()
     stopBcbmAnticipation()
+    /* 报奖已经起来了才出错时，派彩循环不会有人再去收 */
+    clearBcbmPayout()
     stopAutoBet()
     // 释放 waitRingStop，避免卡死
     stopResolve?.()
@@ -1327,6 +1375,7 @@ async function doSpin() {
     ringFaded.value = false
     await Promise.all([ringRef.value?.transformToIdle(), transformPanel(true)])
     hitIndexes.value = []
+    fxRef.value?.hideAmount()
   } finally {
     clearAnticipTimer()
     stopBcbmAnticipation()
@@ -1340,21 +1389,23 @@ async function doSpin() {
 onMounted(() => {
   const code = String(route.params.gameCode || '').toLowerCase()
   if (code && code !== 'bcbm') {
-    void router.replace('/lobby')
+    void leaveGameToLobby(router)
     return
   }
   initBcbmMuteFromStorage()
   unlockBcbmAudio()
+  startBcbmBgm()
   fit()
   window.addEventListener('resize', fit)
   void walletStore.fetchBalance()
+  void hydrateHistory()
   void gamesApi
     .list()
     .then((games) => {
       const cfg = games.find((g) => g.code === 'bcbm')
       if (!cfg) return
       bcbmMinBet.value = Math.max(1, Number(cfg.minBet) || 1)
-      bcbmMaxBet.value = Math.max(bcbmMinBet.value, Number(cfg.maxBet) || 50_000)
+      bcbmMaxBet.value = Math.max(bcbmMinBet.value, Number(cfg.maxBet) || 100_000)
     })
     .catch(() => {
       /* 用默认限额 */
@@ -1366,7 +1417,7 @@ onBeforeUnmount(() => {
   clearAnticipTimer()
   window.removeEventListener('resize', fit)
   fxRef.value?.stop()
-  stopBcbmSpinLoop()
+  stopAllBcbmSfx()
   stopBcbmBgm()
   void walletStore.fetchBalance()
 })

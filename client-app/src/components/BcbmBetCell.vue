@@ -176,25 +176,25 @@ const xyStyle = computed(() => ({
 
 const sparkUrl = computed(() => {
   const kind = props.bet.size === 'S' ? 'minibet' : 'largebet'
-  return `/images/games/bcbm/benz/bet/yben_vfx_glow_${kind}_${color.value}.png`
+  return `/images/games/bcbm/benz/bet/yben_vfx_glow_${kind}_${color.value}.webp`
 })
 const midUrl = computed(
   () =>
-    `/images/games/bcbm/benz/bet/yben_vfx_bet_glow_mid_line_${color.value}.png`,
+    `/images/games/bcbm/benz/bet/yben_vfx_bet_glow_mid_line_${color.value}.webp`,
 )
 const outUrl = computed(
   () =>
-    `/images/games/bcbm/benz/bet/yben_vfx_bet_glow_out_line_${color.value}.png`,
+    `/images/games/bcbm/benz/bet/yben_vfx_bet_glow_out_line_${color.value}.webp`,
 )
 const addUrl = computed(
-  () => `/images/games/bcbm/benz/bet/yben_vfx_add_${color.value}.png`,
+  () => `/images/games/bcbm/benz/bet/yben_vfx_add_${color.value}.webp`,
 )
 const iconUrl = computed(
   () =>
-    `/images/games/bcbm/benz/bet/yben_icon_bet_${meta.value.brand}_${color.value}.png`,
+    `/images/games/bcbm/benz/bet/yben_icon_bet_${meta.value.brand}_${color.value}.webp`,
 )
 const oddsUrl = computed(
-  () => `/images/games/bcbm/benz/bet/yben_txt_x${meta.value.mult}.png`,
+  () => `/images/games/bcbm/benz/bet/yben_txt_x${meta.value.mult}.webp`,
 )
 const txtbox = H5.txtbox
 

@@ -62,14 +62,14 @@ const emit = defineEmits<{
   confirm: [chips: number[]]
 }>()
 
-const BORDER = '/images/games/bcbm/benz/main/yben_ui_geniric_border.png'
-const BORDER2 = '/images/games/bcbm/benz/main/yben_ui_geniric_border2.png'
-const CHIP_ON = '/images/games/bcbm/benz/bet/yben_btn_chips_on.png'
-const CHIP_OFF = '/images/games/bcbm/benz/bet/yben_btn_chips_off.png'
-const BTN_BLUE = '/images/games/bcbm/benz/main/yben_btn_geniric_blue.png'
-const BTN_RED = '/images/games/bcbm/benz/main/yben_btn_geniric_red.png'
-const TXT_CONFIRM = '/images/games/bcbm/benz/txt/yben_txt_confirm_hans.png'
-const TXT_CANCEL = '/images/games/bcbm/benz/txt/yben_txt_cancel_hans.png'
+const BORDER = '/images/games/bcbm/benz/main/yben_ui_geniric_border.webp'
+const BORDER2 = '/images/games/bcbm/benz/main/yben_ui_geniric_border2.webp'
+const CHIP_ON = '/images/games/bcbm/benz/bet/yben_btn_chips_on.webp'
+const CHIP_OFF = '/images/games/bcbm/benz/bet/yben_btn_chips_off.webp'
+const BTN_BLUE = '/images/games/bcbm/benz/main/yben_btn_geniric_blue.webp'
+const BTN_RED = '/images/games/bcbm/benz/main/yben_btn_geniric_red.webp'
+const TXT_CONFIRM = '/images/games/bcbm/benz/txt/yben_txt_confirm_hans.webp'
+const TXT_CANCEL = '/images/games/bcbm/benz/txt/yben_txt_cancel_hans.webp'
 
 const pool = BCBM_CHIP_POOL
 const picked = ref<number[]>([])

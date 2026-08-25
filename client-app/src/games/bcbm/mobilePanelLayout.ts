@@ -195,9 +195,9 @@ export const PANEL_TOTAL_BET = { y: 6, fontSize: 20 }
 export const TOTAL_BET_LABEL = '总下注:'
 
 export const H5 = {
-  bg: '/images/games/bcbm/benz/main/yben_bg.png',
-  panel: '/images/games/bcbm/benz/bet/yben_ui_panel.png',
+  bg: '/images/games/bcbm/benz/main/yben_bg.webp',
+  panel: '/images/games/bcbm/benz/bet/yben_ui_panel.webp',
   panelH: 426,
-  totalBetBg: '/images/games/bcbm/benz/bet/yben_bg_total_bet.png',
-  txtbox: '/images/games/bcbm/benz/main/yben_ui_txtbox_active.png',
+  totalBetBg: '/images/games/bcbm/benz/bet/yben_bg_total_bet.webp',
+  txtbox: '/images/games/bcbm/benz/main/yben_ui_txtbox_active.webp',
 } as const

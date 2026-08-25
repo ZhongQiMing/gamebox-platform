@@ -56,25 +56,25 @@
       >
         <img
           class="fx-circle c01"
-          :src="fxUrl('common/vfx_scifi_circle01.png')"
+          :src="fxUrl('common/vfx_scifi_circle01.webp')"
           alt=""
           draggable="false"
         />
         <img
           class="fx-circle c02"
-          :src="fxUrl('common/vfx_scifi_circle02.png')"
+          :src="fxUrl('common/vfx_scifi_circle02.webp')"
           alt=""
           draggable="false"
         />
         <img
           class="fx-circle c03"
-          :src="fxUrl('common/vfx_scifi_circle03.png')"
+          :src="fxUrl('common/vfx_scifi_circle03.webp')"
           alt=""
           draggable="false"
         />
         <img
           class="fx-circle c05"
-          :src="fxUrl('common/vfx_scifi_circle05.png')"
+          :src="fxUrl('common/vfx_scifi_circle05.webp')"
           alt=""
           draggable="false"
         />
@@ -85,7 +85,7 @@
           :key="`ol${i}`"
           v-show="showCorners"
           class="fx-corner-outline"
-          :src="fxUrl('common/mask_effect_outline.png')"
+          :src="fxUrl('common/mask_effect_outline.webp')"
           alt=""
           draggable="false"
           :style="o.style"
@@ -97,7 +97,7 @@
           :key="`st${i}`"
           v-show="showSideThunder"
           class="fx-side-thunder"
-          :src="fxUrl('common/vfx_thunder_01.png')"
+          :src="fxUrl('common/vfx_thunder_01.webp')"
           alt=""
           draggable="false"
           :style="t.style"
@@ -106,7 +106,7 @@
         <img
           v-show="showGlow"
           class="fx-glow"
-          :src="fxUrl('common/vfx_bg_txt_glow.png')"
+          :src="fxUrl('common/vfx_bg_txt_glow.webp')"
           alt=""
           draggable="false"
         />
@@ -144,7 +144,7 @@
       <img
         v-if="showPaperBg"
         class="fx-paper-bg"
-        src="/images/games/bcbm/benz/main/yben_vfx_bg_purple.png"
+        src="/images/games/bcbm/benz/main/yben_vfx_bg_purple.webp"
         alt=""
         draggable="false"
       />
@@ -426,17 +426,17 @@ export type PayoutOpts = {
 }
 
 const SPEED_WEAK = [
-  fxUrl('speed2/vfx_speed_line_3.png'),
-  fxUrl('speed2/vfx_speed_line_4.png'),
+  fxUrl('speed2/vfx_speed_line_3.webp'),
+  fxUrl('speed2/vfx_speed_line_4.webp'),
 ]
 const SPEED_STRONG = [
-  fxUrl('speed/vfx_speed_line_1.png'),
-  fxUrl('speed/vfx_speed_line_2.png'),
+  fxUrl('speed/vfx_speed_line_1.webp'),
+  fxUrl('speed/vfx_speed_line_2.webp'),
 ]
-const ZOOM_WEAK = [fxUrl('speed2/vfx_circle_zoom_3.png')]
+const ZOOM_WEAK = [fxUrl('speed2/vfx_circle_zoom_3.webp')]
 const ZOOM_STRONG = [
-  fxUrl('speed/vfx_circle_zoom_1.png'),
-  fxUrl('speed/vfx_circle_zoom_2.png'),
+  fxUrl('speed/vfx_circle_zoom_1.webp'),
+  fxUrl('speed/vfx_circle_zoom_2.webp'),
 ]
 /**
  * 官方 speedup_effect：同一张放射贴图挂在多根 bone 上，短脉冲 sc 0.01→8（大线→20），
@@ -474,7 +474,7 @@ const speedZoomSrc = computed(() => {
   return frames[speedZoomFrame.value % frames.length]
 })
 const speedBlurSrc = computed(() =>
-  speedStrong.value ? fxUrl('speed/vfx_bg_blur.png') : fxUrl('speed2/vfx_bg_blur.png'),
+  speedStrong.value ? fxUrl('speed/vfx_bg_blur.webp') : fxUrl('speed2/vfx_bg_blur.webp'),
 )
 
 const speedRays = computed(() => {
@@ -495,12 +495,12 @@ const speedRays = computed(() => {
 })
 
 const BANNER: Record<Exclude<BcbmFxKind, 'win' | 'none'>, string> = {
-  sanyuan: `${TXT}/yben_txt_three_great_scholars_hans.png`,
-  sixi: `${TXT}/yben_txt_four_great_blessings_hans.png`,
-  lightning: `${TXT}/yben_txt_lightning_bolt_hans.png`,
-  uturn: `${TXT}/yben_txt_u_turn_hans.png`,
-  fast: `${TXT}/yben_txt_fast_and_furious_hans.png`,
-  drift: `${TXT}/yben_txt_total_drift_hans.png`,
+  sanyuan: `${TXT}/yben_txt_three_great_scholars_hans.webp`,
+  sixi: `${TXT}/yben_txt_four_great_blessings_hans.webp`,
+  lightning: `${TXT}/yben_txt_lightning_bolt_hans.webp`,
+  uturn: `${TXT}/yben_txt_u_turn_hans.webp`,
+  fast: `${TXT}/yben_txt_fast_and_furious_hans.webp`,
+  drift: `${TXT}/yben_txt_total_drift_hans.webp`,
 }
 
 const amountChars = computed(() => amountText.value.split(''))

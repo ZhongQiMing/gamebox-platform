@@ -35,21 +35,21 @@ const BRAND_FILE: Record<string, string> = {
 }
 
 export function bcbmBgUrl() {
-  return '/images/games/bcbm/bg.png'
+  return '/images/games/bcbm/bg.webp'
 }
 
 export function bcbmSpinIconUrl(brand: string, color: string) {
   const b = BRAND_FILE[brand] ?? brand
-  return `${IMG}/spin/yben_icon_large_${b}_${color}.png`
+  return `${IMG}/spin/yben_icon_large_${b}_${color}.webp`
 }
 
 export function bcbmBetIconUrl(brand: string, color: string) {
   const b = BRAND_FILE[brand] ?? brand
-  return `${IMG}/bet/yben_icon_bet_${b}_${color}.png`
+  return `${IMG}/bet/yben_icon_bet_${b}_${color}.webp`
 }
 
 export function bcbmOddsUrl(mult: number) {
-  return `${IMG}/bet/yben_txt_x${mult}.png`
+  return `${IMG}/bet/yben_txt_x${mult}.webp`
 }
 
 export function bcbmSpecialSpinUrl(
@@ -63,7 +63,7 @@ export function bcbmSpecialSpinUrl(
     fast: 'yben_icon_fast_and_furious',
     drift: 'yben_icon_total_drift',
   } as const
-  return `${IMG}/spin/${map[kind]}.png`
+  return `${IMG}/spin/${map[kind]}.webp`
 }
 
 export function bcbmBannerUrl(kind: 'sanyuan' | 'sixi' | 'lightning' | 'uturn' | 'fast' | 'drift') {
@@ -75,31 +75,31 @@ export function bcbmBannerUrl(kind: 'sanyuan' | 'sixi' | 'lightning' | 'uturn' |
     fast: 'yben_txt_fast_and_furious_hans',
     drift: 'yben_txt_total_drift_hans',
   } as const
-  return `${IMG}/txt/${map[kind]}.png`
+  return `${IMG}/txt/${map[kind]}.webp`
 }
 
 export const BCBM_UI = {
-  panel: `${IMG}/bet/yben_ui_panel.png`,
-  chipOff: `${IMG}/bet/yben_btn_chips_off.png`,
-  chipOn: `${IMG}/bet/yben_btn_chips_on.png`,
-  allOff: `${IMG}/bet/yben_btn_allbet_off.png`,
-  allOn: `${IMG}/bet/yben_btn_allbet_on.png`,
-  autoOff: `${IMG}/bet/yben_btn_autoplay_off.png`,
-  autoOn: `${IMG}/bet/yben_btn_autoplay_on.png`,
-  undo: `${IMG}/bet/yben_btn_undo.png`,
-  startVfx: `${IMG}/bet/yben_vfx_start_on.png`,
-  stopVfx: `${IMG}/bet/yben_vfx_stop_on.png`,
-  clearAuto: `${IMG}/bet/yben_vfx_auto_clear_auto_on.png`,
-  betAmountBg: `${IMG}/bet/yben_ui_txtbox_active.png`,
-  back: `${IMG}/main/yben_btn_back.png`,
-  menu: `${IMG}/main/yben_btn_setting.png`,
-  user: `${IMG}/main/yben_btn_user_own.png`,
-  border: `${IMG}/bet/yben_ui_geniric_border3.png`,
-  borderOn: `${IMG}/bet/yben_ui_geniric_border3_selected.png`,
-  txtStart: `${IMG}/txt/yben_txt_start_hans.png`,
-  txtClear: `${IMG}/txt/yben_txt_clear_off_hans.png`,
-  txtAuto: `${IMG}/txt/yben_txt_auto_off_hans.png`,
-  txtAll: `${IMG}/txt/yben_txt_allbet_off_hans.png`,
+  panel: `${IMG}/bet/yben_ui_panel.webp`,
+  chipOff: `${IMG}/bet/yben_btn_chips_off.webp`,
+  chipOn: `${IMG}/bet/yben_btn_chips_on.webp`,
+  allOff: `${IMG}/bet/yben_btn_allbet_off.webp`,
+  allOn: `${IMG}/bet/yben_btn_allbet_on.webp`,
+  autoOff: `${IMG}/bet/yben_btn_autoplay_off.webp`,
+  autoOn: `${IMG}/bet/yben_btn_autoplay_on.webp`,
+  undo: `${IMG}/bet/yben_btn_undo.webp`,
+  startVfx: `${IMG}/bet/yben_vfx_start_on.webp`,
+  stopVfx: `${IMG}/bet/yben_vfx_stop_on.webp`,
+  clearAuto: `${IMG}/bet/yben_vfx_auto_clear_auto_on.webp`,
+  betAmountBg: `${IMG}/bet/yben_ui_txtbox_active.webp`,
+  back: `${IMG}/main/yben_btn_back.webp`,
+  menu: `${IMG}/main/yben_btn_setting.webp`,
+  user: `${IMG}/main/yben_btn_user_own.webp`,
+  border: `${IMG}/bet/yben_ui_geniric_border3.webp`,
+  borderOn: `${IMG}/bet/yben_ui_geniric_border3_selected.webp`,
+  txtStart: `${IMG}/txt/yben_txt_start_hans.webp`,
+  txtClear: `${IMG}/txt/yben_txt_clear_off_hans.webp`,
+  txtAuto: `${IMG}/txt/yben_txt_auto_off_hans.webp`,
+  txtAll: `${IMG}/txt/yben_txt_allbet_off_hans.webp`,
 } as const
 
 /**

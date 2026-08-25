@@ -12,19 +12,19 @@ export function formatBcbmWinAmount(n: number): string {
 type GlyphMeta = { file: string; w: number; h: number; advance: number }
 
 const GLYPHS: Record<string, GlyphMeta> = {
-  '0': { file: '0.png', w: 115, h: 185, advance: 115 },
-  '1': { file: '1.png', w: 83, h: 184, advance: 83 },
-  '2': { file: '2.png', w: 119, h: 185, advance: 119 },
-  '3': { file: '3.png', w: 115, h: 185, advance: 115 },
-  '4': { file: '4.png', w: 111, h: 184, advance: 111 },
-  '5': { file: '5.png', w: 119, h: 185, advance: 119 },
-  '6': { file: '6.png', w: 111, h: 184, advance: 111 },
-  '7': { file: '7.png', w: 118, h: 184, advance: 118 },
-  '8': { file: '8.png', w: 114, h: 185, advance: 114 },
-  '9': { file: '9.png', w: 110, h: 185, advance: 110 },
-  '.': { file: 'dot.png', w: 59, h: 185, advance: 59 },
-  K: { file: 'K.png', w: 133, h: 184, advance: 133 },
-  M: { file: 'M.png', w: 155, h: 184, advance: 155 },
+  '0': { file: '0.webp', w: 115, h: 185, advance: 115 },
+  '1': { file: '1.webp', w: 83, h: 184, advance: 83 },
+  '2': { file: '2.webp', w: 119, h: 185, advance: 119 },
+  '3': { file: '3.webp', w: 115, h: 185, advance: 115 },
+  '4': { file: '4.webp', w: 111, h: 184, advance: 111 },
+  '5': { file: '5.webp', w: 119, h: 185, advance: 119 },
+  '6': { file: '6.webp', w: 111, h: 184, advance: 111 },
+  '7': { file: '7.webp', w: 118, h: 184, advance: 118 },
+  '8': { file: '8.webp', w: 114, h: 185, advance: 114 },
+  '9': { file: '9.webp', w: 110, h: 185, advance: 110 },
+  '.': { file: 'dot.webp', w: 59, h: 185, advance: 59 },
+  K: { file: 'K.webp', w: 133, h: 184, advance: 133 },
+  M: { file: 'M.webp', w: 155, h: 184, advance: 155 },
 }
 
 export function bcbmWinGlyphSrc(ch: string): string {

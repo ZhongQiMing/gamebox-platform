@@ -89,7 +89,7 @@ const PACKS: PackSpec[] = [
     id: 'speedWeak',
     ske: 'yben_speeed_effect_final_ske.json',
     tex: 'yben_speeed_effect_final_tex.json',
-    png: 'yben_speeed_effect_final_tex.png',
+    png: 'yben_speeed_effect_final_tex.webp',
     dbName: 'yben_speeed_effect_final',
     armature: 'Armature',
   },
@@ -97,7 +97,7 @@ const PACKS: PackSpec[] = [
     id: 'speedStrong',
     ske: 'yben_speeed_effect_2_final_ske.json',
     tex: 'yben_speeed_effect_2_final_tex.json',
-    png: 'yben_speeed_effect_2_final_tex.png',
+    png: 'yben_speeed_effect_2_final_tex.webp',
     dbName: 'yben_speeed_effect_2_final',
     armature: 'Armature',
   },
@@ -105,7 +105,7 @@ const PACKS: PackSpec[] = [
     id: 'payoutCommon',
     ske: 'yben_effect_final_common_ske.json',
     tex: 'yben_effect_final_common_tex.json',
-    png: 'yben_effect_final_common_tex.png',
+    png: 'yben_effect_final_common_tex.webp',
     dbName: 'yben_effect_final_common',
     armature: 'Armature',
   },
@@ -113,7 +113,7 @@ const PACKS: PackSpec[] = [
     id: 'payoutText',
     ske: 'yben_effect_final_text_ske.json',
     tex: 'yben_effect_final_text_tex.json',
-    png: 'yben_effect_final_text_tex.png',
+    png: 'yben_effect_final_text_tex.webp',
     dbName: 'yben_effect_final_text',
     armature: 'Armature',
   },
@@ -121,7 +121,7 @@ const PACKS: PackSpec[] = [
     id: 'number',
     ske: 'yben_number_effect_ske.json',
     tex: 'yben_number_effect_tex.json',
-    png: 'yben_number_effect_tex.png',
+    png: 'yben_number_effect_tex.webp',
     dbName: 'yben_number_disappear',
     armature: 'Armature',
   },
@@ -129,7 +129,7 @@ const PACKS: PackSpec[] = [
     id: 'thunder',
     ske: 'yben_lv2_thunder_ske.json',
     tex: 'yben_lv2_thunder_tex.json',
-    png: 'yben_lv2_thunder_tex.png',
+    png: 'yben_lv2_thunder_tex.webp',
     dbName: 'yben_lv2_thunder',
     armature: 'Armature',
   },
@@ -149,6 +149,7 @@ let factoryReady: Promise<boolean> | null = null
 let factoryOk = false
 const loadedPacks = new Set<string>()
 let clockStarted = false
+let clockTick: (() => void) | null = null
 
 type NamedPs = { tex: Texture; cfg: PsCfg }
 const psAssets = new Map<string, NamedPs>()
@@ -301,11 +302,23 @@ function spawnPsParticle(em: PsEmitter) {
 function ensureClock() {
   if (clockStarted) return
   clockStarted = true
-  Ticker.shared.add(() => {
+  /*
+   * 回调要留住引用：Ticker.shared 是 pixi 的全局时钟，只加不摘的话
+   * 离开奔驰宝马以后它还在按 60fps 空转（advanceTime + 遍历 layers），
+   * 手机上就是持续耗电发热，而且用户已经回到大厅了。
+   */
+  clockTick = () => {
     const dt = Ticker.shared.deltaMS
     PixiFactory.advanceTime(dt / 1000)
     for (const layer of layers.values()) tickSparks(layer, dt)
-  })
+  }
+  Ticker.shared.add(clockTick)
+}
+
+function stopClock() {
+  if (clockTick) Ticker.shared.remove(clockTick)
+  clockTick = null
+  clockStarted = false
 }
 
 async function loadNamedPs(key: string, pngUrl: string, jsonUrl: string) {
@@ -332,27 +345,27 @@ async function ensurePsAssets() {
   await Promise.all([
     loadNamedPs(
       'thunderSpark',
-      dbUrl('yben_lv2_thunder_spark.png'),
+      dbUrl('yben_lv2_thunder_spark.webp'),
       dbUrl('yben_lv2_thunder_spark.json'),
     ),
     loadNamedPs(
       'amountShine',
-      fxPsUrl('yben_vfx_number_shine.png'),
+      fxPsUrl('yben_vfx_number_shine.webp'),
       fxPsUrl('yben_vfx_number_shine.json'),
     ),
     loadNamedPs(
       'amountDot',
-      fxPsUrl('yben_vfx_number_dot.png'),
+      fxPsUrl('yben_vfx_number_dot.webp'),
       fxPsUrl('yben_vfx_number_dot.json'),
     ),
     loadNamedPs(
       'rewardPaper1',
-      fxPsUrl('yben_vfx_reward_paper_1.png'),
+      fxPsUrl('yben_vfx_reward_paper_1.webp'),
       fxPsUrl('yben_vfx_reward_paper_1.json'),
     ),
     loadNamedPs(
       'rewardPaper2',
-      fxPsUrl('yben_vfx_reward_paper_2.png'),
+      fxPsUrl('yben_vfx_reward_paper_2.webp'),
       fxPsUrl('yben_vfx_reward_paper_2.json'),
     ),
   ])
@@ -745,6 +758,8 @@ export function destroyBcbmDragonBones() {
     layer.app.destroy(true)
   }
   layers.clear()
+  /* 渲染器都销毁了，全局时钟不摘就成了纯空转 */
+  stopClock()
   factoryReady = null
   factoryOk = false
   loadedPacks.clear()

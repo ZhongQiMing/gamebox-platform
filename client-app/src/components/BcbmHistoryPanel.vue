@@ -6,7 +6,7 @@
       <div class="border-outer" aria-hidden="true" />
       <img
         class="title"
-        src="/images/games/bcbm/benz/txt/yben_txt_history_hans.png"
+        src="/images/games/bcbm/benz/txt/yben_txt_history_hans.webp"
         alt="历史"
         draggable="false"
       />
@@ -25,8 +25,8 @@
             class="tab-bg"
             :src="
               tab === i
-                ? '/images/games/bcbm/benz/bet/yben_ui_geniric_border3_selected.png'
-                : '/images/games/bcbm/benz/bet/yben_ui_geniric_border3.png'
+                ? '/images/games/bcbm/benz/bet/yben_ui_geniric_border3_selected.webp'
+                : '/images/games/bcbm/benz/bet/yben_ui_geniric_border3.webp'
             "
             alt=""
             draggable="false"
@@ -55,7 +55,7 @@
               <div v-if="iconOf(h).smallUrl" class="small">
                 <img
                   class="circle"
-                  src="/images/games/bcbm/benz/spin/yben_bg_history_blk_circle.png"
+                  src="/images/games/bcbm/benz/spin/yben_bg_history_blk_circle.webp"
                   alt=""
                 />
                 <img class="car" :src="iconOf(h).smallUrl!" alt="" />
@@ -70,7 +70,7 @@
             <div class="col round">局数</div>
             <div v-for="b in CAR_ROAD_HEADERS" :key="b" class="col">
               <img
-                :src="`/images/games/bcbm/benz/bet/yben_icon_history_${b}.png`"
+                :src="`/images/games/bcbm/benz/bet/yben_icon_history_${b}.webp`"
                 alt=""
                 draggable="false"
               />
@@ -114,7 +114,7 @@
                     <div v-if="iconOf(row.result).smallUrl" class="small bead-s">
                       <img
                         class="circle"
-                        src="/images/games/bcbm/benz/spin/yben_bg_history_blk_circle.png"
+                        src="/images/games/bcbm/benz/spin/yben_bg_history_blk_circle.webp"
                         alt=""
                       />
                       <img class="car" :src="iconOf(row.result).smallUrl!" alt="" />
@@ -133,7 +133,7 @@
             <div class="col round">局数</div>
             <div v-for="c in COLOR_ROAD_HEADERS" :key="c" class="col">
               <img
-                :src="`/images/games/bcbm/benz/bet/yben_icon_history_${c}.png`"
+                :src="`/images/games/bcbm/benz/bet/yben_icon_history_${c}.webp`"
                 alt=""
                 draggable="false"
               />
@@ -176,7 +176,7 @@
                     <div v-if="iconOf(row.result).smallUrl" class="small bead-s">
                       <img
                         class="circle"
-                        src="/images/games/bcbm/benz/spin/yben_bg_history_blk_circle.png"
+                        src="/images/games/bcbm/benz/spin/yben_bg_history_blk_circle.webp"
                         alt=""
                       />
                       <img class="car" :src="iconOf(row.result).smallUrl!" alt="" />
@@ -193,13 +193,13 @@
       <button type="button" class="confirm" @click="emit('close')">
         <img
           class="btn-bg"
-          src="/images/games/bcbm/benz/main/yben_btn_geniric_blue.png"
+          src="/images/games/bcbm/benz/main/yben_btn_geniric_blue.webp"
           alt=""
           draggable="false"
         />
         <img
           class="btn-txt"
-          src="/images/games/bcbm/benz/txt/yben_txt_confirm_hans.png"
+          src="/images/games/bcbm/benz/txt/yben_txt_confirm_hans.webp"
           alt="确定"
           draggable="false"
         />
@@ -303,7 +303,7 @@ function iconOf(r: BcbmHistoryResult) {
   pointer-events: none;
   border-style: solid;
   border-width: 48px 59px 73px 52px;
-  border-image-source: url('/images/games/bcbm/benz/main/yben_ui_geniric_border.png');
+  border-image-source: url('/images/games/bcbm/benz/main/yben_ui_geniric_border.webp');
   border-image-slice: 48 59 73 52 fill;
   border-image-repeat: stretch;
   background: #061828;
@@ -370,7 +370,7 @@ function iconOf(r: BcbmHistoryResult) {
   z-index: 1;
   border-style: solid;
   border-width: 18px 19px 18px 19px;
-  border-image-source: url('/images/games/bcbm/benz/main/yben_ui_geniric_border2.png');
+  border-image-source: url('/images/games/bcbm/benz/main/yben_ui_geniric_border2.webp');
   border-image-slice: 18 19 18 19 fill;
   border-image-repeat: stretch;
   background: rgba(0, 20, 40, 0.65);

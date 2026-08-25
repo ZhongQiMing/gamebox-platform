@@ -11,7 +11,7 @@
 
       <button type="button" class="back" aria-label="返回" @click="emit('close')">
         <img
-          src="/images/games/bcbm/benz/main/yben_btn_back.png"
+          src="/images/games/bcbm/benz/main/yben_btn_back.webp"
           alt=""
           draggable="false"
         />
@@ -132,7 +132,7 @@
                     <div v-if="r.resultSmall" class="result-small">
                       <img
                         class="circle"
-                        src="/images/games/bcbm/benz/spin/yben_bg_history_blk_circle.png"
+                        src="/images/games/bcbm/benz/spin/yben_bg_history_blk_circle.webp"
                         alt=""
                       />
                       <img class="car" :src="r.resultSmall" alt="" />
@@ -187,6 +187,7 @@ import {
 import {
   BCBM_PLAYTYPE_META,
 } from '@/games/bcbm/bcbmSpinMath'
+import { formatDateTime, formatMoney, formatSignedMoney } from '@gamebox/shared'
 import { historyPanelIcons } from '@/games/bcbm/bcbmHistoryRoad'
 
 const props = defineProps<{
@@ -263,7 +264,7 @@ function fmtDateTime(iso: string) {
   if (Number.isNaN(d.getTime())) return { ts: 0, date: iso, d: null as Date | null }
   return {
     ts: d.getTime(),
-    date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`,
+    date: formatDateTime(iso),
     d,
   }
 }
@@ -279,13 +280,10 @@ function parseGameName(remark: string | null | undefined) {
   return remark.replace(/\s*(押注|命中|注资|游戏回水|派彩).*$/u, '').trim()
 }
 function fmtNum(n: number) {
-  return Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })
+  return formatMoney(n)
 }
 function fmtSigned(n: number) {
-  const s = fmtNum(Math.abs(n))
-  if (n > 0) return `+${s}`
-  if (n < 0) return `-${s}`
-  return s
+  return formatSignedMoney(n)
 }
 
 function dayStart(offsetDays: number) {
@@ -377,13 +375,12 @@ async function load() {
         }
       })
     } else {
-      const list = await gamesApi.betHistory()
+      const to = Date.now()
+      const from = to - 7 * 86400000
+      const list = await gamesApi.betHistory({ from, to })
       const arr = Array.isArray(list) ? list : []
       betRows.value = arr
-        .filter((x: { game?: { code?: string } }) => {
-          const code = x.game?.code || ''
-          return !code || code === 'bcbm'
-        })
+        .filter((x: { game?: { code?: string } }) => x.game?.code === 'bcbm')
         .map(
           (x: {
             id: string
@@ -481,7 +478,7 @@ onMounted(() => {
   pointer-events: none;
   border-style: solid;
   border-width: 48px 59px 73px 52px;
-  border-image-source: url('/images/games/bcbm/benz/main/yben_ui_geniric_border.png');
+  border-image-source: url('/images/games/bcbm/benz/main/yben_ui_geniric_border.webp');
   border-image-slice: 48 59 73 52 fill;
   border-image-repeat: stretch;
   background: #061828;

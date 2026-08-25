@@ -1,188 +1,188 @@
 {
   "yben_btn_more_hans": {
-    "file": "yben_btn_more_hans.png",
+    "file": "yben_btn_more_hans.webp",
     "w": 50,
     "h": 45,
     "x": 754,
     "y": 292
   },
   "yben_btn_rules_auto_hans": {
-    "file": "yben_btn_rules_auto_hans.png",
+    "file": "yben_btn_rules_auto_hans.webp",
     "w": 67,
     "h": 59,
     "x": 929,
     "y": 0
   },
   "yben_btn_rules_clear_hans": {
-    "file": "yben_btn_rules_clear_hans.png",
+    "file": "yben_btn_rules_clear_hans.webp",
     "w": 66,
     "h": 58,
     "x": 926,
     "y": 61
   },
   "yben_btn_rules_start_hans": {
-    "file": "yben_btn_rules_start_hans.png",
+    "file": "yben_btn_rules_start_hans.webp",
     "w": 65,
     "h": 60,
     "x": 859,
     "y": 58
   },
   "yben_txt_allbet_hans": {
-    "file": "yben_txt_allbet_hans.png",
+    "file": "yben_txt_allbet_hans.webp",
     "w": 42,
     "h": 26,
     "x": 700,
     "y": 67
   },
   "yben_txt_allbet_off_hans": {
-    "file": "yben_txt_allbet_off_hans.png",
+    "file": "yben_txt_allbet_off_hans.webp",
     "w": 55,
     "h": 32,
     "x": 863,
     "y": 292
   },
   "yben_txt_allbet_on_hans": {
-    "file": "yben_txt_allbet_on_hans.png",
+    "file": "yben_txt_allbet_on_hans.webp",
     "w": 54,
     "h": 32,
     "x": 920,
     "y": 292
   },
   "yben_txt_auto_off_hans": {
-    "file": "yben_txt_auto_off_hans.png",
+    "file": "yben_txt_auto_off_hans.webp",
     "w": 55,
     "h": 35,
     "x": 806,
     "y": 292
   },
   "yben_txt_auto_on_hans": {
-    "file": "yben_txt_auto_on_hans.png",
+    "file": "yben_txt_auto_on_hans.webp",
     "w": 55,
     "h": 35,
     "x": 587,
     "y": 334
   },
   "yben_txt_cancel_hans": {
-    "file": "yben_txt_cancel_hans.png",
+    "file": "yben_txt_cancel_hans.webp",
     "w": 80,
     "h": 47,
     "x": 618,
     "y": 67
   },
   "yben_txt_clear_off_hans": {
-    "file": "yben_txt_clear_off_hans.png",
+    "file": "yben_txt_clear_off_hans.webp",
     "w": 57,
     "h": 35,
     "x": 679,
     "y": 333
   },
   "yben_txt_clear_on_hans": {
-    "file": "yben_txt_clear_on_hans.png",
+    "file": "yben_txt_clear_on_hans.webp",
     "w": 57,
     "h": 35,
     "x": 528,
     "y": 334
   },
   "yben_txt_confirm_hans": {
-    "file": "yben_txt_confirm_hans.png",
+    "file": "yben_txt_confirm_hans.webp",
     "w": 81,
     "h": 47,
     "x": 535,
     "y": 67
   },
   "yben_txt_fast_and_furious_hans": {
-    "file": "yben_txt_fast_and_furious_hans.png",
+    "file": "yben_txt_fast_and_furious_hans.webp",
     "w": 533,
     "h": 136,
     "x": 0,
     "y": 0
   },
   "yben_txt_four_great_blessings_hans": {
-    "file": "yben_txt_four_great_blessings_hans.png",
+    "file": "yben_txt_four_great_blessings_hans.webp",
     "w": 460,
     "h": 154,
     "x": 515,
     "y": 413
   },
   "yben_txt_gamerules_hans": {
-    "file": "yben_txt_gamerules_hans.png",
+    "file": "yben_txt_gamerules_hans.webp",
     "w": 112,
     "h": 65,
     "x": 745,
     "y": 58
   },
   "yben_txt_history_hans": {
-    "file": "yben_txt_history_hans.png",
+    "file": "yben_txt_history_hans.webp",
     "w": 182,
     "h": 56,
     "x": 745,
     "y": 0
   },
   "yben_txt_lightning_bolt_hans": {
-    "file": "yben_txt_lightning_bolt_hans.png",
+    "file": "yben_txt_lightning_bolt_hans.webp",
     "w": 529,
     "h": 136,
     "x": 0,
     "y": 138
   },
   "yben_txt_reply_hans": {
-    "file": "yben_txt_reply_hans.png",
+    "file": "yben_txt_reply_hans.webp",
     "w": 73,
     "h": 40,
     "x": 604,
     "y": 292
   },
   "yben_txt_select_allbet_off_hans": {
-    "file": "yben_txt_select_allbet_off_hans.png",
+    "file": "yben_txt_select_allbet_off_hans.webp",
     "w": 50,
     "h": 30,
     "x": 863,
     "y": 326
   },
   "yben_txt_select_allbet_on_hans": {
-    "file": "yben_txt_select_allbet_on_hans.png",
+    "file": "yben_txt_select_allbet_on_hans.webp",
     "w": 49,
     "h": 30,
     "x": 806,
     "y": 329
   },
   "yben_txt_specialrewards_hans": {
-    "file": "yben_txt_specialrewards_hans.png",
+    "file": "yben_txt_specialrewards_hans.webp",
     "w": 208,
     "h": 65,
     "x": 535,
     "y": 0
   },
   "yben_txt_start_hans": {
-    "file": "yben_txt_start_hans.png",
+    "file": "yben_txt_start_hans.webp",
     "w": 73,
     "h": 39,
     "x": 679,
     "y": 292
   },
   "yben_txt_stop_hans": {
-    "file": "yben_txt_stop_hans.png",
+    "file": "yben_txt_stop_hans.webp",
     "w": 74,
     "h": 40,
     "x": 528,
     "y": 292
   },
   "yben_txt_three_great_scholars_hans": {
-    "file": "yben_txt_three_great_scholars_hans.png",
+    "file": "yben_txt_three_great_scholars_hans.webp",
     "w": 460,
     "h": 152,
     "x": 531,
     "y": 138
   },
   "yben_txt_total_drift_hans": {
-    "file": "yben_txt_total_drift_hans.png",
+    "file": "yben_txt_total_drift_hans.webp",
     "w": 526,
     "h": 135,
     "x": 0,
     "y": 276
   },
   "yben_txt_u_turn_hans": {
-    "file": "yben_txt_u_turn_hans.png",
+    "file": "yben_txt_u_turn_hans.webp",
     "w": 513,
     "h": 138,
     "x": 0,

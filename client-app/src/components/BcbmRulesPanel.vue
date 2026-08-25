@@ -45,7 +45,7 @@
                   v-for="b in brands"
                   :key="b.id"
                   class="brand-img"
-                  :src="rul(`yben_rul_icon_large_${b.file}_blue.png`)"
+                  :src="rul(`yben_rul_icon_large_${b.file}_blue.webp`)"
                   :alt="b.label"
                   draggable="false"
                 />
@@ -56,8 +56,8 @@
               <p class="line">{{ T.p1_3 }}</p>
               <p class="line">{{ T.p1_payout }}</p>
               <div class="odds-sample">
-                <img :src="rul('yben_rul_icon_rules_2000.png')" alt="2000" draggable="false" />
-                <img :src="rul('yben_rul_icon_rules_x22.png')" alt="x22" draggable="false" />
+                <img :src="rul('yben_rul_icon_rules_2000.webp')" alt="2000" draggable="false" />
+                <img :src="rul('yben_rul_icon_rules_x22.webp')" alt="x22" draggable="false" />
               </div>
               <p class="line limit">{{ T.p1_limit }}</p>
               <div v-for="row in howtoRows" :key="row.desc" class="howto">
@@ -78,7 +78,7 @@
                 <div v-for="row in oddsRows" :key="row[0]!.id" class="odds-row">
                   <div v-for="s in row" :key="s.id" class="odds-cell">
                     <img
-                      :src="rul(`yben_rul_icon_${s.brandFile}_${s.color}.png`)"
+                      :src="rul(`yben_rul_icon_${s.brandFile}_${s.color}.webp`)"
                       alt=""
                       draggable="false"
                     />
@@ -163,9 +163,9 @@ const RUL = '/images/games/bcbm/benz/rules'
 const rul = (name: string) => `${RUL}/${name}`
 
 const R = {
-  close: rul('yben_msc_btn_close.png'),
-  arrow: rul('yben_rul_btn_rule_arrow.png'),
-  title: rul('yben_rul_txt_title_lang_hans.png'),
+  close: rul('yben_msc_btn_close.webp'),
+  arrow: rul('yben_rul_btn_rule_arrow.webp'),
+  title: rul('yben_rul_txt_title_lang_hans.webp'),
 }
 
 /** 文案对齐正版游戏规则截图（4 页） */
@@ -178,12 +178,14 @@ const T = {
   p1_6: '撤销上一次投注操作',
   p1_7: '完成投注后，按下开始按钮开始转圈',
   p1_8: '赔率',
-  p1_limit: '单局单门下注上限为2000',
+  /* 上方两张图是官方算例（押 2000 × 22 倍），不是限额；写成「上限 2000」会骗玩家 */
+  p1_limit: '如图：单门押注 2000、该门赔率 22 倍，中奖派彩 44000',
   p2_1: '同一种车的三种颜色均为中奖',
   p2_2: '同一种颜色的四种车标均为中奖',
   p2_3: '从结果灯开始顺时针数的5个图案均为中奖图案',
   p2_4: '中奖结果和前后第五个图案均为中奖',
-  p2_5: '使中奖金额翻倍',
+  /* 引擎里 lightning 与普通开奖同样只停一格、按该格赔率派彩，没有翻倍 */
+  p2_5: '开奖伴随闪电特效，仍按中奖车标赔率派彩',
   p2_6: '所有奖项均为中奖',
   p2_7: '本游戏有六个随机触发特殊奖励',
 }
@@ -205,10 +207,10 @@ const brands = [
 ]
 
 const howtoRows = [
-  { icon: rul('yben_rul_btn_rules_auto_lang_hans.png'), desc: T.p1_4 },
-  { icon: rul('yben_rul_btn_rules_clear_lang_hans.png'), desc: T.p1_5 },
-  { icon: rul('yben_rul_btn_rules_undo.png'), desc: T.p1_6 },
-  { icon: rul('yben_rul_btn_rules_start_lang_hans.png'), desc: T.p1_7 },
+  { icon: rul('yben_rul_btn_rules_auto_lang_hans.webp'), desc: T.p1_4 },
+  { icon: rul('yben_rul_btn_rules_clear_lang_hans.webp'), desc: T.p1_5 },
+  { icon: rul('yben_rul_btn_rules_undo.webp'), desc: T.p1_6 },
+  { icon: rul('yben_rul_btn_rules_start_lang_hans.webp'), desc: T.p1_7 },
 ]
 
 const brandFile = (brand: string) => (brand === 'vw' ? 'volkswagen' : brand)
@@ -234,38 +236,38 @@ const oddsRows = [
 const bonuses = [
   {
     key: 'sanyuan',
-    icon: rul('yben_rul_icon_three_great_scholars.png'),
-    name: rul('yben_rul_txt_three_great_scholars_lang_hans.png'),
+    icon: rul('yben_rul_icon_three_great_scholars.webp'),
+    name: rul('yben_rul_txt_three_great_scholars_lang_hans.webp'),
     desc: T.p2_1,
   },
   {
     key: 'sixi',
-    icon: rul('yben_rul_icon_four_great_blessings.png'),
-    name: rul('yben_rul_txt_four_great_blessings_lang_hans.png'),
+    icon: rul('yben_rul_icon_four_great_blessings.webp'),
+    name: rul('yben_rul_txt_four_great_blessings_lang_hans.webp'),
     desc: T.p2_2,
   },
   {
     key: 'fast',
-    icon: rul('yben_rul_icon_fast_and_furious.png'),
-    name: rul('yben_rul_txt_fast_and_furious_lang_hans.png'),
+    icon: rul('yben_rul_icon_fast_and_furious.webp'),
+    name: rul('yben_rul_txt_fast_and_furious_lang_hans.webp'),
     desc: T.p2_3,
   },
   {
     key: 'uturn',
-    icon: rul('yben_rul_icon_U_turn.png'),
-    name: rul('yben_rul_txt_u_turn_lang_hans.png'),
+    icon: rul('yben_rul_icon_U_turn.webp'),
+    name: rul('yben_rul_txt_u_turn_lang_hans.webp'),
     desc: T.p2_4,
   },
   {
     key: 'lightning',
-    icon: rul('yben_rul_icon_lightning_bolt.png'),
-    name: rul('yben_rul_txt_lightning_bolt_lang_hans.png'),
+    icon: rul('yben_rul_icon_lightning_bolt.webp'),
+    name: rul('yben_rul_txt_lightning_bolt_lang_hans.webp'),
     desc: T.p2_5,
   },
   {
     key: 'drift',
-    icon: rul('yben_rul_icon_total_drift.png'),
-    name: rul('yben_rul_txt_total_drift_lang_hans.png'),
+    icon: rul('yben_rul_icon_total_drift.webp'),
+    name: rul('yben_rul_txt_total_drift_lang_hans.webp'),
     desc: T.p2_6,
   },
 ]
@@ -304,7 +306,7 @@ const bonuses = [
   z-index: 0;
   border-style: solid;
   border-width: 48px 59px 73px 52px;
-  border-image-source: url('/images/games/bcbm/benz/main/yben_ui_geniric_border.png');
+  border-image-source: url('/images/games/bcbm/benz/main/yben_ui_geniric_border.webp');
   border-image-slice: 48 59 73 52 fill;
   border-image-repeat: stretch;
   background: #061828;

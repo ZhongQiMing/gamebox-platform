@@ -16,7 +16,7 @@
       >
         <img
           class="pattern"
-          src="/images/games/bcbm/benz/bet/yben_mask_panel_pattern.png"
+          src="/images/games/bcbm/benz/bet/yben_mask_panel_pattern.webp"
           alt=""
           draggable="false"
           :style="{
@@ -132,7 +132,7 @@ const props = defineProps<{
   active: boolean
 }>()
 
-const outline = '/images/games/bcbm/benz/bet/yben_mask_outline.png'
+const outline = '/images/games/bcbm/benz/bet/yben_mask_outline.webp'
 
 const MASK0_W = 200
 const PANEL_W = 480
@@ -263,8 +263,8 @@ onBeforeUnmount(stop)
   height: 344px;
   overflow: hidden;
   will-change: transform;
-  -webkit-mask-image: url('/images/games/bcbm/benz/bet/yben_sfx_flash_light.png');
-  mask-image: url('/images/games/bcbm/benz/bet/yben_sfx_flash_light.png');
+  -webkit-mask-image: url('/images/games/bcbm/benz/bet/yben_sfx_flash_light.webp');
+  mask-image: url('/images/games/bcbm/benz/bet/yben_sfx_flash_light.webp');
   -webkit-mask-size: 100% 100%;
   mask-size: 100% 100%;
   -webkit-mask-repeat: no-repeat;

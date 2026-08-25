@@ -149,7 +149,7 @@ export function initialAngles(): number[] {
 export function spinIconUrl(iconIndex: number): string {
   const pt = ((iconIndex % 12) + 12) % 12
   const m = BCBM_PLAYTYPE_META[pt]
-  return `/images/games/bcbm/benz/spin/yben_icon_large_${m.brand}_${m.color}.png`
+  return `/images/games/bcbm/benz/spin/yben_icon_large_${m.brand}_${m.color}.webp`
 }
 
 export function iconIndexOfCarPos(carPos: number): number {

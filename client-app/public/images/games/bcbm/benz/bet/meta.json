@@ -1,559 +1,559 @@
 {
   "yben_vfx_start_on": {
-    "file": "yben_vfx_start_on.png",
+    "file": "yben_vfx_start_on.webp",
     "w": 120,
     "h": 120,
     "x": 604,
     "y": 306
   },
   "yben_vfx_add_green": {
-    "file": "yben_vfx_add_green.png",
+    "file": "yben_vfx_add_green.webp",
     "w": 60,
     "h": 52,
     "x": 822,
     "y": 515
   },
   "yben_bg_total_bet": {
-    "file": "yben_bg_total_bet.png",
+    "file": "yben_bg_total_bet.webp",
     "w": 193,
     "h": 45,
     "x": 0,
     "y": 428
   },
   "yben_vfx_auto_clear_auto_on": {
-    "file": "yben_vfx_auto_clear_auto_on.png",
+    "file": "yben_vfx_auto_clear_auto_on.webp",
     "w": 126,
     "h": 37,
     "x": 733,
     "y": 430
   },
   "yben_txt_x22": {
-    "file": "yben_txt_x22.png",
+    "file": "yben_txt_x22.webp",
     "w": 43,
     "h": 17,
     "x": 887,
     "y": 569
   },
   "yben_mask_outline": {
-    "file": "yben_mask_outline.png",
+    "file": "yben_mask_outline.webp",
     "w": 89,
     "h": 89,
     "x": 195,
     "y": 428
   },
   "yben_mask_btn_vol_animat": {
-    "file": "yben_mask_btn_vol_animat.png",
+    "file": "yben_mask_btn_vol_animat.webp",
     "w": 66,
     "h": 13,
     "x": 819,
     "y": 569
   },
   "yben_btn_undo": {
-    "file": "yben_btn_undo.png",
+    "file": "yben_btn_undo.webp",
     "w": 55,
     "h": 55,
     "x": 674,
     "y": 489
   },
   "yben_mask_panel_pattern": {
-    "file": "yben_mask_panel_pattern.png",
+    "file": "yben_mask_panel_pattern.webp",
     "w": 470,
     "h": 304,
     "x": 482,
     "y": 0
   },
   "yben_vfx_bet_glow_mid_line_green": {
-    "file": "yben_vfx_bet_glow_mid_line_green.png",
+    "file": "yben_vfx_bet_glow_mid_line_green.webp",
     "w": 57,
     "h": 57,
     "x": 556,
     "y": 488
   },
   "yben_btn_allbet_off": {
-    "file": "yben_btn_allbet_off.png",
+    "file": "yben_btn_allbet_off.webp",
     "w": 86,
     "h": 57,
     "x": 645,
     "y": 430
   },
   "yben_txt_x45": {
-    "file": "yben_txt_x45.png",
+    "file": "yben_txt_x45.webp",
     "w": 42,
     "h": 17,
     "x": 520,
     "y": 574
   },
   "yben_vfx_glow_largebet_green": {
-    "file": "yben_vfx_glow_largebet_green.png",
+    "file": "yben_vfx_glow_largebet_green.webp",
     "w": 16,
     "h": 13,
     "x": 1005,
     "y": 69
   },
   "yben_btn_allbet_select_on_2": {
-    "file": "yben_btn_allbet_select_on_2.png",
+    "file": "yben_btn_allbet_select_on_2.webp",
     "w": 87,
     "h": 53,
     "x": 733,
     "y": 469
   },
   "yben_vfx_add_red": {
-    "file": "yben_vfx_add_red.png",
+    "file": "yben_vfx_add_red.webp",
     "w": 60,
     "h": 52,
     "x": 884,
     "y": 515
   },
   "yben_vfx_glow_largebet_yellow": {
-    "file": "yben_vfx_glow_largebet_yellow.png",
+    "file": "yben_vfx_glow_largebet_yellow.webp",
     "w": 16,
     "h": 12,
     "x": 1005,
     "y": 84
   },
   "yben_vfx_bet_glow_out_line_red": {
-    "file": "yben_vfx_bet_glow_out_line_red.png",
+    "file": "yben_vfx_bet_glow_out_line_red.webp",
     "w": 82,
     "h": 82,
     "x": 286,
     "y": 428
   },
   "yben_icon_bet_volkswagen_yellow": {
-    "file": "yben_icon_bet_volkswagen_yellow.png",
+    "file": "yben_icon_bet_volkswagen_yellow.webp",
     "w": 37,
     "h": 37,
     "x": 822,
     "y": 469
   },
   "yben_icon_bet_bmw_yellow": {
-    "file": "yben_icon_bet_bmw_yellow.png",
+    "file": "yben_icon_bet_bmw_yellow.webp",
     "w": 42,
     "h": 42,
     "x": 0,
     "y": 536
   },
   "yben_vfx_glow_largebet_red": {
-    "file": "yben_vfx_glow_largebet_red.png",
+    "file": "yben_vfx_glow_largebet_red.webp",
     "w": 23,
     "h": 17,
     "x": 524,
     "y": 509
   },
   "yben_icon_bet_benz_green": {
-    "file": "yben_icon_bet_benz_green.png",
+    "file": "yben_icon_bet_benz_green.webp",
     "w": 41,
     "h": 42,
     "x": 674,
     "y": 546
   },
   "yben_txt_x6": {
-    "file": "yben_txt_x6.png",
+    "file": "yben_txt_x6.webp",
     "w": 21,
     "h": 12,
     "x": 154,
     "y": 535
   },
   "yben_txt_x38": {
-    "file": "yben_txt_x38.png",
+    "file": "yben_txt_x38.webp",
     "w": 29,
     "h": 12,
     "x": 524,
     "y": 528
   },
   "yben_mask_common": {
-    "file": "yben_mask_common.png",
+    "file": "yben_mask_common.webp",
     "w": 20,
     "h": 20,
     "x": 988,
     "y": 432
   },
   "yben_icon_select_audi": {
-    "file": "yben_icon_select_audi.png",
+    "file": "yben_icon_select_audi.webp",
     "w": 41,
     "h": 15,
     "x": 717,
     "y": 574
   },
   "yben_icon_bet_audi_red": {
-    "file": "yben_icon_bet_audi_red.png",
+    "file": "yben_icon_bet_audi_red.webp",
     "w": 36,
     "h": 37,
     "x": 946,
     "y": 557
   },
   "yben_btn_autoplay_bg_detect": {
-    "file": "yben_btn_autoplay_bg_detect.png",
+    "file": "yben_btn_autoplay_bg_detect.webp",
     "w": 103,
     "h": 61,
     "x": 370,
     "y": 428
   },
   "yben_txt_x13": {
-    "file": "yben_txt_x13.png",
+    "file": "yben_txt_x13.webp",
     "w": 26,
     "h": 12,
     "x": 640,
     "y": 562
   },
   "yben_btn_allbet_select_on_1": {
-    "file": "yben_btn_allbet_select_on_1.png",
+    "file": "yben_btn_allbet_select_on_1.webp",
     "w": 87,
     "h": 53,
     "x": 861,
     "y": 460
   },
   "yben_vfx_bet_glow_out_line_yellow": {
-    "file": "yben_vfx_bet_glow_out_line_yellow.png",
+    "file": "yben_vfx_bet_glow_out_line_yellow.webp",
     "w": 59,
     "h": 59,
     "x": 0,
     "y": 475
   },
   "yben_txt_x27": {
-    "file": "yben_txt_x27.png",
+    "file": "yben_txt_x27.webp",
     "w": 29,
     "h": 12,
     "x": 640,
     "y": 548
   },
   "yben_txt_x10": {
-    "file": "yben_txt_x10.png",
+    "file": "yben_txt_x10.webp",
     "w": 24,
     "h": 12,
     "x": 154,
     "y": 576
   },
   "yben_vfx_add_yellow": {
-    "file": "yben_vfx_add_yellow.png",
+    "file": "yben_vfx_add_yellow.webp",
     "w": 60,
     "h": 52,
     "x": 286,
     "y": 512
   },
   "yben_ui_panel": {
-    "file": "yben_ui_panel.png",
+    "file": "yben_ui_panel.webp",
     "w": 480,
     "h": 426,
     "x": 0,
     "y": 0
   },
   "yben_icon_bet_benz_yellow": {
-    "file": "yben_icon_bet_benz_yellow.png",
+    "file": "yben_icon_bet_benz_yellow.webp",
     "w": 41,
     "h": 41,
     "x": 438,
     "y": 553
   },
   "yben_btn_autoplay_off": {
-    "file": "yben_btn_autoplay_off.png",
+    "file": "yben_btn_autoplay_off.webp",
     "w": 110,
     "h": 75,
     "x": 876,
     "y": 383
   },
   "yben_icon_bet_bmw_green": {
-    "file": "yben_icon_bet_bmw_green.png",
+    "file": "yben_icon_bet_bmw_green.webp",
     "w": 42,
     "h": 41,
     "x": 596,
     "y": 548
   },
   "yben_btn_select_arrow_on": {
-    "file": "yben_btn_select_arrow_on.png",
+    "file": "yben_btn_select_arrow_on.webp",
     "w": 75,
     "h": 42,
     "x": 447,
     "y": 509
   },
   "yben_icon_bet_benz_red": {
-    "file": "yben_icon_bet_benz_red.png",
+    "file": "yben_icon_bet_benz_red.webp",
     "w": 57,
     "h": 58,
     "x": 61,
     "y": 475
   },
   "yben_icon_bet_volkswagen_green": {
-    "file": "yben_icon_bet_volkswagen_green.png",
+    "file": "yben_icon_bet_volkswagen_green.webp",
     "w": 36,
     "h": 36,
     "x": 781,
     "y": 563
   },
   "yben_icon_bet_bmw_red": {
-    "file": "yben_icon_bet_bmw_red.png",
+    "file": "yben_icon_bet_bmw_red.webp",
     "w": 57,
     "h": 58,
     "x": 120,
     "y": 475
   },
   "yben_vfx_bet_glow_mid_line_yellow": {
-    "file": "yben_vfx_bet_glow_mid_line_yellow.png",
+    "file": "yben_vfx_bet_glow_mid_line_yellow.webp",
     "w": 57,
     "h": 57,
     "x": 615,
     "y": 489
   },
   "yben_txt_x12": {
-    "file": "yben_txt_x12.png",
+    "file": "yben_txt_x12.webp",
     "w": 24,
     "h": 12,
     "x": 564,
     "y": 574
   },
   "yben_mask_panel_vol_animat": {
-    "file": "yben_mask_panel_vol_animat.png",
+    "file": "yben_mask_panel_vol_animat.webp",
     "w": 20,
     "h": 41,
     "x": 989,
     "y": 359
   },
   "yben_btn_arrow_1_on": {
-    "file": "yben_btn_arrow_1_on.png",
+    "file": "yben_btn_arrow_1_on.webp",
     "w": 37,
     "h": 21,
     "x": 236,
     "y": 569
   },
   "yben_icon_select_volkswagen": {
-    "file": "yben_icon_select_volkswagen.png",
+    "file": "yben_icon_select_volkswagen.webp",
     "w": 29,
     "h": 29,
     "x": 989,
     "y": 328
   },
   "yben_icon_bet_audi_green": {
-    "file": "yben_icon_bet_audi_green.png",
+    "file": "yben_icon_bet_audi_green.webp",
     "w": 37,
     "h": 36,
     "x": 481,
     "y": 553
   },
   "yben_txt_x7": {
-    "file": "yben_txt_x7.png",
+    "file": "yben_txt_x7.webp",
     "w": 20,
     "h": 12,
     "x": 348,
     "y": 512
   },
   "yben_btn_autoplay_on": {
-    "file": "yben_btn_autoplay_on.png",
+    "file": "yben_btn_autoplay_on.webp",
     "w": 111,
     "h": 75,
     "x": 876,
     "y": 306
   },
   "yben_btn_chips_off": {
-    "file": "yben_btn_chips_off.png",
+    "file": "yben_btn_chips_off.webp",
     "w": 62,
     "h": 62,
     "x": 954,
     "y": 130
   },
   "yben_txt_x5": {
-    "file": "yben_txt_x5.png",
+    "file": "yben_txt_x5.webp",
     "w": 21,
     "h": 12,
     "x": 154,
     "y": 549
   },
   "yben_icon_bet_volkswagen_red": {
-    "file": "yben_icon_bet_volkswagen_red.png",
+    "file": "yben_icon_bet_volkswagen_red.webp",
     "w": 36,
     "h": 37,
     "x": 781,
     "y": 524
   },
   "yben_btn_chips_change": {
-    "file": "yben_btn_chips_change.png",
+    "file": "yben_btn_chips_change.webp",
     "w": 55,
     "h": 55,
     "x": 179,
     "y": 519
   },
   "yben_vfx_glow_minibet_red": {
-    "file": "yben_vfx_glow_minibet_red.png",
+    "file": "yben_vfx_glow_minibet_red.webp",
     "w": 17,
     "h": 21,
     "x": 1005,
     "y": 23
   },
   "yben_icon_bet_audi_yellow": {
-    "file": "yben_icon_bet_audi_yellow.png",
+    "file": "yben_icon_bet_audi_yellow.webp",
     "w": 36,
     "h": 36,
     "x": 984,
     "y": 557
   },
   "yben_btn_select_arrow_off": {
-    "file": "yben_btn_select_arrow_off.png",
+    "file": "yben_btn_select_arrow_off.webp",
     "w": 75,
     "h": 42,
     "x": 370,
     "y": 491
   },
   "yben_icon_select_benz": {
-    "file": "yben_icon_select_benz.png",
+    "file": "yben_icon_select_benz.webp",
     "w": 28,
     "h": 28,
     "x": 988,
     "y": 402
   },
   "yben_btn_allbet_select_off_1": {
-    "file": "yben_btn_allbet_select_off_1.png",
+    "file": "yben_btn_allbet_select_off_1.webp",
     "w": 68,
     "h": 34,
     "x": 946,
     "y": 521
   },
   "yben_vfx_glow_minibet_green": {
-    "file": "yben_vfx_glow_minibet_green.png",
+    "file": "yben_vfx_glow_minibet_green.webp",
     "w": 17,
     "h": 21,
     "x": 1005,
     "y": 0
   },
   "yben_txt_x16": {
-    "file": "yben_txt_x16.png",
+    "file": "yben_txt_x16.webp",
     "w": 26,
     "h": 12,
     "x": 447,
     "y": 491
   },
   "yben_vfx_stop_on": {
-    "file": "yben_vfx_stop_on.png",
+    "file": "yben_vfx_stop_on.webp",
     "w": 120,
     "h": 120,
     "x": 482,
     "y": 306
   },
   "yben_btn_allbet_select_off_2": {
-    "file": "yben_btn_allbet_select_off_2.png",
+    "file": "yben_btn_allbet_select_off_2.webp",
     "w": 68,
     "h": 34,
     "x": 954,
     "y": 258
   },
   "yben_icon_select_bmw": {
-    "file": "yben_icon_select_bmw.png",
+    "file": "yben_icon_select_bmw.webp",
     "w": 32,
     "h": 32,
     "x": 989,
     "y": 294
   },
   "yben_sfx_flash_light": {
-    "file": "yben_sfx_flash_light.png",
+    "file": "yben_sfx_flash_light.webp",
     "w": 49,
     "h": 128,
     "x": 954,
     "y": 0
   },
   "yben_vfx_glow_minibet_yellow": {
-    "file": "yben_vfx_glow_minibet_yellow.png",
+    "file": "yben_vfx_glow_minibet_yellow.webp",
     "w": 17,
     "h": 21,
     "x": 1005,
     "y": 46
   },
   "yben_vfx_bet_glow_mid_line_red": {
-    "file": "yben_vfx_bet_glow_mid_line_red.png",
+    "file": "yben_vfx_bet_glow_mid_line_red.webp",
     "w": 79,
     "h": 79,
     "x": 475,
     "y": 428
   },
   "yben_btn_allbet_on": {
-    "file": "yben_btn_allbet_on.png",
+    "file": "yben_btn_allbet_on.webp",
     "w": 87,
     "h": 58,
     "x": 556,
     "y": 428
   },
   "yben_vfx_bet_glow_out_line_green": {
-    "file": "yben_vfx_bet_glow_out_line_green.png",
+    "file": "yben_vfx_bet_glow_out_line_green.webp",
     "w": 59,
     "h": 59,
     "x": 950,
     "y": 460
   },
   "yben_btn_chips_on": {
-    "file": "yben_btn_chips_on.png",
+    "file": "yben_btn_chips_on.webp",
     "w": 62,
     "h": 62,
     "x": 954,
     "y": 194
   },
   "yben_txt_x4": {
-    "file": "yben_txt_x4.png",
+    "file": "yben_txt_x4.webp",
     "w": 19,
     "h": 12,
     "x": 760,
     "y": 574
   },
   "yben_icon_arrow": {
-    "file": "yben_icon_arrow.png",
+    "file": "yben_icon_arrow.webp",
     "w": 40,
     "h": 33,
     "x": 286,
     "y": 566
   },
   "yben_icon_history_audi": {
-    "file": "yben_icon_history_audi.png",
+    "file": "yben_icon_history_audi.webp",
     "w": 70,
     "h": 25,
     "x": 524,
     "y": 547
   },
   "yben_icon_history_benz": {
-    "file": "yben_icon_history_benz.png",
+    "file": "yben_icon_history_benz.webp",
     "w": 46,
     "h": 47,
     "x": 61,
     "y": 535
   },
   "yben_icon_history_bmw": {
-    "file": "yben_icon_history_bmw.png",
+    "file": "yben_icon_history_bmw.webp",
     "w": 48,
     "h": 48,
     "x": 731,
     "y": 524
   },
   "yben_icon_history_green": {
-    "file": "yben_icon_history_green.png",
+    "file": "yben_icon_history_green.webp",
     "w": 43,
     "h": 43,
     "x": 393,
     "y": 535
   },
   "yben_icon_history_red": {
-    "file": "yben_icon_history_red.png",
+    "file": "yben_icon_history_red.webp",
     "w": 43,
     "h": 43,
     "x": 348,
     "y": 535
   },
   "yben_icon_history_volkswagen": {
-    "file": "yben_icon_history_volkswagen.png",
+    "file": "yben_icon_history_volkswagen.webp",
     "w": 48,
     "h": 48,
     "x": 236,
     "y": 519
   },
   "yben_icon_history_yellow": {
-    "file": "yben_icon_history_yellow.png",
+    "file": "yben_icon_history_yellow.webp",
     "w": 43,
     "h": 43,
     "x": 109,
     "y": 535
   },
   "yben_ui_geniric_border3_selected": {
-    "file": "yben_ui_geniric_border3_selected.png",
+    "file": "yben_ui_geniric_border3_selected.webp",
     "w": 148,
     "h": 60,
     "x": 726,
     "y": 368
   },
   "yben_ui_geniric_border3": {
-    "file": "yben_ui_geniric_border3.png",
+    "file": "yben_ui_geniric_border3.webp",
     "w": 148,
     "h": 60,
     "x": 726,

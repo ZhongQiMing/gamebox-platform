@@ -70,7 +70,7 @@ export function buildHistoryRoad(
 export function historyCarIconUrl(carPos: number, size: 'l' | 's'): string {
   const pt = WHEEL[((carPos % 24) + 24) % 24]
   const m = BCBM_PLAYTYPE_META[pt]
-  return `/images/games/bcbm/benz/main/yben_icon_history_${size}_${m.brand}_${m.color}.png`
+  return `/images/games/bcbm/benz/main/yben_icon_history_${size}_${m.brand}_${m.color}.webp`
 }
 
 /** 面板格子：特殊奖用 spin 大图标 + 小车标；普通用 s 图 */

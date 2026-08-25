@@ -70,11 +70,11 @@ const emit = defineEmits<{
   'update:sound': [on: boolean]
 }>()
 
-const BORDER = '/images/games/bcbm/benz/main/yben_ui_geniric_border.png'
-const BORDER2 = '/images/games/bcbm/benz/main/yben_ui_geniric_border2.png'
-const CLOSE = '/images/games/bcbm/benz/rules/yben_msc_btn_close.png'
-const OK_BG = '/images/games/bcbm/benz/main/yben_btn_geniric_blue.png'
-const OK_TXT = '/images/games/bcbm/benz/txt/yben_txt_confirm_hans.png'
+const BORDER = '/images/games/bcbm/benz/main/yben_ui_geniric_border.webp'
+const BORDER2 = '/images/games/bcbm/benz/main/yben_ui_geniric_border2.webp'
+const CLOSE = '/images/games/bcbm/benz/rules/yben_msc_btn_close.webp'
+const OK_BG = '/images/games/bcbm/benz/main/yben_btn_geniric_blue.webp'
+const OK_TXT = '/images/games/bcbm/benz/txt/yben_txt_confirm_hans.webp'
 
 const bgmOn = ref(true)
 const sfxOn = ref(true)
