@@ -21,7 +21,7 @@ body {
 	position:absolute;
 	left:50%; /* centers the loading animation horizontally on the screen */
 	top:500px; /* centers the loading animation vertically on the screen */
-	background-image:url(../images/logo.png); /* path to your loading animation */
+	background-image:url(../images/logo.webp); /* path to your loading animation */
 	background-repeat:no-repeat;
 	background-position:center;
 	margin:-154px 0 0 -154px; /* is width and height divided by two */

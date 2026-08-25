@@ -139,7 +139,7 @@
       { n: nums[0], rank: 1 },
       { n: nums[2], rank: 3 }
     ];
-    const bg = await loadImg(ASSETS + 'bg.png?v=' + BOAT_VER);
+    const bg = await loadImg(ASSETS + 'bg.webp?v=' + BOAT_VER);
     const boats = await Promise.all(top3.map(t => loadImg(boatPath(t.n))));
 
     canvas.width = W;

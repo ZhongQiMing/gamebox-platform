@@ -38,7 +38,7 @@ body {
 	margin-right: 5px;
 }
 
-.positm { background: url('../images/numbersprite.png') no-repeat top left; width: 64px; height: 64px;  } 
+.positm { background: url('../images/numbersprite.webp') no-repeat top left; width: 64px; height: 64px;  } 
 
 .num1 { background-position: 0 0; } 
 .num2 { background-position: 0 -64px; } 
@@ -349,7 +349,7 @@ body {
 	position: absolute;
 	top: 185px;
 	left: 340px;
-	/*background-image: url(../images/trafficlight.png);*/
+	/*background-image: url(../images/trafficlight.webp);*/
 	width: 636px;
 	height: 128px;
 }
@@ -436,7 +436,7 @@ body {
 	height: 90px; /*140px*/
 	width: 100%;
 	/*background-color: #2e81ff;*/
-	background: url(../images/bg-bottom.jpg);
+	background: url(../images/bg-bottom.webp);
 	position: absolute;
 	font-size: 28px;
 	top: 780px;
@@ -574,7 +574,7 @@ float: left;
 	height: 690px;
 	display: none;	
 	position: relative;
-	background-image:url(../images/resultbg.jpg);
+	background-image:url(../images/resultbg.webp);
 }
 
 .resultitm {
