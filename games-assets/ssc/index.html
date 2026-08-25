@@ -2,11 +2,13 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <link rel="stylesheet" href="/fonts/gamebox-fonts.css">
+  <link rel="preload" as="style" href="/fonts/gamebox-fonts.css"
+        onload="this.onload=null;this.rel='stylesheet'">
+  <noscript><link rel="stylesheet" href="/fonts/gamebox-fonts.css"></noscript>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>快乐时时彩</title>
   <link rel="stylesheet" href="/legacy/css/common.css">
-<link rel="stylesheet" href="./css/ssc.css?v=59">
+<link rel="stylesheet" href="./css/ssc.css?v=62">
   <script>
     /* 大厅 iframe 嵌入时标记，布局用 100% 跟随容器而非外层 100dvh */
     (function () {
@@ -119,19 +121,19 @@
     </button>
     <div class="ssc-rail-stack" id="sscRailStack">
       <button type="button" class="ssc-rail-btn" id="btnCs" title="客服">
-        <img class="ssc-rail-ic" src="/images/chat-rail/cs.png?v=1" alt="" draggable="false">
+        <img class="ssc-rail-ic" src="/images/chat-rail/cs.webp?v=1" alt="" draggable="false">
         <span class="ssc-rail-lb">客服</span>
       </button>
       <button type="button" class="ssc-rail-btn" id="btnRules" title="规则">
-        <img class="ssc-rail-ic" src="/images/chat-rail/rules.png?v=1" alt="" draggable="false">
+        <img class="ssc-rail-ic" src="/images/chat-rail/rules.webp?v=1" alt="" draggable="false">
         <span class="ssc-rail-lb">规则</span>
       </button>
       <button type="button" class="ssc-rail-btn" id="btnRecords" title="记录">
-        <img class="ssc-rail-ic" src="/images/chat-rail/records.png?v=1" alt="" draggable="false">
+        <img class="ssc-rail-ic" src="/images/chat-rail/records.webp?v=1" alt="" draggable="false">
         <span class="ssc-rail-lb">记录</span>
       </button>
       <button type="button" class="ssc-rail-btn ssc-rail-btn--play" id="btnExpand" title="玩法">
-        <img class="ssc-rail-ic ssc-rail-ic--play" src="/images/chat-rail/play.png?v=1" alt="" draggable="false">
+        <img class="ssc-rail-ic ssc-rail-ic--play" src="/images/chat-rail/play.webp?v=1" alt="" draggable="false">
         <span class="ssc-rail-lb">玩法</span>
       </button>
     </div>
@@ -141,10 +143,10 @@
   <footer class="ssc-composer">
     <input type="text" class="ssc-input" id="chatInput" placeholder="玩法/金额，如 十百59/100、万单/梭哈" autocomplete="off" enterkeyhint="send">
     <button type="button" class="ssc-composer-btn" id="plusBtn" aria-label="更多">
-      <img class="ssc-composer-btn__img" id="plusBtnImg" src="/images/chat-rail/plus.png?v=1" alt="" draggable="false">
+      <img class="ssc-composer-btn__img" id="plusBtnImg" src="/images/chat-rail/plus.webp?v=1" alt="" draggable="false">
     </button>
     <button type="button" class="ssc-composer-btn ssc-composer-btn--play" id="btnComposerPlay" title="玩法" aria-label="玩法">
-      <img class="ssc-composer-btn__img ssc-composer-btn__img--play" src="/images/chat-rail/play.png?v=1" alt="" draggable="false">
+      <img class="ssc-composer-btn__img ssc-composer-btn__img--play" src="/images/chat-rail/play.webp?v=1" alt="" draggable="false">
     </button>
   </footer>
 
@@ -256,16 +258,17 @@
 </div>
 
 <script src="/legacy/js/jquery-3.7.1.min.js"></script>
-<script src="/legacy/js/games-common.js?v=33"></script>
-<script src="/games-assets/_lottery-common/room-chat.js?v=29"></script>
+<script src="/legacy/js/games-common.js?v=35"></script>
+<script src="/games-assets/_lottery-common/room-chat.js?v=30"></script>
 <link rel="stylesheet" href="/games-assets/_lottery-common/hold-drawing-tip.css?v=4">
 <script src="/games-assets/_lottery-common/hold-drawing-tip.js?v=4"></script>
 <link rel="stylesheet" href="/games-assets/_lottery-common/card-sfx-toggle.css?v=8">
 <script src="/games-assets/_lottery-common/app-audio-level.js?v=1"></script>
-<script src="/games-assets/_lottery-common/card-sfx-toggle.js?v=4"></script>
-<script src="./js/ssc-audio.js?v=18"></script>
+<script src="/games-assets/_lottery-common/card-sfx-toggle.js?v=5"></script>
+<script src="/games-assets/_lottery-common/server-clock.js?v=1"></script>
+<script src="./js/ssc-audio.js?v=20"></script>
 <script src="./js/result-card.js?v=15"></script>
-<script src="./js/ssc.js?v=172"></script>
+<script src="./js/ssc.js?v=177"></script>
 <script>
 (function () {
   function boot() {

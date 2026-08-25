@@ -67,13 +67,38 @@
   /** play 世代：重叠 play 时旧 mid/after 定时器作废 */
   var playGen = 0;
 
-  function setMuted(muted) {
+  /*
+   * 静音状态。
+   *
+   * 原先只把状态记在 #soundbtn 的 class 上，且 setMuted 在按钮不存在时直接 return。
+   * 嵌到彩票页里的这份模板没有 #soundbtn（只有一个 autoplay 的 #bgsound），
+   * 于是父页传来的 muted:true 被整条丢弃：既没记上，也没停掉自己的音轨。
+   * 结果开奖时本页播 sound/opening.mp3 + sound/over.mp3，父页的 SscAudio 又播一套
+   * official-opening / official-over，两套叠在一起，听着就是「音乐两遍、开奖音效一段接一段」。
+   * 所以状态必须存在变量里，与按钮是否存在无关。
+   */
+  var soundMuted = false;
+
+  /** 独立打开本页时仍允许用按钮控制，故两个来源取「或」 */
+  function isMuted() {
+    if (soundMuted) return true;
     try {
       var btn = document.getElementById('soundbtn');
-      if (!btn) return;
-      if (muted) btn.classList.add('closesoundbtn');
-      else btn.classList.remove('closesoundbtn');
-      if (muted) {
+      return !!(btn && btn.classList.contains('closesoundbtn'));
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function setMuted(muted) {
+    soundMuted = !!muted;
+    try {
+      var btn = document.getElementById('soundbtn');
+      if (btn) {
+        if (soundMuted) btn.classList.add('closesoundbtn');
+        else btn.classList.remove('closesoundbtn');
+      }
+      if (soundMuted) {
         var a = document.getElementById('bgsound');
         if (a) {
           a.pause();
@@ -81,6 +106,32 @@
         }
       }
     } catch (e) { /* ignore */ }
+  }
+
+  /*
+   * 厂商脚本（victor1.0.js）里还有自己起音轨的地方，最典型的是尾动画结束 2.8 秒后
+   * 把 #bgsound 换成 sound/bg.mp3 当待机音乐。那些地方只看 videoTools.ifsund()，
+   * 完全不理我们的静音状态——聊天流里挂着七八张开奖卡，每张播完都起一条待机音乐，
+   * 于是好几条背景音乐和游戏本身的 BGM 一起响。
+   *
+   * 逐处去改压缩过的厂商代码风险太大，好在它们都过 ifsund() 这一道闸：
+   * 静音时让这道闸直接返回 false，所有音轨一并哑掉，也不影响独立打开本页时的行为。
+   */
+  var vendorGated = false;
+  function gateVendorSound() {
+    if (vendorGated) return;
+    var vt = global.videoTools;
+    if (!vt || typeof vt.ifsund !== 'function') return;
+    var origIfsund = vt.ifsund;
+    vt.ifsund = function () {
+      if (isMuted()) return false;
+      return origIfsund.apply(this, arguments);
+    };
+    vendorGated = true;
+  }
+  gateVendorSound();
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', gateVendorSound);
   }
 
   /** 清掉模板里的占位号（原 HTML 写死 21096 / 16双小虎），避免刷新先闪假结果 */
@@ -236,10 +287,7 @@
       rollCtrl.running = true;
 
       try {
-        var muted = false;
-        var btn = document.getElementById('soundbtn');
-        if (btn && btn.classList.contains('closesoundbtn')) muted = true;
-        if (!muted && videoTools.ifsund && videoTools.ifsund() && global.ifopen) {
+        if (!isMuted() && videoTools.ifsund && videoTools.ifsund() && global.ifopen) {
           $('#bgsound').attr('src', 'sound/opening.mp3');
           if (videoTools.sounds && videoTools.sounds.soundsT) {
             videoTools.sounds.soundsT.play('bgsound');
@@ -285,17 +333,11 @@
     stopRollTimer();
     try {
       if (opts.muted != null) setMuted(!!opts.muted);
-      else {
-        var btn = document.getElementById('soundbtn');
-        if (btn && btn.classList.contains('closesoundbtn')) setMuted(true);
-      }
+      else if (isMuted()) setMuted(true);
     } catch (e0) { /* ignore */ }
 
     try {
-      var muted = false;
-      var btn2 = document.getElementById('soundbtn');
-      if (btn2 && btn2.classList.contains('closesoundbtn')) muted = true;
-      if (!muted && videoTools.ifsund && videoTools.ifsund() && global.ifopen) {
+      if (!isMuted() && videoTools.ifsund && videoTools.ifsund() && global.ifopen) {
         $('#bgsound').attr('src', 'sound/over.mp3');
         if (videoTools.sounds && videoTools.sounds.soundsT) {
           videoTools.sounds.soundsT.play('bgsound');
