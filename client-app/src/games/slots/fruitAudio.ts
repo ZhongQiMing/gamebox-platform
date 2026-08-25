@@ -14,6 +14,7 @@
  * 静音策略：无本游戏记录时跟随账号管理；有本游戏记录后只认本游戏开关。
  */
 import type { FruitAwardType, FruitBetSymbolId } from '@gamebox/shared'
+import { remapKnownOriginUrl } from '@/utils/originPool'
 import {
   getAppBgmVolume,
   getAppSfxVolume,
@@ -31,7 +32,8 @@ function sfxVol(mult = 1) {
   return Math.min(1, BASE_SFX * getAppSfxVolume() * mult)
 }
 
-const BASE = '/audio/fruit'
+const ASSET_ORIGIN = String(import.meta.env.VITE_ASSET_ORIGIN || '').replace(/\/$/, '')
+const BASE = ASSET_ORIGIN ? `${ASSET_ORIGIN}/audio/fruit` : '/audio/fruit'
 
 const FILES = {
   bgm: `${BASE}/bgm-idle.mp3`,
@@ -107,11 +109,12 @@ const cache = new Map<string, HTMLAudioElement>()
 let liveSfx: HTMLAudioElement[] = []
 
 function getAudio(url: string): HTMLAudioElement {
-  let a = cache.get(url)
+  const src = remapKnownOriginUrl(url, 'asset')
+  let a = cache.get(src)
   if (!a) {
-    a = new Audio(url)
+    a = new Audio(src)
     a.preload = 'auto'
-    cache.set(url, a)
+    cache.set(src, a)
   }
   return a
 }
@@ -209,7 +212,7 @@ function playUrlAndWait(url: string, _volume = 0.9, maxMs = 3500, gainBoost = 1)
     unlockFruitAudio()
     stopFruitAnnounce()
     // 报奖必须新建实例：clone 预加载节点在未 ready 时会立刻 error/ended，导致中间格“没报”
-    const a = new Audio(url)
+    const a = new Audio(remapKnownOriginUrl(url, 'asset'))
     a.preload = 'auto'
     a.crossOrigin = 'anonymous'
     announceEl = a
@@ -415,6 +418,13 @@ export function disposeFruitAudio() {
     void announceCtx.close().catch(() => {})
   }
   announceCtx = null
+  /*
+   * unlocked 必须跟着一起复位。
+   * 它是模块级的，页面卸载不会清；上面刚把 AudioContext 关掉，若不复位，
+   * 二次进入时 unlockFruitAudio() 会直接 return —— 既不重建上下文，也不做那次
+   * 静音预热，于是重进后头几声音效发闷、迟到或干脆不响（首次进入却是好的）。
+   */
+  unlocked = false
 }
 
 /* ───────── 1) 背景音乐 ───────── */

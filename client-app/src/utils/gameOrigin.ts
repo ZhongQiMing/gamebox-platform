@@ -1,3 +1,5 @@
+import { getLiveOrigin } from './originPool'
+
 export type GameOriginMode = 'development' | 'production-web' | 'native'
 
 export interface ResolveGameOriginOptions {
@@ -66,12 +68,17 @@ const runtimeMode: GameOriginMode = import.meta.env.MODE === 'app'
     : 'production-web'
 
 /** H5 游戏独立 Origin；仅开发模式允许明确回退到 Vite 同源素材服务。 */
-export const gameOrigin = resolveGameOrigin({
+export let gameOrigin = resolveGameOrigin({
   mode: runtimeMode,
   pageOrigin: window.location.origin,
   gameOrigin: import.meta.env.VITE_GAME_ORIGIN,
   nativeAssetOrigin: import.meta.env.VITE_ASSET_ORIGIN,
 })
+
+export function applyLiveGameOrigin() {
+  const live = getLiveOrigin('game')
+  if (live) gameOrigin = live
+}
 
 export function gameAssetUrl(path: string): string {
   return new URL(path.replace(/^\/+/, ''), `${gameOrigin}/`).toString()

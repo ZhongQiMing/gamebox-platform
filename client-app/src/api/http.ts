@@ -1,7 +1,8 @@
 import axios from 'axios'
 import type { AxiosResponse, InternalAxiosRequestConfig } from 'axios'
 import { useUserStore } from '@/stores/user'
-import { API_BASE } from './apiBase'
+import { getApiBase, registerApiClient } from './apiBase'
+import { retryOnDeadOrigin } from './originRetry'
 import { PLAYER_TOKEN_KEY, loadToken, sessionKind } from './session'
 
 /** 后端统一响应信封 */
@@ -14,9 +15,10 @@ interface Envelope<T = unknown> {
 type HttpConfig = InternalAxiosRequestConfig & { __userToken?: string }
 
 const http = axios.create({
-  baseURL: API_BASE,
+  baseURL: getApiBase(),
   timeout: 10000,
 })
+registerApiClient(http)
 
 /** 登录会顺带下发非 HttpOnly 的 gb_csrf；有 Cookie 会话时写操作必须回传 */
 function readCsrfCookie(): string {
@@ -60,6 +62,9 @@ function errorMessage(err: { response?: { status?: number; data?: { message?: st
   if (typeof raw === 'string' && raw.startsWith('ThrottlerException')) {
     return '尝试过于频繁，请稍后再试'
   }
+  if (!status && /network error/i.test(String(raw))) {
+    return '当前网络连不上服务器，请换网络后重试'
+  }
   return String(raw)
 }
 
@@ -84,6 +89,8 @@ http.interceptors.response.use(
     return Promise.reject(new Error(envelope.message ?? '请求失败'))
   },
   async (err) => {
+    const retry = await retryOnDeadOrigin(http, err)
+    if (retry) return retry
     if (err.response?.status === 401 && !isAuthSessionCall(err.config)) {
       const userStore = useUserStore()
       const staffPlay = localStorage.getItem('staff_play') === '1'

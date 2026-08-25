@@ -24,8 +24,10 @@ import {
   isClickSoundOn,
 } from '@/composables/appSoundPrefs'
 import { playOneShot } from '../pg-common/audioPool'
+import { remapKnownOriginUrl } from '@/utils/originPool'
 
-const BASE = '/audio/bcbm'
+const ASSET_ORIGIN = String(import.meta.env.VITE_ASSET_ORIGIN || '').replace(/\/$/, '')
+const BASE = ASSET_ORIGIN ? `${ASSET_ORIGIN}/audio/bcbm` : '/audio/bcbm'
 
 /** 全游戏统一基准（再乘账号音量滑条）；原官方 BGM 约 0.20 */
 const BASE_BGM = 0.4
@@ -100,11 +102,12 @@ const ANNOUNCE_URLS = [
 const BONUS_LOOP_DUCK_RATIO = 0.2
 
 function getAudio(url: string) {
-  let a = cache.get(url)
+  const src = remapKnownOriginUrl(url, 'asset')
+  let a = cache.get(src)
   if (!a) {
-    a = new Audio(url)
+    a = new Audio(src)
     a.preload = 'auto'
-    cache.set(url, a)
+    cache.set(src, a)
   }
   return a
 }
@@ -113,7 +116,7 @@ function getAudio(url: string) {
 function playUrl(url: string, _volume = 0.75) {
   if (sfxMuted) return null
   unlockBcbmAudio()
-  return playOneShot(url, sfxVol())
+  return playOneShot(remapKnownOriginUrl(url, 'asset'), sfxVol())
 }
 
 function stopEl(el: HTMLAudioElement | null) {
@@ -208,7 +211,7 @@ export function playBcbmAnticipation() {
   stopBcbmAnticipation()
   if (sfxMuted) return
   unlockBcbmAudio()
-  anticipEl = new Audio(FILES.anticipation)
+  anticipEl = new Audio(remapKnownOriginUrl(FILES.anticipation, 'asset'))
   anticipEl.volume = sfxVol()
   void anticipEl.play().catch(() => {})
 }
@@ -465,7 +468,7 @@ export function playBcbmBonusAnnounce(awardType: BcbmAwardType | string) {
   stopAnnounce()
   if (payoutLoopEl) payoutLoopEl.volume = sfxVol() * BONUS_LOOP_DUCK_RATIO
 
-  const el = new Audio(url)
+  const el = new Audio(remapKnownOriginUrl(url, 'asset'))
   el.preload = 'auto'
   el.volume = sfxVol()
   announceEl = el

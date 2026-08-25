@@ -1,7 +1,8 @@
 import axios from 'axios'
 import type { AxiosResponse, InternalAxiosRequestConfig } from 'axios'
 import { useStaffStore } from '@/stores/staff'
-import { API_BASE } from './apiBase'
+import { getApiBase, registerApiClient } from './apiBase'
+import { retryOnDeadOrigin } from './originRetry'
 import { STAFF_TOKEN_KEY, isNativeApp, loadToken, sessionKind } from './session'
 
 interface Envelope<T = unknown> {
@@ -13,9 +14,10 @@ interface Envelope<T = unknown> {
 type StaffConfig = InternalAxiosRequestConfig & { __staffToken?: string }
 
 const staffHttp = axios.create({
-  baseURL: API_BASE,
+  baseURL: getApiBase(),
   timeout: 15000,
 })
+registerApiClient(staffHttp)
 
 function readCsrfCookie(): string {
   const m = document.cookie.match(/(?:^|;\s*)gb_csrf=([^;]+)/)
@@ -52,6 +54,8 @@ staffHttp.interceptors.response.use(
     return Promise.reject(new Error(envelope.message ?? '请求失败'))
   },
   async (err) => {
+    const retry = await retryOnDeadOrigin(staffHttp, err)
+    if (retry) return retry
     if (err.response?.status === 401) {
       const current = loadToken(STAFF_TOKEN_KEY)
       const reqToken = tokenOf(err.config as StaffConfig | undefined)
@@ -78,7 +82,9 @@ staffHttp.interceptors.response.use(
     const msg =
       err.response?.status === 429 || /too many requests|throttler/i.test(String(raw))
         ? '尝试过于频繁，请稍后再试'
-        : String(raw)
+        : /network error/i.test(String(raw))
+          ? '当前网络连不上服务器，请换网络后重试'
+          : String(raw)
     return Promise.reject(new Error(msg))
   },
 )

@@ -1,4 +1,5 @@
 import { isNativeApp } from '@/api/session'
+import { getLiveOrigin } from '@/utils/originPool'
 
 export interface PublicMediaUrlOptions {
   native?: boolean
@@ -19,7 +20,7 @@ export function publicMediaUrl(
   const native = options.native ?? isNativeApp()
   if (!native) return url
 
-  const origin = String(options.apiOrigin ?? import.meta.env.VITE_API_ORIGIN ?? '')
+  const origin = String(options.apiOrigin ?? getLiveOrigin('api') ?? import.meta.env.VITE_API_ORIGIN ?? '')
     .trim()
     .replace(/\/+$/, '')
   return origin ? `${origin}${url}` : url

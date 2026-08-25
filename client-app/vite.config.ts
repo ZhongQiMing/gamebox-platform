@@ -8,6 +8,28 @@ import { resolve } from 'path'
 const repoRoot = resolve(__dirname, '..')
 const gamesAssetsDir = path.join(repoRoot, 'games-assets')
 
+/** 只读 .env 文件本身，不受当前 shell 里残留的 VITE_* 影响。 */
+function readDotEnvFile(filePath: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  if (!fs.existsSync(filePath)) return out
+  for (const line of fs.readFileSync(filePath, 'utf8').split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#')) continue
+    const eq = trimmed.indexOf('=')
+    if (eq <= 0) continue
+    const key = trimmed.slice(0, eq).trim()
+    let val = trimmed.slice(eq + 1).trim()
+    if (
+      (val.startsWith('"') && val.endsWith('"'))
+      || (val.startsWith("'") && val.endsWith("'"))
+    ) {
+      val = val.slice(1, -1)
+    }
+    out[key] = val
+  }
+  return out
+}
+
 function originConfigError(name: string, value?: string): string | null {
   const raw = String(value || '').trim()
   if (!raw || /CHANGE_TO_YOUR_DOMAIN|请改成/.test(raw)) return `${name} 未配置或仍是占位符`
@@ -21,6 +43,18 @@ function originConfigError(name: string, value?: string): string | null {
   } catch {
     return `${name} 不是合法 URL：${raw}`
   }
+}
+
+function originListConfigError(name: string, value?: string): string | null {
+  const raw = String(value || '').trim()
+  if (!raw) return null
+  for (const part of raw.split(',')) {
+    const item = part.trim()
+    if (!item) continue
+    const err = originConfigError(name, item)
+    if (err) return err
+  }
+  return null
 }
 
 const MIME: Record<string, string> = {
@@ -43,9 +77,46 @@ function isSlimApp() {
 /** 大厅期号球 / 快三结果图：安装包内保留，避免大厅也要联网 */
 function isLobbyGamesAsset(relPosix: string): boolean {
   const r = relPosix.replace(/^\/+/, '')
-  if (/^kuai3\/assets\/result\/icon-\d+\.png$/i.test(r)) return true
+  if (/^kuai3\/assets\/result\/icon-\d+\.(png|webp)$/i.test(r)) return true
   if (/^(bjsc|speed-racing|speed-boat)\/assets\/balls\//i.test(r)) return true
   if (/^lhc\/assets\/balls\//i.test(r)) return true
+  return false
+}
+
+/**
+ * 素材生产中间件：留在仓库里供重新切图，但不进发布包。
+ *
+ * 这些文件浏览器一次都不会请求（已按「解析后真实路径」全仓扫过，js/css/html 里
+ * 零引用），但完整包会把它们一起复制进 dist，白占镜像体积和服务器磁盘。
+ *
+ *   ai-sources/       AI 出图原稿
+ *   *-green.png       绿幕源图，抠图后才有可用素材
+ *   *-master.png      精灵母版，切帧后才有 xx-01/02
+ *   _debug-*          抠图调试用的 mask / plate
+ *   page-unified-v51.png  已转 webp，CSS 只引 webp
+ *   bet-btns/download.png 弧度参考图，只在 CSS 注释里被提到
+ *
+ * 注意别顺手把 race-car-front-01.png 这类也排掉：它们是
+ * result-card.js 里 `prefix + 序号 + '.png'` 拼出来的，静态扫不到但确实在用。
+ */
+function isBuildIntermediate(relPosix: string): boolean {
+  const r = relPosix.replace(/^\/+/, '')
+  const base = r.split('/').pop() || ''
+  if (/(^|\/)ai-sources\//i.test(r)) return true
+  if (/^_debug-/i.test(base)) return true
+  if (/-green\.png$/i.test(base)) return true
+  if (/-master\.png$/i.test(base)) return true
+  if (/^page-unified-v51\.png$/i.test(base)) return true
+  if (/(^|\/)bet-btns\/download\.png$/i.test(r)) return true
+  /*
+   * draw-result-stage.png：AI 出的开奖台底图，由 import_ai_assets.py 落盘，
+   * ssc / ffc / lhc 各一份共 5.5 MB，但三个游戏的代码和 CSS 里引用数为 0。
+   * bodybg.full.jpg：开奖动画的原始大图，xyssx_index.html 只引用同目录的
+   * bodybg.webp（57 KB），这份 189 KB 的 jpg 同样零引用。
+   * 两者都留在仓库里备查，但没有理由进发布包。
+   */
+  if (/^draw-result-stage\.png$/i.test(base)) return true
+  if (/\.full\.jpg$/i.test(base)) return true
   return false
 }
 
@@ -56,13 +127,13 @@ function keepBundledGameImage(relPosix: string): boolean {
   const topLevel = parts.length === 2
   if (topLevel && /cover/i.test(base) && !/raw/i.test(base)) return true
   if (
-    /^(ssc|ffc|speed-racing|bjsc|speed-boat|kuai3|hk-mark6|zhajinhua|douniu|baccarat|slots)\.png$/i.test(
+    /^(ssc|ffc|speed-racing|bjsc|speed-boat|kuai3|hk-mark6|zhajinhua|douniu|baccarat|slots)\.(png|webp)$/i.test(
       base,
     )
   ) {
     return true
   }
-  if (/^(bcbm-icon|longhu-icon)\.png$/i.test(base)) return true
+  if (/^(bcbm-icon|longhu-icon)\.(png|webp)$/i.test(base)) return true
   if (topLevel && /开始按钮/.test(base)) return true
   return false
 }
@@ -92,13 +163,29 @@ function copyDirFiltered(
   }
 }
 
-function copyDir(src: string, dest: string) {
-  fs.mkdirSync(dest, { recursive: true })
-  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
-    const from = path.join(src, entry.name)
-    const to = path.join(dest, entry.name)
-    if (entry.isDirectory()) copyDir(from, to)
-    else fs.copyFileSync(from, to)
+/**
+ * 删掉发布包里已被 WebP 取代的 PNG。
+ *
+ * 大厅那 11 个游戏图标和 crown/corner/medal/底图，运行时引用的一律是 .webp
+ * （`useGameLobbyCards.ts`、各视图的 <img>、common.css 里都是写死的 .webp 字面量），
+ * 同名 .png 只是 `scripts/optimize-lobby-images.mjs` 生成 WebP 用的源图。
+ * 源图要留在仓库里好重新压，但没有理由跟着发布包走——它们比 WebP 大一个数量级
+ * （单个 480~1400 KB 对 29~44 KB），合计约 9.5 MB。
+ *
+ * 判据故意设成「同目录存在同名 .webp」而不是列白名单：删之前必然已经确认
+ * 替代品在包里，漏删好过误删。筹码图 chip-*.png 没有 .webp 兄弟，
+ * 所以那批被 H5 用 `chip-${amt}.png` 拼出来的动态引用不会受影响。
+ */
+function pruneSupersededPng(imagesDir: string) {
+  if (!fs.existsSync(imagesDir)) return
+  for (const file of walkFiles(imagesDir)) {
+    if (!/\.png$/i.test(file)) continue
+    if (!fs.existsSync(file.replace(/\.png$/i, '.webp'))) continue
+    try {
+      fs.unlinkSync(file)
+    } catch {
+      /* ignore */
+    }
   }
 }
 
@@ -176,8 +263,10 @@ function finalizeStaticAssets(): Plugin {
       rmRf(outGa)
       if (fs.existsSync(gamesAssetsDir)) {
         if (slim) copyDirFiltered(gamesAssetsDir, outGa, isLobbyGamesAsset)
-        else copyDir(gamesAssetsDir, outGa)
+        else copyDirFiltered(gamesAssetsDir, outGa, (rel) => !isBuildIntermediate(rel))
       }
+
+      pruneSupersededPng(path.join(dist, 'images'))
 
       if (!slim) return
 
@@ -204,7 +293,8 @@ function finalizeStaticAssets(): Plugin {
 
       const origin = String(process.env.VITE_ASSET_ORIGIN || '').replace(/\/$/, '')
       const api = String(process.env.VITE_API_ORIGIN || '').replace(/\/$/, '')
-      console.log(`\n[slim-app] 已瘦包。素材来自 ${origin}，接口指向 ${api}。\n`)
+      const game = String(process.env.VITE_GAME_ORIGIN || '').replace(/\/$/, '')
+      console.log(`\n[slim-app] 已瘦包。素材 ${origin}，接口 ${api}，游戏 ${game || '(回退素材域)'}。\n`)
     },
   }
 }
@@ -249,13 +339,49 @@ function precompressAssets(): Plugin {
 }
 
 export default defineConfig(({ command, mode }) => {
+  // APK 必须以 .env.app 为准。shell 里残留的 VITE_GAME_ORIGIN（例如本机
+  // 测网页时设的 games.local.test）优先级高于 dotenv，会打进正式包，手机打不开游戏。
+  if (mode === 'app') {
+    const appFile = readDotEnvFile(path.join(__dirname, '.env.app'))
+    for (const key of [
+      'VITE_SLIM_APP',
+      'VITE_ASSET_ORIGIN',
+      'VITE_API_ORIGIN',
+      'VITE_GAME_ORIGIN',
+      'VITE_API_FALLBACK_ORIGINS',
+      'VITE_ASSET_FALLBACK_ORIGINS',
+      'VITE_GAME_FALLBACK_ORIGINS',
+    ]) {
+      if (appFile[key]) process.env[key] = appFile[key]
+    }
+  }
+
   const env = loadEnv(mode, __dirname, '')
+  if (mode === 'app') {
+    const appFile = readDotEnvFile(path.join(__dirname, '.env.app'))
+    for (const key of [
+      'VITE_SLIM_APP',
+      'VITE_ASSET_ORIGIN',
+      'VITE_API_ORIGIN',
+      'VITE_GAME_ORIGIN',
+      'VITE_API_FALLBACK_ORIGINS',
+      'VITE_ASSET_FALLBACK_ORIGINS',
+      'VITE_GAME_FALLBACK_ORIGINS',
+    ]) {
+      if (appFile[key]) env[key] = appFile[key]
+    }
+  }
   if (env.VITE_SLIM_APP === '1') process.env.VITE_SLIM_APP = '1'
   if (env.VITE_ASSET_ORIGIN) process.env.VITE_ASSET_ORIGIN = env.VITE_ASSET_ORIGIN
   if (env.VITE_API_ORIGIN) process.env.VITE_API_ORIGIN = env.VITE_API_ORIGIN
+  if (env.VITE_GAME_ORIGIN) process.env.VITE_GAME_ORIGIN = env.VITE_GAME_ORIGIN
+  if (env.VITE_API_FALLBACK_ORIGINS) process.env.VITE_API_FALLBACK_ORIGINS = env.VITE_API_FALLBACK_ORIGINS
+  if (env.VITE_ASSET_FALLBACK_ORIGINS) process.env.VITE_ASSET_FALLBACK_ORIGINS = env.VITE_ASSET_FALLBACK_ORIGINS
+  if (env.VITE_GAME_FALLBACK_ORIGINS) process.env.VITE_GAME_FALLBACK_ORIGINS = env.VITE_GAME_FALLBACK_ORIGINS
+
+  const nativeBuild = mode === 'app' || env.VITE_SLIM_APP === '1'
 
   if (command === 'build') {
-    const nativeBuild = mode === 'app' || env.VITE_SLIM_APP === '1'
     const errors = nativeBuild
       ? [
           originConfigError('VITE_ASSET_ORIGIN（Native 游戏素材域）', env.VITE_ASSET_ORIGIN),
@@ -263,6 +389,12 @@ export default defineConfig(({ command, mode }) => {
           env.VITE_GAME_ORIGIN
             ? originConfigError('VITE_GAME_ORIGIN（Native 独立游戏域）', env.VITE_GAME_ORIGIN)
             : null,
+          env.VITE_GAME_ORIGIN && /local\.test|localhost/i.test(env.VITE_GAME_ORIGIN)
+            ? 'VITE_GAME_ORIGIN 不能是本机测试域名，APK 必须指向线上游戏域'
+            : null,
+          originListConfigError('VITE_API_FALLBACK_ORIGINS', env.VITE_API_FALLBACK_ORIGINS),
+          originListConfigError('VITE_ASSET_FALLBACK_ORIGINS', env.VITE_ASSET_FALLBACK_ORIGINS),
+          originListConfigError('VITE_GAME_FALLBACK_ORIGINS', env.VITE_GAME_FALLBACK_ORIGINS),
         ]
       : [originConfigError('VITE_GAME_ORIGIN（生产 Web 独立游戏域）', env.VITE_GAME_ORIGIN)]
     const invalid = errors.filter((error): error is string => Boolean(error))
@@ -276,8 +408,17 @@ export default defineConfig(({ command, mode }) => {
   }
 
   return {
-    /* precompress 必须排在 finalizeStaticAssets 之后：games-assets 是那一步才复制进 dist 的 */
-    plugins: [vue(), serveGamesAssetsDev(), finalizeStaticAssets(), precompressAssets()],
+    /*
+     * precompress 必须排在 finalizeStaticAssets 之后：games-assets 是那一步才复制进 dist 的。
+     * Native 包里不能有 .gz：aapt 打包 assets 时会自动剥掉 .gz 后缀，xxx.css 和 xxx.css.gz
+     * 会撞成同一个资源名，gradle 直接报 Duplicate resources。APK 里也没有 nginx 用它们。
+     */
+    plugins: [
+      vue(),
+      serveGamesAssetsDev(),
+      finalizeStaticAssets(),
+      ...(nativeBuild ? [] : [precompressAssets()]),
+    ],
     resolve: {
       alias: {
         '@': resolve(__dirname, 'src'),
@@ -295,9 +436,6 @@ export default defineConfig(({ command, mode }) => {
              * 不单独拆出去，它会被并进公共 vendor，让每个首次进站的用户都白下一份。
              */
             if (p.includes('/pixi.js/') || p.includes('/@pixi/')) return 'pixi-vendor'
-            if (p.includes('/socket.io-client/') || p.includes('/engine.io-client/')) {
-              return 'socket-vendor'
-            }
             if (
               p.includes('/vue-router/')
               || p.includes('/pinia/')

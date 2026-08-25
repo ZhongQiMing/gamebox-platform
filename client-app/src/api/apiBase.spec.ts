@@ -4,17 +4,19 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-/** 每次都要重新 import，API_BASE 是模块加载时就算好的常量 */
-async function loadApiBase(origin?: string): Promise<string> {
+async function loadApiBase(origin?: string, fallbacks?: string): Promise<string> {
   vi.resetModules()
+  localStorage.clear()
   if (origin === undefined) vi.stubEnv('VITE_API_ORIGIN', '')
   else vi.stubEnv('VITE_API_ORIGIN', origin)
+  vi.stubEnv('VITE_API_FALLBACK_ORIGINS', fallbacks ?? '')
   const mod = await import('./apiBase')
-  return mod.API_BASE
+  return mod.getApiBase()
 }
 
 afterEach(() => {
   vi.unstubAllEnvs()
+  localStorage.clear()
 })
 
 describe('API_BASE', () => {
@@ -28,5 +30,16 @@ describe('API_BASE', () => {
 
   it('域名结尾多写一个斜杠也不会拼出 //api', async () => {
     expect(await loadApiBase('https://api.example.com/')).toBe('https://api.example.com/api')
+  })
+
+  it('记住备用线路后接口打到备用域名', async () => {
+    vi.resetModules()
+    localStorage.clear()
+    vi.stubEnv('VITE_API_ORIGIN', 'https://a.example')
+    vi.stubEnv('VITE_API_FALLBACK_ORIGINS', 'https://b.example')
+    const pool = await import('@/utils/originPool')
+    pool.rememberOrigin('api', 'https://b.example')
+    const mod = await import('./apiBase')
+    expect(mod.getApiBase()).toBe('https://b.example/api')
   })
 })

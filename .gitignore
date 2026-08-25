@@ -4,6 +4,7 @@ node_modules/
 
 # 构建产物
 dist/
+dist-seed/
 build/
 *.tsbuildinfo
 # scripts/build-images.ps1 导出的镜像包，单个上 G
@@ -13,6 +14,8 @@ dist-images/
 .env
 .env.*
 !.env.example
+# APK/iOS 打包域名，无私密；另一台机器拉下来才能直接打正式包
+!.env.app
 scripts/health-alert.env
 scripts/.health-alert-state.json
 scripts/security-artifacts/
@@ -38,6 +41,11 @@ logs/
 client-app/android/app/build/
 client-app/ios/App/Pods/
 client-app/android/.gradle/
+
+# 安卓签名密钥与口令（泄露＝别人能冒你的名字发更新包，绝不入库）
+client-app/android/keystore.properties
+*.jks
+*.keystore
 
 # 压缩包 / 备份
 *.zip
