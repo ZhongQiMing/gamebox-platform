@@ -15,7 +15,7 @@
 
   var GIF_STATUS = 'img/status.gif';
   var GIF_EACH = 'img/each.gif';
-  var IMG_IDLE = 'img/0001.png';
+  var IMG_IDLE = 'img/0001.webp';
 
   var playTimers = [];
   var playing = false;
@@ -311,7 +311,7 @@
     var preloadList = [
       IMG_IDLE,
       'img/empt.png',
-      'img/bj222.png',
+      'img/bj222.webp',
       'img/222.png',
       GIF_STATUS,
       GIF_EACH,

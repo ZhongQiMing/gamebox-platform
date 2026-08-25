@@ -10,6 +10,25 @@ $(function () {
   const INTERVAL = 75;
   const PREP_SEC = 35;
   const BET_SEC = INTERVAL - PREP_SEC;
+
+  /*
+   * 服务端校准时钟。
+   * 凡是要跟 lockAt / openAt 这类服务端绝对时间戳比较的地方都走 srvNow()，
+   * 否则玩家设备时钟偏几秒，倒计时和下注闸门就跟着偏几秒。
+   * 公共层没加载时退化成本地钟，行为与改造前一致，不会把游戏卡死。
+   */
+  function srvNow() {
+    return window.LotteryClock ? LotteryClock.now() : Date.now();
+  }
+  /** 服务端时刻 → 本地时刻，供 setTimeout 排程 */
+  function toLocalMs(serverMs) {
+    return window.LotteryClock ? LotteryClock.toLocal(serverMs) : Number(serverMs);
+  }
+  /** 客户端停止接单的时刻：比服务端封盘线提前一点，避免最后一刻下注被服务端打回 */
+  function betCutoffAt(lockAtMs) {
+    return window.LotteryClock ? LotteryClock.cutoffAt(lockAtMs) : Number(lockAtMs);
+  }
+
   function fixAvatar(url) {
     const fallback = '/images/avatars/001.jpg';
     if (!url) return fallback;
@@ -118,7 +137,8 @@ $(function () {
 
   function nextOpenAtMs(now) {
     const intervalMs = INTERVAL * 1000;
-    const t = now != null ? now : Date.now();
+    /* 服务端的开奖网格对齐 Unix 纪元，推算必须站在服务端时间轴上 */
+    const t = now != null ? now : srvNow();
     return Math.ceil(t / intervalMs) * intervalMs;
   }
   function fmtIssueFromOpenAt(openAtMs) {
@@ -130,7 +150,7 @@ $(function () {
   }
   function getRoundRemain() {
     const openAt = nextOpenAtMs();
-    let r = (openAt - Date.now()) / 1000;
+    let r = (openAt - srvNow()) / 1000;
     if (r <= 0) r = INTERVAL;
     return r;
   }
@@ -140,7 +160,9 @@ $(function () {
   }
   function isBettingOpen() {
     if (!serverSynced || !serverCurrent) return false;
-    const open = serverCurrent.status === 'PENDING' && Date.now() < new Date(serverCurrent.lockAt).getTime();
+    /* 提前于服务端封盘线收口：请求还要飞过网络，卡着线点下去必被服务端拒 */
+    const open = serverCurrent.status === 'PENDING'
+      && srvNow() < betCutoffAt(new Date(serverCurrent.lockAt).getTime());
     if (!open) return false;
     /* 开奖仪式未回到 betting：禁止下注 */
     if (roomChat && typeof roomChat.isBettingOpen === 'function' && !roomChat.isBettingOpen()) return false;
@@ -755,6 +777,13 @@ $(function () {
   }
   /** 玩法脚金额栏是否处于梭哈（提前声明，避免 unitAmount/refreshStats TDZ） */
   let playAllin = false;
+  /**
+   * 上一次从玩法面板提交的选中快照，给面板里的「重复」用。
+   * 面板的重复要把玩法重新点回来、金额留着可改，而不是把文本塞进聊天框
+   * —— 塞进聊天框就没法换金额了。组合玩法不存（无可靠回填口）。
+   * @type {{plays:string[],catIdx:number,amount:number,allin:boolean}|null}
+   */
+  let lastPanelPick = null;
 
   function unitAmount() {
     if (playAllin) return 0;
@@ -2054,7 +2083,7 @@ $(function () {
     const stats = getStats(user.uid);
     stats.winloss += serverProfit;
     stats.turnover += serverTurnover;
-    stats.rebate = (stats.rebate || 0) + Math.round(serverTurnover * 0.005 * 100) / 100;
+    stats.rebate = (stats.rebate || 0) + ((window.App && App.calcRebate) ? App.calcRebate(serverTurnover) : 0);
     saveStats(user.uid, stats);
     refreshStats();
   }
@@ -2363,7 +2392,7 @@ $(function () {
     if (String(serverCurrent.issueNo || '') !== issue) return false;
     const st = String(serverCurrent.status || '');
     const lockAt = new Date(serverCurrent.lockAt).getTime();
-    const now = Date.now();
+    const now = srvNow();
     return st === 'LOCKED' || (st === 'PENDING' && Number.isFinite(lockAt) && now >= lockAt);
   }
 
@@ -2395,7 +2424,7 @@ $(function () {
     const openAt = new Date(serverCurrent.openAt).getTime();
     const readyMs = (typeof resultRevealDurationMs === 'function' ? resultRevealDurationMs() : 8000) + 1400;
     const remain = Number.isFinite(openAt)
-      ? Math.max(1200, openAt - Date.now() + 600)
+      ? Math.max(1200, openAt - srvNow() + 600)
       : readyMs;
     if (typeof roomChat.scheduleRevealReady === 'function') {
       roomChat.scheduleRevealReady(issue, Math.min(remain, readyMs + 400));
@@ -2569,7 +2598,7 @@ $(function () {
               started = true;
               let armMs = Math.max(Number(totalMs) || readyMs, Number(numbersAt) || 0) + 1200;
               if (Number.isFinite(openAt)) {
-                armMs = Math.max(armMs, openAt - Date.now() + 1200);
+                armMs = Math.max(armMs, openAt - srvNow() + 1200);
               }
               ctx.scheduleRevealReady(issue, armMs);
             },
@@ -2593,7 +2622,7 @@ $(function () {
             ctx.setRevealPending(issue);
             const openAtHold = serverCurrent && new Date(serverCurrent.openAt).getTime();
             const remain = Number.isFinite(openAtHold)
-              ? Math.max(1200, openAtHold - Date.now() + 600)
+              ? Math.max(1200, openAtHold - srvNow() + 600)
               : readyMs;
             ctx.scheduleRevealReady(issue, Math.min(remain, readyMs + 400));
           } else if (LhcResultCard.settle) {
@@ -2715,10 +2744,10 @@ $(function () {
     const $img = $('#plusBtnImg');
     if (hasText) {
       $btn.addClass('is-send').attr('aria-label', '发送');
-      if ($img.length) $img.attr('src', '/images/chat-rail/send.png?v=1');
+      if ($img.length) $img.attr('src', '/images/chat-rail/send.webp?v=1');
     } else {
       $btn.removeClass('is-send').attr('aria-label', '更多');
-      if ($img.length) $img.attr('src', '/images/chat-rail/plus.png?v=1');
+      if ($img.length) $img.attr('src', '/images/chat-rail/plus.webp?v=1');
     }
   }
 
@@ -3605,6 +3634,36 @@ $(function () {
     return { err: '当前玩法不支持' };
   }
 
+  /**
+   * 玩法面板里的「重复」：把上次的玩法重新点选回来，金额也填回去但仍可改，
+   * 不关面板、不写聊天框。想直接发上次那单请用键盘里的「重复」。
+   * 组合玩法（生肖/多号码）没有可靠的回填口，退回填输入框。
+   */
+  function repeatLastBetInPlayPanel() {
+    const snap = lastPanelPick;
+    if (!snap || !snap.plays.length) {
+      fillLastBetsToInput();
+      return;
+    }
+    if (!$('#playSheet').hasClass('is-open')) openPlaySheet(true);
+
+    playCatIdx = snap.catIdx;
+    $('#playNav .lhc-play-nav__item').removeClass('is-active');
+    $('#playNav .lhc-play-nav__item[data-idx="' + playCatIdx + '"]').addClass('is-active');
+    renderPlayPanel();
+
+    playSelectedList = snap.plays.slice();
+    playAllin = !!snap.allin;
+    if (!playAllin && snap.amount > 0) {
+      setPlayAmount(snap.amount);
+      clearPlayAmountChipActive();
+      $('#playAmountChips .lhc-play-foot__chip[data-amt="' + snap.amount + '"]').addClass('is-active');
+    }
+    syncPlayAmountUI();
+    updatePlaySelected();
+    App.toast('已点选上次玩法 · ' + snap.plays.length + '项');
+  }
+
   function submitPlayBet() {
     const cat = currentPlayCat();
     if (!isBettingOpen()) {
@@ -3619,12 +3678,24 @@ $(function () {
         return;
       }
       plays = built.plays;
+      /*
+       * 组合玩法（生肖 / 多号码那类）的选中状态不在 playSelectedList 里，
+       * 硬恢复会点错，所以这类不存快照，「重复」时退回填输入框。
+       */
+      lastPanelPick = null;
     } else {
       if (!playSelectedList.length) {
         App.toast('请先选择玩法');
         return;
       }
       plays = playSelectedList.slice();
+      /* 普通玩法存面板快照，供「重复」原样点回来（金额仍可改） */
+      lastPanelPick = {
+        plays: plays.slice(),
+        catIdx: playCatIdx,
+        amount: unitAmount(),
+        allin: !!playAllin,
+      };
     }
     let resolved;
     if (playAllin) {
@@ -5002,6 +5073,10 @@ $(function () {
     if (window.parent !== window && !App._bridgeReady) return;
     snapshotBusy = true;
     App.fetchLotterySnapshot(SERVER_GAME).then(function (snapshot) {
+      /* 先校时：后面所有与 lockAt / openAt 的比较都要用校准后的钟 */
+      if (snapshot && window.LotteryClock) {
+        LotteryClock.sync(snapshot.serverNow, snapshot.sentAt, snapshot.recvAt);
+      }
       /* 先标记已同步，避免后续渲染异常把整页永远钉在「同步中」 */
       serverSynced = true;
       App._lhcServerSynced = true;
@@ -5040,7 +5115,7 @@ $(function () {
         } else if (serverCurrent) {
           const _st = String(serverCurrent.status || '');
           const _openAt = new Date(serverCurrent.openAt).getTime();
-          if (_st !== 'PENDING' && _st !== 'LOCKED' && Number.isFinite(_openAt) && Date.now() >= _openAt) {
+          if (_st !== 'PENDING' && _st !== 'LOCKED' && Number.isFinite(_openAt) && srvNow() >= _openAt) {
             serverCurrent = null;
             App._lhcServerCurrent = null;
           }
@@ -5100,18 +5175,24 @@ $(function () {
     }
     if (serverSynced && serverCurrent) {
       const lockAt = new Date(serverCurrent.lockAt).getTime();
+      const cutoff = betCutoffAt(lockAt);
       const issueCur = String(serverCurrent.issueNo || '');
       const status = String(serverCurrent.status || '');
-      const now = Date.now();
-      const open = status === 'PENDING' && now < lockAt;
+      const now = srvNow();
+      /* 倒计时归零点与停止接单点对齐，玩家看到 0 的那一刻正好点不动 */
+      const open = status === 'PENDING' && now < cutoff;
       setCurIssueDisplay(issueCur);
       if (open) {
-        updateCountdownUI(Math.max(0, (lockAt - now) / 1000) + PREP_SEC);
+        updateCountdownUI(Math.max(0, (cutoff - now) / 1000) + PREP_SEC);
         if (roomBetFrozen && sealedIssueNo && issueCur && issueCur !== sealedIssueNo) {
           roomBetFrozen = false;
           sealedIssueNo = '';
         }
-      } else if (status === 'LOCKED' || (status === 'PENDING' && now >= lockAt)) {
+      } else if (status === 'LOCKED' || (status === 'PENDING' && now >= cutoff)) {
+        /*
+         * 停止接单到服务端封盘之间的提前量窗口也走这里，
+         * 否则这不到一秒会掉进「等待开盘」分支，每局闪一下。
+         */
         updateCountdownDrawing();
         if (Number.isFinite(new Date(serverCurrent.openAt).getTime()) &&
             now >= new Date(serverCurrent.openAt).getTime()) {
@@ -5307,6 +5388,7 @@ $(function () {
           <h3 class="lhc-rules-sec__title">五、温馨提示</h3>
           <ul>
             <li>请理性竞猜，注意自身资金安全</li>
+            <li><b>高赔玩法单注限额</b>：赔率超过 500 倍的玩法（四全中 / 三全中）单注最高 50，超出会被退回并提示</li>
             <li>网络延迟可能导致倒计时与封盘线相差约 1～2 秒，以能否成功提交为准</li>
             <li>侧栏「记录」查看本游戏注单；底部「+」里的「竞猜报表」可看全部游戏</li>
             <li>长龙 / 预测仅供走势参考，不构成投注建议</li>
@@ -5509,7 +5591,7 @@ $(function () {
   });
 
   $('#playClear').on('click', clearPlaySelection);
-  $('#playRepeat').on('click', fillLastBetsToInput);
+  $('#playRepeat').on('click', repeatLastBetInPlayPanel);
   $('#playSubmit').on('click', submitPlayBet);
   $('#btnLong').on('click', () => openLongSheet(true));
   $('#longSheetClose, #longMask').on('click', () => openLongSheet(false));

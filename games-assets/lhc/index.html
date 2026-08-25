@@ -2,11 +2,13 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <link rel="stylesheet" href="/fonts/gamebox-fonts.css">
+  <link rel="preload" as="style" href="/fonts/gamebox-fonts.css"
+        onload="this.onload=null;this.rel='stylesheet'">
+  <noscript><link rel="stylesheet" href="/fonts/gamebox-fonts.css"></noscript>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>幸运六合彩</title>
   <link rel="stylesheet" href="/legacy/css/common.css">
-  <link rel="stylesheet" href="./css/lhc.css?v=49">
+  <link rel="stylesheet" href="./css/lhc.css?v=50">
   <script>
     (function () {
       if (window.parent !== window) {
@@ -112,19 +114,19 @@
     </button>
     <div class="lhc-rail-stack" id="lhcRailStack">
       <button type="button" class="lhc-rail-btn" id="btnCs" title="客服">
-        <img class="lhc-rail-ic" src="/images/chat-rail/cs.png?v=1" alt="" draggable="false">
+        <img class="lhc-rail-ic" src="/images/chat-rail/cs.webp?v=1" alt="" draggable="false">
         <span class="lhc-rail-lb">客服</span>
       </button>
       <button type="button" class="lhc-rail-btn" id="btnRules" title="规则">
-        <img class="lhc-rail-ic" src="/images/chat-rail/rules.png?v=1" alt="" draggable="false">
+        <img class="lhc-rail-ic" src="/images/chat-rail/rules.webp?v=1" alt="" draggable="false">
         <span class="lhc-rail-lb">规则</span>
       </button>
       <button type="button" class="lhc-rail-btn" id="btnRecords" title="记录">
-        <img class="lhc-rail-ic" src="/images/chat-rail/records.png?v=1" alt="" draggable="false">
+        <img class="lhc-rail-ic" src="/images/chat-rail/records.webp?v=1" alt="" draggable="false">
         <span class="lhc-rail-lb">记录</span>
       </button>
       <button type="button" class="lhc-rail-btn lhc-rail-btn--play" id="btnExpand" title="玩法">
-        <img class="lhc-rail-ic lhc-rail-ic--play" src="/images/chat-rail/play.png?v=1" alt="" draggable="false">
+        <img class="lhc-rail-ic lhc-rail-ic--play" src="/images/chat-rail/play.webp?v=1" alt="" draggable="false">
         <span class="lhc-rail-lb">玩法</span>
       </button>
     </div>
@@ -133,10 +135,10 @@
   <footer class="lhc-composer">
     <input type="text" class="lhc-input" id="chatInput" placeholder="例：特码08/100 或 特码大/50" autocomplete="off" enterkeyhint="send">
     <button type="button" class="lhc-composer-btn" id="plusBtn" aria-label="更多">
-      <img class="lhc-composer-btn__img" id="plusBtnImg" src="/images/chat-rail/plus.png?v=1" alt="" draggable="false">
+      <img class="lhc-composer-btn__img" id="plusBtnImg" src="/images/chat-rail/plus.webp?v=1" alt="" draggable="false">
     </button>
     <button type="button" class="lhc-composer-btn lhc-composer-btn--play" id="btnComposerPlay" title="玩法" aria-label="玩法">
-      <img class="lhc-composer-btn__img lhc-composer-btn__img--play" src="/images/chat-rail/play.png?v=1" alt="" draggable="false">
+      <img class="lhc-composer-btn__img lhc-composer-btn__img--play" src="/images/chat-rail/play.webp?v=1" alt="" draggable="false">
     </button>
   </footer>
 
@@ -250,16 +252,17 @@
   </div>
 
 <script src="/legacy/js/jquery-3.7.1.min.js"></script>
-<script src="/legacy/js/games-common.js?v=33"></script>
-<script src="/games-assets/_lottery-common/room-chat.js?v=29"></script>
+<script src="/legacy/js/games-common.js?v=35"></script>
+<script src="/games-assets/_lottery-common/room-chat.js?v=30"></script>
 <link rel="stylesheet" href="/games-assets/_lottery-common/hold-drawing-tip.css?v=4">
 <script src="/games-assets/_lottery-common/hold-drawing-tip.js?v=4"></script>
 <link rel="stylesheet" href="/games-assets/_lottery-common/card-sfx-toggle.css?v=8">
 <script src="/games-assets/_lottery-common/app-audio-level.js?v=1"></script>
-<script src="/games-assets/_lottery-common/card-sfx-toggle.js?v=4"></script>
-<script src="./js/lhc-audio.js?v=5"></script>
+<script src="/games-assets/_lottery-common/card-sfx-toggle.js?v=5"></script>
+<script src="/games-assets/_lottery-common/server-clock.js?v=1"></script>
+<script src="./js/lhc-audio.js?v=6"></script>
 <script src="./js/result-card.js?v=25"></script>
-<script src="./js/lhc.js?v=183"></script>
+<script src="./js/lhc.js?v=187"></script>
 <script>
 (function () {
   function boot() {

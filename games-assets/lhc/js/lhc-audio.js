@@ -36,8 +36,11 @@
     if (lobbyBgm) {
       try { lobbyBgm.volume = drawActive ? lobbyDuckVol() : musicVol(); } catch (e) {}
     }
-    if (drawBg) { try { drawBg.volume = sfxVol(); } catch (e2) {} }
-    activeNodes.forEach(function (n) { try { n.volume = sfxVol(); } catch (e3) {} });
+    /* 仪式音轨要认「开奖音效」这一路的开关：关着时它们静音待命，别在这里被拉回音量 */
+    var dv = pref.drawSfx ? sfxVol() : 0;
+    var dm = !pref.drawSfx;
+    if (drawBg) { try { drawBg.muted = dm; drawBg.volume = dv; } catch (e2) {} }
+    activeNodes.forEach(function (n) { try { n.muted = dm; n.volume = dv; } catch (e3) {} });
   }
 
   var pref = {
@@ -68,13 +71,7 @@
     } else {
       try { if (lobbyBgm) lobbyBgm.pause(); } catch (e5) { /* ignore */ }
     }
-    if (!pref.drawSfx) {
-      try { if (typeof clearDrawTimers === 'function') clearDrawTimers(); } catch (e8) { /* ignore */ }
-      drawActive = false;
-      if (lobbyBgm && pref.music) {
-        try { lobbyBgm.volume = musicVol(); } catch (e9) { /* ignore */ }
-      }
-    }
+    /* 关掉这一路只静音、不销毁（见 setDrawSfxOn）；drawActive 交给仪式自己收尾 */
     applyLevels();
   }
   window.addEventListener('storage', function (ev) {
@@ -154,24 +151,51 @@
   }
 
   /* ───────── 3) 开奖动画音效 ───────── */
-  function clearDrawTimers() {
+  /** 仪式音轨目标音量：关掉这一路时为 0（节点仍在，见 setDrawSfxOn） */
+  function drawTrackVol() {
+    return pref.drawSfx ? sfxVol() : 0;
+  }
+
+  /**
+   * 收尾用：停摇珠循环轨与待触发定时器，正在响的报号让它说完。
+   * 一期要报 7 个球、14 段语音，硬停会把最后那句掐掉半截。
+   */
+  function stopDrawLoops() {
     for (var i = 0; i < drawTimers.length; i++) clearTimeout(drawTimers[i]);
     drawTimers = [];
-    for (var j = 0; j < activeNodes.length; j++) stopNode(activeNodes[j]);
-    activeNodes = [];
     stopNode(drawBg);
     drawBg = null;
   }
 
-  function playOne(name, vol) {
-    if (!pref.drawSfx) return null;
+  /** 硬停：离页 / 新一期顶掉上一期，报号也一并掐 */
+  function clearDrawTimers() {
+    stopDrawLoops();
+    for (var j = 0; j < activeNodes.length; j++) stopNode(activeNodes[j]);
+    activeNodes = [];
+  }
+
+  /**
+   * 关掉这一路时不再拦着不建节点，而是建出来静音播。
+   * 原先是「关掉就 clearDrawTimers()」：报号节点和 14 段语音的定时器一起销毁，
+   * 再打开只是把开关置回 true，这一期剩下的球就再也不报了，得等下一期。
+   * 六合彩一期仪式有三十秒，中途关一下等于后面全哑，所以必须保留定时器、只压音量。
+   */
+  function playOne(name) {
     try {
       var a = new Audio(url(name));
-      a.volume = sfxVol();
+      a.muted = !pref.drawSfx;
+      a.volume = drawTrackVol();
       a.preload = 'auto';
       var p = a.play();
       if (p && p.catch) p.catch(function () {});
       activeNodes.push(a);
+      /* 报号是一次性的，播完自己从表里摘掉，避免越攒越长 */
+      var drop = function () {
+        var i = activeNodes.indexOf(a);
+        if (i >= 0) activeNodes.splice(i, 1);
+      };
+      a.addEventListener('ended', drop, { once: true });
+      a.addEventListener('error', drop, { once: true });
       return a;
     } catch (e) {
       return null;
@@ -179,12 +203,12 @@
   }
 
   function startDrawBg() {
-    if (!pref.drawSfx) return;
     stopNode(drawBg);
     try {
       drawBg = new Audio(url('bgsound'));
       drawBg.loop = true;
-      drawBg.volume = sfxVol();
+      drawBg.muted = !pref.drawSfx;
+      drawBg.volume = drawTrackVol();
       drawBg.preload = 'auto';
       var p = drawBg.play();
       if (p && p.catch) p.catch(function () {});
@@ -194,11 +218,9 @@
   function setDrawSfxOn(on) {
     pref.drawSfx = !!on;
     savePref();
-    if (!pref.drawSfx) {
-      clearDrawTimers();
-      drawActive = false;
-      ensureLobbyBgm(true);
-    }
+    applyLevels();
+    /* 仪式仍在跑时 BGM 该压的继续压，别因为切了开关就把音乐顶回来 */
+    ensureLobbyBgm(true);
   }
 
   function startDrawCeremony(opts) {
@@ -241,7 +263,8 @@
   }
 
   function endDrawCeremony() {
-    clearDrawTimers();
+    /* 只收循环轨：动画结束这一下常常压在最后一句报号上，硬停就把它掐半截 */
+    stopDrawLoops();
     drawActive = false;
     ensureLobbyBgm(true);
   }

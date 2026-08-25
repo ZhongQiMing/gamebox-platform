@@ -47,7 +47,7 @@ html, body {
 .crust {
   position: absolute;
   inset: 0;
-  background: url("../img/bj222.png") 0 0 / 100% 100% no-repeat;
+  background: url("../img/bj222.webp") 0 0 / 100% 100% no-repeat;
   pointer-events: none;
   z-index: 2;
 }
