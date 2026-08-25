@@ -9,6 +9,11 @@ import { GameOpsScheduler } from './game-ops.scheduler';
 import { GameConfigCache } from '../game-core/game-config.cache';
 import { validateGamePayTable } from '../game-core/game-config.validator';
 import { RETIRED_GAME_CODES } from '../games/retired-games';
+import {
+  envelopeFromLimits,
+  listGamePlays,
+  parsePlayLimitsBody,
+} from '../games/game-play-catalog';
 
 @Controller('admin/games')
 @Roles('ADMIN')
@@ -127,15 +132,40 @@ export class GameAdminController {
     return { ok: true };
   }
 
-  /** 基础参数：限红、排序 */
+  /** 某游戏全部玩法 + 当前限红（基础设置弹窗） */
+  @Get(':code/plays')
+  async listPlays(@Param('code') code: string) {
+    const game = await this.prisma.game.findUnique({
+      where: { code },
+      include: { configs: { where: { active: true }, take: 1 } },
+    });
+    if (!game) throw new NotFoundException('游戏不存在');
+    const plays = listGamePlays(game, game.configs[0] ?? null);
+    return {
+      code: game.code,
+      name: game.name,
+      plays,
+    };
+  }
+
+  /** 基础参数：显示名 + 按玩法限红 */
   @Patch(':code')
   async updateBasics(
     @Param('code') code: string,
     @Body()
-    body: { minBet?: number; maxBet?: number; sortOrder?: number; name?: string },
+    body: {
+      minBet?: number
+      maxBet?: number
+      sortOrder?: number
+      name?: string
+      playLimits?: unknown
+    },
     @CurrentUser() user: { id: string },
   ) {
-    const game = await this.prisma.game.findUnique({ where: { code } });
+    const game = await this.prisma.game.findUnique({
+      where: { code },
+      include: { configs: { where: { active: true }, take: 1 } },
+    });
     if (!game) throw new NotFoundException('游戏不存在');
 
     const data: {
@@ -143,26 +173,36 @@ export class GameAdminController {
       maxBet?: number;
       sortOrder?: number;
       name?: string;
+      playLimits?: object;
     } = {};
 
-    if (body.minBet != null) {
-      const n = Number(body.minBet);
-      if (!Number.isFinite(n) || n <= 0) throw new BadRequestException('最小下注无效');
-      data.minBet = n;
-    }
-    if (body.maxBet != null) {
-      const n = Number(body.maxBet);
-      if (!Number.isFinite(n) || n <= 0) throw new BadRequestException('最大下注无效');
-      data.maxBet = n;
-    }
-    if (data.minBet != null && data.maxBet != null && data.minBet > data.maxBet) {
-      throw new BadRequestException('最小下注不能大于最大下注');
-    }
-    if (data.minBet != null && data.maxBet == null && data.minBet > Number(game.maxBet)) {
-      throw new BadRequestException('最小下注不能大于当前最大下注');
-    }
-    if (data.maxBet != null && data.minBet == null && data.maxBet < Number(game.minBet)) {
-      throw new BadRequestException('最大下注不能小于当前最小下注');
+    if (body.playLimits != null) {
+      const catalog = listGamePlays(game, game.configs[0] ?? null);
+      const limits = parsePlayLimitsBody(body.playLimits, catalog);
+      const env = envelopeFromLimits(limits, game);
+      data.playLimits = limits;
+      data.minBet = env.minBet;
+      data.maxBet = env.maxBet;
+    } else {
+      if (body.minBet != null) {
+        const n = Number(body.minBet);
+        if (!Number.isFinite(n) || n <= 0) throw new BadRequestException('最小下注无效');
+        data.minBet = n;
+      }
+      if (body.maxBet != null) {
+        const n = Number(body.maxBet);
+        if (!Number.isFinite(n) || n <= 0) throw new BadRequestException('最大下注无效');
+        data.maxBet = n;
+      }
+      if (data.minBet != null && data.maxBet != null && data.minBet > data.maxBet) {
+        throw new BadRequestException('最小下注不能大于最大下注');
+      }
+      if (data.minBet != null && data.maxBet == null && data.minBet > Number(game.maxBet)) {
+        throw new BadRequestException('最小下注不能大于当前最大下注');
+      }
+      if (data.maxBet != null && data.minBet == null && data.maxBet < Number(game.minBet)) {
+        throw new BadRequestException('最大下注不能小于当前最小下注');
+      }
     }
     if (body.sortOrder != null) {
       const n = Math.floor(Number(body.sortOrder));

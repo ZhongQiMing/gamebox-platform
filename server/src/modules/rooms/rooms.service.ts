@@ -20,7 +20,7 @@ export class RoomsService {
     return {
       roomNo: r.roomNo,
       name: r.name,
-      icon: r.icon?.trim() || '/images/rooms/default-room.png',
+      icon: r.icon?.trim() || '/images/rooms/default-room.webp',
       memberStatus,
     };
   }

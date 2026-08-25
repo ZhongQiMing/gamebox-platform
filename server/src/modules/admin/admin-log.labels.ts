@@ -26,6 +26,10 @@ export const ADMIN_ACTION_META: Record<string, { label: string; group: string }>
   ROOM_STATUS: { label: '房间状态变更', group: '房间' },
   ROOM_DELETE: { label: '删除房间', group: '房间' },
   ROOM_SOFT_DELETE: { label: '软删房间', group: '房间' },
+  ROOM_HARD_PURGE: { label: '彻底清除房间', group: '房间' },
+  ROOM_ICON: { label: '修改房间图标', group: '房间' },
+  ROOM_OWNER_RETIRE: { label: '停用房间代理', group: '房间' },
+  ROOM_OWNER_RESTORE: { label: '恢复房间代理', group: '房间' },
   ROOM_ROTATE_CODE: { label: '轮换房间号', group: '房间' },
   ROOM_GRANT_OWNER: { label: '授予房主可见', group: '房间' },
   ROOM_REVOKE_OWNER: { label: '取消房主可见', group: '房间' },
@@ -38,6 +42,7 @@ export const ADMIN_ACTION_META: Record<string, { label: string; group: string }>
   ROOM_BILL_FREEZE: { label: '房间欠费冻结', group: '房间' },
   ROOM_FLY: { label: '整房飞盘开关', group: '房间' },
   ROOM_CREDIT_LIMIT_BUMP: { label: '调整信用额度', group: '资金' },
+  GENERAL_CREDIT_LIMIT_BUMP: { label: '调整总代信用额度', group: '资金' },
   ROOM_JOIN_APPROVE: { label: '通过进房申请', group: '房间' },
   ROOM_JOIN_REJECT: { label: '拒绝进房申请', group: '房间' },
 
@@ -47,11 +52,16 @@ export const ADMIN_ACTION_META: Record<string, { label: string; group: string }>
   CONTROL_DELETE: { label: '删除控奖策略', group: '控奖' },
   CONTROL_GLOBAL_SOFT: { label: '全局软控配置', group: '控奖' },
   CONTROL_SOFT_BIAS: { label: '偏置策略', group: '控奖' },
+  PAYOUT_GATE_RELEASE: { label: '出款闸门放行', group: '资金' },
+  PAYOUT_GATE_REVOKE: { label: '撤销出款放行', group: '资金' },
   ROOM_WEEK_SETTLE: { label: '房间周结已结清', group: '结账' },
   ROOM_WEEK_SETTLE_EARLY: { label: '信用盘提前结账', group: '结账' },
   ROOM_WEEK_SETTLE_PAYMENT: { label: '结账实付已收款', group: '结账' },
+  GENERAL_PERIOD_SETTLE: { label: '总代账期结清', group: '结账' },
+  GENERAL_ROOM_FEE_SET: { label: '总代房间月费单价', group: '结账' },
 
   REBATE_POLICY: { label: '回水规则', group: '回水' },
+  REBATE_POLICY_DOWNLINE: { label: '下级回水规则', group: '回水' },
   REBATE_RATE: { label: '设置回水比例', group: '回水' },
   PLAYER_REBATE: { label: '玩家回水比例', group: '回水' },
   PLAYER_REBATE_CLAIM: { label: '代领玩家回水', group: '回水' },
@@ -64,6 +74,10 @@ export const ADMIN_ACTION_META: Record<string, { label: string; group: string }>
   USER_NICKNAME: { label: '修改昵称', group: '账号' },
   AGENT_CREATE: { label: '创建下级账号', group: '账号' },
   AGENT_LEVEL_SET: { label: '设置代理层级', group: '账号' },
+  GENERAL_GRANT_OWNER: { label: '授予总监可见总代', group: '账号' },
+  GENERAL_REVOKE_OWNER: { label: '取消总监可见总代', group: '账号' },
+  CS_SLA_UNLOCK: { label: '客服解锁', group: '账号' },
+  CS_SLA_WAIVE: { label: '免除客服罚扣', group: '账号' },
   CS_DUTY_SET: { label: '设置值班客服', group: '账号' },
   CS_DUTY_CLEAR: { label: '清空值班客服', group: '账号' },
   CS_STAFF_CREATE: { label: '开客服账号', group: '账号' },
@@ -176,16 +190,28 @@ export function summarizeAdminLog(
       return `删除房间 ${d.name || target || '—'}${d.roomNo ? `（${d.roomNo}）` : ''}`;
     case 'ROOM_SOFT_DELETE':
       return `软删房间 ${target || '—'}`;
+    case 'ROOM_HARD_PURGE':
+      return `彻底清除房间 ${target || '—'}`;
+    case 'ROOM_ICON':
+      return `修改房间 ${target || '—'} 的图标`;
+    case 'ROOM_OWNER_RETIRE':
+      return `停用房间 ${target || '—'} 的代理`;
+    case 'ROOM_OWNER_RESTORE':
+      return `恢复房间 ${target || '—'} 的代理`;
     case 'ROOM_ROTATE_CODE':
       return `房间 ${target || '—'} 轮换房间号为 ${d.roomNo || '—'}`;
     case 'ROOM_GRANT_OWNER':
       return `房间 ${target || '—'} 授予房主可见`;
     case 'ROOM_REVOKE_OWNER':
       return `房间 ${target || '—'} 取消房主可见`;
+    case 'GENERAL_GRANT_OWNER':
+      return `总代 ${target || '—'} 对总监开放可见（剩 ${d.remaining ?? '—'} 个总监可见）`;
+    case 'GENERAL_REVOKE_OWNER':
+      return `总代 ${target || '—'} 对总监取消可见（剩 ${d.remaining ?? '—'} 个总监可见）`;
     case 'ROOM_AGENT_RESET_PWD':
       return `重置房间 ${target || '—'} 绑定代理密码`;
     case 'ROOM_BILLING_UPDATE':
-      return `房间 ${target || '—'} 月费 ${money(d.monthlyFee)} / 每月 ${d.billingDay ?? '—'} 日`;
+      return `房间 ${target || '—'} 月费 ${money(d.monthlyFee)}`;
     case 'ROOM_OVER_ISSUE': {
       const after = (d.after ?? d) as Record<string, unknown>;
       const on = after.overIssueEnabled === true || after.overIssueEnabled === 'true';
@@ -210,6 +236,12 @@ export function summarizeAdminLog(
       return `房间 ${target || '—'} 信用额度${dir} ${money(d.amount)}${
         d.after != null ? ` → 合同 ${money(d.after)}` : ''
       }${d.quotaAfter != null ? ` · 剩余 ${money(d.quotaAfter)}` : ''}`;
+    }
+    case 'GENERAL_CREDIT_LIMIT_BUMP': {
+      const dir = d.direction === 'down' ? '减少' : '增加';
+      return `总代 ${target || '—'} 信用额度${dir} ${money(d.amount)}${
+        d.creditLimit != null ? ` → 合同 ${money(d.creditLimit)}` : ''
+      }${d.pointsQuota != null ? ` · 剩余 ${money(d.pointsQuota)}` : ''}`;
     }
     case 'ROOM_JOIN_APPROVE':
       return `通过进房申请 ${d.uid || target || '—'}${d.roomNo ? ` · 房 ${d.roomNo}` : ''}`;
@@ -244,6 +276,20 @@ export function summarizeAdminLog(
       }`;
     case 'ROOM_WEEK_SETTLE_PAYMENT':
       return `房间 ${target || '—'} 实付已确认收款 ${money(d.settlePay)}`;
+    case 'GENERAL_PERIOD_SETTLE':
+      return `总代 ${target || '—'} 账期结清${
+        d.roomCount != null ? ` · ${d.roomCount} 间房` : ''
+      }${d.betFlow != null ? ` · 投注额 ${money(d.betFlow)}` : ''}${
+        d.settlePay != null ? ` · 交割 ${money(d.settlePay)}` : ''
+      }`;
+    case 'GENERAL_ROOM_FEE_SET':
+      return `总代 ${target || '—'} 房间月费单价改为 ${money(d.roomMonthlyFee ?? d.after)}`;
+    case 'GENERAL_PERIOD_SETTLE':
+      return `总代 ${target || '—'} 账期结清${
+        d.roomCount != null ? ` · ${d.roomCount} 间房` : ''
+      }${d.settlePay != null ? ` · 交割 ${money(d.settlePay)}` : ''}`;
+    case 'GENERAL_ROOM_FEE_SET':
+      return `总代 ${target || '—'} 房间月费单价改为 ${money(d.roomMonthlyFee ?? d.fee)}`;
 
     case 'REBATE_POLICY': {
       const parts: string[] = [];
@@ -284,6 +330,12 @@ export function summarizeAdminLog(
     }
     case 'AGENT_LEVEL_SET':
       return `设置代理 ${target || '—'} 层级 ${d.levelCode || '—'}`;
+    case 'CS_SLA_UNLOCK':
+      return `解锁客服 ${target || '—'}`;
+    case 'CS_SLA_WAIVE':
+      return `免除客服 ${target || '—'} 罚款${d.amount != null ? ` ${money(d.amount)}` : ''}`;
+    case 'REBATE_POLICY_DOWNLINE':
+      return `设置下级回水规则${target ? ` · ${target}` : ''}`;
     case 'CS_DUTY_SET':
       return '设置值班客服';
     case 'CS_DUTY_CLEAR':
@@ -313,10 +365,23 @@ export function summarizeAdminLog(
   }
 }
 
-export function listActionOptions() {
-  return Object.entries(ADMIN_ACTION_META).map(([value, m]) => ({
-    value,
-    label: m.label,
-    group: m.group,
-  }));
+/**
+ * 软控/控奖相关动作，**只有 ADMIN 能看见**。
+ *
+ * 靠「管辖范围碰巧匹配不上」来挡是不牢的：只要某条记录的 target 恰好落进
+ * 总代/代理的管辖集合，他就能翻到软控痕迹。这里改成按动作名显式排除。
+ */
+export const SOFT_CONTROL_ACTIONS = Object.entries(ADMIN_ACTION_META)
+  .filter(([, m]) => m.group === '控奖')
+  .map(([action]) => action);
+
+export function listActionOptions(role?: string) {
+  const hideControl = role !== 'ADMIN';
+  return Object.entries(ADMIN_ACTION_META)
+    .filter(([, m]) => !(hideControl && m.group === '控奖'))
+    .map(([value, m]) => ({
+      value,
+      label: m.label,
+      group: m.group,
+    }));
 }

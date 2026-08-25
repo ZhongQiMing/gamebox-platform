@@ -11,6 +11,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { GameConfigCache } from './game-config.cache';
 import { SettlementKernel } from './settlement-kernel';
+import { SoftControlAuditService } from '../console/soft-control-audit.service';
 import { genServerSeed, deriveRandom, weightedPick } from './fairness.util';
 import {
   BCBM_RING,
@@ -25,6 +26,8 @@ import {
   bcbmFreeIndexes,
   bcbmNonFreeIndexes,
   isBcbmBetId,
+  parsePlayLimits,
+  resolvePlayBetRange,
   roundMoney,
   type BcbmAwardType,
   type BcbmBetId,
@@ -88,6 +91,7 @@ export class BcbmEngine {
     @Optional() @Inject(forwardRef(() => GlobalSoftControlService))
     private globalSoft?: GlobalSoftControlService,
     @Optional() private flyDisk?: FlyDiskService,
+    @Optional() private softAudit?: SoftControlAuditService,
   ) {}
 
   async spin(input: BcbmSpinInput) {
@@ -120,7 +124,20 @@ export class BcbmEngine {
     if (game.code !== GAME_CODE) throw new BadRequestException('游戏编码无效');
     const config = game.configs[0];
     if (!config) throw new BadRequestException('游戏未配置');
-    if (totalAmount < asMoney(game.minBet) || totalAmount > asMoney(game.maxBet)) {
+    const bcbmLimits = parsePlayLimits(game.playLimits);
+    if (Object.keys(bcbmLimits).length) {
+      for (const [pos, amt] of entries) {
+        const range = resolvePlayBetRange({
+          gameMin: asMoney(game.minBet),
+          gameMax: asMoney(game.maxBet),
+          playLimits: bcbmLimits,
+          playKey: pos,
+        });
+        if (amt < range.minBet || amt > range.maxBet) {
+          throw new BadRequestException(`${pos} 须在 ${range.minBet}~${range.maxBet} 之间`);
+        }
+      }
+    } else if (totalAmount < asMoney(game.minBet) || totalAmount > asMoney(game.maxBet)) {
       throw new BadRequestException(`总押注须在 ${asMoney(game.minBet)}~${asMoney(game.maxBet)} 之间`);
     }
 
@@ -183,6 +200,10 @@ export class BcbmEngine {
       allocated,
     } = softPick.result;
     const stopCell = BCBM_RING[stopIndex];
+    /* 三个比例都在下注时定死：结算时才现算的话，中途改比例会把历史流水一起改掉 */
+    const rates = this.flyDisk && house?.roomId
+      ? await this.flyDisk.resolvePlayerRate(playerId, house.roomId, GAME_CODE)
+      : undefined;
     const flyPayload = house
       ? {
           type: house.type,
@@ -190,6 +211,12 @@ export class BcbmEngine {
           flying: house.flying,
           roomId: house.roomId,
           agentUserId: house.agentUserId,
+          generalUserId: house.generalUserId,
+          sitting: house.sitting,
+          bookMode: house.bookMode,
+          P: rates?.P,
+          agentPkg: rates?.agentPkg,
+          generalPkg: rates?.generalPkg,
         }
       : undefined;
 
@@ -208,6 +235,21 @@ export class BcbmEngine {
           nonce: 1,
         },
       });
+      /* 介入留痕：只有 ADMIN 能查，写失败也不能拖累开奖 */
+      if (softPick.steered && this.softAudit) {
+        await this.softAudit.record({
+          category: 'arcade',
+          gameCode: GAME_CODE,
+          refNo: round.roundNo,
+          refId: round.id,
+          reason: 'arcadePool',
+          tries: softPick.tries,
+          naturalDigest: `${softPick.natural.awardType} 停${softPick.natural.stopIndex}`,
+          adoptedDigest: `${awardType} 停${stopIndex}`,
+          stake: totalAmount,
+          estPayout: softPick.result.payout,
+        });
+      }
 
       await this.settle.debitBetInTx(tx, {
         playerId,
@@ -265,6 +307,8 @@ export class BcbmEngine {
           stake: amt,
           skipCap: true,
           house: house ?? undefined,
+          gameCode: GAME_CODE,
+          rateSnapshot: flyPayload,
         });
 
         betResults.push({ position: pos, amount: amt, payout, won });

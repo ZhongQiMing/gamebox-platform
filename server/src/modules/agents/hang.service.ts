@@ -169,7 +169,7 @@ export class HangService {
     }
 
     const rooms = await this.prisma.room.findMany({
-      where: { ownerAgent: { userId: operatorId } },
+      where: { ownerAgent: { userId: operatorId }, status: { not: 'CLOSED' } },
       select: { id: true, ownerAgent: { select: { userId: true } } },
       take: 2,
     });

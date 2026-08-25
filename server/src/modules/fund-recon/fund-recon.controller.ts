@@ -1,24 +1,30 @@
-import { Body, Controller, ForbiddenException, Get, HttpStatus, Post, Req, Res } from '@nestjs/common';
+import {
+  Body, Controller, DefaultValuePipe, ForbiddenException, Get, HttpStatus,
+  ParseIntPipe, Post, Query, Req, Res,
+} from '@nestjs/common';
 import { SkipThrottle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import { createHash, timingSafeEqual } from 'node:crypto';
-import { IsString, Length } from 'class-validator';
+import { IsInt, IsOptional, IsString, Length, Max, Min } from 'class-validator';
 import { Public } from '../../common/decorators/public.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { FundReconService } from './fund-recon.service';
 import { AdminPasswordService } from '../admin/admin-password.service';
 
-class FixDto {
-  @IsString()
-  @Length(1, 64)
-  id!: string;
-
+class GateReleaseDto {
+  /** 放行等于在账不平的情况下继续出款，必须写清为什么 */
   @IsString()
   @Length(4, 200)
   reason!: string;
 
-  /** 补记会往账本里写一条调整，等于人工承认一笔差额，必须二次验密 */
+  /** 放行时长（小时），服务端上限 24 */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(24)
+  hours?: number;
+
   @IsString()
   @Length(1, 200)
   adminPassword!: string;
@@ -90,28 +96,81 @@ export class FundReconController {
     private adminPwd: AdminPasswordService,
   ) {}
 
-  /** 最近一次结果；没跑过返回 null，由前端提示先点「立即对账」 */
+  /**
+   * 最近一次结果。
+   * 内存里没有时（刚重启）回落到落库的最近一次，避免页面显示「尚未对账」。
+   * 同时带上出款闸门状态，让人一眼看到「现在能不能出款」。
+   */
   @Get()
-  last() {
-    return { report: this.svc.getLast() };
+  async last() {
+    const inMemory = this.svc.getLast();
+    if (inMemory) {
+      return {
+        report: inMemory,
+        gate: await this.svc.payoutGateStatus({ autoRun: false }),
+      };
+    }
+    const persisted = await this.svc.getLastPersisted();
+    return {
+      report: persisted?.report ?? null,
+      persisted: persisted
+        ? { trigger: persisted.trigger, checkedAt: persisted.checkedAt.toISOString() }
+        : null,
+      gate: await this.svc.payoutGateStatus({ autoRun: false }),
+    };
   }
 
   @Post('run')
   async run() {
-    return { report: await this.svc.run() };
+    return { report: await this.svc.run('manual') };
   }
 
-  /** 补记积分账差错调整：只写流水记录差额来路，不动余额 */
-  @Post('fix-points')
-  async fixPoints(@CurrentUser() u: { id: string; role: string }, @Body() dto: FixDto) {
-    await this.adminPwd.verify(u, dto.adminPassword);
-    return this.svc.fixPointsDrift(u.id, dto.id, dto.reason);
+  /** 历次对账记录：重启也不会丢，用来回溯「什么时候开始不平的」 */
+  @Get('history')
+  history(
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page = 1,
+    @Query('pageSize', new DefaultValuePipe(20), ParseIntPipe) pageSize = 20,
+  ) {
+    return this.svc.history({ page, pageSize });
   }
 
-  /** 补记盘分账差错调整：只写流水，不动 pointsQuota */
-  @Post('fix-quota')
-  async fixQuota(@CurrentUser() u: { id: string; role: string }, @Body() dto: FixDto) {
-    await this.adminPwd.verify(u, dto.adminPassword);
-    return this.svc.fixQuotaDrift(u.id, dto.id, dto.reason);
+  /** 出款闸门当前状态 */
+  @Get('payout-gate')
+  payoutGate() {
+    return this.svc.payoutGateStatus({ autoRun: false });
   }
+
+  /**
+   * 知情放行：对账不平时临时允许出款。
+   * 必须填原因、过二次密码、有到期时间，全程留痕。
+   */
+  @Post('payout-gate/release')
+  async releaseGate(
+    @CurrentUser() u: { id: string; role: string },
+    @Body() dto: GateReleaseDto,
+  ) {
+    await this.adminPwd.verify(u, dto.adminPassword);
+    return this.svc.releasePayoutGate({
+      operatorId: u.id,
+      reason: dto.reason,
+      hours: dto.hours ?? 2,
+    });
+  }
+
+  /** 撤销放行，立即恢复拦截 */
+  @Post('payout-gate/revoke')
+  async revokeGate(@CurrentUser() u: { id: string; role: string }) {
+    return this.svc.revokePayoutGateRelease(u.id);
+  }
+
+  /*
+   * 这里曾有 fix-points / fix-quota 两个「补流水」接口，已删除。
+   *
+   * 它们只写一条流水让「余额 vs 流水」的差额归零，却不动余额。所以当真相是
+   * 「余额多了」时，它会把流水也改成多的，两边一起错——原本能看出差额，
+   * 补完反而看不出来了，等于把证据抹掉。而且幂等键用随机数，可以无限重复补。
+   *
+   * 对不上就说明出过事，正确做法是查清原因，再走正常的上分/下分把钱调平：
+   * 那条路会同时改余额和写流水，两边始终一致，也留下可追溯的资金流水。
+   */
 }

@@ -10,6 +10,7 @@ import * as bcrypt from 'bcrypt';
 import type { JwtPayload } from './jwt.strategy';
 import { RiskDetectorService } from '../risk/risk-detector.service';
 import { LoginLockService } from './login-lock.service';
+import { PrismaService } from '../../prisma/prisma.service';
 import { DUMMY_PASSWORD_HASH } from '../../common/security.constants';
 
 const LOCKED_MSG = '账号已冻结，请联系房主或管理员解冻';
@@ -22,6 +23,7 @@ export class AuthService {
     private jwt: JwtService,
     private riskDetector: RiskDetectorService,
     private loginLock: LoginLockService,
+    private prisma: PrismaService,
   ) {}
 
   async register(dto: { username: string; password: string; nickname?: string; inviteCode?: string }) {
@@ -58,6 +60,23 @@ export class AuthService {
     if (u.status !== 'ACTIVE') throw new UnauthorizedException('账号已禁用');
     if (this.loginLock.isLocked(u.loginLockedAt)) {
       throw new UnauthorizedException(LOCKED_MSG);
+    }
+
+    /*
+     * 客服被锁号就直接挡在登录这一步，而不是放进来再禁止接单。
+     * 放进来会让他以为「只是没单」，实际是已经被罚下，
+     * 必须让他当场看到「已锁定」才会去找代理报备。
+     */
+    if (u.role === 'CS') {
+      const cs = await this.prisma.csStaff.findUnique({
+        where: { userId: u.id },
+        select: { slaLockedAt: true, slaLockReason: true },
+      });
+      if (cs?.slaLockedAt) {
+        throw new UnauthorizedException(
+          `账号已锁定：${cs.slaLockReason || '漏接玩家消息'}。请联系代理解锁`,
+        );
+      }
     }
 
     await this.loginLock.clearFailCounters(u.username, ip);

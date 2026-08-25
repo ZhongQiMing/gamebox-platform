@@ -3,15 +3,15 @@ import { roundMoney } from '@gamebox/shared';
 
 /** 按游戏类别默认回水率 */
 export const CATEGORY_REBATE_RATE: Record<GameCategory, number> = {
-  LOTTERY: 0.008,
+  LOTTERY: 0.018,
   SLOT: 0.005,
   ARCADE: 0.005,
-  TABLE: 0.005,
+  TABLE: 0.018,
 };
 
 /**
  * 个别游戏覆盖（0 = 不参与回水）。
- * 水果机已参与：走 ARCADE 默认 0.5%（与奔驰宝马等同）；聊天室彩票为 LOTTERY 0.8%。
+ * 水果机已参与：走 ARCADE 默认 0.5%；聊天室彩票为 LOTTERY 1.8%。
  * 开奖押注写 Bet.validFlow；猜大小 validFlow=0（零边缘，不计回水）。
  */
 export const GAME_REBATE_OVERRIDES: Record<string, number> = {};

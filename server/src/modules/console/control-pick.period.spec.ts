@@ -2,7 +2,6 @@ import {
   decidePeriodGuard,
   isBetterSoftGlobalPick,
   periodCandidateLegal,
-  periodIronLegal,
   periodLossPct,
   periodLossScore,
   periodNeedsSteer,
@@ -22,15 +21,6 @@ describe('单期总账：基础度量', () => {
     expect(periodLossPct(100, 150)).toBeCloseTo(50);
     expect(periodLossPct(100, 0)).toBeCloseTo(-100);
     expect(periodLossPct(0, 10)).toBe(0);
-  });
-
-  it('periodIronLegal：只拦庄亏超上限，庄家大赢合法', () => {
-    expect(periodIronLegal({ periodStake: 50, periodPayout: 0, maxPeriodLossPct: 50 })).toBe(true);
-    expect(periodIronLegal({ periodStake: 50, periodPayout: 75, maxPeriodLossPct: 50 })).toBe(true);
-    expect(periodIronLegal({ periodStake: 50, periodPayout: 76, maxPeriodLossPct: 50 })).toBe(false);
-    expect(
-      periodIronLegal({ periodStake: 50, periodPayout: 450_000, maxPeriodLossPct: 50 }),
-    ).toBe(false);
   });
 
   it('periodNeedsSteer / periodLossScore', () => {

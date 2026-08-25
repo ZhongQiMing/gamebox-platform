@@ -150,6 +150,7 @@ model User {
   updatedAt   DateTime  @updatedAt
 
   roomOwnerGrants          RoomOwnerGrant[]
+  generalOwnerGrants       GeneralOwnerGrant[] @relation("GeneralOwnerGrantOwner")
   agent                    Agent?
   csStaff                  CsStaff?
   bets                     Bet[]
@@ -175,6 +176,7 @@ model User {
   roomHangsAsParent        RoomPlayerHang[]        @relation("RoomHangParent")
   riskHandled              RiskEvent[]             @relation("RiskHandledBy")
   generalSettles           GeneralPeriodSettle[]   @relation("GeneralSettleOwner")
+  payoutGateReleases       PayoutGateRelease[]     @relation("PayoutGateReleaser")
 
   @@index([role, status])
   @@index([role, createdAt]) // 报表按周期统计新增玩家
@@ -212,6 +214,12 @@ model Agent {
   rebateRate     Float @default(0.018) // 给玩家的默认回水比例 P
   /// 流水整包：总代默认 7%、代理默认 5%
   flowRate       Float @default(0.05)
+  /// 总代：给名下代理的默认整包（开房带入）；须落在平台代理上下限内，且不超过自己的整包
+  downlineFlowRate Float?
+  /// 总代：给玩家回水下限（夹在平台玩家框内）
+  playerMinRate    Float?
+  /// 总代：给玩家回水上限（夹在平台玩家框内，且不超过给代理的整包）
+  playerMaxRate    Float?
   /// 占成：总代默认 50%（上限 70%）、代理默认 50%（不能超过总代）
   shareRate      Float @default(0.5)
 
@@ -222,6 +230,9 @@ model Agent {
   creditLimit Decimal @default(0) @db.Decimal(18, 2)
   /// 总代与平台的结算周期；名下各房间跟代理的周期互不影响
   settleCycle String  @default("WEEKLY_MON")
+  /// 总代每开一间房、每月要缴给平台的月费单价。
+  /// 平台只按这个价收；总代向代理收多少（Room.monthlyFee）由他自己定，差价归他。
+  roomMonthlyFee Decimal @default(0) @db.Decimal(18, 2)
 
   teamFlowTotal Decimal @default(0) @db.Decimal(18, 2)
   teamFlowMonth Decimal @default(0) @db.Decimal(18, 2)
@@ -229,14 +240,16 @@ model Agent {
   /// 真分可用库存
   pointsQuota Decimal @default(0) @db.Decimal(18, 2)
   pointsUsed  Decimal @default(0) @db.Decimal(18, 2)
-  /// 飞盘剩余覆盖
-  flyCover    Decimal @default(0) @db.Decimal(18, 2)
+  /// 按游戏自己调过的整包额度 { gameCode: { flowRate } }
+  gameRates   Json    @default("{}")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   rooms        Room[] @relation("RoomOwnerAgent")
   generalRooms Room[] @relation("RoomGeneralAgent")
+  /// 仅 role=GENERAL 有意义：哪些总监能看见这个总代
+  ownerGrants  GeneralOwnerGrant[] @relation("GeneralOwnerGrantAgent")
 }
 
 /// 客服档案（role=CS）：额度在 PointsAccount；佣金点数/接单权重在此
@@ -251,6 +264,13 @@ model CsStaff {
   idleWeight        Int      @default(100)
   /// IDLE=接单 REST=休息
   workStatus        String   @default("REST")
+  /// 客服端最后一次心跳。App 被划掉进程就没了，服务端只能靠它判断人还在不在
+  lastSeenAt        DateTime?
+  /// 转为休息的时刻；连续休息超时要据此锁号
+  restSinceAt       DateTime?
+  /// 漏接被强制下线后锁号：必须代理点解锁才能再登录
+  slaLockedAt       DateTime?
+  slaLockReason     String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
@@ -278,6 +298,80 @@ model CsWageBill {
 
   @@index([csUserId, status, createdAt])
   @@index([agentUserId, status])
+}
+
+/// 客服响应考核规则：一个代理一份，金额与时限都由代理自己设
+model CsSlaPolicy {
+  id          String  @id @default(cuid())
+  agentUserId String  @unique
+  /// 关掉就只统计不罚不踢
+  enabled     Boolean @default(true)
+  /// 玩家发消息后多少秒未回复 → 提醒代理
+  remindSec   Int     @default(180)
+  /// 多少秒未回复 → 强制休息、踢下线、锁号待代理解锁
+  kickSec     Int     @default(480)
+  /// 超过 remindSec 每次罚
+  lateFine    Decimal @db.Decimal(18, 2) @default(10)
+  /// 超过 kickSec 每次再罚（累加在 lateFine 之上）
+  missFine    Decimal @db.Decimal(18, 2) @default(50)
+  /// 单日罚款上限占当日佣金的比例，防止客服干一天倒欠钱
+  dailyFineCapRate Float @default(0.5)
+  /// 日奖门槛：及时率与最少接单轮数同时达标才发
+  bonusMinRate     Float   @default(0.95)
+  bonusMinRounds   Int     @default(20)
+  dailyBonus       Decimal @db.Decimal(18, 2) @default(100)
+  /// 连续达标天数与额外奖励
+  streakDays       Int     @default(7)
+  streakBonus      Decimal @db.Decimal(18, 2) @default(500)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+/// 一轮「玩家问 → 客服答」的考核记录。一轮 = 一批未被回复的玩家消息，连发不重复计。
+model CsSlaEvent {
+  id          String    @id @default(cuid())
+  csUserId    String
+  agentUserId String
+  playerId    String
+  /// 本轮最早一条未被回复的玩家消息时间；计时从这里起
+  askedAt     DateTime
+  /// 触发本轮的那条玩家消息，用来防重复开轮
+  askMessageId String   @unique
+  /// 客服/代理真的回了（或直接审掉了单）的时间；看了不算
+  repliedAt   DateTime?
+  responseSec Int?
+  /// ON_TIME=及时 LATE=超时 MISSED=漏接（已踢下线）
+  level       String    @default("PENDING")
+  remindedAt  DateTime?
+  kickedAt    DateTime?
+  fineAmount  Decimal   @db.Decimal(18, 2) @default(0)
+  /// 代理免除本次处罚（客服线下报备手机没电之类）
+  waived      Boolean   @default(false)
+  waivedBy    String?
+  waivedAt    DateTime?
+  waiveReason String?
+  /// 上海时区日期键，按天统计用
+  dayKey      String
+  createdAt   DateTime  @default(now())
+
+  @@index([csUserId, dayKey])
+  @@index([agentUserId, dayKey])
+  @@index([level, repliedAt])
+}
+
+/// 客服值班时长：每次切换状态记一段，按天累计空闲/休息
+model CsDutySpan {
+  id        String    @id @default(cuid())
+  csUserId  String
+  /// IDLE=空闲 REST=休息
+  status    String
+  startedAt DateTime
+  endedAt   DateTime?
+  seconds   Int       @default(0)
+  dayKey    String
+
+  @@index([csUserId, dayKey])
+  @@index([csUserId, endedAt])
 }
 
 // 代理等级配置（对应原型 team-data 的 V1-V5）
@@ -318,6 +412,10 @@ model Room {
   /// 下次扣费时间（上海自然日 0 点语义由任务保证）
   nextBillAt       DateTime?
   lastBilledAt     DateTime?
+  /// 平台向总代收本房月费的下一个到期时间（预收：建房时即为建房时刻，下次结账就收第一笔）。
+  /// 与 nextBillAt 是两条腿：nextBillAt 是总代/平台向代理收，这个是平台向总代收。
+  /// null = 直挂房，平台直接向代理收，不走总代这条腿。
+  platformFeeDueAt DateTime?
   overIssueEnabled Boolean   @default(true)
   overIssueLimit   Decimal   @default(0) @db.Decimal(18, 2)
   overIssueUsed    Decimal   @default(0) @db.Decimal(18, 2)
@@ -340,6 +438,7 @@ model Room {
   weekSettles     RoomWeekSettle[]
 
   @@index([nextBillAt, status])
+  @@index([platformFeeDueAt])
   @@index([generalAgentId])
 }
 
@@ -375,6 +474,26 @@ model RoomOwnerGrant {
   createdAt DateTime @default(now())
 
   @@unique([roomId, ownerId])
+  @@index([ownerId])
+}
+
+/// 总监(BRANCH) ↔ 总代 可见/管辖授权。
+///
+/// 为什么不能沿用 RoomOwnerGrant 推导：总代自己通常一间房都不持有
+/// （房是代理持有、再挂到总代名下），刚建好的总代更是零房间。
+/// 靠房间授权反推会让新总代对谁都不可见，连开他的那个总监也看不到。
+///
+/// 没有授权行 = 该总代对该总监不可见，连带他名下所有房间、代理、玩家一并隐藏。
+model GeneralOwnerGrant {
+  id             String   @id @default(cuid())
+  /// Agent.id，对应 role=GENERAL 的那行
+  generalAgentId String
+  generalAgent   Agent    @relation("GeneralOwnerGrantAgent", fields: [generalAgentId], references: [id], onDelete: Cascade)
+  ownerId        String // User.id role=BRANCH
+  owner          User     @relation("GeneralOwnerGrantOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  createdAt      DateTime @default(now())
+
+  @@unique([generalAgentId, ownerId])
   @@index([ownerId])
 }
 
@@ -481,7 +600,9 @@ model GeneralPeriodSettle {
   generalShareAmount  Decimal @default(0) @db.Decimal(18, 2)
   platformShareAmount Decimal @default(0) @db.Decimal(18, 2)
 
-  /// 信用盘：按封账快照应收的钱（正=总代付平台）
+  /// 本期房间月费（正=总代付平台），已含在 settlePay 里；收了哪几间房记在 note
+  roomFee Decimal @default(0) @db.Decimal(18, 2)
+  /// 应收的钱（正=总代付平台）= 占成部分 + 房间月费
   settlePay Decimal @default(0) @db.Decimal(18, 2)
   /// 封账时的剩余信用与合同额度，供对接时补额度用
   quotaAtClose  Decimal @default(0) @db.Decimal(18, 2)
@@ -603,6 +724,75 @@ model GlobalSoftBias {
   @@index([playerId])
 }
 
+/// 软控介入留痕：**只有 ADMIN 能读，任何对外接口都不得返回本表任何字段**
+///
+/// 只在「放弃了自然结果」时写一行——分母（总局数）从 GameRound / LotteryIssue 拿，
+/// 所以介入率照样算得出来，而行数只跟介入次数成正比，不会被每一次转轮撑爆。
+/// 存下被放弃的自然结果，是为了事后能回答「本来会开什么、为什么改」。
+model SoftControlAudit {
+  id       String @id @default(cuid())
+  /// lottery | table | arcade
+  category String
+  gameCode String
+  /// 期号/局号；街机的再赌用 `局号:gamble` 区分同局两次挑选
+  refNo    String
+  /// GameRound.id 或 LotteryIssue.id
+  refId    String?
+  /// 触发来源：period(期间护栏) | dayNet(当日净额) | bias(偏置) | brake(玩家刹车) | arcadePool(街机池)
+  reason   String
+  /// 候选个数
+  tries    Int    @default(0)
+  /// 被放弃的自然结果摘要
+  naturalDigest String?
+  /// 实际采用的结果摘要
+  adoptedDigest String?
+  /// 本局涉及下注额与预估派彩，用来判断这次介入是否讲得通
+  stake     Decimal  @default(0) @db.Decimal(18, 2)
+  estPayout Decimal  @default(0) @db.Decimal(18, 2)
+  createdAt DateTime @default(now())
+
+  /// 同一局重复写入直接撞唯一键，天然幂等（结算重放/崩溃续跑都不会重复留痕）
+  @@unique([category, refNo])
+  @@index([createdAt])
+  @@index([category, gameCode, createdAt])
+}
+
+/// 资金对账每次执行的结果快照
+///
+/// 原先只存在进程内存里，重启就没了。而出款闸门必须依赖「最近一次对账结论」，
+/// 内存态会让刚重启的实例既无法放行也无法拦截，所以必须落库。
+model FundReconRun {
+  id         String   @id @default(cuid())
+  /// cron(定时巡检) | manual(人工触发) | gate(出款前按需触发)
+  trigger    String
+  ok         Boolean
+  totalBad   Int      @default(0)
+  durationMs Int      @default(0)
+  /// 完整报告 JSON（各检查项与明细行）
+  report     Json
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([ok, createdAt])
+}
+
+/// 出款闸门的人工放行
+///
+/// 对账不平时一律禁止出款。但误报会把整个生意冻住，所以留一条「管理员知情放行」
+/// 的口子：必须填原因、过二次密码、且有到期时间，全程留痕。
+model PayoutGateRelease {
+  id          String   @id @default(cuid())
+  reason      String
+  createdById String
+  createdBy   User     @relation("PayoutGateReleaser", fields: [createdById], references: [id], onDelete: Restrict)
+  /// 放行到什么时候为止；到点自动恢复拦截
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([expiresAt])
+}
+
 /// 全局回水政策（超管锁死总返水率与玩家下限）
 model RebatePolicy {
   id            Int      @id @default(1)
@@ -611,12 +801,17 @@ model RebatePolicy {
   maxRate       Float    @default(0.05)
   /// 兼容：视作总代整包默认（7%）
   totalRate     Float    @default(0.07)
+  /// 平台玩家回水框
   playerMinRate Float    @default(0.018)
-  /// 总代整包默认 / 上限
+  playerMaxRate Float    @default(0.05)
+  /// 总代整包：下限 / 新建默认 / 上限
+  generalMinRate     Float @default(0.018)
   generalDefaultRate Float @default(0.07)
   generalMaxRate     Float @default(0.10)
-  /// 代理整包默认
+  /// 代理整包：下限 / 新建默认 / 上限（上限不能超过总代上限）
+  agentMinRate       Float @default(0.018)
   agentDefaultRate   Float @default(0.05)
+  agentMaxRate       Float @default(0.07)
   /// 分类默认 JSON（遗留，自助回水改按玩家 P）
   defaults      Json     @default("{}")
   updatedAt     DateTime @updatedAt
@@ -678,7 +873,8 @@ model PointsAccount {
   createdAt DateTime         @default(now())
   updatedAt DateTime         @updatedAt
 
-  ledgers PointsLedger[]
+  ledgers    PointsLedger[]
+  applyQueue PlatformApplyQueue[]
 
   @@unique([ownerType, ownerId, roomId])
   @@index([ownerType, roomId])
@@ -704,6 +900,29 @@ model PointsLedger {
   @@index([accountId, createdAt])
   @@index([refType, refId])
   @@index([bizType, createdAt])
+}
+
+/// 待合并进余额的账目队列（只有平台账户走这里）。
+///
+/// 为什么单独一张表：平台账户是全站唯一一行，每笔飞盘下注和派彩都要动它，
+/// 当场改余额会让这一行成为全站瓶颈（实测 337 笔/秒封顶）。改成下注只写账本、
+/// 余额由合并工人批量补，就没有任何独占锁落在那一行（实测 2225 笔/秒，且不再有硬上限）。
+///
+/// 为什么不是在 PointsLedger 上加一个「待处理」标记位：那样索引要覆盖整张大表，
+/// 而且标记翻转会在大表里留下死元组。独立小表合并完即删，常态接近空。
+///
+/// 真账永远是 PointsLedger —— 队列里这条和账本那条在同一个事务里写入，
+/// 所以钱不会丢；工人只负责把金额抄进余额那一列，它出问题只影响余额新不新。
+model PlatformApplyQueue {
+  id        String        @id @default(cuid())
+  accountId String
+  account   PointsAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  /// 对应的账本行，合并时要回填它的 balanceAfter
+  ledgerId  String        @unique
+  amount    Decimal       @db.Decimal(18, 2)
+  createdAt DateTime      @default(now())
+
+  @@index([accountId, createdAt, id])
 }
 
 // ======================= 上分 / 下分 =======================
@@ -748,6 +967,8 @@ model Game {
   entryUrl        String? // games-assets 入口
   minBet          Decimal      @default(1) @db.Decimal(18, 2)
   maxBet          Decimal      @default(100000) @db.Decimal(18, 2)
+  /// 按玩法的单注上下限 { [playKey]: { minBet, maxBet } }；缺的玩法回落 minBet/maxBet
+  playLimits      Json?
   sortOrder       Int          @default(0)
   // 彩票专用：开奖周期（秒），如 SSC=60；非彩票为 null
   drawIntervalSec Int?
@@ -901,8 +1122,12 @@ model Bet {
   @@index([playerId, settledAt]) // 玩家回水/报表按结算时间取有效流水
   @@index([gameId, createdAt]) // 运营/报表按游戏统计
   @@index([status, settledAt]) // 每日回水任务 / 共盘日账全表按结算时间扫描
+  @@index([status, createdAt]) // 工作台/报表按下注日+状态扫
   @@index([issueId, status])
   @@index([roundId, status])
+  /// 每笔下注都要查「本局本人这一方向已押多少」与对冲互斥；
+  /// 只有 (roundId, status) 时，一局上千注就得逐行过滤出自己那几笔。
+  @@index([roundId, playerId, status])
 }
 
 // ======================= 多级分润 / 回水 =======================
@@ -927,6 +1152,32 @@ model CommissionRecord {
   @@index([sourceUserId, settledAt])
 }
 
+/// 信用盘上分欠款：先给下家上分，每周结账不冲；人不干了走下分/收回额度再扣。
+/// 谁上的分记谁的欠。现金盘不写这张表。
+model CreditIssueDebt {
+  id             String    @id @default(cuid())
+  /// 收到上分的总代或代理
+  debtorUserId   String
+  /// PLATFORM=欠平台 GENERAL=欠总代
+  creditorKind   String
+  /// creditorKind=GENERAL 时为总代 userId；PLATFORM 为空
+  creditorUserId String?
+  /// 总代→代理、平台→直挂代理写房间；平台→总代为空
+  roomId         String?
+  amount         Decimal   @db.Decimal(18, 2)
+  remaining      Decimal   @db.Decimal(18, 2)
+  refType        String?
+  refId          String?
+  remark         String?
+  idempotencyKey String    @unique
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([debtorUserId, remaining])
+  @@index([creditorKind, creditorUserId, remaining])
+  @@index([roomId, remaining])
+}
+
 /// 代理盘分（Agent.pointsQuota）变动流水。
 /// 现金盘的额度变动与 PointsLedger 一一对应；信用盘只动额度、不产生积分流水，
 /// 因此本表既是信用盘唯一的账目凭证，也是两种盘型共用的幂等锚点——
@@ -938,7 +1189,7 @@ model CommissionRecord {
 model AgentQuotaLedger {
   id             String   @id @default(cuid())
   agentUserId    String
-  /// CASH=现金盘（同时动余额） CREDIT=信用盘（只动额度）
+  /// CASH/CREDIT 日常都同时动余额与额度；CREDIT 只在结账多轧欠款
   bookMode       String
   /// OPEN=建号期初 TRANSFER_IN/OUT=盘分进出 SETTLE=结账校准 REBATE/COMMISSION/ADJUST/BET/WIN
   bizType        String

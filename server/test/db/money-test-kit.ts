@@ -5,7 +5,9 @@
 import { randomUUID } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 import { PointsService } from '../../src/modules/points/points.service';
+import { PlatformBalanceMergerService } from '../../src/modules/points/platform-balance-merger.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
+import type { RedisService } from '../../src/redis/redis.service';
 import type { PlatformEmergencyService } from '../../src/modules/points/platform-emergency.service';
 
 export function createTestPrisma(): PrismaClient {
@@ -32,12 +34,36 @@ export function createPointsService(prisma: PrismaClient): PointsService {
   return new PointsService(prisma as unknown as PrismaService, emergencyStub);
 }
 
+/**
+ * 把平台余额的待合并队列排空。
+ *
+ * 平台侧的账是「先记账、余额由 PlatformBalanceMerger 每 200ms 补」，所以任何断言
+ * 「平台余额已经变了」的用例都要先调这个，否则读到的是还没补上的旧值。
+ * 生产里这个延迟不到一秒，测试里手动推一把，验的仍是完整链路。
+ */
+export async function drainPlatformQueue(prisma: PrismaClient): Promise<void> {
+  const merger = new PlatformBalanceMergerService(
+    prisma as unknown as PrismaService,
+    {
+      runExclusive: async (_k: string, _t: number, task: () => Promise<void>) => {
+        await task();
+        return 'ran' as const;
+      },
+    } as unknown as RedisService,
+    emergencyStub as unknown as PlatformEmergencyService,
+  );
+  /* 一轮有上限，积压多时要反复排 */
+  while ((await merger.mergeOnce()) > 0) {
+    /* 继续 */
+  }
+}
+
 let seq = 0;
 
 /** 建一个测试玩家；username/uid/nickname 都有唯一约束，必须每次不同 */
 export async function makeUser(
   prisma: PrismaClient,
-  role: 'PLAYER' | 'AGENT' = 'PLAYER',
+  role: 'PLAYER' | 'AGENT' | 'BRANCH' | 'GENERAL' | 'PROXY' | 'CS' = 'PLAYER',
 ): Promise<string> {
   seq += 1;
   const tag = `${Date.now().toString(36)}${seq}${randomUUID().slice(0, 6)}`.toLowerCase();
@@ -148,7 +174,7 @@ export async function runConcurrently<T>(
 export async function wipeMoneyTables(prisma: PrismaClient): Promise<void> {
   await prisma.$executeRawUnsafe(`
     TRUNCATE TABLE
-      "PointsLedger", "AgentQuotaLedger", "PointsAccount",
+      "PlatformApplyQueue", "PointsLedger", "AgentQuotaLedger", "PointsAccount",
       "RechargeOrder", "RoomMember", "Room", "Agent", "User"
     RESTART IDENTITY CASCADE
   `);

@@ -16,6 +16,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { PointsService } from '../points/points.service';
 import { AdminLogService } from '../admin/admin-log.service';
 import { ConsoleScopeService, type ConsoleActor } from './console-scope.service';
+import { CsSlaService } from './cs-sla.service';
 import {
   assertFundOrderNo,
   lockAgentRowInTx,
@@ -42,6 +43,7 @@ export class CsStaffService {
     private points: PointsService,
     private adminLog: AdminLogService,
     private scope: ConsoleScopeService,
+    private sla: CsSlaService,
   ) {}
 
   private async allocUid() {
@@ -61,7 +63,11 @@ export class CsStaffService {
     if (actor.role === 'AGENT') {
       return [actor.id];
     }
-    if (actor.role !== 'ADMIN' && actor.role !== 'BRANCH') {
+    if (actor.role === 'PROXY' && !(await this.scope.isGeneralSide(actor))) {
+      const root = await this.scope.scopeRootUserId(actor);
+      return [root];
+    }
+    if (actor.role !== 'ADMIN' && actor.role !== 'BRANCH' && !(await this.scope.isGeneralSide(actor))) {
       throw new ForbiddenException('无权查看客服列表');
     }
     if (parentAgentUserId) {
@@ -167,7 +173,7 @@ export class CsStaffService {
     });
   }
 
-  /** 管理员 / 房主开客服（挂到指定房间代理） */
+  /** 管理 / 总监 / 名下总代开客服（挂到指定房间代理） */
   async create(
     actor: ConsoleActor,
     body: {
@@ -177,14 +183,26 @@ export class CsStaffService {
       parentAgentUserId?: string;
     },
   ) {
-    if (actor.role !== 'ADMIN' && actor.role !== 'BRANCH') {
-      throw new ForbiddenException('仅管理员或房主可开客服账号');
+    const generalSide = await this.scope.isGeneralSide(actor);
+    if (actor.role !== 'ADMIN' && actor.role !== 'BRANCH' && !generalSide) {
+      throw new ForbiddenException('仅管理、总监或总代可开客服账号');
     }
     const parentAgentUserId = body.parentAgentUserId?.trim();
     if (!parentAgentUserId) {
       throw new BadRequestException('请选择所属代理');
     }
     await this.scope.assertUserInScope(actor, parentAgentUserId);
+    if (generalSide) {
+      const rootId = await this.scope.generalRootId(actor);
+      const hasRoom = await this.prisma.room.findFirst({
+        where: {
+          ownerAgent: { userId: parentAgentUserId },
+          generalAgent: { userId: rootId },
+        },
+        select: { id: true },
+      });
+      if (!hasRoom) throw new ForbiddenException('只能给名下代理房间开客服');
+    }
     const parent = await this.prisma.user.findUnique({
       where: { id: parentAgentUserId },
     });
@@ -292,6 +310,13 @@ export class CsStaffService {
     if (!cs || cs.role !== 'CS' || cs.parentId !== actor.id) {
       throw new NotFoundException('客服不存在');
     }
+    /*
+     * 停用的客服登不进来也发不出分，额度划进去就锁死在他账上，
+     * 还会一直计进代理的信用账本，结账时看着像凭空少了一笔可用额度。
+     */
+    if (cs.status === 'DISABLED') {
+      throw new BadRequestException('该客服已停用，请先启用再划额度');
+    }
 
     const credit = await this.agentIsCredit(actor.id);
     const idemIn = `cs_alloc:${orderNo}:in`;
@@ -311,76 +336,47 @@ export class CsStaffService {
       });
       if (existed) return;
 
-      if (credit) {
-        const agent = await tx.agent.findUnique({ where: { userId: actor.id } });
-        if (!agent) throw new BadRequestException('代理账户不存在');
-        const quota = asMoney(agent.pointsQuota);
-        if (quota + 1e-9 < amount) {
-          throw new BadRequestException(`剩余信用不足（可用 ${quota}）`);
-        }
-        await writeAgentQuotaInTx(tx, {
-          agentUserId: actor.id,
-          bookMode: 'CREDIT',
-          delta: -amount,
-          usedDelta: amount,
-          bizType: 'TRANSFER_OUT',
-          remark: withOrderRemark(orderNo, '', '代理划入客服额度(信用)'),
-          refType: 'cs_alloc',
-          refId: csUserId,
-          idempotencyKey: `${idemIn}:QUOTA`,
-        });
-        await this.points.creditInTx(tx, 'CS', csUserId, amount, 'TRANSFER_IN', {
-          operatorId: actor.id,
-          remark: withOrderRemark(orderNo, '', '代理划入客服额度(信用)'),
-          refType: 'cs_alloc',
-          refId: csUserId,
-          idempotencyKey: idemIn,
-        });
-      } else {
-        // 现金盘：余额划给客服，同时扣上盘额度（分到客服桌）；可飞=代理余额+客服额度
-        await lockAgentRowInTx(tx, actor.id);
-        const agent = await tx.agent.findUnique({ where: { userId: actor.id } });
-        if (!agent) throw new BadRequestException('代理账户不存在');
-        const quota = asMoney(agent.pointsQuota);
-        const acc = await tx.pointsAccount.findUnique({
-          where: this.points.accountWhere('AGENT', actor.id),
-        });
-        const bal = asMoney(acc?.balance ?? 0);
-        if (bal + 1e-9 < amount) {
-          throw new BadRequestException(`代理余额不足（可用 ${bal}）`);
-        }
-        if (quota + 1e-9 < amount) {
-          throw new BadRequestException(`上盘额度不足（可用 ${quota}）`);
-        }
-        await this.points.transferInTx(
-          tx,
-          {
-            type: 'AGENT',
-            id: actor.id,
-            remark: withOrderRemark(orderNo, '', '划额度给客服'),
-            idempotencyKey: `cs_alloc:${orderNo}:out`,
-          },
-          {
-            type: 'CS',
-            id: csUserId,
-            remark: withOrderRemark(orderNo, '', '代理划入客服额度'),
-            idempotencyKey: idemIn,
-          },
-          amount,
-          { bizType: 'TRANSFER_OUT', bizTypeIn: 'TRANSFER_IN', operatorId: actor.id },
+      await lockAgentRowInTx(tx, actor.id);
+      const agent = await tx.agent.findUnique({ where: { userId: actor.id } });
+      if (!agent) throw new BadRequestException('代理账户不存在');
+      const quota = asMoney(agent.pointsQuota);
+      const acc = await tx.pointsAccount.findUnique({
+        where: this.points.accountWhere('AGENT', actor.id),
+      });
+      const bal = asMoney(acc?.balance ?? 0);
+      if (Math.min(bal, quota) + 1e-9 < amount) {
+        throw new BadRequestException(
+          `代理盘分不足（余额 ${bal}，额度 ${quota}）`,
         );
-        await writeAgentQuotaInTx(tx, {
-          agentUserId: actor.id,
-          bookMode: 'CASH',
-          delta: -amount,
-          usedDelta: amount,
-          bizType: 'TRANSFER_OUT',
-          remark: withOrderRemark(orderNo, '', '划额度给客服'),
-          refType: 'cs_alloc',
-          refId: csUserId,
-          idempotencyKey: `${idemIn}:QUOTA`,
-        });
       }
+      await this.points.transferInTx(
+        tx,
+        {
+          type: 'AGENT',
+          id: actor.id,
+          remark: withOrderRemark(orderNo, '', credit ? '划额度给客服(信用)' : '划额度给客服'),
+          idempotencyKey: `cs_alloc:${orderNo}:out`,
+        },
+        {
+          type: 'CS',
+          id: csUserId,
+          remark: withOrderRemark(orderNo, '', credit ? '代理划入客服额度(信用)' : '代理划入客服额度'),
+          idempotencyKey: idemIn,
+        },
+        amount,
+        { bizType: 'TRANSFER_OUT', bizTypeIn: 'TRANSFER_IN', operatorId: actor.id },
+      );
+      await writeAgentQuotaInTx(tx, {
+        agentUserId: actor.id,
+        bookMode: credit ? 'CREDIT' : 'CASH',
+        delta: -amount,
+        usedDelta: amount,
+        bizType: 'TRANSFER_OUT',
+        remark: withOrderRemark(orderNo, '', credit ? '划额度给客服(信用)' : '划额度给客服'),
+        refType: 'cs_alloc',
+        refId: csUserId,
+        idempotencyKey: `${idemIn}:QUOTA`,
+      });
     });
 
     await this.adminLog.log(actor.id, 'CS_STAFF_ALLOC', csUserId, {
@@ -428,64 +424,42 @@ export class CsStaffService {
       });
       if (existed) return;
 
-      if (credit) {
-        const csAcc = await tx.pointsAccount.findUnique({
-          where: this.points.accountWhere('CS', csUserId),
-        });
-        const csBal = asMoney(csAcc?.balance ?? 0);
-        if (csBal + 1e-9 < amount) {
-          throw new BadRequestException(`客服额度不足（可用 ${csBal}）`);
-        }
-        await this.points.creditInTx(tx, 'CS', csUserId, -amount, 'TRANSFER_OUT', {
-          operatorId: actor.id,
-          remark: withOrderRemark(orderNo, '', '收回客服额度(信用)'),
-          refType: 'cs_recall',
-          refId: csUserId,
-          idempotencyKey: idemOut,
-        });
-        await writeAgentQuotaInTx(tx, {
-          agentUserId: actor.id,
-          bookMode: 'CREDIT',
-          delta: amount,
-          usedDelta: -amount,
-          bizType: 'TRANSFER_IN',
-          remark: withOrderRemark(orderNo, '', '收回客服额度(信用)'),
-          refType: 'cs_recall',
-          refId: csUserId,
-          idempotencyKey: `${idemOut}:QUOTA`,
-        });
-      } else {
-        // 现金盘：余额收回 + 上盘额度加回（与划拨对称）
-        await lockAgentRowInTx(tx, actor.id);
-        await this.points.transferInTx(
-          tx,
-          {
-            type: 'CS',
-            id: csUserId,
-            remark: withOrderRemark(orderNo, '', '收回客服额度'),
-            idempotencyKey: idemOut,
-          },
-          {
-            type: 'AGENT',
-            id: actor.id,
-            remark: withOrderRemark(orderNo, '', '客服额度收回'),
-            idempotencyKey: `cs_recall:${orderNo}:in`,
-          },
-          amount,
-          { bizType: 'TRANSFER_OUT', bizTypeIn: 'TRANSFER_IN', operatorId: actor.id },
-        );
-        await writeAgentQuotaInTx(tx, {
-          agentUserId: actor.id,
-          bookMode: 'CASH',
-          delta: amount,
-          usedDelta: -amount,
-          bizType: 'TRANSFER_IN',
-          remark: withOrderRemark(orderNo, '', '客服额度收回'),
-          refType: 'cs_recall',
-          refId: csUserId,
-          idempotencyKey: `${idemOut}:QUOTA`,
-        });
+      await lockAgentRowInTx(tx, actor.id);
+      const csAcc = await tx.pointsAccount.findUnique({
+        where: this.points.accountWhere('CS', csUserId),
+      });
+      const csBal = asMoney(csAcc?.balance ?? 0);
+      if (csBal + 1e-9 < amount) {
+        throw new BadRequestException(`客服额度不足（可用 ${csBal}）`);
       }
+      await this.points.transferInTx(
+        tx,
+        {
+          type: 'CS',
+          id: csUserId,
+          remark: withOrderRemark(orderNo, '', credit ? '收回客服额度(信用)' : '收回客服额度'),
+          idempotencyKey: idemOut,
+        },
+        {
+          type: 'AGENT',
+          id: actor.id,
+          remark: withOrderRemark(orderNo, '', credit ? '客服额度收回(信用)' : '客服额度收回'),
+          idempotencyKey: `cs_recall:${orderNo}:in`,
+        },
+        amount,
+        { bizType: 'TRANSFER_OUT', bizTypeIn: 'TRANSFER_IN', operatorId: actor.id },
+      );
+      await writeAgentQuotaInTx(tx, {
+        agentUserId: actor.id,
+        bookMode: credit ? 'CREDIT' : 'CASH',
+        delta: amount,
+        usedDelta: -amount,
+        bizType: 'TRANSFER_IN',
+        remark: withOrderRemark(orderNo, '', credit ? '收回客服额度(信用)' : '客服额度收回'),
+        refType: 'cs_recall',
+        refId: csUserId,
+        idempotencyKey: `${idemOut}:QUOTA`,
+      });
     });
 
     await this.adminLog.log(actor.id, 'CS_STAFF_RECALL', csUserId, {
@@ -528,10 +502,23 @@ export class CsStaffService {
         if (!['IDLE', 'REST'].includes(body.workStatus)) {
           throw new BadRequestException('状态须为 IDLE 或 REST');
         }
-        await this.prisma.csStaff.update({
-          where: { userId: csUserId },
-          data: { workStatus: body.workStatus },
-        });
+        if (body.workStatus === 'IDLE' && cs.csStaff?.slaLockedAt) {
+          throw new ForbiddenException(
+            `账号已锁定：${cs.csStaff.slaLockReason || '漏接玩家消息'}。请联系代理报备后解锁`,
+          );
+        }
+        if (cs.csStaff?.workStatus !== body.workStatus) {
+          await this.prisma.csStaff.update({
+            where: { userId: csUserId },
+            data: {
+              workStatus: body.workStatus,
+              /* 点「接单」当作一次心跳，免得刚上班就被离线扫描判成走了 */
+              ...(body.workStatus === 'IDLE' ? { lastSeenAt: new Date() } : {}),
+            },
+          });
+          /* 值班时长按状态段累计，存在服务器，App 被划掉不影响 */
+          await this.sla.onWorkStatusChanged(csUserId, body.workStatus as 'IDLE' | 'REST');
+        }
       }
       return this.detail(csUserId);
     }
@@ -594,6 +581,7 @@ export class CsStaffService {
     if (!u || u.role !== 'CS') throw new NotFoundException('客服不存在');
     const bal = await this.csBalance(csUserId);
     const wage = await this.wageSummary(csUserId);
+    const duty = await this.sla.dutyToday(csUserId);
     return {
       id: u.id,
       uid: u.uid,
@@ -604,6 +592,11 @@ export class CsStaffService {
       wageRate: u.csStaff?.wageRate ?? 0,
       idleWeight: u.csStaff?.idleWeight ?? 100,
       workStatus: u.csStaff?.workStatus ?? 'REST',
+      slaLocked: !!u.csStaff?.slaLockedAt,
+      slaLockReason: u.csStaff?.slaLockReason ?? null,
+      /* 今日值班时长：空闲与休息分开，按上海自然日 */
+      idleSecToday: duty.idleSec,
+      restSecToday: duty.restSec,
       ...wage,
     };
   }
@@ -886,7 +879,19 @@ export class CsStaffService {
       await this.scope.assertUserInScope(actor, parentAgentUserId);
       return;
     }
-    throw new ForbiddenException('仅管理员或房主可停用/重置客服');
+    if (await this.scope.isGeneralSide(actor)) {
+      const rootId = await this.scope.generalRootId(actor);
+      await this.scope.assertUserInScope(actor, parentAgentUserId);
+      const hasRoom = await this.prisma.room.findFirst({
+        where: {
+          ownerAgent: { userId: parentAgentUserId },
+          generalAgent: { userId: rootId },
+        },
+        select: { id: true },
+      });
+      if (hasRoom) return;
+    }
+    throw new ForbiddenException('仅管理、总监或名下总代可停用/重置客服');
   }
 
   /** 停用/启用客服（管理员/房主） */
@@ -901,6 +906,23 @@ export class CsStaffService {
     if (!cs || cs.role !== 'CS') throw new NotFoundException('客服不存在');
     await this.assertCanHardManageCs(actor, cs.parentId);
     if (cs.status === status) return { id: cs.id, status };
+
+    /*
+     * 手上还有额度就先别停：停用后他发不出去也退不回来，
+     * 那笔钱会一直挂在代理的信用账本里。让操作的人先收回。
+     */
+    if (status === 'DISABLED') {
+      const acc = await this.prisma.pointsAccount.findFirst({
+        where: { ownerType: 'CS', ownerId: csUserId },
+        select: { balance: true },
+      });
+      const left = asMoney(acc?.balance ?? 0);
+      if (left > 0) {
+        throw new BadRequestException(
+          `该客服名下还有额度 ${left}，请先在「客服账号」里收回再停用`,
+        );
+      }
+    }
 
     const u = await this.prisma.user.update({
       where: { id: csUserId },

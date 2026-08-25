@@ -13,6 +13,7 @@ import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { GameConfigCache } from './game-config.cache';
 import { SettlementKernel } from './settlement-kernel';
+import { SoftControlAuditService } from '../console/soft-control-audit.service';
 import { genServerSeed, deriveRandom, weightedPick } from './fairness.util';
 import {
   FRUIT_RING,
@@ -27,6 +28,8 @@ import {
   fruitLuckIndexes,
   fruitNonLuckIndexes,
   isFruitBetSymbolId,
+  parsePlayLimits,
+  resolvePlayBetRange,
   roundMoney,
   type FruitAwardType,
   type FruitBetSymbolId,
@@ -97,6 +100,7 @@ export class FruitMachineEngine {
     @Optional() @Inject(forwardRef(() => GlobalSoftControlService))
     private globalSoft?: GlobalSoftControlService,
     @Optional() private flyDisk?: FlyDiskService,
+    @Optional() private softAudit?: SoftControlAuditService,
   ) {}
 
   private flyRoomId(payload: unknown): string {
@@ -146,7 +150,20 @@ export class FruitMachineEngine {
     if (game.category !== 'ARCADE') throw new BadRequestException('该游戏不是街机品类');
     const config = game.configs[0];
     if (!config) throw new BadRequestException('游戏未配置');
-    if (totalAmount < asMoney(game.minBet) || totalAmount > asMoney(game.maxBet)) {
+    const fruitLimits = parsePlayLimits(game.playLimits);
+    if (Object.keys(fruitLimits).length) {
+      for (const [sym, amt] of entries) {
+        const range = resolvePlayBetRange({
+          gameMin: asMoney(game.minBet),
+          gameMax: asMoney(game.maxBet),
+          playLimits: fruitLimits,
+          playKey: sym,
+        });
+        if (amt < range.minBet || amt > range.maxBet) {
+          throw new BadRequestException(`${sym} 须在 ${range.minBet}~${range.maxBet} 之间`);
+        }
+      }
+    } else if (totalAmount < asMoney(game.minBet) || totalAmount > asMoney(game.maxBet)) {
       throw new BadRequestException(`总押注须在 ${asMoney(game.minBet)}~${asMoney(game.maxBet)} 之间`);
     }
 
@@ -207,6 +224,10 @@ export class FruitMachineEngine {
       allocated,
       nonce,
     } = softPick.result;
+    /* 三个比例都在下注时定死：揭晓可能晚很久，期间改比例不该动到这笔已发生的流水 */
+    const rates = this.flyDisk && house?.roomId
+      ? await this.flyDisk.resolvePlayerRate(playerId, house.roomId, GAME_CODE)
+      : undefined;
     const flyPayload = house
       ? {
           type: house.type,
@@ -214,8 +235,13 @@ export class FruitMachineEngine {
           flying: house.flying,
           roomId: house.roomId,
           agentUserId: house.agentUserId,
+          generalUserId: house.generalUserId,
+          sitting: house.sitting,
           /* 房间账本类型：揭晓派彩必须按信用/现金规则分支，不可丢 */
           bookMode: house.bookMode,
+          P: rates?.P,
+          agentPkg: rates?.agentPkg,
+          generalPkg: rates?.generalPkg,
         }
       : undefined;
 
@@ -237,6 +263,21 @@ export class FruitMachineEngine {
           nonce,
         },
       });
+      /* 介入留痕：只有 ADMIN 能查，写失败也不能拖累开奖 */
+      if (softPick.steered && this.softAudit) {
+        await this.softAudit.record({
+          category: 'arcade',
+          gameCode: GAME_CODE,
+          refNo: round.roundNo,
+          refId: round.id,
+          reason: 'arcadePool',
+          tries: softPick.tries,
+          naturalDigest: `${softPick.natural.awardType} 停${softPick.natural.stopIndex}`,
+          adoptedDigest: `${awardType} 停${stopIndex}`,
+          stake: totalAmount,
+          estPayout: softPick.result.payout,
+        });
+      }
 
       await this.settle.debitBetInTx(tx, {
         playerId,
@@ -636,6 +677,11 @@ export class FruitMachineEngine {
           stake: amt,
           skipCap: true,
           house: houseForReveal,
+          gameCode: GAME_CODE,
+          /* 揭晓可能晚很久，按下注时定死的整包比例发放 */
+          rateSnapshot: (
+            bet.payload as { fly?: { agentPkg?: unknown; generalPkg?: unknown; P?: unknown } } | null
+          )?.fly,
         });
       }
 
@@ -745,6 +791,8 @@ export class FruitMachineEngine {
       flying: house.flying,
       roomId: house.roomId,
       agentUserId: house.agentUserId,
+      generalUserId: house.generalUserId,
+      sitting: house.sitting,
       bookMode: house.bookMode,
     };
 
@@ -823,6 +871,21 @@ export class FruitMachineEngine {
           nonce: 1,
         },
       });
+      /* 再赌是同一局里的第二次挑选，留痕另记一行 */
+      if (softPick.steered && this.softAudit) {
+        await this.softAudit.record({
+          category: 'arcade',
+          gameCode: GAME_CODE,
+          refNo: `${round.roundNo}:gamble`,
+          refId: round.id,
+          reason: 'arcadePool',
+          tries: softPick.tries,
+          naturalDigest: `点${softPick.natural.roll} ${softPick.natural.result}`,
+          adoptedDigest: `点${roll} ${result}`,
+          stake: amount,
+          estPayout: payoutBack,
+        });
+      }
       const bet = await tx.bet.create({
         data: {
           betNo: businessNo('FGB'),

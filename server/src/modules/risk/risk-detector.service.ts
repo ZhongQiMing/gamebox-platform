@@ -6,6 +6,18 @@ import { oppositeHedgeSides } from '../table/table-risk';
 import { RiskService } from './risk.service';
 import { RISK_TYPES } from './risk.types';
 
+/**
+ * 对押要多大才值得报。
+ *
+ * 一间房里几个人在同一期分别押大和押小，本来就是常态，金额还都压在同一档筹码上。
+ * 不设门槛的话每开一期就报一批，角标长期停在 99+，真出事反而没人看。
+ * 同 IP 是另一回事，多小都报。
+ */
+const COLLUSION_MIN_AMOUNT = Math.max(
+  0,
+  Number(process.env.RISK_COLLUSION_MIN_AMOUNT ?? 200),
+);
+
 @Injectable()
 export class RiskDetectorService {
   private readonly logger = new Logger(RiskDetectorService.name);
@@ -232,9 +244,12 @@ export class RiskDetectorService {
         me.lastLoginIp === peer.player.lastLoginIp &&
         !isPrivateOrLocalIp(me.lastLoginIp);
 
-      const level = sameIp || Math.abs(peerAmt - amount) / Math.max(amount, peerAmt) < 0.1
-        ? 'CRITICAL'
-        : 'WARN';
+      /*
+       * 同 IP 才是硬信号（一人多号自己对自己），直接报严重。
+       * 不同 IP 的对押只有押得够大才值得看一眼，小额的属于正常多人同局。
+       */
+      if (!sameIp && Math.min(amount, peerAmt) < COLLUSION_MIN_AMOUNT) return;
+      const level = sameIp ? 'CRITICAL' : 'WARN';
 
       const pairKey = [input.playerId, peer.playerId].sort().join(':');
       await this.risk.record({

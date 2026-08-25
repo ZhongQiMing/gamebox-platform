@@ -29,6 +29,9 @@ describe('AuthService 登录安全', () => {
     clearFailCounters: jest.fn(),
     isLocked: jest.fn(),
   };
+  const prisma = {
+    csStaff: { findUnique: jest.fn() },
+  };
   let service: AuthService;
 
   const activeUser = {
@@ -56,12 +59,31 @@ describe('AuthService 登录安全', () => {
     loginLock.clearFailCounters.mockResolvedValue(undefined);
     loginLock.isLocked.mockReturnValue(false);
     mockedCompare.mockResolvedValue(true);
+    prisma.csStaff.findUnique.mockResolvedValue(null);
     service = new AuthService(
       users as never,
       jwt as never,
       riskDetector as never,
       loginLock as never,
+      prisma as never,
     );
+  });
+
+  it('客服被锁号时直接登录失败，而不是登进来再禁止接单', async () => {
+    users.findByUsername.mockResolvedValue({ ...activeUser, role: 'CS' });
+    prisma.csStaff.findUnique.mockResolvedValue({
+      slaLockedAt: new Date(),
+      slaLockReason: '连续休息超过 60 分钟',
+    });
+
+    await expect(service.login('cs001', 'pw')).rejects.toThrow('账号已锁定');
+  });
+
+  it('客服没被锁就正常登录', async () => {
+    users.findByUsername.mockResolvedValue({ ...activeUser, role: 'CS' });
+    prisma.csStaff.findUnique.mockResolvedValue({ slaLockedAt: null, slaLockReason: null });
+
+    await expect(service.login('cs001', 'pw')).resolves.toMatchObject({ token: 'jwt-token' });
   });
 
   it('账号不存在时仍使用固定 cost=12 dummy hash 做 bcrypt', async () => {

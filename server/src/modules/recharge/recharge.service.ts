@@ -5,6 +5,7 @@ import {
   NotFoundException,
   ForbiddenException,
   Inject,
+  Optional,
   forwardRef,
 } from '@nestjs/common';
 import { randomInt } from 'node:crypto';
@@ -21,6 +22,7 @@ import { PointsService } from '../points/points.service';
 import { AdminLogService } from '../admin/admin-log.service';
 import { RiskDetectorService } from '../risk/risk-detector.service';
 import { CsService } from '../cs/cs.service';
+import { assertPayoutAllowed } from '../fund-recon/payout-gate.helper';
 import {
   applyAgentCreditToPlayerInTx,
   applyCsCreditToPlayerInTx,
@@ -470,6 +472,18 @@ export class RechargeService {
 
   /** 代理/客服审核通过：UP 出账给玩家；DOWN 结算回代理或客服额度 */
   async approveRecharge(orderId: string, reviewerId: string) {
+    /*
+     * 下分是钱真正离开平台的动作，过闸门：对账不平时不准出款。
+     * 上分是钱进来，不拦——账花了还继续收钱不会造成损失，拦了反而影响生意。
+     * 闸门查询放在事务外：它自己可能要现跑一次对账，不该占着这笔审核的事务。
+     */
+    const pre = await this.prisma.rechargeOrder.findUnique({
+      where: { id: orderId },
+      select: { type: true },
+    });
+    if (pre?.type === 'DOWN') {
+      await assertPayoutAllowed(this.prisma, `下分单审核 ${orderId}`);
+    }
     return this.prisma.$transaction(async (tx) => {
       const order = await tx.rechargeOrder.findUnique({ where: { id: orderId } });
       if (!order) throw new NotFoundException('订单不存在');
@@ -665,7 +679,10 @@ export class RechargeService {
     });
   }
 
-  /** 审单结果写入客服会话（失败不影响主流程） */
+  /**
+   * 审单结果写入客服会话（失败不影响主流程）。
+   * 顺带停掉响应计时——客服直接把单审掉了，动作比回一句话更实在，不该判成没回复。
+   */
   private async pushCsSystemMessage(
     playerId: string,
     text: string,
@@ -673,6 +690,11 @@ export class RechargeService {
   ) {
     try {
       await this.cs.pushSystemMessage(playerId, text, rechargeOrderId);
+    } catch {
+      /* ignore */
+    }
+    try {
+      await this.cs.closeSlaRound(playerId);
     } catch {
       /* ignore */
     }
@@ -796,10 +818,21 @@ export class RechargeService {
         orderBy: { createdAt: 'asc' },
         skip: (page - 1) * pageSize,
         take: pageSize,
-        include: { player: { select: { id: true, uid: true, nickname: true } } },
+        include: { player: { select: { id: true, uid: true, nickname: true, username: true } } },
       }),
     ]);
-    return { total, page, pageSize, list };
+    /*
+     * amount 必须过 asMoney 再出接口。
+     * Prisma 的 Decimal 序列化成 JSON 是字符串，前端 formatMoney 收到字符串会算成 0.00，
+     * 于是审核弹窗把一万块显示成 0.00 —— 审的人看不出金额。myOrders / reviewHistory
+     * 都做了这层转换，只有这里漏了。
+     */
+    return {
+      total,
+      page,
+      pageSize,
+      list: list.map((o) => ({ ...o, amount: asMoney(o.amount) })),
+    };
   }
 
   /**
@@ -867,7 +900,7 @@ export class RechargeService {
         orderBy: { reviewedAt: 'desc' },
         skip: (page - 1) * pageSize,
         take: pageSize,
-        include: { player: { select: { id: true, uid: true, nickname: true } } },
+        include: { player: { select: { id: true, uid: true, nickname: true, username: true } } },
       }),
     ]);
     return {

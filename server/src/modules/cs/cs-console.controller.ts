@@ -87,6 +87,20 @@ export class CsConsoleController {
     return this.svc.listSessions(u.id);
   }
 
+  /**
+   * GET /api/console/cs/history?roomNo=123456&player=xxx
+   * 管理 / 总监按房间加玩家查完整对话，出纠纷时用；不做实时会话列表。
+   */
+  @Get('history')
+  @Roles('ADMIN', 'BRANCH')
+  history(
+    @Query('roomNo') roomNo: string,
+    @Query('player') player: string,
+    @Query('limit', new DefaultValuePipe(200), ParseIntPipe) limit: number,
+  ) {
+    return this.svc.adminPlayerHistory(roomNo, player, limit);
+  }
+
   /** GET /api/console/cs/sessions/:playerId/messages */
   @Get('sessions/:playerId/messages')
   messages(

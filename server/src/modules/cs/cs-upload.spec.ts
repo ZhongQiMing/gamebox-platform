@@ -60,6 +60,7 @@ describe('CsService 图片上传防护', () => {
       redis as never,
       {} as never,
       {} as never,
+      {} as never,
     );
   });
 

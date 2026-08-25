@@ -20,18 +20,60 @@ function normalizedOrigin(value: string): string {
   return value.trim().replace(/\/+$/, '').toLowerCase();
 }
 
+const DEV_WEB_ORIGINS = [
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'http://localhost:5173',
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:3001',
+  'http://127.0.0.1:5173',
+];
+
 function configuredWebOrigins(): Set<string> {
   const values = [
     process.env.PUBLIC_BASE_URL ?? '',
     ...(process.env.AUTH_ALLOWED_ORIGINS ?? '').split(','),
+    ...(process.env.NODE_ENV === 'production' ? [] : DEV_WEB_ORIGINS),
   ];
   return new Set(values.map(normalizedOrigin).filter(Boolean));
+}
+
+/**
+ * 调试包里的页面是从开发机局域网 IP 加载的（`http://192.168.1.16:5173`），
+ * 而 DEV_WEB_ORIGINS 只列了 localhost —— 手机/模拟器上登录会被判成跨站。
+ * IP 随路由器分配变动，写死一个没有意义，所以开发环境按私网网段整体放行。
+ * 仅在非生产生效；生产仍只认 PUBLIC_BASE_URL / AUTH_ALLOWED_ORIGINS。
+ */
+function isDevLanOrigin(origin: string): boolean {
+  if (process.env.NODE_ENV === 'production') return false;
+  let host: string;
+  try {
+    host = new URL(origin).hostname;
+  } catch {
+    return false;
+  }
+  if (host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1') {
+    return true;
+  }
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (!v4) return false;
+  const [a, b] = [Number(v4[1]), Number(v4[2])];
+  return a === 10 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31);
+}
+
+function isTrustedWebOrigin(origin: string, expected: string, expectedAllowed: boolean): boolean {
+  if (!origin || !expectedAllowed) return false;
+  const configured = configuredWebOrigins();
+  return origin === expected || configured.has(origin) || isDevLanOrigin(origin);
 }
 
 /**
  * 建立/替换会话不能依赖双提交 token（登录前还没有 token），改校验浏览器来源。
  * 无 Origin/Referer/Fetch Metadata 的非浏览器客户端继续允许；现代跨站表单至少会带
  * Origin/Referer 或 Sec-Fetch-Site: cross-site，因此会被拒绝。
+ *
+ * 本地 Vite 会把后台(3001)/玩家端(5173)代理到接口(3000)，浏览器 Origin 仍是前端端口，
+ * Host 却变成 3000。这时不能只认「Origin === Host」，还要认 AUTH_ALLOWED_ORIGINS。
  */
 export function hasTrustedAuthSource(req: Request): boolean {
   const host = req.get('host');
@@ -43,15 +85,16 @@ export function hasTrustedAuthSource(req: Request): boolean {
 
   const origin = normalizedOrigin(headerValue(req.headers.origin));
   if (origin) {
-    return capacitor.has(origin) || (expectedAllowed && origin === expected);
+    return capacitor.has(origin) || isTrustedWebOrigin(origin, expected, expectedAllowed);
   }
 
   const referer = headerValue(req.headers.referer).trim();
   if (referer) {
     try {
-      return (
-        expectedAllowed &&
-        normalizedOrigin(new URL(referer).origin) === expected
+      return isTrustedWebOrigin(
+        normalizedOrigin(new URL(referer).origin),
+        expected,
+        expectedAllowed,
       );
     } catch {
       return false;

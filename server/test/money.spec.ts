@@ -10,6 +10,7 @@ import {
   asMoney,
   capWin,
   formatMoney,
+  formatSignedMoney,
   payoutForTableSide,
   payoutFromProfitOdds,
   payoutFromTotalOdds,
@@ -35,6 +36,17 @@ describe('roundMoney', () => {
     expect(roundMoney(Infinity)).toBe(0);
     expect(roundMoney(-Infinity)).toBe(0);
   });
+
+  it('数字字符串按数值算，不能静默变 0', () => {
+    /*
+     * Prisma 的 Decimal 出接口就是字符串，类型标注是 number 也挡不住。
+     * 早前这里用 Number.isFinite 直接判入参，Number.isFinite('10000') 为 false，
+     * 于是一万块的上分申请在审核弹窗里显示成 0.00，审的人看不出金额。
+     */
+    expect(roundMoney('10000' as unknown as number)).toBe(10000);
+    expect(roundMoney('12.345' as unknown as number)).toBe(12.35);
+    expect(formatMoney('10000' as unknown as number)).toBe('10,000.00');
+  });
 });
 
 describe('asMoney', () => {
@@ -59,6 +71,14 @@ describe('formatMoney', () => {
     expect(formatMoney(88888.5)).toBe('88,888.50');
     expect(formatMoney(0)).toBe('0.00');
     expect(formatMoney(-1234.567)).toBe('-1,234.57');
+  });
+});
+
+describe('formatSignedMoney', () => {
+  it('正数带加号，负数带减号，零不加号', () => {
+    expect(formatSignedMoney(1234.5)).toBe('+1,234.50');
+    expect(formatSignedMoney(-1234.5)).toBe('-1,234.50');
+    expect(formatSignedMoney(0)).toBe('0.00');
   });
 });
 

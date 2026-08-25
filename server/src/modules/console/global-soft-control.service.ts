@@ -1134,6 +1134,53 @@ export class GlobalSoftControlService {
         exitPct: GEAR_EXIT_PCT,
         minCycleFlow: GEAR_MIN_CYCLE_FLOW,
       },
+      /*
+       * 如实交代每个可调项到底作用在哪、还有哪些其实已经不生效了。
+       *
+       * 后台原来把「单期亏损触发线」「控后冷却」当成可用参数展示，运营改了却毫无
+       * 效果——真正生效的是按档位算出的开档线（正常 50%/回收 30%/强回收 15%）。
+       * 界面显示的和实际执行的不一致，会让人基于错误认知做运营决策，比参数本身
+       * 不好用严重得多。
+       */
+      truth: {
+        ineffective: [
+          {
+            key: 'maxPeriodLossPct',
+            label: '单期亏损触发线',
+            why: '真实开档线由「慢性失血档位」决定（正常 50% / 回收 30% / 强回收 15%），此项不参与判断',
+          },
+          {
+            key: 'cooldownEnabled',
+            label: '控后冷却',
+            why: '冷却会让出防爆权，已停用；运行时恒为未冷却',
+          },
+        ],
+        /** 每个开关的适用范围：界面看起来全站生效，实际分类不同 */
+        scopes: [
+          { key: 'targetNetPct', label: '日账中轴/带宽', applies: ['彩票', '牌桌'] },
+          { key: 'gearMode', label: '慢性失血档位', applies: ['彩票', '牌桌'] },
+          { key: 'candidateTries', label: '候选试号数', applies: ['彩票', '牌桌'] },
+          {
+            key: 'playerBrakeEnabled',
+            label: '玩家缓刹',
+            applies: ['彩票', '牌桌'],
+            note: '街机/电子是一人一局，不参与缓刹',
+          },
+          {
+            key: 'softBias',
+            label: '房间/玩家偏置',
+            applies: ['彩票', '牌桌'],
+            note: '街机/电子只按资金池目标返还率挑号，偏置对它无效',
+          },
+          {
+            key: 'arcadeRtpTarget',
+            label: '街机目标返还率',
+            applies: ['街机', '电子'],
+          },
+          { key: 'arcadeCandidateTries', label: '街机候选试号数', applies: ['街机', '电子'] },
+          { key: 'arcadePoolWindowDays', label: '街机池统计窗口', applies: ['街机', '电子'] },
+        ],
+      },
       updatedAt: row.updatedAt.toISOString(),
     };
   }

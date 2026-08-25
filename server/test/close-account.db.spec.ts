@@ -13,6 +13,7 @@ import type { RebateService } from '../src/modules/rebate/rebate.service';
 import {
   createPointsService,
   createTestPrisma,
+  drainPlatformQueue,
   ledgerSum,
   makeUser,
   readBalance,
@@ -138,6 +139,8 @@ describe('注销执行', () => {
 
     expect(res.forfeited).toBe(20);
     expect(await readBalance(prisma, 'PLAYER', id, ROOM)).toBe(0);
+    /* 平台侧是先记账、余额由合并工人补，所以先排空队列再读 */
+    await drainPlatformQueue(prisma);
     expect(await readBalance(prisma, 'PLATFORM', PLATFORM_OWNER_ID)).toBe(platformBefore + 20);
     /* 对账不变量：玩家侧流水合计仍等于余额 0 */
     expect(await ledgerSum(prisma, accountId)).toBe(0);

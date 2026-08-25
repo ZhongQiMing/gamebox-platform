@@ -1,8 +1,9 @@
 import {
   Controller, Post, Get, Body, Param, Query,
-  DefaultValuePipe, ParseIntPipe,
+  DefaultValuePipe, ParseIntPipe, UseGuards,
 } from '@nestjs/common';
 import { SkipThrottle } from '@nestjs/throttler';
+import { BetRateGuard } from '../../common/guards/bet-rate.guard';
 import { Type } from 'class-transformer';
 import { IsArray, IsInt, IsOptional, IsString, Max, MaxLength, Min, ValidateNested } from 'class-validator';
 import { LotteryService } from './lottery.service';
@@ -65,7 +66,14 @@ class LotteryBetBatchDto {
 export class LotteryController {
   constructor(private readonly lottery: LotteryService) {}
 
-  /** 批量投注（同一事务，全成全败） */
+  /**
+   * 批量投注（同一事务，全成全败）
+   *
+   * 与牌桌一致：跳过全局按 IP 的额度，改为按玩家计数。
+   * 共用出口 IP（运营商 NAT、网吧、家庭 WiFi）的玩家不该互相挤占下注额度。
+   */
+  @SkipThrottle()
+  @UseGuards(BetRateGuard)
   @Post(':gameCode/bet-batch')
   async betBatch(
     @Param('gameCode') gameCode: string,
@@ -80,7 +88,9 @@ export class LotteryController {
     });
   }
 
-  /** 投注（需登录） */
+  /** 投注（需登录）；限流同上，按玩家计数 */
+  @SkipThrottle()
+  @UseGuards(BetRateGuard)
   @Post(':gameCode/bet')
   async bet(
     @Param('gameCode') gameCode: string,
@@ -125,15 +135,11 @@ export class LotteryController {
   @Public()
   @SkipThrottle()
   @Get(':gameCode/snapshot')
-  async snapshot(
+  snapshot(
     @Param('gameCode') gameCode: string,
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
   ) {
-    const [current, history] = await Promise.all([
-      this.lottery.currentIssue(gameCode),
-      this.lottery.history(gameCode, Math.min(limit, 80)),
-    ]);
-    return { current, history };
+    return this.lottery.snapshot(gameCode, Math.min(limit, 80));
   }
 
   /** 历史开奖（公开；同上） */
@@ -155,15 +161,22 @@ export class LotteryController {
     return this.lottery.getPayTable(gameCode);
   }
 
-  /** 我的投注记录（可按期号过滤） */
+  /** 我的投注记录（可按期号或 range/from/to 过滤） */
   @Get(':gameCode/my-bets')
   myBets(
     @Param('gameCode') gameCode: string,
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
     @Query('pageSize', new DefaultValuePipe(20), ParseIntPipe) pageSize: number,
     @Query('issueNo') issueNo: string | undefined,
+    @Query('range') range: string | undefined,
+    @Query('from') fromStr: string | undefined,
+    @Query('to') toStr: string | undefined,
     @CurrentUser() user: JwtUser,
   ) {
-    return this.lottery.myBets(user.id, gameCode, page, pageSize, issueNo);
+    return this.lottery.myBets(user.id, gameCode, page, pageSize, issueNo, {
+      range,
+      fromMs: fromStr != null && fromStr !== '' ? Number(fromStr) : undefined,
+      toMs: toStr != null && toStr !== '' ? Number(toStr) : undefined,
+    });
   }
 }

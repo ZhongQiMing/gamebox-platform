@@ -76,7 +76,11 @@ export class RiskAdminController {
     for (const t of Object.keys(RISK_TYPE_META)) byType[t] = 0;
     for (const row of byTypeRaw) byType[row.type] = row._count._all;
 
-    return { unhandled, critical, warn, todayNew, byType };
+    /*
+     * 角标只认「要人去看的」那部分。INFO 是逐笔下注就会写的流水噪音，
+     * 混进角标会让它长期停在 99+，真出事时反而没人当回事。
+     */
+    return { unhandled, critical, warn, actionable: critical + warn, todayNew, byType };
   }
 
   /**

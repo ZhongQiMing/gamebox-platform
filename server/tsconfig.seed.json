@@ -1,0 +1,26 @@
+{
+  /*
+   * 把初始化脚本单独编译成可直接 node 执行的产物。
+   *
+   * 为什么要单独一份：生产镜像按 --prod 装依赖，ts-node 是开发依赖不在里面，
+   * 而且 runner 只拷 dist、不拷 src，所以 `ts-node prisma/seed.ts` 在服务器上
+   * 既没有解释器也找不到它 import 的赔率表。迁移只建空表、不插游戏目录/赔率/
+   * 代理等级/平台开账/管理员，这些全在 seed 里——跑不了 seed 就等于平台是空的，
+   * 而 postgres 挂在 internal 网络上又没法从外面连进去补数据。
+   *
+   * 不能直接把 prisma/ 塞进主 tsconfig 的 include：那样推断出的根目录会从 src
+   * 上移到仓库目录，产物变成 dist/src/main.js，Dockerfile 的 CMD 和一切路径都得跟着改。
+   * 这里用独立 outDir，主构建产物一个字节都不变。
+   *
+   * include 只写入口，tsc 会顺着 import 把用到的 src 文件一起编进来。
+   */
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "./dist-seed",
+    "declaration": false,
+    "sourceMap": false,
+    "incremental": false
+  },
+  "include": ["prisma/seed.ts", "prisma/platform-opening.ts"]
+}

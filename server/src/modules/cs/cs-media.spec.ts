@@ -57,6 +57,7 @@ describe('CsService 私有媒体读取', () => {
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
     );
   });
 
@@ -81,19 +82,40 @@ describe('CsService 私有媒体读取', () => {
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
-  it('玩家只能在自己的客服消息引用该 URL 后读取收款码', async () => {
+  it('玩家把自己会话里粘贴的他人媒体 URL 不能用来读取', async () => {
+    prisma.csMessage.findFirst.mockResolvedValue(null);
+
+    await expect(
+      service.openMedia({ id: 'player-1', role: 'PLAYER' }, upload.id),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(prisma.csMessage.findFirst).toHaveBeenCalledWith({
+      where: {
+        playerId: 'player-1',
+        sender: { not: 'PLAYER' },
+        text: { contains: '/api/cs/media/media-1234567890' },
+      },
+      select: { id: true },
+    });
+  });
+
+  it('客服发到该玩家会话的收款码可以读取', async () => {
     prisma.csMessage.findFirst.mockResolvedValue({ id: 'message-1' });
 
     await expect(
       service.openMedia({ id: 'player-1', role: 'PLAYER' }, upload.id),
     ).resolves.toEqual(expect.objectContaining({ mimeType: 'image/png' }));
-    expect(prisma.csMessage.findFirst).toHaveBeenCalledWith({
-      where: {
-        playerId: 'player-1',
-        text: { contains: '/api/cs/media/media-1234567890' },
-      },
-      select: { id: true },
+  });
+
+  it('媒体绑定了该玩家时可以直接读取', async () => {
+    prisma.csUpload.findUnique.mockResolvedValue({
+      ...upload,
+      playerId: 'player-1',
     });
+
+    await expect(
+      service.openMedia({ id: 'player-1', role: 'PLAYER' }, upload.id),
+    ).resolves.toEqual(expect.objectContaining({ mimeType: 'image/png' }));
+    expect(prisma.csMessage.findFirst).not.toHaveBeenCalled();
   });
 
   it('每日清理未发送孤儿与超过保留期的文件', async () => {

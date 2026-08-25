@@ -25,6 +25,7 @@ import { RedisService } from '../../redis/redis.service';
 import { isRealImage } from '../../common/utils/image-magic';
 import { RechargeService } from '../recharge/recharge.service';
 import { CsStaffService } from '../console/cs-staff.service';
+import { CsSlaService } from '../console/cs-sla.service';
 
 const UP_RE = /^上分\s*\/?\s*(\d+)$/;
 const DOWN_RE = /^下分\s*\/?\s*(\d+)$/;
@@ -62,9 +63,31 @@ const DEFAULT_PLAYER_UPLOAD_LIMIT = 10;
 const DEFAULT_STAFF_UPLOAD_LIMIT = 30;
 const DEFAULT_CHAT_IMAGE_MAX_BYTES = 2 * 1024 * 1024;
 const DEFAULT_PAY_QR_MAX_BYTES = 8_000_000;
-const DEFAULT_MEDIA_RETENTION_DAYS = 90;
 const DEFAULT_ORPHAN_RETENTION_DAYS = 7;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+
+/**
+ * 客服聊天保留策略。
+ *
+ * 一份数据、三个可见窗口：越靠近一线看得越少，出纠纷时上家还调得出来。
+ * 真正从库里删只按最长的那档（管理 3 天），删早了上面两档就成了空的。
+ * 图片窗口比文字短，是为了逼客服每次要最新付款截图，不给拿旧图糊弄的机会。
+ */
+const CS_TEXT_VISIBLE_HOURS: Record<'CS' | 'AGENT' | 'ADMIN', number> = {
+  CS: 8,
+  AGENT: 12,
+  ADMIN: 72,
+};
+const CS_IMAGE_VISIBLE_HOURS: Record<'CS' | 'AGENT' | 'ADMIN', number> = {
+  CS: 3,
+  AGENT: 12,
+  ADMIN: 72,
+};
+/** 超过这个钟点的聊天连同图片一起物理删除；与最长可见窗口一致 */
+const CS_CHAT_KEEP_HOURS = 72;
+/** 一次任务最多删几条，避免维护窗被一张表占满 */
+const CS_CHAT_PRUNE_BATCH = 2000;
 
 function fundChannelLabel(channel?: string | null): string {
   const ch = String(channel ?? '').trim();
@@ -92,7 +115,31 @@ export class CsService {
     @Inject(forwardRef(() => RechargeService))
     private recharge: RechargeService,
     private csStaff: CsStaffService,
+    private csSla: CsSlaService,
   ) {}
+
+  /**
+   * 玩家发来消息 → 开一轮响应考核。
+   * 计时从这条消息起算，看了不算，必须客服真回一条才停表（见 CsSlaService）。
+   */
+  private async startSlaRound(
+    playerId: string,
+    assigneeId: string | null,
+    message: { id: string; createdAt: Date },
+  ) {
+    if (!assigneeId) return;
+    const agentRootId = await this.resolveAgentRootId(playerId);
+    if (!agentRootId) return;
+    await this.csSla
+      .openRound({
+        csUserId: assigneeId,
+        agentUserId: agentRootId,
+        playerId,
+        askMessageId: message.id,
+        askedAt: message.createdAt,
+      })
+      .catch(() => undefined); /* 考核记不上不该挡住玩家发消息 */
+  }
 
   private mediaUrl(id: string): string {
     return `/api/cs/media/${id}`;
@@ -266,21 +313,52 @@ export class CsService {
     return this.csStaff.pickAssignee(agentRootId);
   }
 
-  private serializeMsg(m: {
-    id: string;
-    playerId: string;
-    sender: string;
-    text: string;
-    isRead: boolean;
-    rechargeOrderId: string | null;
-    assigneeId: string | null;
-    createdAt: Date;
-  }) {
+  /** 运营侧角色归并到三档可见窗口；总代/子账号跟代理同档 */
+  private viewerTier(role: string): 'CS' | 'AGENT' | 'ADMIN' {
+    if (role === 'CS') return 'CS';
+    if (role === 'ADMIN' || role === 'BRANCH') return 'ADMIN';
+    return 'AGENT';
+  }
+
+  /** 该档能看到多久以前的文字；玩家看自己的不受限（库里有多少看多少） */
+  private textVisibleFrom(tier: 'CS' | 'AGENT' | 'ADMIN'): Date {
+    return new Date(Date.now() - CS_TEXT_VISIBLE_HOURS[tier] * HOUR_MS);
+  }
+
+  /**
+   * 图片窗口比文字短，所以同一条消息可能「文字还看得见、图片已过期」。
+   * 这里只把图片标记摘掉换成提示，不整条隐藏——不然会话看起来像断了。
+   */
+  private stripExpiredImages(text: string, createdAt: Date, tier: 'CS' | 'AGENT' | 'ADMIN'): string {
+    const limit = Date.now() - CS_IMAGE_VISIBLE_HOURS[tier] * HOUR_MS;
+    if (createdAt.getTime() >= limit) return text;
+    if (!CS_IMG_RE.test(text)) {
+      CS_IMG_RE.lastIndex = 0;
+      return text;
+    }
+    CS_IMG_RE.lastIndex = 0;
+    const stripped = text.replace(CS_IMG_RE, '［图片已过期］').trim();
+    return stripped || '［图片已过期］';
+  }
+
+  private serializeMsg(
+    m: {
+      id: string;
+      playerId: string;
+      sender: string;
+      text: string;
+      isRead: boolean;
+      rechargeOrderId: string | null;
+      assigneeId: string | null;
+      createdAt: Date;
+    },
+    tier?: 'CS' | 'AGENT' | 'ADMIN',
+  ) {
     return {
       id: m.id,
       playerId: m.playerId,
       sender: m.sender,
-      text: m.text,
+      text: tier ? this.stripExpiredImages(m.text, m.createdAt, tier) : m.text,
       isRead: m.isRead,
       rechargeOrderId: m.rechargeOrderId,
       assigneeId: m.assigneeId,
@@ -347,6 +425,11 @@ export class CsService {
         rechargeOrderId: opts.orderId,
       },
     });
+  }
+
+  /** 审掉单子等同于回复：供审单流程调用，停掉该玩家的响应计时 */
+  async closeSlaRound(playerId: string) {
+    await this.csSla.closeRound(playerId).catch(() => undefined);
   }
 
   /** 审单结果等系统消息写入客服会话 */
@@ -462,7 +545,12 @@ export class CsService {
         if (ordered.length !== ids.length) {
           throw new BadRequestException('消息幂等记录不完整，请联系客服');
         }
-        return { list: ordered.map((m) => this.serializeMsg(m)), created: false, down: false };
+        return {
+          list: ordered.map((m) => this.serializeMsg(m)),
+          created: false,
+          down: false,
+          ask: null as { id: string; createdAt: Date } | null,
+        };
       }
 
       const playerMsg = await tx.csMessage.create({
@@ -534,11 +622,19 @@ export class CsService {
         this.serializeMsg({ ...playerMsg, rechargeOrderId: orderId }),
         ...(sysMsg ? [this.serializeMsg(sysMsg)] : []),
       ];
-      return { list, created: true, down: !!down && !!orderId };
+      return {
+        list,
+        created: true,
+        down: !!down && !!orderId,
+        ask: { id: playerMsg.id, createdAt: playerMsg.createdAt },
+      };
     });
     if (result.created && result.down) {
       const amount = Number(down?.[1]);
       this.recharge.onWithdrawCommitted(playerId, amount);
+    }
+    if (result.created && result.ask) {
+      await this.startSlaRound(playerId, assigneeId, result.ask);
     }
     return { list: result.list };
   }
@@ -583,6 +679,7 @@ export class CsService {
       },
     });
     await this.markMediaAttached(mediaIds);
+    await this.startSlaRound(playerId, assigneeId, playerMsg);
 
     const out = [this.serializeMsg(playerMsg)];
 
@@ -657,7 +754,12 @@ export class CsService {
       ],
     };
 
-    const msgWhere: Prisma.CsMessageWhereInput = { player: playerWhere };
+    const tier = this.viewerTier(team.role);
+    const msgWhere: Prisma.CsMessageWhereInput = {
+      player: playerWhere,
+      /* 可见窗口：客服 8 小时、代理 12 小时。超窗的会话直接从列表消失 */
+      createdAt: { gte: this.textVisibleFrom(tier) },
+    };
     // 客服：只拉指派给自己的消息，再按玩家最新粘性过滤
     if (team.role === 'CS') {
       msgWhere.assigneeId = actorId;
@@ -675,7 +777,7 @@ export class CsService {
         isRead: true,
         assigneeId: true,
         createdAt: true,
-        player: { select: { id: true, uid: true, nickname: true, avatar: true } },
+        player: { select: { id: true, uid: true, nickname: true, username: true, avatar: true } },
       },
     });
 
@@ -685,6 +787,7 @@ export class CsService {
         playerId: string;
         uid: string;
         nickname: string;
+        username: string;
         avatar: string | null;
         lastText: string;
         lastSender: string;
@@ -701,8 +804,9 @@ export class CsService {
           playerId: m.playerId,
           uid: m.player.uid,
           nickname: m.player.nickname,
+          username: m.player.username,
           avatar: m.player.avatar,
-          lastText: m.text,
+          lastText: this.stripExpiredImages(m.text, m.createdAt, tier),
           lastSender: m.sender,
           lastAt: m.createdAt.toISOString(),
           unread: 0,
@@ -724,21 +828,104 @@ export class CsService {
       rows = owned;
     }
 
+    /*
+     * 响应倒计时：带上本轮起算时间和两条时限，客服端自己跑秒。
+     * 不下发的话客服看不到自己还剩多久，罚则就只有惩罚没有提醒。
+     */
+    const openRounds = await this.csSla
+      .openRoundsByPlayer(rows.map((r) => r.playerId))
+      .catch(() => new Map<string, Date>());
+    const policy = await this.csSla.getPolicy(team.agentRootId).catch(() => null);
+
     const list = rows
-      .map(({ lastAssigneeId: _a, ...rest }) => rest)
+      .map(({ lastAssigneeId: _a, ...rest }) => ({
+        ...rest,
+        askedAt: openRounds.get(rest.playerId)?.toISOString() ?? null,
+      }))
       .sort((a, b) => new Date(b.lastAt).getTime() - new Date(a.lastAt).getTime());
-    return { list };
+    return {
+      list,
+      sla: policy
+        ? { enabled: policy.enabled, remindSec: policy.remindSec, kickSec: policy.kickSec }
+        : null,
+    };
   }
 
   async sessionMessages(actorId: string, playerId: string, limit = 100) {
     const { team } = await this.assertPlayerInTeam(actorId, playerId);
     if (team.role === 'CS') await this.assertCsOwnsSession(actorId, playerId);
+    const tier = this.viewerTier(team.role);
     const list = await this.prisma.csMessage.findMany({
-      where: { playerId },
+      where: { playerId, createdAt: { gte: this.textVisibleFrom(tier) } },
       orderBy: { createdAt: 'asc' },
       take: Math.min(Math.max(limit, 1), 200),
     });
-    return { list: list.map((m) => this.serializeMsg(m)) };
+    /* 进到聊天窗口后同样要看得到还剩多久，字段与会话列表一致 */
+    const [openRounds, policy] = await Promise.all([
+      this.csSla.openRoundsByPlayer([playerId]).catch(() => new Map<string, Date>()),
+      this.csSla.getPolicy(team.agentRootId).catch(() => null),
+    ]);
+    return {
+      list: list.map((m) => this.serializeMsg(m, tier)),
+      askedAt: openRounds.get(playerId)?.toISOString() ?? null,
+      sla: policy
+        ? { enabled: policy.enabled, remindSec: policy.remindSec, kickSec: policy.kickSec }
+        : null,
+    };
+  }
+
+  /**
+   * 管理 / 总监按「房间号 + 玩家」查完整对话。
+   *
+   * 刻意不做实时会话列表：管理不接单，只在出纠纷时按人翻记录。
+   * 窗口 3 天，与物理保留期一致——超过 3 天线下就按不受理处理。
+   */
+  async adminPlayerHistory(
+    roomNo: string,
+    playerKey: string,
+    limit = 200,
+  ) {
+    const no = String(roomNo ?? '').trim();
+    const key = String(playerKey ?? '').trim();
+    if (!/^\d{6}$/.test(no)) throw new BadRequestException('请输入 6 位进房码');
+    if (!key) throw new BadRequestException('请输入玩家账号 / UID / 昵称');
+
+    const room = await this.prisma.room.findUnique({
+      where: { roomNo: no },
+      select: { id: true, roomNo: true, name: true },
+    });
+    if (!room) throw new NotFoundException('房间不存在');
+
+    const member = await this.prisma.roomMember.findFirst({
+      where: {
+        roomId: room.id,
+        player: {
+          role: 'PLAYER',
+          OR: [{ username: key }, { uid: key }, { nickname: key }],
+        },
+      },
+      select: {
+        player: { select: { id: true, uid: true, username: true, nickname: true } },
+      },
+    });
+    if (!member?.player) throw new NotFoundException('该房间下没有这个玩家');
+
+    const tier = 'ADMIN' as const;
+    const list = await this.prisma.csMessage.findMany({
+      where: {
+        playerId: member.player.id,
+        createdAt: { gte: this.textVisibleFrom(tier) },
+      },
+      orderBy: { createdAt: 'asc' },
+      take: Math.min(Math.max(limit, 1), 500),
+    });
+
+    return {
+      room,
+      player: member.player,
+      keepHours: CS_CHAT_KEEP_HOURS,
+      list: list.map((m) => this.serializeMsg(m, tier)),
+    };
   }
 
   async agentReply(actorId: string, playerId: string, textRaw: string) {
@@ -770,9 +957,15 @@ export class CsService {
       },
     });
     await this.markMediaAttached(mediaIds);
+    /* 真回了一条才停表；markRead 里刻意不停，看了不等于回了 */
+    await this.csSla.closeRound(playerId, msg.createdAt).catch(() => undefined);
     return { message: this.serializeMsg(msg) };
   }
 
+  /**
+   * 标记已读。刻意**不**结束响应计时——「看了」不算「回了」，
+   * 必须客服真发一条消息或把单审掉才停表。
+   */
   async markRead(actorId: string, playerId: string) {
     const { team } = await this.assertPlayerInTeam(actorId, playerId);
     if (team.role === 'CS') await this.assertCsOwnsSession(actorId, playerId);
@@ -788,10 +981,23 @@ export class CsService {
     const team = await this.teamPlayerPrefix(csUserId);
     if (!team || team.role !== 'CS') return [];
 
+    /*
+     * 玩家范围必须与 listSessions 用同一口径：agentPath 前缀「或」主代理房间成员。
+     * 玩家是按房间进来的，agentPath 不一定挂到代理身上（实测就有停在 '/' 的）。
+     * 原先这里只比 agentPath，结果同一个玩家聊天列表里有、点「审本单」却说没有申请，
+     * 客服看得见消息却批不了单。
+     */
+    const memberIds = await this.roomMemberPlayerIds(team.agentRootId);
     const recent = await this.prisma.csMessage.findMany({
       where: {
         assigneeId: csUserId,
-        player: { role: 'PLAYER', agentPath: { startsWith: team.prefix } },
+        player: {
+          role: 'PLAYER',
+          OR: [
+            { agentPath: { startsWith: team.prefix } },
+            ...(memberIds.length ? [{ id: { in: memberIds } }] : []),
+          ],
+        },
       },
       orderBy: { createdAt: 'desc' },
       take: 800,
@@ -1007,11 +1213,13 @@ export class CsService {
     await writeFile(filePath, buf, { flag: 'wx' });
 
     try {
-      const retentionDays = this.positiveConfigInt(
-        'CS_MEDIA_RETENTION_DAYS',
-        DEFAULT_MEDIA_RETENTION_DAYS,
-        3650,
-      );
+      /*
+       * 收款码要长期用，聊天图跟着聊天一起 3 天到期。
+       * 原来统一 90 天，聊天图会在硬盘上堆三个月。
+       */
+      const retentionHours = policy === 'STAFF_PAY_QR'
+        ? this.positiveConfigInt('CS_PAY_QR_RETENTION_DAYS', 90, 3650) * 24
+        : CS_CHAT_KEEP_HOURS;
       const upload = await this.prisma.csUpload.create({
         data: {
           ownerId: actorId,
@@ -1021,7 +1229,7 @@ export class CsService {
           mimeType: mime === 'image/jpg' ? 'image/jpeg' : mime,
           sizeBytes: buf.length,
           storageKey,
-          expiresAt: new Date(Date.now() + retentionDays * DAY_MS),
+          expiresAt: new Date(Date.now() + retentionHours * HOUR_MS),
         },
         select: { id: true },
       });
@@ -1060,10 +1268,18 @@ export class CsService {
     let allowed = upload.ownerId === actor.id;
     const url = this.mediaUrl(upload.id);
     if (!allowed && actor.role === 'PLAYER') {
+      /*
+       * 玩家只能读：自己上传的，或客服/系统发到自己会话里的。
+       * 不能靠「在自己会话粘贴他人 URL」越权读收款码。
+       */
       allowed =
         upload.playerId === actor.id ||
         !!(await this.prisma.csMessage.findFirst({
-          where: { playerId: actor.id, text: { contains: url } },
+          where: {
+            playerId: actor.id,
+            sender: { not: 'PLAYER' },
+            text: { contains: url },
+          },
           select: { id: true },
         }));
     }
@@ -1117,6 +1333,37 @@ export class CsService {
       mimeType: upload.mimeType,
       sizeBytes: info.size,
     };
+  }
+
+  /**
+   * 每日清理超过保留期的聊天记录（文字）。
+   *
+   * 落在 04:00–06:00 维护窗内，玩家无感。分批删：一次性 DELETE 上百万行会长时间持锁。
+   * 只删到最长可见窗口那一档，删早了管理那边就是空的。
+   */
+  @Cron('35 4 * * *', { timeZone: 'Asia/Shanghai' })
+  async cleanupExpiredMessages(): Promise<number> {
+    const before = new Date(Date.now() - CS_CHAT_KEEP_HOURS * HOUR_MS);
+    let removed = 0;
+    for (let i = 0; i < 100; i++) {
+      const batch = await this.prisma.csMessage.findMany({
+        where: { createdAt: { lt: before } },
+        select: { id: true },
+        take: CS_CHAT_PRUNE_BATCH,
+      });
+      if (!batch.length) break;
+      const res = await this.prisma.csMessage.deleteMany({
+        where: { id: { in: batch.map((r) => r.id) } },
+      });
+      removed += res.count;
+      if (batch.length < CS_CHAT_PRUNE_BATCH) break;
+    }
+    /* 幂等锚点跟着消息一起过期，留着也没有对应的消息可指 */
+    await this.prisma.csMessageRequest
+      .deleteMany({ where: { createdAt: { lt: before } } })
+      .catch(() => undefined);
+    if (removed) this.logger.log(`已清理 ${removed} 条过期客服聊天`);
+    return removed;
   }
 
   /** 每日清理 7 天未发送的孤儿文件，以及超过业务保留期的媒体。 */

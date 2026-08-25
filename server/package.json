@@ -4,7 +4,8 @@
   "private": true,
   "description": "游戏盒子平台后端（大脑）：账本/爆率/开奖/分润/风控/实时",
   "scripts": {
-    "build": "nest build",
+    "postinstall": "prisma generate",
+    "build": "prisma generate && nest build",
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:prod": "node dist/main.js",
@@ -12,6 +13,8 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:seed": "ts-node prisma/seed.ts",
+    "build:seed": "tsc -p tsconfig.seed.json",
+    "seed:prod": "node dist-seed/prisma/seed.js",
     "test": "jest --runInBand",
     "test:db": "jest --config jest.db.config.cjs --runInBand",
     "test:watch": "jest --watch",

@@ -40,8 +40,51 @@ export const GAME_OPS_SCHEDULE = {
     label: '每天 06:01',
     desc: '结束维护，恢复凌晨自动关闭的游戏（与回水 06:00 错开）',
   },
-  maintWindow: '04:00 ～ 06:00',
+  maintWindow: '04:00 ～ 06:01',
 } as const;
+
+const MAINT_START_MIN = 4 * 60;
+const MAINT_END_MIN = 6 * 60 + 1; // 06:01，与结束 cron 对齐
+
+export function dailyMaintDisabled(): boolean {
+  const v = (process.env.DISABLE_DAILY_MAINT || '').trim().toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes';
+}
+
+export function shanghaiDateKey(d = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: SH_TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d);
+}
+
+export function shanghaiClockMinutes(d = new Date()): number {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: SH_TZ,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(d);
+  const h = Number(parts.find((p) => p.type === 'hour')?.value ?? 0);
+  const m = Number(parts.find((p) => p.type === 'minute')?.value ?? 0);
+  return h * 60 + m;
+}
+
+/** 上海 [04:00, 06:01)；DISABLE_DAILY_MAINT=1 时恒为 false */
+export function inDailyMaintWindow(d = new Date()): boolean {
+  if (dailyMaintDisabled()) return false;
+  const mins = shanghaiClockMinutes(d);
+  return mins >= MAINT_START_MIN && mins < MAINT_END_MIN;
+}
+
+/** 距今日 06:01 的剩余秒；窗外为 0 */
+export function dailyMaintRemainSec(d = new Date()): number {
+  if (!inDailyMaintWindow(d)) return 0;
+  const end = new Date(`${shanghaiDateKey(d)}T06:01:00+08:00`);
+  return Math.max(0, Math.floor((end.getTime() - d.getTime()) / 1000));
+}
 
 @Injectable()
 export class GameOpsScheduler implements OnModuleInit {
@@ -88,7 +131,7 @@ export class GameOpsScheduler implements OnModuleInit {
       ],
       notes: [
         '期号（彩票/桌台）按上海日历日自动重计，无需手工重置。',
-        '每日 04:00–06:00 维护窗只动「当时上架」的游戏；你手动维护/下架的不受影响。',
+        '每日 04:00–06:01 维护窗只动「当时上架」的游戏；你手动维护/下架的不受影响。',
         '进维护后立刻停新注/新期；牌桌本局会结算完再暂停开局，不会中途掐结算踢人。',
         '报表「今日」流水、输赢按上海自然日切分，与 00:00 日切对齐。',
         '平台账户触及下限时会紧急全站维护，须处理后再点「全部上架」；06:01 不会自动恢复。',
@@ -98,37 +141,17 @@ export class GameOpsScheduler implements OnModuleInit {
 
   /** 上海自然日 yyyy-mm-dd */
   private shanghaiDateKey(d = new Date()): string {
-    return new Intl.DateTimeFormat('en-CA', {
-      timeZone: SH_TZ,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    }).format(d);
-  }
-
-  private shanghaiMinutes(d = new Date()): number {
-    const parts = new Intl.DateTimeFormat('en-GB', {
-      timeZone: SH_TZ,
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-    }).formatToParts(d);
-    const h = Number(parts.find((p) => p.type === 'hour')?.value ?? 0);
-    const m = Number(parts.find((p) => p.type === 'minute')?.value ?? 0);
-    return h * 60 + m;
+    return shanghaiDateKey(d);
   }
 
   /** 临时跳过每日维护窗（.env DISABLE_DAILY_MAINT=1） */
   private dailyMaintDisabled(): boolean {
-    const v = (process.env.DISABLE_DAILY_MAINT || '').trim().toLowerCase();
-    return v === '1' || v === 'true' || v === 'yes';
+    return dailyMaintDisabled();
   }
 
-  /** 是否在 [04:00, 06:00) */
+  /** 是否在 [04:00, 06:01) */
   private inMaintWindow(d = new Date()): boolean {
-    if (this.dailyMaintDisabled()) return false;
-    const mins = this.shanghaiMinutes(d);
-    return mins >= 4 * 60 && mins < 6 * 60;
+    return inDailyMaintWindow(d);
   }
 
   private shanghaiDayStart(d = new Date()): Date {
@@ -238,6 +261,22 @@ export class GameOpsScheduler implements OnModuleInit {
     const dayKey = this.shanghaiDateKey();
     const dayStart = this.shanghaiDayStart();
     try {
+      /* 进程内标志只管自己那台；扩到两台会同时删期号、写两遍日志，取锁失败宁可不跑 */
+      await this.redis.runExclusive(
+        `gamebox:cron:day-cut:${dayKey}`,
+        10 * 60 * 1000,
+        () => this.runDayCut(dayKey, dayStart),
+        { onLockError: 'skip' },
+      );
+    } catch (e) {
+      this.logger.error(`dayCut failed: ${(e as Error).message}`);
+    } finally {
+      this.dayCutting = false;
+    }
+  }
+
+  private async runDayCut(dayKey: string, dayStart: Date) {
+    {
       const lotteryCodes = Object.keys(LOTTERY_INTERVALS);
       const games = await this.prisma.game.findMany({
         where: { code: { in: lotteryCodes } },
@@ -267,10 +306,6 @@ export class GameOpsScheduler implements OnModuleInit {
         lotteryCodes: games.map((g) => g.code),
         note: '期号按上海自然日 MMDD+序号重计；流水/账单按日切统计',
       });
-    } catch (e) {
-      this.logger.error(`dayCut failed: ${(e as Error).message}`);
-    } finally {
-      this.dayCutting = false;
     }
   }
 
@@ -284,6 +319,22 @@ export class GameOpsScheduler implements OnModuleInit {
     if (this.maintBusy) return;
     this.maintBusy = true;
     try {
+      /* 多实例同时进维护会各生成一个 batchId，退出时只认得回其中一个 */
+      await this.redis.runExclusive(
+        `gamebox:cron:maint-start:${this.shanghaiDateKey()}`,
+        10 * 60 * 1000,
+        () => this.runEnterMaintenance(),
+        { onLockError: 'skip' },
+      );
+    } catch (e) {
+      this.logger.error(`daily maint start failed: ${(e as Error).message}`);
+    } finally {
+      this.maintBusy = false;
+    }
+  }
+
+  private async runEnterMaintenance() {
+    {
       const online = await this.prisma.game.findMany({
         where: { status: 'ONLINE' },
         select: { id: true, code: true },
@@ -318,10 +369,6 @@ export class GameOpsScheduler implements OnModuleInit {
         batchId,
         window: GAME_OPS_SCHEDULE.maintWindow,
       });
-    } catch (e) {
-      this.logger.error(`enterDailyMaintenance failed: ${(e as Error).message}`);
-    } finally {
-      this.maintBusy = false;
     }
   }
 
@@ -331,6 +378,26 @@ export class GameOpsScheduler implements OnModuleInit {
     if (this.maintBusy) return;
     this.maintBusy = true;
     try {
+      /*
+       * 这一条刻意保持「取锁失败也跑」，跟进维护窗相反。
+       * 恢复上架是幂等的，多跑一次没有代价；跳过却会让全部游戏一直停在维护中，
+       * 那是比重复执行严重得多的后果。
+       */
+      await this.redis.runExclusive(
+        `gamebox:cron:maint-end:${this.shanghaiDateKey()}`,
+        10 * 60 * 1000,
+        () => this.runExitMaintenance(),
+        { onLockError: 'run' },
+      );
+    } catch (e) {
+      this.logger.error(`daily maint end failed: ${(e as Error).message}`);
+    } finally {
+      this.maintBusy = false;
+    }
+  }
+
+  private async runExitMaintenance() {
+    {
       if (await this.platformEmergency.isEmergencyActive()) {
         this.logger.warn(
           `daily maint end skipped: emergency active (${REDIS_EMERGENCY_MAINT})`,
@@ -368,10 +435,6 @@ export class GameOpsScheduler implements OnModuleInit {
         batchId,
         restored: restored.count,
       });
-    } catch (e) {
-      this.logger.error(`exitDailyMaintenance failed: ${(e as Error).message}`);
-    } finally {
-      this.maintBusy = false;
     }
   }
 
@@ -382,7 +445,7 @@ export class GameOpsScheduler implements OnModuleInit {
   async forceRestoreAllOnline(): Promise<{ restored: number; codes: string[] }> {
     const emergency = await this.platformEmergency.isEmergencyActive();
     if (!emergency && this.inMaintWindow()) {
-      throw new BadRequestException('当前处于每日维护窗（04:00–06:00），请过窗后再全部上架');
+      throw new BadRequestException('当前处于每日维护窗（04:00–06:01），请过窗后再全部上架');
     }
     const stuck = await this.prisma.game.findMany({
       where: {

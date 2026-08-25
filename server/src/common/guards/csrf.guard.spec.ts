@@ -101,6 +101,36 @@ describe('CsrfGuard 认证端点来源校验', () => {
     expect(guard.canActivate(context(request({ headers: {} })))).toBe(true);
   });
 
+  it('开发环境允许 Vite 代理过来的后台 Origin（端口与 Host 不同）', () => {
+    process.env.NODE_ENV = 'development';
+    const req = request({
+      protocol: 'http',
+      host: 'localhost:3000',
+      headers: { origin: 'http://localhost:3001' },
+    });
+    expect(guard.canActivate(context(req))).toBe(true);
+  });
+
+  it('开发环境允许调试包从局域网 IP 登录', () => {
+    process.env.NODE_ENV = 'development';
+    const req = request({
+      protocol: 'http',
+      host: 'localhost:3000',
+      headers: { origin: 'http://192.168.1.16:5173' },
+    });
+    expect(guard.canActivate(context(req))).toBe(true);
+  });
+
+  it('生产环境不放行局域网 IP Origin', () => {
+    process.env.NODE_ENV = 'production';
+    process.env.AUTH_ALLOWED_ORIGINS = 'https://app.example';
+    const req = request({
+      host: 'app.example',
+      headers: { origin: 'http://192.168.1.16:5173' },
+    });
+    expect(() => guard.canActivate(context(req))).toThrow(ForbiddenException);
+  });
+
   it('生产环境只允许显式列出的玩家端与管理端 Origin', () => {
     process.env.NODE_ENV = 'production';
     process.env.AUTH_ALLOWED_ORIGINS =

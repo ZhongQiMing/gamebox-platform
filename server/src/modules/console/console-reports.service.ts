@@ -10,7 +10,10 @@ import {
 } from '../../common/shanghai-range';
 import { csvRow } from '../../common/utils/csv';
 import { ConsoleScopeService, type ConsoleActor } from './console-scope.service';
-import { splitHouseShare } from './share-split.helper';
+import { roleEarning, splitHouseShare } from './share-split.helper';
+import { flowViewFor, flowViewerSide, type FlowViewerSide } from './flow-scope.helper';
+import { keepClosedRoomInPeriodList } from './open-room.where';
+import { ADMIN_ACTION_META } from '../admin/admin-log.labels';
 
 function formatShanghaiDt(d: Date): string {
   const sh = new Date(d.getTime() + SHANGHAI_TZ_OFFSET_MS);
@@ -29,6 +32,140 @@ export class ConsoleReportsService {
     private prisma: PrismaService,
     private scope: ConsoleScopeService,
   ) {}
+
+  /**
+   * 三级账本：每一级只统计「我接到的单」，与 flowViewFor 的 total 同源。
+   *
+   *   代理接到全部（含自己关盘） → agentFly 飞给总代 → flown 飞给平台
+   *
+   * 全站取数只认这一个映射。曾经并存的 reportBetHouse 只有 flown/all 两档、
+   * 分不出总代那一档，会把代理自己关盘的钱算进总代的表，已删除。
+   */
+  private ledgerHouse(side: FlowViewerSide): 'all' | 'flown' | 'agentFly' {
+    if (side === 'PLATFORM') return 'flown';
+    if (side === 'GENERAL') return 'agentFly';
+    return 'all';
+  }
+
+  /**
+   * 玩家上下分按房间归集：代理/客服直接上分走账本，不写充值审核单。
+   * 只认玩家房账上的转入/充值、转出/下分，不含下注派彩回水。
+   */
+  async playerFundByRoom(roomIds: string[], from: Date, to: Date) {
+    type Row = { room_id: string; up_amt: unknown; up_cnt: number; down_amt: unknown; down_cnt: number };
+    const empty = { upAmount: 0, upCount: 0, downAmount: 0, downCount: 0 };
+    const out = new Map<string, typeof empty>();
+    if (!roomIds.length) return out;
+    const rows = await this.prisma.$queryRaw<Row[]>`
+      SELECT
+        a."roomId" AS room_id,
+        COALESCE(SUM(CASE
+          WHEN l.amount > 0 AND l."bizType" IN ('TRANSFER_IN', 'RECHARGE') THEN l.amount
+          ELSE 0 END), 0) AS up_amt,
+        COUNT(*) FILTER (
+          WHERE l.amount > 0 AND l."bizType" IN ('TRANSFER_IN', 'RECHARGE')
+        )::int AS up_cnt,
+        COALESCE(SUM(CASE
+          WHEN l.amount < 0 AND l."bizType" IN ('TRANSFER_OUT', 'WITHDRAW') THEN -l.amount
+          ELSE 0 END), 0) AS down_amt,
+        COUNT(*) FILTER (
+          WHERE l.amount < 0 AND l."bizType" IN ('TRANSFER_OUT', 'WITHDRAW')
+        )::int AS down_cnt
+      FROM "PointsLedger" l
+      JOIN "PointsAccount" a ON a.id = l."accountId"
+      WHERE a."ownerType" = 'PLAYER'
+        AND a."roomId" IN (${Prisma.join(roomIds)})
+        AND l."createdAt" >= ${from}
+        AND l."createdAt" < ${to}
+      GROUP BY a."roomId"
+    `;
+    for (const r of rows) {
+      if (!r.room_id) continue;
+      out.set(r.room_id, {
+        upAmount: asMoney(r.up_amt),
+        upCount: Number(r.up_cnt || 0),
+        downAmount: asMoney(r.down_amt),
+        downCount: Number(r.down_cnt || 0),
+      });
+    }
+    return out;
+  }
+
+  /** 无房间范围时按玩家账本汇总（管理看全站 / 代理看名下玩家） */
+  private async playerFundByPlayers(playerIds: string[] | null, from: Date, to: Date) {
+    type Row = { up_amt: unknown; up_cnt: number; down_amt: unknown; down_cnt: number };
+    const empty = { upAmount: 0, upCount: 0, downAmount: 0, downCount: 0 };
+    const out = new Map<string, typeof empty>();
+    if (playerIds && !playerIds.length) return out;
+    const playerFilter = playerIds
+      ? Prisma.sql`AND a."ownerId" IN (${Prisma.join(playerIds)})`
+      : Prisma.empty;
+    const rows = await this.prisma.$queryRaw<Row[]>`
+      SELECT
+        COALESCE(SUM(CASE
+          WHEN l.amount > 0 AND l."bizType" IN ('TRANSFER_IN', 'RECHARGE') THEN l.amount
+          ELSE 0 END), 0) AS up_amt,
+        COUNT(*) FILTER (
+          WHERE l.amount > 0 AND l."bizType" IN ('TRANSFER_IN', 'RECHARGE')
+        )::int AS up_cnt,
+        COALESCE(SUM(CASE
+          WHEN l.amount < 0 AND l."bizType" IN ('TRANSFER_OUT', 'WITHDRAW') THEN -l.amount
+          ELSE 0 END), 0) AS down_amt,
+        COUNT(*) FILTER (
+          WHERE l.amount < 0 AND l."bizType" IN ('TRANSFER_OUT', 'WITHDRAW')
+        )::int AS down_cnt
+      FROM "PointsLedger" l
+      JOIN "PointsAccount" a ON a.id = l."accountId"
+      WHERE a."ownerType" = 'PLAYER'
+        AND l."createdAt" >= ${from}
+        AND l."createdAt" < ${to}
+        ${playerFilter}
+    `;
+    const r = rows[0];
+    if (r) {
+      out.set('_all', {
+        upAmount: asMoney(r.up_amt),
+        upCount: Number(r.up_cnt || 0),
+        downAmount: asMoney(r.down_amt),
+        downCount: Number(r.down_cnt || 0),
+      });
+    }
+    return out;
+  }
+
+  private sumPlayerFund(rows: Iterable<{ upAmount: number; upCount: number; downAmount: number; downCount: number }>) {
+    let upAmount = 0;
+    let upCount = 0;
+    let downAmount = 0;
+    let downCount = 0;
+    for (const r of rows) {
+      upAmount = asMoney(upAmount + r.upAmount);
+      upCount += r.upCount;
+      downAmount = asMoney(downAmount + r.downAmount);
+      downCount += r.downCount;
+    }
+    return { upAmount, upCount, downAmount, downCount };
+  }
+
+  private flownPrismaFilter() {
+    return {
+      OR: [
+        { payload: { path: ['fly', 'flying'], equals: true } },
+        { payload: { path: ['fly', 'flying'], equals: 'true' } },
+      ],
+    };
+  }
+
+  /**
+   * 三级账本的 Prisma 版过滤（走 Bet 表直查、拿不到 roomBetAgg 的地方用）：
+   * 平台只认飞上来的，总代认代理飞上来的（飞上台 + 自己坐庄），代理认全部。
+   */
+  private ledgerPrismaFilter(side: FlowViewerSide) {
+    if (side === 'AGENT') return null;
+    const flown = this.flownPrismaFilter().OR;
+    if (side === 'PLATFORM') return { OR: flown };
+    return { OR: [...flown, { payload: { path: ['fly', 'sitting'], equals: 'GENERAL' } }] };
+  }
 
   private resolveRange(opts?: { range?: string; from?: string; to?: string }): {
     from: Date;
@@ -66,11 +203,111 @@ export class ConsoleReportsService {
    * 经营 KPI 仅计 WON/LOST；PENDING 另计。
    */
   /**
-   * 已结算注单按房间聚合，供总代账期汇总用。
-   * 与报表、结账共用同一口径，四次周结加起来才等于代理那次月结里平台该得的部分。
+   * 房间列表今日投注：飞上台 / 代理飞盘 / 全部，已结算 + 未开奖分开。
+   * 三方各取自己该看的那一截，盈亏仍只用已开奖。
    */
-  async settledRoomAgg(roomIds: string[], from: Date, to: Date) {
-    const { byRoom } = await this.roomBetAgg(roomIds, from, to, ['WON', 'LOST']);
+  async roomDayHouseAgg(roomIds: string[], from: Date, to: Date) {
+    const empty = { flow: 0, pendingFlow: 0, payout: 0, housePnl: 0, count: 0, players: new Set<string>() };
+    if (!roomIds.length) return new Map<string, { flown: typeof empty; agentFly: typeof empty; all: typeof empty }>();
+    /*
+     * 全站两把尺，各自贯彻，不在同一个字段上混：
+     * - 流水（flow / pendingFlow / count）按**下注时间**，含未开奖 —— 看今天打了多少，要实时
+     * - 盈亏（payout / housePnl）按**开奖时间** —— 输赢开奖才存在，且必须跟结算单对得上
+     * 所以下面已结算那组用 settledAt 取，未开奖那组仍用 createdAt。
+     */
+    const [flownS, flyS, allS, flownP, flyP, allP, flownW, flyW, allW] = await Promise.all([
+      this.roomBetAgg(roomIds, from, to, ['WON', 'LOST'], 'flown'),
+      this.roomBetAgg(roomIds, from, to, ['WON', 'LOST'], 'agentFly'),
+      this.roomBetAgg(roomIds, from, to, ['WON', 'LOST'], 'all'),
+      this.roomBetAgg(roomIds, from, to, ['PENDING'], 'flown'),
+      this.roomBetAgg(roomIds, from, to, ['PENDING'], 'agentFly'),
+      this.roomBetAgg(roomIds, from, to, ['PENDING'], 'all'),
+      this.roomBetAgg(roomIds, from, to, ['WON', 'LOST'], 'flown', 'settledAt'),
+      this.roomBetAgg(roomIds, from, to, ['WON', 'LOST'], 'agentFly', 'settledAt'),
+      this.roomBetAgg(roomIds, from, to, ['WON', 'LOST'], 'all', 'settledAt'),
+    ]);
+    const pack = (
+      s?: { flow: number; payout: number; count: number; players: Set<string> },
+      p?: { flow: number; payout: number; count: number; players: Set<string> },
+      /** 按开奖时间归期的那一份，只用来出盈亏 */
+      w?: { flow: number; payout: number },
+    ) => {
+      const settledFlow = asMoney(s?.flow ?? 0);
+      const pendingFlow = asMoney(p?.flow ?? 0);
+      const drawnFlow = asMoney(w?.flow ?? 0);
+      const payout = asMoney(w?.payout ?? 0);
+      return {
+        flow: asMoney(settledFlow + pendingFlow),
+        pendingFlow,
+        payout,
+        housePnl: asMoney(drawnFlow - payout),
+        count: (s?.count ?? 0) + (p?.count ?? 0),
+        players: new Set<string>([...(s?.players ?? []), ...(p?.players ?? [])]),
+      };
+    };
+    const byRoom = new Map<string, { flown: ReturnType<typeof pack>; agentFly: ReturnType<typeof pack>; all: ReturnType<typeof pack> }>();
+    for (const roomId of roomIds) {
+      byRoom.set(roomId, {
+        flown: pack(flownS.byRoom.get(roomId), flownP.byRoom.get(roomId), flownW.byRoom.get(roomId)),
+        agentFly: pack(flyS.byRoom.get(roomId), flyP.byRoom.get(roomId), flyW.byRoom.get(roomId)),
+        all: pack(allS.byRoom.get(roomId), allP.byRoom.get(roomId), allW.byRoom.get(roomId)),
+      });
+    }
+    return byRoom;
+  }
+
+  /**
+   * 按房间拆飞上台 / 代理飞盘 / 关盘。结账专用。
+   * flown：平台坐庄，总表占成用这个。
+   * agentFly：代理飞上台或飞到总代，总代↔代理结账用这个。
+   * 代理自己坐庄不进上面两本。
+   *
+   * 按**开奖时间**归期：输赢在开奖那一刻才定，派完彩这一期才算完。
+   * 跨点未开奖的注不会卡在这一期，等开完奖自动落进它开奖的那一期。
+   */
+  async settledRoomAggByHouse(roomIds: string[], from: Date, to: Date) {
+    const [flown, agentFly, all] = await Promise.all([
+      this.roomBetAgg(roomIds, from, to, ['WON', 'LOST'], 'flown', 'settledAt'),
+      this.roomBetAgg(roomIds, from, to, ['WON', 'LOST'], 'agentFly', 'settledAt'),
+      this.roomBetAgg(roomIds, from, to, ['WON', 'LOST'], 'all', 'settledAt'),
+    ]);
+    const pick = (agg?: { flow: number; payout: number; count: number }) => {
+      const betFlow = asMoney(agg?.flow ?? 0);
+      const payout = asMoney(agg?.payout ?? 0);
+      return {
+        betFlow,
+        payout,
+        housePnl: asMoney(betFlow - payout),
+        betCount: Number(agg?.count ?? 0),
+      };
+    };
+    const byRoom = new Map<string, {
+      flown: ReturnType<typeof pick>;
+      agentFly: ReturnType<typeof pick>;
+      generalSat: ReturnType<typeof pick>;
+      closed: ReturnType<typeof pick>;
+    }>();
+    for (const roomId of roomIds) {
+      const f = pick(flown.byRoom.get(roomId));
+      const af = pick(agentFly.byRoom.get(roomId));
+      const a = pick(all.byRoom.get(roomId));
+      byRoom.set(roomId, {
+        flown: f,
+        agentFly: af,
+        generalSat: {
+          betFlow: asMoney(af.betFlow - f.betFlow),
+          payout: asMoney(af.payout - f.payout),
+          housePnl: asMoney(af.housePnl - f.housePnl),
+          betCount: af.betCount - f.betCount,
+        },
+        closed: {
+          betFlow: asMoney(a.betFlow - f.betFlow),
+          payout: asMoney(a.payout - f.payout),
+          housePnl: asMoney(a.housePnl - f.housePnl),
+          betCount: a.betCount - f.betCount,
+        },
+      });
+    }
     return byRoom;
   }
 
@@ -79,17 +316,28 @@ export class ConsoleReportsService {
     from: Date,
     to: Date,
     statuses: Array<'WON' | 'LOST' | 'PENDING'>,
+    /** flown=平台坐庄；agentFly=代理飞盘（上台或飞到总代）；all=含代理自己坐庄 */
+    house: 'all' | 'flown' | 'agentFly' = 'all',
+    /**
+     * 注单归到哪一期：
+     * - createdAt：按下注时间（经营看板用，「今天打了多少」）
+     * - settledAt：按开奖时间（结账用，输赢在开奖那刻才定，派完彩这一期才算完）
+     */
+    timeField: 'createdAt' | 'settledAt' = 'createdAt',
   ): Promise<{
     byRoom: Map<string, { flow: number; payout: number; count: number; players: Set<string> }>;
     byGame: Array<{ gameId: string; flow: number; payout: number; count: number }>;
     total: { flow: number; payout: number; count: number };
     activePlayers: number;
+    /** 注单没写房间号，认不到归属：不进任何一间房，单列出来供核对 */
+    unattributed: { flow: number; payout: number; count: number };
   }> {
     const empty = {
       byRoom: new Map<string, { flow: number; payout: number; count: number; players: Set<string> }>(),
       byGame: [] as Array<{ gameId: string; flow: number; payout: number; count: number }>,
       total: { flow: 0, payout: 0, count: 0 },
       activePlayers: 0,
+      unattributed: { flow: 0, payout: 0, count: 0 },
     };
     if (!roomIds.length || !statuses.length) return empty;
 
@@ -110,35 +358,45 @@ export class ConsoleReportsService {
 
     const statusList = Prisma.join(statuses);
     const roomList = Prisma.join(roomIds);
+    /* fly.flying 由下注时写入；缺字段的历史单不算飞盘 */
+    const houseFilter =
+      house === 'flown'
+        ? Prisma.sql`AND b.payload->'fly'->>'flying' = 'true'`
+        : house === 'agentFly'
+          ? Prisma.sql`AND (
+              b.payload->'fly'->>'flying' = 'true'
+              OR b.payload->'fly'->>'sitting' = 'GENERAL'
+            )`
+          : Prisma.empty;
 
-    const [roomRows, gameRows, activeRows] = await Promise.all([
+    /*
+     * 归属只认注单自带的 fly.roomId，和结账口径完全一致。
+     * 早先这里在缺字段时回退到「该玩家最近一次通过审核的房」，
+     * 结果是：老注单在报表里有、在账单里没有；玩家换房还会改动历史报表。
+     * 认不到房的注单改为单独归到 unattributed，明面上摆出来。
+     */
+    /*
+     * 归期时间列：结账用开奖时间，经营用下注时间。
+     * 未开奖的注 settledAt 为空，按开奖时间取数时天然落不进任何账期，
+     * 等开完奖自动进那一期——「派完彩这一期才算完」。
+     */
+    const timeCol =
+      timeField === 'settledAt' ? Prisma.sql`b."settledAt"` : Prisma.sql`b."createdAt"`;
+
+    const [roomRows, gameRows, activeRows, orphanRows] = await Promise.all([
       this.prisma.$queryRaw<RoomRow[]>`
         SELECT
-          COALESCE(NULLIF(b.payload->'fly'->>'roomId', ''), m."roomId") AS room_id,
+          NULLIF(b.payload->'fly'->>'roomId', '') AS room_id,
           b."playerId" AS player_id,
           COALESCE(SUM(b.amount), 0) AS flow,
           COALESCE(SUM(b.payout), 0) AS payout,
           COUNT(*)::int AS cnt
         FROM "Bet" b
-        LEFT JOIN LATERAL (
-          SELECT rm."roomId"
-          FROM "RoomMember" rm
-          WHERE rm."playerId" = b."playerId"
-            AND rm.status = 'APPROVED'
-            AND rm."roomId" IN (${roomList})
-          ORDER BY rm."updatedAt" DESC NULLS LAST
-          LIMIT 1
-        ) m ON true
-        WHERE b."createdAt" >= ${from}
-          AND b."createdAt" < ${to}
+        WHERE ${timeCol} >= ${from}
+          AND ${timeCol} < ${to}
           AND b.status::text IN (${statusList})
-          AND (
-            NULLIF(b.payload->'fly'->>'roomId', '') IN (${roomList})
-            OR (
-              NULLIF(b.payload->'fly'->>'roomId', '') IS NULL
-              AND m."roomId" IS NOT NULL
-            )
-          )
+          ${houseFilter}
+          AND NULLIF(b.payload->'fly'->>'roomId', '') IN (${roomList})
         GROUP BY 1, 2
       `,
       this.prisma.$queryRaw<GameRow[]>`
@@ -148,25 +406,11 @@ export class ConsoleReportsService {
           COALESCE(SUM(b.payout), 0) AS payout,
           COUNT(*)::int AS cnt
         FROM "Bet" b
-        LEFT JOIN LATERAL (
-          SELECT rm."roomId"
-          FROM "RoomMember" rm
-          WHERE rm."playerId" = b."playerId"
-            AND rm.status = 'APPROVED'
-            AND rm."roomId" IN (${roomList})
-          ORDER BY rm."updatedAt" DESC NULLS LAST
-          LIMIT 1
-        ) m ON true
-        WHERE b."createdAt" >= ${from}
-          AND b."createdAt" < ${to}
+        WHERE ${timeCol} >= ${from}
+          AND ${timeCol} < ${to}
           AND b.status::text IN (${statusList})
-          AND (
-            NULLIF(b.payload->'fly'->>'roomId', '') IN (${roomList})
-            OR (
-              NULLIF(b.payload->'fly'->>'roomId', '') IS NULL
-              AND m."roomId" IS NOT NULL
-            )
-          )
+          ${houseFilter}
+          AND NULLIF(b.payload->'fly'->>'roomId', '') IN (${roomList})
         GROUP BY b."gameId"
         ORDER BY SUM(b.amount) DESC NULLS LAST
         LIMIT 20
@@ -174,24 +418,29 @@ export class ConsoleReportsService {
       this.prisma.$queryRaw<ActiveRow[]>`
         SELECT COUNT(DISTINCT b."playerId")::int AS cnt
         FROM "Bet" b
-        LEFT JOIN LATERAL (
-          SELECT rm."roomId"
-          FROM "RoomMember" rm
-          WHERE rm."playerId" = b."playerId"
-            AND rm.status = 'APPROVED'
-            AND rm."roomId" IN (${roomList})
-          ORDER BY rm."updatedAt" DESC NULLS LAST
-          LIMIT 1
-        ) m ON true
-        WHERE b."createdAt" >= ${from}
-          AND b."createdAt" < ${to}
+        WHERE ${timeCol} >= ${from}
+          AND ${timeCol} < ${to}
           AND b.status::text IN (${statusList})
-          AND (
-            NULLIF(b.payload->'fly'->>'roomId', '') IN (${roomList})
-            OR (
-              NULLIF(b.payload->'fly'->>'roomId', '') IS NULL
-              AND m."roomId" IS NOT NULL
-            )
+          ${houseFilter}
+          AND NULLIF(b.payload->'fly'->>'roomId', '') IN (${roomList})
+      `,
+      this.prisma.$queryRaw<{ flow: unknown; payout: unknown; cnt: number }[]>`
+        SELECT
+          COALESCE(SUM(b.amount), 0) AS flow,
+          COALESCE(SUM(b.payout), 0) AS payout,
+          COUNT(*)::int AS cnt
+        FROM "Bet" b
+        WHERE ${timeCol} >= ${from}
+          AND ${timeCol} < ${to}
+          AND b.status::text IN (${statusList})
+          ${houseFilter}
+          AND NULLIF(b.payload->'fly'->>'roomId', '') IS NULL
+          AND EXISTS (
+            SELECT 1
+            FROM "RoomMember" rm
+            WHERE rm."playerId" = b."playerId"
+              AND rm.status = 'APPROVED'
+              AND rm."roomId" IN (${roomList})
           )
       `,
     ]);
@@ -229,6 +478,11 @@ export class ConsoleReportsService {
       })),
       total: { flow, payout, count },
       activePlayers: Number(activeRows[0]?.cnt) || 0,
+      unattributed: {
+        flow: asMoney(orphanRows[0]?.flow ?? 0),
+        payout: asMoney(orphanRows[0]?.payout ?? 0),
+        count: Number(orphanRows[0]?.cnt) || 0,
+      },
     };
   }
 
@@ -264,6 +518,9 @@ export class ConsoleReportsService {
     });
 
     const grantedRoomIds = explicitRoomIds ?? (await this.scope.grantedRoomIds(actor));
+    /* 取数口径与下面的占成拆分共用同一个身份判定，避免两处判得不一样 */
+    const generalSide = await this.scope.isGeneralSide(actor);
+    const isPlatformSide = actor.role === 'ADMIN' || actor.role === 'BRANCH';
 
     /**
      * 注单归因房间范围：
@@ -294,6 +551,10 @@ export class ConsoleReportsService {
           housePnl: 0,
           playerPnl: 0,
           betCount: 0,
+          flownBetFlow: 0,
+          flownPayout: 0,
+          flownHousePnl: 0,
+          flownBetCount: 0,
           upAmount: 0,
           upCount: 0,
           downAmount: 0,
@@ -339,11 +600,16 @@ export class ConsoleReportsService {
 
     let betFlow = 0;
     let payout = 0;
+    /** 按开奖时间归期的投注额，只用来配 payout 出盈亏 */
+    let drawnFlow = 0;
     let betCount = 0;
     /* 下面 if/else 两个分支都会赋值，这里不给初值避免掩盖漏赋值 */
     let pendingBetFlow: number;
     let pendingBetCount: number;
     let activePlayers: number;
+    /* 注单没写房间号：不摊进任何一间房，单独摆出来提示排查 */
+    let unattributedBetFlow = 0;
+    let unattributedBetCount = 0;
     let byGame: Array<{
       gameCode: string;
       gameName: string;
@@ -354,16 +620,24 @@ export class ConsoleReportsService {
     }>;
 
     if (roomScopedIds) {
-      const [settled, pending] = await Promise.all([
-        this.roomBetAgg(roomScopedIds, from, to, ['WON', 'LOST']),
-        this.roomBetAgg(roomScopedIds, from, to, ['PENDING']),
+      const house = this.ledgerHouse(
+        flowViewerSide({ isPlatformSide, isGeneralSide: generalSide }),
+      );
+      /* 流水按下注时间（含未开奖），盈亏按开奖时间——与 roomDayHouseAgg 同一套规矩 */
+      const [settled, pending, drawn] = await Promise.all([
+        this.roomBetAgg(roomScopedIds, from, to, ['WON', 'LOST'], house),
+        this.roomBetAgg(roomScopedIds, from, to, ['PENDING'], house),
+        this.roomBetAgg(roomScopedIds, from, to, ['WON', 'LOST'], house, 'settledAt'),
       ]);
       betFlow = settled.total.flow;
-      payout = settled.total.payout;
+      payout = drawn.total.payout;
+      drawnFlow = drawn.total.flow;
       betCount = settled.total.count;
       pendingBetFlow = pending.total.flow;
       pendingBetCount = pending.total.count;
       activePlayers = settled.activePlayers;
+      unattributedBetFlow = asMoney(settled.unattributed.flow + pending.unattributed.flow);
+      unattributedBetCount = settled.unattributed.count + pending.unattributed.count;
       const gameIds = settled.byGame.map((g) => g.gameId);
       const games = gameIds.length
         ? await this.prisma.game.findMany({
@@ -384,21 +658,34 @@ export class ConsoleReportsService {
         };
       });
     } else {
+      /* 与 roomScoped 分支同一套账本口径，总代不能再落到「全部」 */
+      const flownOnly = this.ledgerPrismaFilter(
+        flowViewerSide({ isPlatformSide, isGeneralSide: generalSide }),
+      );
       const settledWhere: Record<string, unknown> = {
         createdAt: { gte: from, lt: to },
         status: { in: ['WON', 'LOST'] },
+        ...(flownOnly ? { AND: [flownOnly] } : {}),
       };
       const pendingWhere: Record<string, unknown> = {
         createdAt: { gte: from, lt: to },
         status: 'PENDING',
+        ...(flownOnly ? { AND: [flownOnly] } : {}),
+      };
+      /* 盈亏那一份按开奖时间归期，与 roomScoped 分支同一套规矩 */
+      const drawnWhere: Record<string, unknown> = {
+        settledAt: { gte: from, lt: to },
+        status: { in: ['WON', 'LOST'] },
+        ...(flownOnly ? { AND: [flownOnly] } : {}),
       };
       if (playerIds) {
         const filter = { in: playerIds.length ? playerIds : ['__none__'] };
         settledWhere['playerId'] = filter;
         pendingWhere['playerId'] = filter;
+        drawnWhere['playerId'] = filter;
       }
 
-      const [bets, pendingAgg, activeRaw, byGameRaw] = await Promise.all([
+      const [bets, pendingAgg, activeRaw, byGameRaw, drawnAgg] = await Promise.all([
         this.prisma.bet.groupBy({
           by: ['status'],
           where: settledWhere,
@@ -423,13 +710,18 @@ export class ConsoleReportsService {
           orderBy: { _sum: { amount: 'desc' } },
           take: 20,
         }),
+        this.prisma.bet.aggregate({
+          where: drawnWhere,
+          _sum: { amount: true, payout: true },
+        }),
       ]);
 
       for (const b of bets) {
         betFlow += asMoney(b._sum.amount ?? 0);
-        payout += asMoney(b._sum.payout ?? 0);
         betCount += b._count;
       }
+      drawnFlow = asMoney(drawnAgg._sum.amount ?? 0);
+      payout = asMoney(drawnAgg._sum.payout ?? 0);
       pendingBetFlow = asMoney(pendingAgg._sum.amount ?? 0);
       pendingBetCount = pendingAgg._count;
       activePlayers = activeRaw.length;
@@ -458,26 +750,14 @@ export class ConsoleReportsService {
       });
     }
 
-    const housePnl = betFlow - payout; // 庄家视角
+    /* 盈亏两边都按开奖时间，别拿下注时间的流水去减开奖时间的派彩 */
+    const housePnl = asMoney(drawnFlow - payout);
 
-    const upWhere: Record<string, unknown> = {
-      type: 'UP',
-      status: 'APPROVED',
-      reviewedAt: { gte: from, lt: to },
-    };
-    const downWhere: Record<string, unknown> = {
-      type: 'DOWN',
-      status: 'APPROVED',
-      reviewedAt: { gte: from, lt: to },
-    };
-    if (playerIds) {
-      upWhere['playerId'] = { in: playerIds.length ? playerIds : ['__none__'] };
-      downWhere['playerId'] = { in: playerIds.length ? playerIds : ['__none__'] };
-    }
-
-    const [upAgg, downAgg, pendingUp, pendingDown, commissionAgg] = await Promise.all([
-      this.prisma.rechargeOrder.aggregate({ where: upWhere, _sum: { amount: true }, _count: true }),
-      this.prisma.rechargeOrder.aggregate({ where: downWhere, _sum: { amount: true }, _count: true }),
+    const fundRooms = roomScopedIds ?? [];
+    const [fundByRoom, pendingUp, pendingDown, commissionAgg] = await Promise.all([
+      fundRooms.length
+        ? this.playerFundByRoom(fundRooms, from, to)
+        : this.playerFundByPlayers(playerIds, from, to),
       this.prisma.rechargeOrder.count({
         where: {
           type: 'UP',
@@ -506,57 +786,128 @@ export class ConsoleReportsService {
           ? await this.prisma.room.count()
           : grantedRoomIds.length;
 
-    const upAmount = asMoney(upAgg._sum.amount ?? 0);
-    const downAmount = asMoney(downAgg._sum.amount ?? 0);
+    const fund = this.sumPlayerFund(fundByRoom.values());
+    const upAmount = fund.upAmount;
+    const downAmount = fund.downAmount;
     const playerPnl = payout - betFlow;
     const commissionAmount = asMoney(commissionAgg._sum.amount ?? 0);
 
     /*
-     * 占成拆分：
+     * 占成拆分（只算飞盘，关盘自负不进）：
      * - 管理/总监看平台那份（100% − 总代成数）
      * - 总代看自己的成数差（总代成数 − 代理成数），不是整房盈亏，否则数字比实收大一截
-     * - 代理端仍按庄家盈亏口径
+     * - 代理端按整房庄家盈亏，并扣掉挂靠佣金——那笔确实是他自己出的
      */
     let platformShareAmount = asMoney(housePnl);
     let netPnl = asMoney(housePnl - commissionAmount);
-    const isPlatformSide = actor.role === 'ADMIN' || actor.role === 'BRANCH';
-    if (isPlatformSide || actor.role === 'GENERAL') {
-      const shareRoomIds =
-        roomScopedIds ??
-        (grantedRoomIds === null
-          ? (
-              await this.prisma.room.findMany({
-                select: { id: true },
-                take: 50_000,
-              })
-            ).map((r) => r.id)
-          : grantedRoomIds);
-      if (shareRoomIds.length) {
-        const [shareRooms, settledShare] = await Promise.all([
-          this.prisma.room.findMany({
-            where: { id: { in: shareRoomIds } },
-            select: { id: true, agentShareRate: true, generalAgent: { select: { shareRate: true } } },
-          }),
-          this.roomBetAgg(shareRoomIds, from, to, ['WON', 'LOST']),
-        ]);
-        let share = 0;
-        for (const room of shareRooms) {
-          const agg = settledShare.byRoom.get(room.id);
-          const roomHouse = asMoney((agg?.flow ?? 0) - (agg?.payout ?? 0));
-          const split = splitHouseShare(
-            roomHouse,
-            Number(room.agentShareRate) || 0,
-            room.generalAgent ? Number(room.generalAgent.shareRate) || 0 : null,
-          );
-          share = asMoney(
-            share + (isPlatformSide ? split.platformShareAmount : split.generalShareAmount),
-          );
-        }
-        platformShareAmount = asMoney(share);
-      } else if (!isPlatformSide) {
-        platformShareAmount = 0;
-      }
-      netPnl = asMoney(platformShareAmount - commissionAmount);
+
+    const shareRoomIds =
+      roomScopedIds ??
+      (grantedRoomIds === null
+        ? (
+            await this.prisma.room.findMany({
+              select: { id: true },
+              take: 50_000,
+            })
+          ).map((r) => r.id)
+        : grantedRoomIds);
+
+    /*
+     * 两套口径分开取，别混：
+     * - 结账口径（flownShare / agentFlyShare）按开奖时间，跟账单一致；派完彩才算这一期。
+     * - 经营口径（带 Live 后缀）按下注时间且含未开奖，跟房间列表「今日流水」一致。
+     */
+    const [
+      flownLiveAgg,
+      agentFlyLiveAgg,
+      flownPending,
+      agentFlyPending,
+      flownShare,
+      agentFlyShare,
+      allShare,
+    ] = shareRoomIds.length
+      ? await Promise.all([
+          this.roomBetAgg(shareRoomIds, from, to, ['WON', 'LOST'], 'flown'),
+          this.roomBetAgg(shareRoomIds, from, to, ['WON', 'LOST'], 'agentFly'),
+          this.roomBetAgg(shareRoomIds, from, to, ['PENDING'], 'flown'),
+          this.roomBetAgg(shareRoomIds, from, to, ['PENDING'], 'agentFly'),
+          this.roomBetAgg(shareRoomIds, from, to, ['WON', 'LOST'], 'flown', 'settledAt'),
+          this.roomBetAgg(shareRoomIds, from, to, ['WON', 'LOST'], 'agentFly', 'settledAt'),
+          /* 代理自己关盘那截 = all − agentFly，算代理净赚要用 */
+          this.roomBetAgg(shareRoomIds, from, to, ['WON', 'LOST'], 'all', 'settledAt'),
+        ])
+      : [null, null, null, null, null, null, null];
+    const flownBetFlow = asMoney(flownShare?.total.flow ?? 0);
+    const flownPayout = asMoney(flownShare?.total.payout ?? 0);
+    const flownHousePnl = asMoney(flownBetFlow - flownPayout);
+    const flownBetCount = Number(flownShare?.total.count ?? 0);
+    const agentFlyBetFlow = asMoney(agentFlyShare?.total.flow ?? 0);
+    const agentFlyPayout = asMoney(agentFlyShare?.total.payout ?? 0);
+    const agentFlyHousePnl = asMoney(agentFlyBetFlow - agentFlyPayout);
+    const flownBetFlowLive = asMoney(
+      asMoney(flownLiveAgg?.total.flow ?? 0) + asMoney(flownPending?.total.flow ?? 0),
+    );
+    const agentFlyBetFlowLive = asMoney(
+      asMoney(agentFlyLiveAgg?.total.flow ?? 0) + asMoney(agentFlyPending?.total.flow ?? 0),
+    );
+    const allBetFlowLive = asMoney(betFlow + pendingBetFlow);
+    /* 三方口径只有 flowViewFor 一个出处，页面与单测共用 */
+    const closedBetFlow = flowViewFor(
+      flowViewerSide({ isPlatformSide, isGeneralSide: generalSide }),
+      { flown: flownBetFlowLive, agentFly: agentFlyBetFlowLive, all: allBetFlowLive },
+    ).closed;
+
+    /*
+     * 三方净赚同一个出处：roleEarning。
+     * 每个角色只认「自己坐庄那截 + 自己分到那份」，下家关盘的钱不进上家的账，
+     * 三方净赚相加恒等于三种坐庄的输赢总和（有单测守着）。
+     */
+    const viewerSide = flowViewerSide({ isPlatformSide, isGeneralSide: generalSide });
+    let satHousePnl = 0;
+    let myShareAmount = 0;
+    let myNetEarning = 0;
+    if (flownShare && agentFlyShare && allShare) {
+      const shareRooms = await this.prisma.room.findMany({
+        where: { id: { in: shareRoomIds } },
+        select: {
+          id: true,
+          agentShareRate: true,
+          generalAgent: { select: { shareRate: true } },
+        },
+      });
+      const houseOf = (
+        agg?: { flow: number; payout: number },
+      ) => asMoney(asMoney(agg?.flow ?? 0) - asMoney(agg?.payout ?? 0));
+      const earning = roleEarning(
+        viewerSide,
+        shareRooms.map((room) => {
+          const flownPnl = houseOf(flownShare.byRoom.get(room.id));
+          const agentFlyPnl = houseOf(agentFlyShare.byRoom.get(room.id));
+          const allPnl = houseOf(allShare.byRoom.get(room.id));
+          return {
+            flownHousePnl: flownPnl,
+            generalSatHousePnl: asMoney(agentFlyPnl - flownPnl),
+            agentSatHousePnl: asMoney(allPnl - agentFlyPnl),
+            agentShareRate: Number(room.agentShareRate) || 0,
+            generalShareRate: room.generalAgent
+              ? Number(room.generalAgent.shareRate) || 0
+              : null,
+          };
+        }),
+        commissionAmount,
+      );
+      satHousePnl = earning.satHousePnl;
+      myShareAmount = earning.myShareAmount;
+      myNetEarning = earning.netEarning;
+    }
+
+    if (isPlatformSide || generalSide) {
+      platformShareAmount = myShareAmount;
+      /*
+       * 挂靠佣金由房间代理自己出，平台一分没掏，所以不从平台/总代这份里扣。
+       * 它仍单独作为「代理支出」展示，见 commissionAmount。
+       */
+      netPnl = asMoney(platformShareAmount);
     }
 
     return {
@@ -567,25 +918,48 @@ export class ConsoleReportsService {
       housePnl,
       playerPnl,
       betCount,
+      /** 平台坐庄部分（占成基数）：关盘由代理/总代自负，不含在内 */
+      flownBetFlow,
+      flownPayout,
+      flownHousePnl,
+      flownBetCount,
+      agentFlyBetFlow,
+      /** 代理飞盘（上台 + 飞到总代）：房间结算单的口径 */
+      agentFlyPayout,
+      agentFlyHousePnl,
+      /** 经营展示：已结 + 未开奖，跟房间列表今日流水对齐 */
+      flownBetFlowLive,
+      agentFlyBetFlowLive,
+      closedBetFlow,
       upAmount,
-      upCount: upAgg._count,
+      upCount: fund.upCount,
       downAmount,
-      downCount: downAgg._count,
+      downCount: fund.downCount,
       pendingUp,
       pendingDown,
       /** 未结算注单（不计入流水/盈亏 KPI） */
       pendingBetFlow,
       pendingBetCount,
+      /** 注单缺房间号，报表与账单都不认；>0 说明有单需要排查 */
+      unattributedBetFlow,
+      unattributedBetCount,
       activePlayers,
       playerCount: playerIds?.length ?? null,
       commissionAmount,
       commissionCount: commissionAgg._count,
       /** 管理/总监=平台那份；总代=自己的成数差；代理=整房庄家盈亏 */
       platformShareAmount,
+      /* ── 三方统一口径：工作台/报表的「我的」那几格都读这三个 ── */
+      /** 我自己坐庄那部分的毛输赢 */
+      satHousePnl,
+      /** 我分到的那份：平台=平台占成；总代=成数差+坐庄留存；代理=飞出去部分的占成 */
+      myShareAmount,
+      /** 我今日净赚：代理还要再扣挂靠佣金 */
+      myNetEarning,
       shareBasis:
         actor.role === 'ADMIN' || actor.role === 'BRANCH'
           ? ('PLATFORM' as const)
-          : actor.role === 'GENERAL'
+          : generalSide
             ? ('GENERAL_DIFF' as const)
             : ('HOUSE' as const),
       /** 资金净变动 ≈ 上分 - 下分 + 玩家盈亏 */
@@ -631,6 +1005,20 @@ export class ConsoleReportsService {
           WHERE g.id = b."gameId" AND g.code = ${gameCode}
         )`
       : Prisma.empty;
+    /* 三级账本：总代只看代理飞上来的，别把代理自己关盘的注单也列出来 */
+    const betsSide = flowViewerSide({
+      isPlatformSide: actor.role === 'ADMIN' || actor.role === 'BRANCH',
+      isGeneralSide: await this.scope.isGeneralSide(actor),
+    });
+    const houseFilter =
+      betsSide === 'PLATFORM'
+        ? Prisma.sql`AND b.payload->'fly'->>'flying' = 'true'`
+        : betsSide === 'GENERAL'
+          ? Prisma.sql`AND (
+              b.payload->'fly'->>'flying' = 'true'
+              OR b.payload->'fly'->>'sitting' = 'GENERAL'
+            )`
+          : Prisma.empty;
 
     type BetRow = {
       id: string;
@@ -645,30 +1033,22 @@ export class ConsoleReportsService {
       settled_at: Date | null;
     };
 
+    /*
+     * 归属与状态都跟聚合、结算对齐：只认注单自带的 fly.roomId，且排除已取消。
+     * 早先这里对缺 roomId 的单用 RoomMember 兜底、又不过滤 CANCELLED，
+     * 于是同一间房的「注单明细」比「流水」多出一截，对账时永远差一点。
+     */
     const [countRows, rows] = await Promise.all([
       this.prisma.$queryRaw<Array<{ cnt: number }>>`
         SELECT COUNT(*)::int AS cnt
         FROM "Bet" b
-        LEFT JOIN LATERAL (
-          SELECT rm."roomId"
-          FROM "RoomMember" rm
-          WHERE rm."playerId" = b."playerId"
-            AND rm.status = 'APPROVED'
-            AND rm."roomId" = ${roomId}
-          ORDER BY rm."updatedAt" DESC NULLS LAST
-          LIMIT 1
-        ) m ON true
         WHERE b."createdAt" >= ${from}
           AND b."createdAt" < ${to}
-          AND (
-            NULLIF(b.payload->'fly'->>'roomId', '') = ${roomId}
-            OR (
-              NULLIF(b.payload->'fly'->>'roomId', '') IS NULL
-              AND m."roomId" IS NOT NULL
-            )
-          )
+          AND b.status <> 'CANCELLED'
+          AND NULLIF(b.payload->'fly'->>'roomId', '') = ${roomId}
           ${playerFilter}
           ${gameFilter}
+          ${houseFilter}
       `,
       this.prisma.$queryRaw<BetRow[]>`
         SELECT
@@ -683,26 +1063,13 @@ export class ConsoleReportsService {
           b."createdAt" AS created_at,
           b."settledAt" AS settled_at
         FROM "Bet" b
-        LEFT JOIN LATERAL (
-          SELECT rm."roomId"
-          FROM "RoomMember" rm
-          WHERE rm."playerId" = b."playerId"
-            AND rm.status = 'APPROVED'
-            AND rm."roomId" = ${roomId}
-          ORDER BY rm."updatedAt" DESC NULLS LAST
-          LIMIT 1
-        ) m ON true
         WHERE b."createdAt" >= ${from}
           AND b."createdAt" < ${to}
-          AND (
-            NULLIF(b.payload->'fly'->>'roomId', '') = ${roomId}
-            OR (
-              NULLIF(b.payload->'fly'->>'roomId', '') IS NULL
-              AND m."roomId" IS NOT NULL
-            )
-          )
+          AND b.status <> 'CANCELLED'
+          AND NULLIF(b.payload->'fly'->>'roomId', '') = ${roomId}
           ${playerFilter}
           ${gameFilter}
+          ${houseFilter}
         ORDER BY b."createdAt" DESC
         LIMIT ${pageSize} OFFSET ${offset}
       `,
@@ -802,6 +1169,8 @@ export class ConsoleReportsService {
             user: { select: { nickname: true, username: true } },
           },
         },
+        /* 挂了总代就要三段拆，否则本表的平台占成会把成数差算进平台，与 summary 对不上 */
+        generalAgent: { select: { shareRate: true } },
       },
       orderBy: { roomNo: 'asc' },
     });
@@ -820,36 +1189,22 @@ export class ConsoleReportsService {
     }
 
     const playerIdList = [...allPlayerIds];
-    const playerFilter = { in: playerIdList.length ? playerIdList : ['__none__'] };
     const playerToRoom = new Map<string, string>();
     for (const m of members) {
       if (!playerToRoom.has(m.playerId)) playerToRoom.set(m.playerId, m.roomId);
     }
 
-    const [settledBets, ups, downs, commissions] = await Promise.all([
-      this.roomBetAgg(roomIds, from, to, ['WON', 'LOST']),
-      this.prisma.rechargeOrder.groupBy({
-        by: ['playerId'],
-        where: {
-          type: 'UP',
-          status: 'APPROVED',
-          reviewedAt: { gte: from, lt: to },
-          playerId: playerFilter,
-        },
-        _sum: { amount: true },
-        _count: true,
-      }),
-      this.prisma.rechargeOrder.groupBy({
-        by: ['playerId'],
-        where: {
-          type: 'DOWN',
-          status: 'APPROVED',
-          reviewedAt: { gte: from, lt: to },
-          playerId: playerFilter,
-        },
-        _sum: { amount: true },
-        _count: true,
-      }),
+    const generalSide = await this.scope.isGeneralSide(actor);
+    const byRoomSide = flowViewerSide({
+      isPlatformSide: actor.role === 'ADMIN' || actor.role === 'BRANCH',
+      isGeneralSide: generalSide,
+    });
+    const [dayHouse, flownBets, fundByRoom, commissions] = await Promise.all([
+      /* 经营展示：按下注时间、含未开奖 */
+      this.roomDayHouseAgg(roomIds, from, to),
+      /* 占成基数：按开奖时间，跟结算单同一把尺 */
+      this.roomBetAgg(roomIds, from, to, ['WON', 'LOST'], 'flown', 'settledAt'),
+      this.playerFundByRoom(roomIds, from, to),
       // 挂靠佣金按产生流水的玩家归属房间（代理支出给玩家推荐人）
       playerIdList.length
         ? this.prisma.commissionRecord.groupBy({
@@ -864,13 +1219,6 @@ export class ConsoleReportsService {
           })
         : Promise.resolve([] as { sourceUserId: string; _sum: { amount: unknown }; _count: number }[]),
     ]);
-
-    const upByPlayer = new Map(
-      ups.map((u) => [u.playerId, { amount: asMoney(u._sum.amount ?? 0), count: u._count }]),
-    );
-    const downByPlayer = new Map(
-      downs.map((d) => [d.playerId, { amount: asMoney(d._sum.amount ?? 0), count: d._count }]),
-    );
     const commissionByRoom = new Map<string, { amount: number; count: number }>();
     for (const c of commissions) {
       const rid = playerToRoom.get(c.sourceUserId);
@@ -883,33 +1231,42 @@ export class ConsoleReportsService {
 
     const list = rooms.map((room) => {
       const pids = roomPlayers.get(room.id) ?? [];
-      const betAgg = settledBets.byRoom.get(room.id);
-      const betFlow = betAgg?.flow ?? 0;
-      const payout = betAgg?.payout ?? 0;
-      const betCount = betAgg?.count ?? 0;
-      let upAmount = 0;
-      let upCount = 0;
-      let downAmount = 0;
-      let downCount = 0;
-      for (const pid of pids) {
-        const u = upByPlayer.get(pid);
-        if (u) {
-          upAmount += u.amount;
-          upCount += u.count;
-        }
-        const d = downByPlayer.get(pid);
-        if (d) {
-          downAmount += d.amount;
-          downCount += d.count;
-        }
-      }
-      upAmount = asMoney(upAmount);
-      downAmount = asMoney(downAmount);
-      const housePnl = asMoney(betFlow - payout);
+      const houses = dayHouse.get(room.id);
+      /* 与 view.total 同一口径：总代只统计代理飞上来的，代理自己关盘的不算进来 */
+      const pick = houses?.[this.ledgerHouse(byRoomSide)];
+      const betFlow = asMoney((pick?.flow ?? 0) - (pick?.pendingFlow ?? 0));
+      const pendingBetFlow = asMoney(pick?.pendingFlow ?? 0);
+      const payout = asMoney(pick?.payout ?? 0);
+      const betCount = pick?.count ?? 0;
+      /* 三方口径只有 flowViewFor 一个出处，页面与单测共用 */
+      const view = flowViewFor(
+        byRoomSide,
+        {
+          flown: asMoney(houses?.flown.flow ?? 0),
+          agentFly: asMoney(houses?.agentFly.flow ?? 0),
+          all: asMoney(houses?.all.flow ?? 0),
+        },
+      );
+      const flownBetFlow = view.flying;
+      const closedBetFlow = view.closed;
+      const fund = fundByRoom.get(room.id) ?? { upAmount: 0, upCount: 0, downAmount: 0, downCount: 0 };
+      const upAmount = fund.upAmount;
+      const upCount = fund.upCount;
+      const downAmount = fund.downAmount;
+      const downCount = fund.downCount;
+      const housePnl = asMoney(pick?.housePnl ?? betFlow - payout);
       const playerPnl = asMoney(payout - betFlow);
+      const flownAgg = flownBets.byRoom.get(room.id);
+      const flownHousePnl = asMoney(
+        asMoney(flownAgg?.flow ?? 0) - asMoney(flownAgg?.payout ?? 0),
+      );
+      /* 与 summary()/结算单同一个拆分函数，避免同一间房在两张表上占成对不上 */
       const agentShareRate = Math.min(1, Math.max(0, Number(room.agentShareRate) || 0));
-      const agentShareAmount = asMoney(housePnl * agentShareRate);
-      const platformShareAmount = asMoney(housePnl - agentShareAmount);
+      const { agentShareAmount, generalShareAmount, platformShareAmount } = splitHouseShare(
+        flownHousePnl,
+        agentShareRate,
+        room.generalAgent ? Number(room.generalAgent.shareRate) || 0 : null,
+      );
       const commissionAmount = commissionByRoom.get(room.id)?.amount ?? 0;
       const commissionCount = commissionByRoom.get(room.id)?.count ?? 0;
       return {
@@ -920,14 +1277,20 @@ export class ConsoleReportsService {
         agentNickname: room.ownerAgent?.user?.nickname ?? null,
         agentUsername: room.ownerAgent?.user?.username ?? null,
         memberCount: pids.length,
-        activePlayers: betAgg?.players.size ?? 0,
+        activePlayers: pick?.players.size ?? 0,
         betCount,
         betFlow,
+        pendingBetFlow,
         payout,
         housePnl,
         playerPnl,
+        flownBetFlow,
+        closedBetFlow,
+        flownHousePnl,
         agentShareRate,
         agentShareAmount,
+        /** 挂总代时总代那份；直挂房恒为 0。三段相加 = flownHousePnl */
+        generalShareAmount,
         platformShareAmount,
         upAmount,
         upCount,
@@ -935,14 +1298,16 @@ export class ConsoleReportsService {
         downCount,
         commissionAmount,
         commissionCount,
-        /** 平台净盈亏 = 平台占成 − 代理佣金 */
-        netPnl: asMoney(platformShareAmount - commissionAmount),
+        /** 平台净盈亏 = 平台占成；挂靠佣金是代理自己出的，不从这里扣 */
+        netPnl: platformShareAmount,
         netChange: asMoney(upAmount - downAmount + playerPnl),
       };
     });
 
+    const visible = list.filter(keepClosedRoomInPeriodList);
+
     // 有流水/资金的房间排前，其余按房号
-    list.sort((a, b) => {
+    visible.sort((a, b) => {
       const score = (x: typeof a) => Math.abs(x.betFlow) + Math.abs(x.upAmount) + Math.abs(x.downAmount);
       const d = score(b) - score(a);
       if (d !== 0) return d;
@@ -951,7 +1316,7 @@ export class ConsoleReportsService {
 
     return {
       ...this.rangeMeta(from, to, rangeKey),
-      list,
+      list: visible,
     };
   }
 
@@ -1024,7 +1389,7 @@ export class ConsoleReportsService {
       csvRow(['报表区间（上海时间）', `${fromText} 至 ${toText}`]),
       csvRow([
         '说明',
-        '流水/盈亏仅含已结算注单；房间优先按 fly.roomId 归因；平台占成=庄家盈亏×(1-代理占成)；净盈亏=平台占成-代理佣金',
+        '只算飞盘（平台坐庄）。关盘自负，不进流水/派彩/盈亏/占成；净盈亏=平台占成，挂靠佣金由代理自己出、不从中扣',
       ]),
       '',
       csvRow([
@@ -1093,7 +1458,12 @@ export class ConsoleReportsService {
 
   /**
    * 代理团队玩家有效流水榜（早茶对照用）。
-   * 口径与回水一致：validFlow > 0 且 settledAt 落在上海日窗；范围按 agentPath 团队树。
+   * 口径与回水一致：validFlow > 0 且 settledAt 落在上海日窗。
+   *
+   * 范围走 playerWhere，和玩家列表、玩家详情同一把尺：
+   * 代理/子账号=管辖房间内在房玩家，客服=系统派给自己的玩家。
+   * 早先按 agentPath 团队树取人，会把挂在树下却不在自己房里的玩家也列出来，
+   * 客服更是能看到全部派单以外的人。
    */
   async playerFlow(
     actor: ConsoleActor,
@@ -1102,32 +1472,20 @@ export class ConsoleReportsService {
     if (actor.role !== 'AGENT' && actor.role !== 'PROXY' && actor.role !== 'CS') {
       throw new ForbiddenException('仅代理/客服可查看玩家流水榜');
     }
-    const rangeKey: TimeRangeKey = (
-      ['today', 'yesterday', 'thisweek', 'lastweek', 'thismonth'] as const
-    ).includes(opts?.range as TimeRangeKey)
-      ? (opts!.range as TimeRangeKey)
+    const rangeKey: TimeRangeKey = isTimeRangeKey(opts?.range)
+      ? opts.range
       : 'today';
     const [from, to] = shanghaiRangeBounds(rangeKey);
     const limit = Math.min(Math.max(opts?.limit ?? 100, 1), 500);
 
-    const rootId = await this.scope.scopeRootUserId(actor);
-    const root = await this.prisma.user.findUnique({
-      where: { id: rootId },
-      select: { agentPath: true },
-    });
-    const prefix = `${root?.agentPath ?? '/'}${rootId}/`;
-
-    const playerWhere: Prisma.UserWhereInput = {
-      role: 'PLAYER',
-      agentPath: { startsWith: prefix },
-    };
+    const playerWhere = (await this.scope.playerWhere(actor)) as Prisma.UserWhereInput;
     if (opts?.playerId?.trim()) {
-      playerWhere.id = opts.playerId.trim();
+      playerWhere.AND = [{ id: opts.playerId.trim() }];
     }
 
     const players = await this.prisma.user.findMany({
       where: playerWhere,
-      select: { id: true, uid: true, nickname: true, avatar: true },
+      select: { id: true, uid: true, nickname: true, username: true, avatar: true },
       take: 50_000,
     });
     if (!players.length) {
@@ -1139,6 +1497,7 @@ export class ConsoleReportsService {
           playerId: string;
           uid: string;
           nickname: string;
+          username: string;
           avatar: string | null;
           validFlow: number;
           betCount: number;
@@ -1177,6 +1536,7 @@ export class ConsoleReportsService {
             playerId: pid,
             uid: p.uid,
             nickname: p.nickname,
+            username: p.username,
             avatar: p.avatar,
             validFlow: asMoney(g?._sum.validFlow ?? 0),
             betCount: g?._count ?? 0,
@@ -1191,6 +1551,7 @@ export class ConsoleReportsService {
         playerId: g.playerId,
         uid: p.uid,
         nickname: p.nickname,
+        username: p.username,
         avatar: p.avatar,
         validFlow: asMoney(g._sum.validFlow ?? 0),
         betCount: g._count,
@@ -1229,16 +1590,24 @@ export class ConsoleReportsService {
     });
     const playerIds = players.map((p) => p.id);
 
-    // 工作台 TOP 游戏：仅已结算（与 summary 流水口径一致）
+    /*
+     * 工作台 TOP 游戏：口径跟 summary 一致——三级账本取自己那一桶，
+     * 且这里出的是盈亏，按**开奖时间**归期。
+     */
     const statusIn = ['WON', 'LOST'] as Array<'WON' | 'LOST'>;
-    const betWhere =
-      actor.role === 'ADMIN'
-        ? { createdAt: { gte: from, lt: to }, status: { in: statusIn } }
-        : {
-            createdAt: { gte: from, lt: to },
-            status: { in: statusIn },
-            playerId: { in: playerIds.length ? playerIds : ['__none__'] },
-          };
+    const dashSide = flowViewerSide({
+      isPlatformSide: actor.role === 'ADMIN' || actor.role === 'BRANCH',
+      isGeneralSide: await this.scope.isGeneralSide(actor),
+    });
+    const dashHouseFilter = this.ledgerPrismaFilter(dashSide);
+    const betWhere: Record<string, unknown> = {
+      settledAt: { gte: from, lt: to },
+      status: { in: statusIn },
+      ...(actor.role === 'ADMIN'
+        ? {}
+        : { playerId: { in: playerIds.length ? playerIds : ['__none__'] } }),
+      ...(dashHouseFilter ? { AND: [dashHouseFilter] } : {}),
+    };
 
     const roomWhere =
       roomIds === null
@@ -1292,6 +1661,8 @@ export class ConsoleReportsService {
           name: true,
           bookMode: true,
           agentShareRate: true,
+          /* 周报占成要三段拆，挂了总代得扣掉成数差 */
+          generalAgent: { select: { shareRate: true } },
           createdAt: true,
         },
         take: 50_000,
@@ -1361,53 +1732,26 @@ export class ConsoleReportsService {
         ),
       );
     }
-    const weekHousePnl = asMoney(weekSummary?.housePnl ?? 0);
-    const weekBetFlow = asMoney(weekSummary?.betFlow ?? 0);
-    const weekAgentShare = shareRate == null ? 0 : asMoney(weekHousePnl * shareRate);
-    const weekPlatformShare = shareRate == null ? 0 : asMoney(weekHousePnl - weekAgentShare);
+    /*
+     * 占成预估与结算中心同口径：只算飞盘，否则代理会按含关盘的数字预期收付。
+     * 拆分走统一的 splitHouseShare，别再手写乘法——挂了总代时要扣掉成数差，
+     * 原先 `housePnl − 代理占成` 会把总代那截也算成代理要上缴给平台的。
+     */
+    const weekHousePnl = asMoney(weekSummary?.flownHousePnl ?? 0);
+    const weekBetFlow = asMoney(weekSummary?.flownBetFlow ?? 0);
+    const weekGeneralRate = rooms.length
+      ? rooms.reduce((s, r) => s + Number(r.generalAgent?.shareRate ?? 0), 0) / rooms.length
+      : 0;
+    const weekSplit = splitHouseShare(
+      weekHousePnl,
+      shareRate ?? 0,
+      rooms.some((r) => r.generalAgent) ? weekGeneralRate : null,
+    );
+    const weekAgentShare = shareRate == null ? 0 : weekSplit.agentShareAmount;
+    /* 代理视角的「应上缴上家」＝ 庄家盈亏 − 自己那份，中间有总代也不能少付 */
+    const weekPlatformShare = shareRate == null ? 0 : weekSplit.agentPayBase;
 
-    // 管理员/房主：今日给代理发额/回收（不看玩家上下分，避免 A 盘超发搅乱）
-    let agentQuotaIssue = 0;
-    let agentQuotaRecall = 0;
-    let agentQuotaIssueCount = 0;
-    let agentQuotaRecallCount = 0;
-    if (actor.role === 'ADMIN' || actor.role === 'BRANCH') {
-      const quotaWhere: Record<string, unknown> = {
-        action: { in: ['QUOTA_SELL', 'QUOTA_RECALL'] },
-        createdAt: { gte: from, lt: to },
-      };
-      if (actor.role === 'BRANCH') {
-        const agentUserIds = [
-          ...new Set(
-            (
-              await this.prisma.room.findMany({
-                where: { id: { in: roomIds?.length ? roomIds : ['__none__'] } },
-                select: { ownerAgent: { select: { userId: true } } },
-              })
-            )
-              .map((r) => r.ownerAgent?.userId)
-              .filter((id): id is string => !!id),
-          ),
-        ];
-        quotaWhere.target = { in: agentUserIds.length ? agentUserIds : ['__none__'] };
-      }
-      const quotaLogs = await this.prisma.adminLog.findMany({
-        where: quotaWhere,
-        select: { action: true, detail: true },
-        take: 20_000,
-      });
-      for (const row of quotaLogs) {
-        const amt = asMoney(Number((row.detail as { amount?: number } | null)?.amount ?? 0));
-        if (amt <= 0) continue;
-        if (row.action === 'QUOTA_SELL') {
-          agentQuotaIssue = asMoney(agentQuotaIssue + amt);
-          agentQuotaIssueCount += 1;
-        } else if (row.action === 'QUOTA_RECALL') {
-          agentQuotaRecall = asMoney(agentQuotaRecall + amt);
-          agentQuotaRecallCount += 1;
-        }
-      }
-    }
+    const platformQuota = await this.sumPlatformQuotaToday(actor, from, to, roomIds);
 
     return {
       summary: {
@@ -1442,12 +1786,12 @@ export class ConsoleReportsService {
         weekAgentShare,
         weekPlatformShare,
       },
-      /** 平台/房主 → 代理额度进出（今日） */
+      /** 平台侧今日给总代/代理的额度进出；不含总代给下级 */
       agentQuota: {
-        issueAmount: agentQuotaIssue,
-        issueCount: agentQuotaIssueCount,
-        recallAmount: agentQuotaRecall,
-        recallCount: agentQuotaRecallCount,
+        issueAmount: platformQuota.issueAmount,
+        issueCount: platformQuota.issueCount,
+        recallAmount: platformQuota.recallAmount,
+        recallCount: platformQuota.recallCount,
       },
       cashflow: {
         playerBalance: reconcile.balanceSum,
@@ -1463,6 +1807,7 @@ export class ConsoleReportsService {
       recentLogs: recentLogs.map((l) => ({
         id: l.id,
         action: l.action,
+        actionLabel: ADMIN_ACTION_META[l.action]?.label ?? l.action,
         target: l.target,
         detail: l.detail,
         createdAt: l.createdAt,
@@ -1497,13 +1842,19 @@ export class ConsoleReportsService {
     for (let i = days - 1; i >= 0; i--) {
       const from = new Date(today0.getTime() - i * dayMs);
       const to = new Date(from.getTime() + dayMs);
+      /* 趋势图出的是盈亏，按开奖时间归期，跟报表/结账同一把尺 */
       const betWhere =
         playerIds === null
-          ? { createdAt: { gte: from, lt: to }, status: { in: statusIn } }
+          ? {
+              settledAt: { gte: from, lt: to },
+              status: { in: statusIn },
+              AND: [this.flownPrismaFilter()],
+            }
           : {
-              createdAt: { gte: from, lt: to },
+              settledAt: { gte: from, lt: to },
               status: { in: statusIn },
               playerId: { in: playerIds.length ? playerIds : ['__none__'] },
+              AND: [this.flownPrismaFilter()],
             };
 
       const [agg, newUsers] = await Promise.all([
@@ -1537,5 +1888,88 @@ export class ConsoleReportsService {
       });
     }
     return result;
+  }
+
+  /**
+   * 工作台「今日上分 / 今日下分」：
+   *   只认管理、总监从平台池打给总代、代理的额度；
+   *   总代给下级的不进（操作人不是管理/总监）。
+   *   总监再按显示房间过滤：看不见的总代、看不见的房间主代理都不进。
+   */
+  private async sumPlatformQuotaToday(
+    actor: ConsoleActor,
+    from: Date,
+    to: Date,
+    visibleRoomIds: string[] | null,
+  ) {
+    const empty = { issueAmount: 0, issueCount: 0, recallAmount: 0, recallCount: 0 };
+    if (actor.role !== 'ADMIN' && actor.role !== 'BRANCH') return empty;
+
+    let allowedTargets: Set<string> | null = null;
+    if (actor.role === 'BRANCH') {
+      allowedTargets = new Set<string>();
+      const rooms = await this.prisma.room.findMany({
+        where: { id: { in: visibleRoomIds?.length ? visibleRoomIds : ['__none__'] } },
+        select: {
+          ownerAgent: { select: { userId: true } },
+          generalAgent: { select: { userId: true } },
+        },
+      });
+      for (const r of rooms) {
+        if (r.ownerAgent?.userId) allowedTargets.add(r.ownerAgent.userId);
+        if (r.generalAgent?.userId) allowedTargets.add(r.generalAgent.userId);
+      }
+      const generalIds = await this.scope.grantedGeneralAgentIds(actor);
+      if (generalIds?.length) {
+        const gens = await this.prisma.agent.findMany({
+          where: { id: { in: generalIds } },
+          select: { userId: true },
+        });
+        for (const g of gens) allowedTargets.add(g.userId);
+      }
+    }
+
+    const quotaLogs = await this.prisma.adminLog.findMany({
+      where: {
+        action: { in: ['QUOTA_SELL', 'QUOTA_RECALL'] },
+        createdAt: { gte: from, lt: to },
+        /* 总代给代理的操作人是 GENERAL，这里直接排除 */
+        operator: { role: { in: ['ADMIN', 'BRANCH'] } },
+      },
+      select: { action: true, target: true, detail: true },
+      take: 20_000,
+    });
+
+    const targetIds = [...new Set(quotaLogs.map((l) => l.target).filter((id): id is string => !!id))];
+    const roleById = new Map(
+      (
+        await this.prisma.user.findMany({
+          where: { id: { in: targetIds.length ? targetIds : ['__none__'] } },
+          select: { id: true, role: true },
+        })
+      ).map((u) => [u.id, u.role]),
+    );
+
+    let issueAmount = 0;
+    let issueCount = 0;
+    let recallAmount = 0;
+    let recallCount = 0;
+    for (const row of quotaLogs) {
+      const tid = row.target;
+      if (!tid) continue;
+      const role = roleById.get(tid);
+      if (role !== 'GENERAL' && role !== 'AGENT') continue;
+      if (allowedTargets && !allowedTargets.has(tid)) continue;
+      const amt = asMoney(Number((row.detail as { amount?: number } | null)?.amount ?? 0));
+      if (amt <= 0) continue;
+      if (row.action === 'QUOTA_SELL') {
+        issueAmount = asMoney(issueAmount + amt);
+        issueCount += 1;
+      } else {
+        recallAmount = asMoney(recallAmount + amt);
+        recallCount += 1;
+      }
+    }
+    return { issueAmount, issueCount, recallAmount, recallCount };
   }
 }

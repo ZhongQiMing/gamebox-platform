@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../../prisma/prisma.service';
+import { RedisService } from '../../redis/redis.service';
 import { RoomChatService } from './room-chat.service';
 import { CHAT_LOTTERY_GAMES } from './room-chat.types';
 
@@ -21,6 +22,7 @@ export class RoomChatScheduler {
   constructor(
     private prisma: PrismaService,
     private chat: RoomChatService,
+    private redis: RedisService,
   ) {}
 
   /**
@@ -75,7 +77,12 @@ export class RoomChatScheduler {
     this.robotBusy = true;
     try {
       /* 开盘线只在 announceLocks 链路写；这里不再 fanOutDueOpens，杜绝双开盘线 */
-      await this.chat.tickRobotAtmosphere();
+      await this.redis.runExclusive(
+        'gamebox:cron:robot-atm',
+        2500,
+        () => this.chat.tickRobotAtmosphere(),
+        { onLockError: 'skip' },
+      );
     } catch (e) {
       this.logger.warn(`robot atmosphere: ${(e as Error).message}`);
     } finally {
@@ -89,7 +96,12 @@ export class RoomChatScheduler {
     if (this.fundTalkBusy) return;
     this.fundTalkBusy = true;
     try {
-      await this.chat.tickRobotFundTalk();
+      await this.redis.runExclusive(
+        'gamebox:cron:robot-talk',
+        7000,
+        () => this.chat.tickRobotFundTalk(),
+        { onLockError: 'skip' },
+      );
     } catch (e) {
       this.logger.warn(`robot fund talk: ${(e as Error).message}`);
     } finally {

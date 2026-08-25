@@ -26,6 +26,11 @@ const CS_ALLOWED = [
   'GET console/cs-staff/me', //           自己的额度与佣金汇总
   'GET console/cs-staff/wage/bills', //   自己的佣金账单
   'PATCH console/cs-staff/:id', //        自己切接单/休息
+  /*
+   * 心跳：只写自己的 lastSeenAt，不读任何数据。
+   * 必须开，否则 App 被划掉后服务端不知道人走了，会继续派单再按漏接罚他。
+   */
+  'POST console/cs-sla/heartbeat',
 ].sort();
 
 const VERB: Record<number, string> = {

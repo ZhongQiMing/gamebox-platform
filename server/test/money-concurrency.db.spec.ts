@@ -15,6 +15,7 @@ import { writeAgentQuotaInTx } from '../src/modules/console/player-fund.helper';
 import {
   createPointsService,
   createTestPrisma,
+  drainPlatformQueue,
   ledgerSum,
   makeUser,
   readBalance,
@@ -180,6 +181,8 @@ describe('转账原子性', () => {
     );
 
     expect(await readBalance(prisma, 'PLAYER', playerId, ROOM)).toBe(120);
+    /* 平台侧是先记账、余额由合并工人补，所以先排空队列再读 */
+    await drainPlatformQueue(prisma);
     expect(await readBalance(prisma, 'PLATFORM', PLATFORM_OWNER_ID)).toBe(platformBefore + 80);
     expect(await ledgerSum(prisma, accountId)).toBe(120);
   });

@@ -3,6 +3,7 @@ import { Cron } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
 import { asMoney, formatMoney, roundMoney } from '@gamebox/shared';
 import { PrismaService } from '../../prisma/prisma.service';
+import { withTxRetry } from '../../prisma/tx-retry';
 import { PLATFORM_OWNER_ID, PointsService, type OwnerType } from '../points/points.service';
 import { FlyDiskService, type FlyHouse } from '../console/fly-disk.service';
 import {
@@ -15,6 +16,8 @@ import {
   type GameRebateFlow,
 } from './rebate-rates';
 import { shanghaiRangeBounds, type TimeRangeKey } from '../../common/shanghai-range';
+import { RedisService } from '../../redis/redis.service';
+import { splitRebateClaimPayers } from './rebate-payers';
 
 /**
  * 旧版笔结留下的「这笔已发过回水」标记。
@@ -117,7 +120,20 @@ export class RebateService {
     private prisma: PrismaService,
     private points: PointsService,
     private flyDisk: FlyDiskService,
+    private redis: RedisService,
   ) {}
+
+  /**
+   * 玩家在某游戏的当前回水比例 —— 只给游戏内展示用。
+   *
+   * 真正发放认的是下注时写进 Bet.payload 的 P 快照，两者在改比例的瞬间会有差；
+   * 展示要的是「我现在下注按什么点数算」，所以这里取当前值而不是快照。
+   */
+  async playerRateForGame(playerId: string, gameCode?: string): Promise<{ rate: number }> {
+    const code = String(gameCode || '').trim();
+    const { P } = await this.flyDisk.resolvePlayerRate(playerId, undefined, code || undefined);
+    return { rate: P };
+  }
 
   private async ensureRateMap() {
     if (this.rateMap.size && Date.now() < this.rateMapExpiresAt) return;
@@ -136,17 +152,41 @@ export class RebateService {
     this.rateMapExpiresAt = Date.now() + RATE_CACHE_MS;
   }
 
+  /**
+   * 没在注单里快照 P 的老流水，按「该游戏当前档」补一个比例。
+   *
+   * 必须按 gameId 逐个解析：整个房间取一个值的话，电子/街机会拿到平常游戏的档，
+   * 管理端为电子单独配的比例等于没配。
+   */
+  private async fallbackRatesByGame(
+    playerId: string,
+    roomId: string,
+    bets: Array<{ gameId: string; payload?: Prisma.JsonValue | null }>,
+  ): Promise<Map<string, number>> {
+    const out = new Map<string, number>();
+    const needed = new Set<string>();
+    for (const b of bets) {
+      if (persistedPlayerRate(b.payload) == null) needed.add(b.gameId);
+    }
+    for (const gameId of needed) {
+      const code = this.rateMap.get(gameId)?.code;
+      const { P } = await this.flyDisk.resolvePlayerRate(playerId, roomId, code);
+      out.set(gameId, P);
+    }
+    return out;
+  }
+
   private sliceFromBets(
     bets: Array<{
       validFlow: Prisma.Decimal | number;
       gameId: string;
       payload?: Prisma.JsonValue | null;
     }>,
-    roomFallbackP: number,
+    fallbackByGame: Map<string, number>,
   ): Omit<UnclaimedSlice, 'date'> | null {
     const gameMap = new Map<string, number>();
     for (const b of bets) {
-      const rate = persistedPlayerRate(b.payload) ?? roomFallbackP;
+      const rate = persistedPlayerRate(b.payload) ?? (fallbackByGame.get(b.gameId) ?? 0);
       const key = `${b.gameId}:${rate}`;
       gameMap.set(key, roundMoney((gameMap.get(key) ?? 0) + asMoney(b.validFlow)));
     }
@@ -243,11 +283,8 @@ export class RebateService {
     for (const [dateKey, roomMap] of betsByDateRoom) {
       const roomSlices: Array<Omit<UnclaimedSlice, 'date'>> = [];
       for (const [roomId, roomBets] of roomMap) {
-        const needsFallback = roomBets.some((bet) => persistedPlayerRate(bet.payload) == null);
-        const fallbackP = needsFallback
-          ? (await this.flyDisk.resolvePlayerRate(playerId, roomId)).P
-          : 0;
-        const calc = this.sliceFromBets(roomBets, fallbackP);
+        const fallbackByGame = await this.fallbackRatesByGame(playerId, roomId, roomBets);
+        const calc = this.sliceFromBets(roomBets, fallbackByGame);
         if (calc) roomSlices.push(calc);
       }
       if (!roomSlices.length) continue;
@@ -276,7 +313,15 @@ export class RebateService {
     await this.ensureRateMap();
     const [dayStart, dayEnd] = boundsForDateKey(dateKey);
 
-    return this.prisma.$transaction(async (tx) => {
+    /*
+     * 死锁自动重试。
+     *
+     * 领回水与游戏结算会互相等锁：领取这边先锁玩家、后动代理账户，
+     * 结算那边的顺序相反，两条路径同时高频发生时会形成循环等待，
+     * Postgres 检测到就杀掉一方。这两种错误下事务已完整回滚，
+     * 重放不会重复发钱（何况还有幂等键与游标双重保护）。
+     */
+    return withTxRetry(() => this.prisma.$transaction(async (tx) => {
       /* 串行化同一玩家领取，避免并发双发 */
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`rebate:${playerId}`}))`;
 
@@ -289,13 +334,14 @@ export class RebateService {
        */
       const rawBets = await tx.$queryRaw<
         Array<{
+          id: string;
           validFlow: Prisma.Decimal;
           gameId: string;
           payload: Prisma.JsonValue | null;
           settledAt: Date;
         }>
       >`
-        SELECT b."validFlow", b."gameId", b."payload", b."settledAt"
+        SELECT b."id", b."validFlow", b."gameId", b."payload", b."settledAt"
         FROM "Bet" b
         WHERE b."playerId" = ${playerId}
           AND b."status" IN ('WON'::"BetStatus", 'LOST'::"BetStatus")
@@ -325,7 +371,7 @@ export class RebateService {
         const lastAt = rawBets[rawBets.length - 1]!.settledAt;
         if (lastAt) {
           const boundaryBets = await tx.$queryRaw<typeof rawBets>`
-            SELECT b."validFlow", b."gameId", b."payload", b."settledAt"
+            SELECT b."id", b."validFlow", b."gameId", b."payload", b."settledAt"
             FROM "Bet" b
             WHERE b."playerId" = ${playerId}
               AND b."status" IN ('WON'::"BetStatus", 'LOST'::"BetStatus")
@@ -368,19 +414,16 @@ export class RebateService {
       let totalAmount = 0;
       const rows = [];
       for (const [claimRoomId, roomBets] of betsByRoom) {
-        const needsFallback = roomBets.some((bet) => persistedPlayerRate(bet.payload) == null);
-        const fallbackP = needsFallback
-          ? (await this.flyDisk.resolvePlayerRate(playerId, claimRoomId)).P
-          : 0;
-        const slice = this.sliceFromBets(roomBets, fallbackP);
+        const fallbackByGame = await this.fallbackRatesByGame(playerId, claimRoomId, roomBets);
+        const slice = this.sliceFromBets(roomBets, fallbackByGame);
         if (!slice) continue;
         const house = await this.flyDisk.resolveHouse(playerId, claimRoomId);
-        const payerParts = this.splitRebatePayersFromBets(
-          roomBets,
-          slice.amount,
-          slice.validFlow,
+        const payerParts = splitRebateClaimPayers({
+          bets: roomBets,
+          totalAmount: slice.amount,
+          platformId: PLATFORM_OWNER_ID,
           house,
-        );
+        });
         const row = await tx.dailyRebateSettlement.create({
           data: {
             playerId,
@@ -417,14 +460,41 @@ export class RebateService {
             data: { ledgerId: lastLedgerId },
           }),
         );
+
+        /*
+         * 给本批注单打「已领」标记，作为游标之外的第二道闸。
+         *
+         * 玩家份额的去重本来只靠 DailyRebateSettlement 的 periodEnd 游标加玩家级
+         * 咨询锁。那套逻辑目前是对的，但没有纵深防御：将来有人改错游标条件、
+         * 或手工动过结算表，就会重复发放且无从发现。查询侧本来就已经在过滤这个
+         * 标记（COALESCE(payload #>> '{flowRebatePaid}') <> 'true'），只是从来没人写入。
+         *
+         * 用 jsonb_set 就地打标，不动 payload 其余字段。
+         */
+        const claimedIds = roomBets.map((b) => b.id).filter(Boolean);
+        if (claimedIds.length) {
+          const marked = await tx.$executeRaw`
+            UPDATE "Bet"
+            SET payload = jsonb_set(
+              COALESCE(payload, '{}'::jsonb), '{flowRebatePaid}', 'true'::jsonb, true
+            )
+            WHERE id = ANY(${claimedIds}::text[])
+          `;
+          if (Number(marked) !== claimedIds.length) {
+            this.log.warn(
+              `回水已领标记条数不符：应打 ${claimedIds.length} 条，实打 ${marked} 条`
+              + `（玩家 ${playerId} 房间 ${claimRoomId} ${dateKey}）`,
+            );
+          }
+        }
         totalAmount = roundMoney(totalAmount + slice.amount);
       }
       if (!rows.length) throw new BadRequestException('当前无可领取的回水');
       return { ...rows[0]!, amount: new Prisma.Decimal(totalAmount), settlements: rows };
-    });
+    }), { label: `回水领取 ${playerId}` });
   }
 
-  /** 自助领取落账：飞盘→平台；关盘→代理盘分/剩余信用 */
+  /** 自助领取落账：已预扣的从待入账出；老单仍由庄家出 */
   private async payClaimPartInTx(
     tx: Prisma.TransactionClient,
     opts: {
@@ -636,55 +706,84 @@ export class RebateService {
    */
   @Cron('0 6 * * *', { timeZone: 'Asia/Shanghai' })
   async autoSettleYesterday() {
+    /*
+     * 多实例只放一台跑：每人一把 advisory lock 挡得住重复发钱，但挡不住几万人白扫一遍。
+     * Redis 抖动时宁可这一轮不跑——漏一轮明天补得回来，几台机器同时全表扫会把库压垮。
+     */
+    await this.redis.runExclusive(
+      'gamebox:cron:rebate-auto',
+      2 * 60 * 60 * 1000,
+      () => this.runAutoSettleYesterday(),
+      { onLockError: 'skip' },
+    );
+  }
+
+  private async listAutoClaimTargets(rangeStart: Date, todayStart: Date) {
+    return this.prisma.$queryRaw<Array<{ playerId: string; dateKey: string }>>`
+      SELECT DISTINCT b."playerId" AS "playerId",
+             to_char((b."settledAt" AT TIME ZONE 'Asia/Shanghai'), 'YYYY-MM-DD') AS "dateKey"
+      FROM "Bet" b
+      WHERE b."status" IN ('WON'::"BetStatus", 'LOST'::"BetStatus")
+        AND b."validFlow" > 0
+        AND b."settledAt" >= ${rangeStart}
+        AND b."settledAt" < ${todayStart}
+        AND COALESCE(b."payload" #>> '{fly,roomId}', '') <> ''
+        AND COALESCE(b."payload" #>> '{flowRebatePaid}', 'false') <> 'true'
+      ORDER BY 2, 1
+    `;
+  }
+
+  private isEmptyClaim(e: unknown) {
+    const text = e instanceof BadRequestException
+      ? JSON.stringify(e.getResponse())
+      : String((e as Error)?.message || e);
+    return text.includes('无可领取');
+  }
+
+  private async runAutoSettleYesterday() {
     const todayKey = dateKeyFromParts(shanghaiParts());
     const oldestKey = shiftDateKey(todayKey, -SCAN_DAYS);
     const [rangeStart] = boundsForDateKey(oldestKey);
     const [, todayStart] = boundsForDateKey(shiftDateKey(todayKey, -1));
 
-    const players = await this.prisma.bet.findMany({
-      where: {
-        status: { in: ['WON', 'LOST'] },
-        settledAt: { gte: rangeStart, lt: todayStart },
-        validFlow: { gt: 0 },
-      },
-      distinct: ['playerId'],
-      select: { playerId: true },
-    });
-
+    const targets = (await this.listAutoClaimTargets(rangeStart, todayStart))
+      .filter((t) => t.dateKey < todayKey);
+    const failed: Array<{ playerId: string; dateKey: string }> = [];
     let ok = 0;
-    let attempts = 0;
-    for (const p of players) {
+    let empty = 0;
+
+    for (const t of targets) {
       try {
-        const unclaimed = await this.buildUnclaimedMap(p.playerId);
-        const dates = [...unclaimed.keys()]
-          .filter((d) => d < todayKey && (unclaimed.get(d)?.amount ?? 0) > 0)
-          .sort();
-        for (const dateKey of dates) {
-          attempts++;
-          await this.claimDate(p.playerId, dateKey, 'AUTO');
-          ok++;
-        }
+        await this.claimDate(t.playerId, t.dateKey, 'AUTO');
+        ok++;
       } catch (e) {
-        this.log.warn(`auto rebate failed player=${p.playerId}: ${(e as Error).message}`);
+        if (this.isEmptyClaim(e)) {
+          empty++;
+          continue;
+        }
+        failed.push(t);
+        this.log.warn(`auto rebate failed player=${t.playerId} date=${t.dateKey}: ${(e as Error).message}`);
       }
     }
-    this.log.log(`daily rebate auto: settled ${ok}/${attempts} slices for ${players.length} players`);
+
+    let retried = 0;
+    for (const t of failed) {
+      try {
+        await this.claimDate(t.playerId, t.dateKey, 'AUTO');
+        ok++;
+        retried++;
+      } catch (e) {
+        if (this.isEmptyClaim(e)) {
+          empty++;
+          continue;
+        }
+        this.log.error(`auto rebate still failed player=${t.playerId} date=${t.dateKey}: ${(e as Error).message}`);
+      }
+    }
+
+    this.log.log(
+      `daily rebate auto: settled ${ok}/${targets.length} slices (empty=${empty} retry=${retried} remain=${failed.length - retried})`,
+    );
   }
 
-  /**
-   * 玩家回水一律由本房代理出（整包 5% 里含给玩家的点）。
-   */
-  private splitRebatePayersFromBets(
-    bets: Array<{ payload: Prisma.JsonValue | null; validFlow: Prisma.Decimal | number }>,
-    totalAmount: number,
-    _totalFlow: number,
-    house: FlyHouse,
-  ): Array<{ type: OwnerType; id: string; amount: number; label: string }> {
-    if (totalAmount <= 0) return [];
-    const agentId = house.agentUserId || (house.type === 'AGENT' ? house.id : '');
-    if (agentId) {
-      return [{ type: 'AGENT', id: agentId, amount: totalAmount, label: 'agent' }];
-    }
-    return [{ type: 'PLATFORM', id: PLATFORM_OWNER_ID, amount: totalAmount, label: 'fly' }];
-  }
 }

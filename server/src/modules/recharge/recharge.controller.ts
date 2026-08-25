@@ -1,5 +1,6 @@
 import { Controller, Post, Get, Patch, Body, Param, Query,
   ParseIntPipe, DefaultValuePipe } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { RechargeService } from './recharge.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -39,7 +40,13 @@ export class RejectDto {
 export class RechargeController {
   constructor(private svc: RechargeService) {}
 
-  /** POST /api/recharge/apply — 申请上分 */
+  /**
+   * POST /api/recharge/apply — 申请上分
+   *
+   * 单独限流：全局 120/分 对建单太松。订单号是幂等键，重放同一个号不会重复建单，
+   * 但换号连发就是一堆待审单，客服那边直接被刷爆。正常玩家一分钟不会申请十次以上。
+   */
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Roles('PLAYER')
   @Post('apply')
   apply(@CurrentUser() u: { id: string }, @Body() dto: ApplyRechargeDto) {
@@ -50,7 +57,8 @@ export class RechargeController {
     });
   }
 
-  /** POST /api/recharge/withdraw — 申请下分 */
+  /** POST /api/recharge/withdraw — 申请下分（下分会立即冻结余额，比上分更该限） */
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Roles('PLAYER')
   @Post('withdraw')
   withdraw(@CurrentUser() u: { id: string }, @Body() dto: ApplyWithdrawDto) {

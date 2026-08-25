@@ -28,8 +28,13 @@ import {
 import { formatLotteryPlayLabel } from '../lottery/play-label';
 import type { LotteryPayTable } from '../lottery/lottery.types';
 
+const OPEN_ROOMS_CACHE_MS = 3000;
+
 @Injectable()
 export class RoomChatService {
+  private openRoomsAt = 0;
+  private openRooms: Array<{ id: string; enabledGames: string }> = [];
+
   constructor(private prisma: PrismaService) {}
 
   /** 历史气泡里的旧「N定M」展示成现行「N/M」，不改库 */
@@ -127,8 +132,15 @@ export class RoomChatService {
   }
 
   async listOpenRoomsForGame(gameCode: string) {
-    const rooms = await this.prisma.room.findMany({ where: { status: 'OPEN' } });
-    return rooms.filter((r) => this.roomEnablesGame(r.enabledGames, gameCode));
+    const now = Date.now();
+    if (now - this.openRoomsAt > OPEN_ROOMS_CACHE_MS) {
+      this.openRooms = await this.prisma.room.findMany({
+        where: { status: 'OPEN' },
+        select: { id: true, enabledGames: true },
+      });
+      this.openRoomsAt = now;
+    }
+    return this.openRooms.filter((r) => this.roomEnablesGame(r.enabledGames, gameCode));
   }
 
   async append(input: {
@@ -679,41 +691,62 @@ export class RoomChatService {
       if (!issue) continue;
 
       const rooms = await this.listOpenRoomsForGame(gameCode);
-      for (const room of rooms) {
-        const openLine = await this.prisma.roomChatMessage.findFirst({
+      if (!rooms.length) continue;
+      const roomIds = rooms.map((r) => r.id);
+      const [openLines, betGroups, configs] = await Promise.all([
+        this.prisma.roomChatMessage.findMany({
           where: {
-            roomId: room.id,
+            roomId: { in: roomIds },
             gameCode,
             kind: 'open',
             issueNo: issue.issueNo,
           },
-          select: { id: true, createdAt: true },
+          select: { roomId: true, createdAt: true },
           orderBy: { createdAt: 'desc' },
-        });
-        if (!openLine) continue;
-
-        const plan = await this.robotPlanFor(room.id, gameCode);
-        const activeCount = resolveActiveRobotCount(plan, now);
-        if (activeCount <= 0) continue;
-        const rosterN = rosterSizeFor(plan);
-
-        const startAfterMs = plan.timing.startAfterOpenSec * 1000;
-        const stopBeforeMs = Math.max(1000, plan.timing.stopBeforeLockSec * 1000);
-        if (now.getTime() - openLine.createdAt.getTime() < startAfterMs) continue;
-        if (issue.lockAt.getTime() - now.getTime() <= stopBeforeMs) continue;
-
-        const betCount = await this.prisma.roomChatMessage.count({
+        }),
+        this.prisma.roomChatMessage.groupBy({
+          by: ['roomId'],
           where: {
-            roomId: room.id,
+            roomId: { in: roomIds },
             gameCode,
             kind: 'bet',
             isRobot: true,
             issueNo: issue.issueNo,
           },
-        });
+          _count: { _all: true },
+        }),
+        this.prisma.roomGameConfig.findMany({
+          where: { roomId: { in: roomIds }, gameCode },
+          select: { roomId: true, robotCount: true, robotPlan: true },
+        }),
+      ]);
+      const openAtByRoom = new Map<string, Date>();
+      for (const row of openLines) {
+        if (!openAtByRoom.has(row.roomId)) openAtByRoom.set(row.roomId, row.createdAt);
+      }
+      const betCountByRoom = new Map(betGroups.map((g) => [g.roomId, g._count._all]));
+      const planByRoom = new Map(
+        configs.map((c) => [c.roomId, normalizeRobotPlan(c.robotPlan, c.robotCount ?? 14)]),
+      );
+
+      for (const room of rooms) {
+        const openAt = openAtByRoom.get(room.id);
+        if (!openAt) continue;
+
+        const plan = planByRoom.get(room.id) ?? normalizeRobotPlan(undefined, 14);
+        const activeCount = resolveActiveRobotCount(plan, now, `${room.id}:${gameCode}`);
+        if (activeCount <= 0) continue;
+        const rosterN = rosterSizeFor(plan);
+
+        const startAfterMs = plan.timing.startAfterOpenSec * 1000;
+        const stopBeforeMs = Math.max(1000, plan.timing.stopBeforeLockSec * 1000);
+        if (now.getTime() - openAt.getTime() < startAfterMs) continue;
+        if (issue.lockAt.getTime() - now.getTime() <= stopBeforeMs) continue;
+
+        const betCount = betCountByRoom.get(room.id) ?? 0;
         if (betCount >= activeCount) continue;
 
-        const windowStart = openLine.createdAt.getTime() + startAfterMs;
+        const windowStart = openAt.getTime() + startAfterMs;
         const windowEnd = issue.lockAt.getTime() - stopBeforeMs;
         const windowMs = Math.max(2000, windowEnd - windowStart);
         /* 把 activeCount 条注摊进窗口；人数多时间隔更短 */
@@ -788,7 +821,7 @@ export class RoomChatService {
   /** 当前时段有效托人数（上海时区） */
   async robotCountFor(roomId: string, gameCode: string) {
     const plan = await this.robotPlanFor(roomId, gameCode);
-    return resolveActiveRobotCount(plan);
+    return resolveActiveRobotCount(plan, new Date(), `${roomId}:${gameCode}`);
   }
 
   /** 牌桌气氛：玩家房间对该游戏的有效托人数（供桌面假筹频率） */

@@ -13,9 +13,15 @@ export interface RedisRoomState {
   /** 当前相位绝对截止时间（epoch ms） */
   phaseEndsAt: number;
   outcome: Record<string, unknown> | null;
+  /**
+   * 开奖种子。下注期为空串——候选是封盘时才生成的独立种子，
+   * 开局前无从承诺（承诺了又换就是更明显的破绽）。
+   */
   serverSeed: string;
   serverSeedHash: string;
   nonce: number;
+  /** 本局是否放弃了自然结果；仅内部留痕，不进任何对外响应 */
+  steered?: boolean;
   betSummary: Record<string, number>;
   history: TableHistoryItem[];
   /** 乐观锁版本：每次 CAS 写回 +1 */

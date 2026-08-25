@@ -4,7 +4,8 @@
  * 这里算错的直接后果是平台与代理之间多付/少付真钱，而且每周结一次、
  * 错了要往前追一整周的账，所以四种局面（平台亏/平台赚/持平/超发）都钉住。
  */
-import { clampShareRate, computeCreditBook } from './credit-settle.helper';
+import { agentDisplayBalance, agentWorkingDisk, clampShareRate, computeCreditBook } from './credit-settle.helper';
+import { creditDiskMerge } from './player-fund.helper';
 
 describe('clampShareRate', () => {
   it('夹在 0~1', () => {
@@ -102,5 +103,35 @@ describe('computeCreditBook', () => {
     expect(b.agentShareAmount).toBe(1_100.0);
     expect(b.platformShareAmount).toBe(2_233.34);
     expect(b.agentShareAmount + b.platformShareAmount).toBe(b.housePnl);
+  });
+});
+
+describe('两盘同一本盘分', () => {
+  it('代理余额就是余额，不再把额度和佣金袋相加', () => {
+    expect(agentDisplayBalance({ bookMode: 'CREDIT', balance: 200, pointsQuota: -80 })).toBe(200);
+    expect(agentDisplayBalance({ bookMode: 'CASH', balance: 50, pointsQuota: 50 })).toBe(50);
+  });
+
+  it('未并账时取更紧的一侧，避免佣金袋和剩余信用加两遍', () => {
+    expect(agentWorkingDisk(100, 5)).toBe(5);
+    expect(agentWorkingDisk(-80, -60)).toBe(-80);
+  });
+
+  it('并账：额度吸收佣金、余额补上剩余信用，两边落到同一个数', () => {
+    const zongdai = creditDiskMerge(2_616_818, -204_663.15);
+    expect(zongdai.alreadySynced).toBe(false);
+    expect(zongdai.merged).toBe(2_412_154.85);
+    expect(zongdai.quota + zongdai.quotaDelta).toBe(zongdai.merged);
+    expect(zongdai.balance + zongdai.balanceDelta).toBe(zongdai.merged);
+
+    const agent = creditDiskMerge(-864_386.04, 204_663.15);
+    expect(agent.merged).toBe(-659_722.89);
+    expect(agent.quota + agent.quotaDelta).toBe(agent.merged);
+    expect(agent.balance + agent.balanceDelta).toBe(agent.merged);
+  });
+
+  it('已经同步的不改（余额=额度就是一本盘分，不能再相加）', () => {
+    expect(creditDiskMerge(100, 100).alreadySynced).toBe(true);
+    expect(creditDiskMerge(0, 0).alreadySynced).toBe(true);
   });
 });

@@ -8,10 +8,21 @@ import { Prisma } from '@prisma/client';
 import { asMoney, roundMoney } from '@gamebox/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PointsService, PLATFORM_OWNER_ID, type OwnerType } from '../points/points.service';
+import { agentFlyAvailable, generalTreeFlyAvailable } from './credit-settle.helper';
+
+/** 可飞额度缓存有效期；下注判断容许这个量级的滞后 */
+const FLY_CACHE_TTL_MS = Math.max(
+  0,
+  Math.floor(Number(process.env.FLY_AVAILABLE_CACHE_MS ?? 500)),
+);
+/** 缓存条目上限，防止代理数量很多时无界增长 */
+const FLY_CACHE_MAX = 5000;
 import {
-  cashDiskFlyAvailable,
-  creditDiskFlyAvailable,
-} from './credit-settle.helper';
+  bandForRoomGame,
+  readPlatformBounds,
+  resolvePayoutRates,
+  resolvePlayerBand,
+} from '../rebate/rebate-chain';
 
 export type FlyHouse = {
   type: OwnerType;
@@ -34,22 +45,85 @@ export class FlyDiskService {
     private points: PointsService,
   ) {}
 
-  /** 上盘可飞 = 代理余额 + 客服未发出额度（同一笔盘分池） */
-  async cashFlyAvailable(
+  /**
+   * 可飞额度的进程内短缓存。
+   *
+   * 这个数要聚合「名下房间全部玩家持分」，一间几千人的房每次都算就是几千行扫描，
+   * 而它在每笔下注的判断路径上。缓存一小段时间换掉这个开销。
+   *
+   * 代价：额度最多旧这么久，极端情况下会多飞出一点点。可以接受——它是风险闸门
+   * 而不是余额，差几百毫秒的量级远小于单注限红；真正兜底的是限红与软控。
+   */
+  private readonly flyCache = new Map<string, { at: number; value: number }>();
+
+  /** 上盘可飞 = 代理盘分 + 客服未发出 + 名下房间玩家持分（见 agentFlyAvailable） */
+  async flyAvailable(
     tx: Prisma.TransactionClient | PrismaService,
     agentUserId: string,
+    bookMode: 'CASH' | 'CREDIT',
   ): Promise<number> {
-    return cashDiskFlyAvailable(tx, agentUserId);
+    return agentFlyAvailable(tx, agentUserId, bookMode);
+  }
+
+  /** 带缓存版本，只给下注判断用；后台展示与结算一律读实时值 */
+  private async flyAvailableCached(
+    agentUserId: string,
+    bookMode: 'CASH' | 'CREDIT',
+  ): Promise<number> {
+    return this.cached(`A:${bookMode}:${agentUserId}`, () =>
+      agentFlyAvailable(this.prisma, agentUserId, bookMode),
+    );
+  }
+
+  /**
+   * 整棵总代树，同样只给下注判断用。
+   *
+   * 不带盘种参数：树里每一格用各自的盘种（总代用自己与平台的约定，
+   * 每个代理用其房间的约定），由 SQL 内部决定。
+   */
+  private async treeFlyAvailableCached(generalUserId: string): Promise<number> {
+    return this.cached(`G:${generalUserId}`, () =>
+      generalTreeFlyAvailable(this.prisma, generalUserId),
+    );
+  }
+
+  private async cached(key: string, load: () => Promise<number>): Promise<number> {
+    const hit = this.flyCache.get(key);
+    const now = Date.now();
+    if (hit && now - hit.at < FLY_CACHE_TTL_MS) return hit.value;
+    const value = await load();
+    this.flyCache.set(key, { at: now, value });
+    /* 缓存只是省查询，不能变成内存泄漏：超量就整体丢掉重来 */
+    if (this.flyCache.size > FLY_CACHE_MAX) this.flyCache.clear();
+    return value;
   }
 
   private readonly roomInclude = {
     bookMode: true,
     generalFlyEnabled: true,
     ownerAgent: {
-      select: { id: true, userId: true, flyCover: true, rebateRate: true, flowRate: true, shareRate: true, pointsQuota: true },
+      select: {
+        id: true,
+        userId: true,
+        rebateRate: true,
+        flowRate: true,
+        shareRate: true,
+        pointsQuota: true,
+        gameRates: true,
+      },
     },
     generalAgent: {
-      select: { id: true, userId: true, flowRate: true, shareRate: true, pointsQuota: true },
+      select: {
+        id: true,
+        userId: true,
+        flowRate: true,
+        shareRate: true,
+        pointsQuota: true,
+        downlineFlowRate: true,
+        playerMinRate: true,
+        playerMaxRate: true,
+        gameRates: true,
+      },
     },
   } as const;
 
@@ -158,65 +232,62 @@ export class FlyDiskService {
       return { type: 'AGENT', id: generalUserId, flying: false, sitting: 'GENERAL', ...base };
     }
 
-    const switchOn = true;
-    const available = isCredit
-      ? await creditDiskFlyAvailable(this.prisma, agent.userId)
-      : await this.cashFlyAvailable(this.prisma, agent.userId);
+    /*
+     * 一层一层往上飞，每一层只拿自己的钱冒险：
+     *
+     *   代理那一支不够本注  →  代理坐庄
+     *   整棵总代树不够本注  →  总代坐庄
+     *   两层都够            →  飞到平台
+     *
+     * 为什么平台还要看整棵树：总代一旦超发（赔出去的超过他手上有的），
+     * 某个代理那一支的数字会被抬高，但那部分分没有真钱背书——玩家输了平台收到白纸，
+     * 玩家赢了平台掏真钱。所以平台当庄的上限是树里实际有多少钱。
+     * 树里有钱时两个条件都满足，行为和只看单支时一模一样。
+     */
     const stake = Math.max(0, asMoney(stakeAmount ?? 0));
-    const flying = stake > 0
-      ? switchOn && available + 1e-9 >= stake
-      : switchOn && available > 0;
-    if (flying) {
-      return {
-        type: 'PLATFORM',
-        id: PLATFORM_OWNER_ID,
-        flying: true,
-        sitting: 'PLATFORM',
-        ...base,
-      };
+    const enough = (v: number) => (stake > 0 ? v + 1e-9 >= stake : v > 0);
+
+    if (!enough(await this.flyAvailableCached(agent.userId, bookMode))) {
+      /* 代理这一支不够：有总代则总代接，否则代理自己坐庄 */
+      if (generalUserId) {
+        return { type: 'AGENT', id: generalUserId, flying: false, sitting: 'GENERAL', ...base };
+      }
+      return { type: 'AGENT', id: agent.userId, flying: false, sitting: 'AGENT', ...base };
     }
-    /* 额度不够飞平台：有总代则总代坐庄，否则代理坐庄 */
-    if (generalUserId) {
+
+    if (generalUserId && !enough(await this.treeFlyAvailableCached(generalUserId))) {
       return { type: 'AGENT', id: generalUserId, flying: false, sitting: 'GENERAL', ...base };
     }
-    return { type: 'AGENT', id: agent.userId, flying: false, sitting: 'AGENT', ...base };
-  }
 
-  /**
-   * 历史兼容：飞盘单笔净输赢不再改代理盘分（算法 A）。
-   * 派彩只走玩家↔平台；盘分仅上分/下分/买额度/关盘庄家路径变动。
-   */
-  /* eslint-disable-next-line @typescript-eslint/require-await
-     -- 保持 async：三处结算调用点都在 await 它，日后若这里恢复动账，
-     少一个 await 就是钱没落库还继续往下走 */
-  async applyFlyLossInTx(
-    _tx: Prisma.TransactionClient,
-    _agentUserId: string | undefined,
-    _flying: boolean,
-    _stake: number,
-    _payout: number,
-    _idemKey?: string,
-    _bookMode?: string,
-  ): Promise<void> {
-    return;
+    return {
+      type: 'PLATFORM',
+      id: PLATFORM_OWNER_ID,
+      flying: true,
+      sitting: 'PLATFORM',
+      ...base,
+    };
   }
 
   async getRebatePolicy() {
     const row = await this.prisma.rebatePolicy.findUnique({ where: { id: 1 } });
+    const platform = readPlatformBounds(row);
     return {
-      totalRate: row?.generalDefaultRate ?? row?.totalRate ?? 0.07,
-      playerMinRate: row?.playerMinRate ?? 0.018,
-      generalDefaultRate: row?.generalDefaultRate ?? 0.07,
-      generalMaxRate: row?.generalMaxRate ?? 0.1,
-      agentDefaultRate: row?.agentDefaultRate ?? 0.05,
+      totalRate: platform.generalDefault,
+      playerMinRate: platform.playerMin,
+      playerMaxRate: platform.playerMax,
+      generalDefaultRate: platform.generalDefault,
+      generalMaxRate: platform.generalMax,
+      agentDefaultRate: platform.agentDefault,
+      defaults: row?.defaults ?? {},
+      platform,
     };
   }
 
   /**
-   * P=玩家回水；agentPkg=代理整包；generalPkg=总代整包（无总代=0）。
-   * 飞上台时平台出 generalPkg 或 agentPkg；关盘不出上级整包。
+   * P=玩家回水；agentPkg=代理%；generalPkg=总代%。
+   * 发放时各人拿自己的点：总代%−代理%、代理%−玩家%、玩家进回水池。
    */
-  async resolvePlayerRate(playerId: string, roomId?: string): Promise<{
+  async resolvePlayerRate(playerId: string, roomId?: string, gameCode?: string): Promise<{
     P: number;
     T: number;
     A: number;
@@ -225,27 +296,57 @@ export class FlyDiskService {
   }> {
     const policy = await this.getRebatePolicy();
     const member = await this.resolvePlayerRoom(playerId, roomId);
-    const agentPkg = Math.max(
-      policy.playerMinRate,
-      Number(member?.room?.ownerAgent?.flowRate ?? policy.agentDefaultRate),
-    );
-    const generalPkg = member?.room?.generalAgent
-      ? Number(member.room.generalAgent.flowRate ?? policy.generalDefaultRate)
-      : 0;
-    const maxP = agentPkg / 2;
-    let P = member?.playerRebateRate
-      ?? member?.room?.ownerAgent?.rebateRate
-      ?? policy.playerMinRate;
-    if (P < policy.playerMinRate) P = policy.playerMinRate;
-    if (P > maxP) P = maxP;
-    const T = generalPkg > 0 ? generalPkg : agentPkg;
-    return { P, T, A: roundMoney(Math.max(0, agentPkg - P)), agentPkg, generalPkg };
+    const opsRoomId = roomId || member?.roomId;
+    const roomBand = resolvePlayerBand({
+      platform: policy.platform,
+      general: member?.room?.generalAgent,
+      agentFlowRate: member?.room?.ownerAgent?.flowRate,
+    });
+    const gamePkg = gameCode
+      ? bandForRoomGame({
+          defaults: policy.defaults,
+          platform: policy.platform,
+          gameCode,
+          category: (
+            await this.prisma.game.findUnique({
+              where: { code: gameCode },
+              select: { category: true },
+            })
+          )?.category,
+          hasGeneral: !!member?.room?.generalAgent,
+          generalGameRates: member?.room?.generalAgent?.gameRates,
+          agentGameRates: member?.room?.ownerAgent?.gameRates,
+        }).pkg
+      : null;
+    let roomGameRate: number | null = null;
+    if (gameCode && opsRoomId) {
+      const cfg = await this.prisma.roomGameConfig.findUnique({
+        where: { roomId_gameCode: { roomId: opsRoomId, gameCode } },
+        select: { rebateRate: true },
+      });
+      if (cfg?.rebateRate != null) roomGameRate = Number(cfg.rebateRate);
+    }
+    const rates = resolvePayoutRates({
+      roomBand,
+      gamePkg,
+      roomGameRate,
+      memberRate: member?.playerRebateRate,
+      agentDefaultRate: member?.room?.ownerAgent?.rebateRate,
+    });
+    const T = rates.generalPkg > 0 ? rates.generalPkg : rates.agentPkg;
+    return {
+      P: rates.P,
+      T,
+      A: roundMoney(rates.A),
+      agentPkg: rates.agentPkg,
+      generalPkg: rates.generalPkg,
+    };
   }
 
   clampPlayerRate(rate: number, T: number, playerMinRate: number) {
-    const maxP = T / 2;
-    if (rate < playerMinRate || rate > maxP) {
-      throw new BadRequestException(`玩家回水须在 ${playerMinRate} ~ ${maxP}（不超过代理份额）`);
+    const maxP = Math.min(T, rate);
+    if (rate < playerMinRate) {
+      throw new BadRequestException(`玩家回水须在 ${playerMinRate} ~ ${maxP}`);
     }
     return rate;
   }

@@ -4,7 +4,11 @@
  * 订单号既是展示单号也是幂等键锚点，放行一个坏号等于放行一次重复转账，
  * 所以宽松（可注入/超长）和过严（正常号被拒）两边都要看住。
  */
-import { assertFundOrderNo, withOrderRemark } from './player-fund.helper';
+import {
+  assertFundOrderNo,
+  closedDiskHouseUserId,
+  withOrderRemark,
+} from './player-fund.helper';
 
 describe('assertFundOrderNo', () => {
   it('接受前端生成的正常订单号', () => {
@@ -56,5 +60,34 @@ describe('withOrderRemark', () => {
 
   it('备注和兜底都没有时只留订单号', () => {
     expect(withOrderRemark('FD20260808A1')).toBe('订单号 FD20260808A1');
+  });
+});
+
+/**
+ * 关盘坐庄方一旦认错人，输赢就结到别人盘分上，而且两本账各自自洽、
+ * 日常对账查不出来（对账只验「余额 vs 自己那本流水」）。这里钉死取值来源。
+ */
+describe('closedDiskHouseUserId', () => {
+  it('代理关盘：坐庄方就是房间代理', () => {
+    expect(
+      closedDiskHouseUserId({ id: 'agent-1', agentUserId: 'agent-1' }),
+    ).toBe('agent-1');
+  });
+
+  it('总代关盘：坐庄方是总代，不能取成房间代理', () => {
+    expect(
+      closedDiskHouseUserId({ id: 'general-9', agentUserId: 'agent-1' }),
+    ).toBe('general-9');
+  });
+
+  it('缺坐庄方时退回房间代理，不返回空串把扣款打到空账户', () => {
+    expect(closedDiskHouseUserId({ agentUserId: 'agent-1' })).toBe('agent-1');
+    expect(closedDiskHouseUserId({ id: '', agentUserId: 'agent-1' })).toBe('agent-1');
+  });
+
+  it('两者都缺时返回空串，由下游 closedDisk* 抛错拦截', () => {
+    expect(closedDiskHouseUserId(null)).toBe('');
+    expect(closedDiskHouseUserId(undefined)).toBe('');
+    expect(closedDiskHouseUserId({})).toBe('');
   });
 });

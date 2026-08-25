@@ -3,18 +3,24 @@ import {
   Body, Controller, Delete, Get, Inject, Param, Patch, Post, Put, Query,
   DefaultValuePipe, ParseIntPipe, forwardRef,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ConsoleRoomsService } from './console-rooms.service';
 import { ConsoleWalletService } from './console-wallet.service';
 import { ConsoleControlService } from './console-control.service';
 import { GlobalSoftControlService } from './global-soft-control.service';
+import { SoftControlAuditService } from './soft-control-audit.service';
 import { ConsoleReportsService } from './console-reports.service';
 import { ConsolePlayersService } from './console-players.service';
 import { CsStaffService } from './cs-staff.service';
+import { CsSlaService } from './cs-sla.service';
+import { isTimeRangeKey, shanghaiRangeBounds } from '../../common/shanghai-range';
 import { RoomSettleService } from './room-settle.service';
 import { GeneralSettleService } from './general-settle.service';
+import { ConsoleLiveService } from './console-live.service';
 import type { ConsoleActor } from './console-scope.service';
+import { ConsoleRebatePolicyService } from './console-rebate-policy.service';
 import { ConsoleScopeService } from './console-scope.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AdminLogService } from '../admin/admin-log.service';
@@ -32,6 +38,11 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
+/** 结算页签取值归一化：本期 / 上期 / 提前结账，非法值一律当上期 */
+function settlePeriodKey(v?: string): 'current' | 'last' | 'early' {
+  return v === 'current' || v === 'early' ? v : 'last';
+}
+
 /**
  * 控制台默认可见角色，**不含客服**。
  *
@@ -47,9 +58,6 @@ import { Type } from 'class-transformer';
  * 新增**写**接口时务必单独写 @Roles，别让总代顺着兜底拿到不该有的操作。
  */
 const OPS = ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'] as const;
-
-/** 回水比例硬上限（20%）：超过这个量级只可能是误配 */
-const REBATE_RATE_MAX = 0.2;
 
 /** 代理额度上下分：clientRequestId 兼作订单号与幂等键，缺了会被服务层拒绝 */
 export class WalletIssueDto {
@@ -131,11 +139,15 @@ export class ConsoleController {
     private wallet: ConsoleWalletService,
     private control: ConsoleControlService,
     private globalSoft: GlobalSoftControlService,
+    private softAudit: SoftControlAuditService,
     private reports: ConsoleReportsService,
     private players: ConsolePlayersService,
     private csStaff: CsStaffService,
+    private csSla: CsSlaService,
     private settle: RoomSettleService,
     private generalSettle: GeneralSettleService,
+    private live: ConsoleLiveService,
+    private rebatePolicy: ConsoleRebatePolicyService,
     private prisma: PrismaService,
     private adminLog: AdminLogService,
     private scope: ConsoleScopeService,
@@ -164,8 +176,14 @@ export class ConsoleController {
     return this.wallet.myBalance(this.actor(u));
   }
 
+  /**
+   * 下发额度给总代/代理。
+   *
+   * PROXY 留着是给**总代侧子账号**用的（服务里按 isGeneralSide 当成总代）；
+   * AGENT 曾在这里，但代理无论发给谁都会被层级校验拒掉，是个点了必失败的空入口，已摘。
+   */
   @Post('wallet/issue')
-  @Roles('ADMIN', 'BRANCH', 'GENERAL', 'AGENT')
+  @Roles('ADMIN', 'BRANCH', 'GENERAL', 'PROXY')
   issue(
     @CurrentUser() u: { id: string; role: string },
     @Body() body: WalletIssueDto,
@@ -179,9 +197,9 @@ export class ConsoleController {
     );
   }
 
-  /** 回收总代/代理/子账号额度（下分） */
+  /** 回收总代/代理额度（下分）；PROXY 同 issue，仅总代侧子账号有效 */
   @Post('wallet/recall')
-  @Roles('ADMIN', 'BRANCH', 'GENERAL', 'AGENT')
+  @Roles('ADMIN', 'BRANCH', 'GENERAL', 'PROXY')
   recall(
     @CurrentUser() u: { id: string; role: string },
     @Body() body: WalletRecallDto,
@@ -230,13 +248,13 @@ export class ConsoleController {
 
   // ── 进房审核：列表可读；通过/拒绝仅主代理与管理/房主（子账号只读）──
   @Get('room-members/pending')
-  @Roles('AGENT', 'PROXY', 'ADMIN', 'BRANCH')
+  @Roles('AGENT', 'PROXY', 'ADMIN', 'BRANCH', 'GENERAL')
   pendingJoins(@CurrentUser() u: { id: string; role: string }) {
     return this.rooms.listPendingMembers(this.actor(u));
   }
 
   @Post('room-members/:id/approve')
-  @Roles('AGENT', 'ADMIN', 'BRANCH')
+  @Roles('AGENT', 'ADMIN', 'BRANCH', 'GENERAL', 'PROXY')
   approveJoin(
     @CurrentUser() u: { id: string; role: string },
     @Param('id') id: string,
@@ -245,7 +263,7 @@ export class ConsoleController {
   }
 
   @Post('room-members/:id/reject')
-  @Roles('AGENT', 'ADMIN', 'BRANCH')
+  @Roles('AGENT', 'ADMIN', 'BRANCH', 'GENERAL', 'PROXY')
   rejectJoin(
     @CurrentUser() u: { id: string; role: string },
     @Param('id') id: string,
@@ -260,12 +278,13 @@ export class ConsoleController {
     @Query('includeClosed') includeClosed?: string,
   ) {
     return this.rooms.list(this.actor(u), {
+      /* 总代/代理传这个也不给已关闭，服务里还要验角色 */
       includeClosed: includeClosed === '1' || includeClosed === 'true',
     });
   }
 
   @Post('rooms')
-  @Roles('ADMIN', 'BRANCH', 'GENERAL')
+  @Roles('ADMIN', 'BRANCH', 'GENERAL', 'PROXY')
   createRoom(
     @CurrentUser() u: { id: string; role: string },
     @Body() body: {
@@ -301,7 +320,7 @@ export class ConsoleController {
 
   /** PATCH /api/console/rooms/:id/icon — 上传房间图标（管理/总监/总代/代理） */
   @Patch('rooms/:id/icon')
-  @Roles('ADMIN', 'BRANCH', 'GENERAL', 'AGENT')
+  @Roles('ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY')
   updateRoomIcon(
     @CurrentUser() u: { id: string; role: string },
     @Param('id') id: string,
@@ -322,7 +341,7 @@ export class ConsoleController {
 
   /** 重置本房专属代理密码（不可换绑代理） */
   @Post('rooms/:id/reset-agent-password')
-  @Roles('ADMIN', 'BRANCH')
+  @Roles('ADMIN', 'BRANCH', 'GENERAL', 'PROXY')
   resetAgentPassword(
     @CurrentUser() u: { id: string; role: string },
     @Param('id') id: string,
@@ -351,8 +370,37 @@ export class ConsoleController {
     return this.rooms.revokeOwner(this.actor(u), id, body.ownerUserId);
   }
 
+  /** 某总代当前对哪些总监可见（含全部总监名单，供前端做勾选） */
+  @Get('generals/:id/owners')
+  @Roles('ADMIN', 'BRANCH')
+  generalOwners(
+    @CurrentUser() u: { id: string; role: string },
+    @Param('id') id: string,
+  ) {
+    return this.players.generalOwners(this.actor(u), id);
+  }
+
+  /**
+   * 开/关某个总监对该总代的可见性。
+   * 关掉后这个总监看不到该总代本人、名下房间、代理、玩家、报表与结算。
+   */
+  @Post('generals/:id/owner')
+  @Roles('ADMIN')
+  setGeneralOwner(
+    @CurrentUser() u: { id: string; role: string },
+    @Param('id') id: string,
+    @Body() body: { ownerUserId: string; visible: boolean },
+  ) {
+    return this.players.setGeneralOwner(
+      this.actor(u),
+      id,
+      body.ownerUserId,
+      !!body.visible,
+    );
+  }
+
   @Patch('rooms/:id/status')
-  @Roles('ADMIN', 'BRANCH', 'GENERAL', 'AGENT')
+  @Roles('ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY')
   setRoomStatus(
     @CurrentUser() u: { id: string; role: string },
     @Param('id') id: string,
@@ -373,7 +421,7 @@ export class ConsoleController {
   }
 
   @Patch('rooms/:id/general-fly')
-  @Roles('GENERAL')
+  @Roles('GENERAL', 'PROXY')
   setGeneralRoomFly(
     @CurrentUser() u: { id: string; role: string },
     @Param('id') id: string,
@@ -394,11 +442,16 @@ export class ConsoleController {
 
   /** 信用盘：永久加减代理额度（合同+剩余信用同步；direction=up|down） */
   @Post('rooms/:id/credit-limit/bump')
-  @Roles('ADMIN', 'BRANCH')
+  @Roles('ADMIN', 'BRANCH', 'GENERAL', 'PROXY')
   bumpCreditLimit(
     @CurrentUser() u: { id: string; role: string },
     @Param('id') id: string,
-    @Body() body: { amount?: number; remark?: string; direction?: 'up' | 'down' },
+    @Body() body: {
+      amount?: number;
+      remark?: string;
+      direction?: 'up' | 'down';
+      clientRequestId?: string;
+    },
   ) {
     return this.rooms.bumpCreditLimitByAmount(
       this.actor(u),
@@ -406,10 +459,15 @@ export class ConsoleController {
       Number(body?.amount),
       body?.remark,
       body?.direction,
+      body?.clientRequestId,
     );
   }
 
-  /** 删房会连带清掉该房的注单/账本关联，跟改软控参数同级：要二次验密 */
+  /**
+   * 「删房」其实是关房（status=CLOSED），注单与账本一律保留、不做物理删除。
+   * 玩家仍能申请下分把分取走，代理照样能审。
+   * 之所以要二次验密：关房会让全房玩家进不去，影响面等同改软控参数。
+   */
   @Post('rooms/:id/delete')
   @Roles('ADMIN')
   async deleteRoom(
@@ -420,6 +478,21 @@ export class ConsoleController {
     const actor = this.actor(u);
     await this.globalSoft.verifyAdminPassword(actor, body?.adminPassword);
     return this.rooms.remove(actor, id);
+  }
+
+  /**
+   * 真删除空房。有过注单/账本的会拒绝，避免对账断档。
+   */
+  @Post('rooms/:id/purge')
+  @Roles('ADMIN')
+  async purgeRoom(
+    @CurrentUser() u: { id: string; role: string },
+    @Param('id') id: string,
+    @Body() body: AdminPasswordDto,
+  ) {
+    const actor = this.actor(u);
+    await this.globalSoft.verifyAdminPassword(actor, body?.adminPassword);
+    return this.rooms.purge(actor, id);
   }
 
   // 进房码仅创建时可设，创建后不可换——换码接口停用
@@ -443,7 +516,7 @@ export class ConsoleController {
   }
 
   @Patch('rooms/:id/games/:gameCode')
-  @Roles('ADMIN', 'BRANCH', 'AGENT')
+  @Roles('ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY')
   patchRoomGame(
     @CurrentUser() u: { id: string; role: string },
     @Param('id') id: string,
@@ -474,6 +547,25 @@ export class ConsoleController {
     return this.settle.statement(this.actor(u), id, { period, weekStart });
   }
 
+  /**
+   * 应付账龄：已结账但线下一直没交割的单子。
+   *
+   * 现金盘占成交割在系统外完成，漏确认就等于漏付，原先没有任何看板与提醒。
+   * 定时巡检每天会把逾期的记进风控事件，这个接口给后台直接查。
+   */
+  @Get('settle/aged-payables')
+  @Roles('ADMIN', 'BRANCH')
+  agedPayables(
+    @CurrentUser() u: { id: string; role: string },
+    @Query('overdueDays') overdueDays?: string,
+  ) {
+    const days = Number(overdueDays);
+    return this.settle.agedPayables(
+      Number.isFinite(days) && days > 0 ? days : undefined,
+      this.actor(u),
+    );
+  }
+
   /** 导出对账单 CSV */
   @Get('rooms/:id/week-settle/export')
   roomWeekSettleExport(
@@ -486,7 +578,7 @@ export class ConsoleController {
   }
 
   @Post('rooms/:id/week-settle/mark')
-  @Roles('ADMIN', 'BRANCH')
+  @Roles('ADMIN', 'BRANCH', 'GENERAL', 'PROXY')
   markRoomWeekSettle(
     @CurrentUser() u: { id: string; role: string },
     @Param('id') id: string,
@@ -497,7 +589,7 @@ export class ConsoleController {
 
   /** 信用盘：确认线下已交割实付 */
   @Post('rooms/:id/week-settle/confirm-payment')
-  @Roles('ADMIN', 'BRANCH')
+  @Roles('ADMIN', 'BRANCH', 'GENERAL', 'PROXY')
   confirmRoomWeekSettlePayment(
     @CurrentUser() u: { id: string; role: string },
     @Param('id') id: string,
@@ -509,7 +601,7 @@ export class ConsoleController {
   // ── 玩家 / 代理 ──
   /** 客服不可浏览玩家列表（仅会话派单可见） */
   @Get('players')
-  @Roles('ADMIN', 'BRANCH', 'AGENT', 'PROXY')
+  @Roles('ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY')
   listPlayers(
     @CurrentUser() u: { id: string; role: string },
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page = 1,
@@ -538,13 +630,24 @@ export class ConsoleController {
 
   /** 客服仅可查系统派给自己的玩家详情 */
   @Get('players/:id')
-  @Roles('ADMIN', 'BRANCH', 'AGENT', 'PROXY', 'CS')
+  @Roles('ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY', 'CS')
   playerDetail(
     @CurrentUser() u: { id: string; role: string },
     @Param('id') id: string,
     @Query('roomId') roomId?: string,
   ) {
     return this.players.getPlayerDetail(this.actor(u), id, roomId);
+  }
+
+  /** 玩家画像：资金/风险/游戏偏好，只给管理与总监 */
+  @Get('players/:id/profile')
+  @Roles('ADMIN', 'BRANCH')
+  playerProfile(
+    @CurrentUser() u: { id: string; role: string },
+    @Param('id') id: string,
+    @Query('roomId') roomId?: string,
+  ) {
+    return this.players.getPlayerProfile(this.actor(u), id, roomId);
   }
 
   @Get('agents')
@@ -577,7 +680,7 @@ export class ConsoleController {
 
   /** 余额流水 / 上下分 / 操作记录（只读审计，不可删） */
   @Get('agents/:userId/audit')
-  @Roles('ADMIN', 'BRANCH', 'AGENT', 'PROXY', 'CS')
+  @Roles('ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY', 'CS')
   agentAudit(
     @CurrentUser() u: { id: string; role: string },
     @Param('userId') userId: string,
@@ -614,7 +717,7 @@ export class ConsoleController {
   }
 
   @Patch('agents/:userId/status')
-  @Roles('ADMIN', 'BRANCH')
+  @Roles('ADMIN', 'BRANCH', 'GENERAL', 'PROXY')
   setProxyStatus(
     @CurrentUser() u: { id: string; role: string },
     @Param('userId') userId: string,
@@ -624,7 +727,7 @@ export class ConsoleController {
   }
 
   @Post('agents/:userId/reset-password')
-  @Roles('ADMIN', 'BRANCH')
+  @Roles('ADMIN', 'BRANCH', 'GENERAL', 'PROXY')
   resetProxyPassword(
     @CurrentUser() u: { id: string; role: string },
     @Param('userId') userId: string,
@@ -654,9 +757,9 @@ export class ConsoleController {
     return this.players.setStatus(this.actor(u), id, body.status);
   }
 
-  /** 重置玩家密码并解冻（仅管理 / 房主） */
+  /** 重置玩家密码并解冻：管理/总监全部可见玩家；总代仅名下房间 */
   @Post('players/:id/reset-password')
-  @Roles('ADMIN', 'BRANCH')
+  @Roles('ADMIN', 'BRANCH', 'GENERAL', 'PROXY')
   resetPlayerPassword(
     @CurrentUser() u: { id: string; role: string },
     @Param('id') id: string,
@@ -668,22 +771,22 @@ export class ConsoleController {
   // ── 总代账期结算（平台 ↔ 总代，按总代自己的周期汇总名下所有房间）──
   /** 汇总对账单：一行总代、下面每房一行 */
   @Get('general-settle/statement')
-  @Roles('ADMIN', 'BRANCH', 'GENERAL')
+  @Roles('ADMIN', 'BRANCH', 'GENERAL', 'PROXY')
   generalSettleStatement(
     @CurrentUser() u: { id: string; role: string },
     @Query('generalUserId') generalUserId?: string,
-    @Query('period') period?: 'current' | 'last',
+    @Query('period') period?: 'current' | 'last' | 'early',
     @Query('periodStart') periodStart?: string,
   ) {
     return this.generalSettle.statement(this.actor(u), {
       generalUserId,
-      period: period === 'current' ? 'current' : 'last',
+      period: settlePeriodKey(period),
       periodStart,
     });
   }
 
   @Get('general-settle/history')
-  @Roles('ADMIN', 'BRANCH', 'GENERAL')
+  @Roles('ADMIN', 'BRANCH', 'GENERAL', 'PROXY')
   generalSettleHistory(
     @CurrentUser() u: { id: string; role: string },
     @Query('generalUserId') generalUserId?: string,
@@ -692,16 +795,55 @@ export class ConsoleController {
     return this.generalSettle.history(this.actor(u), generalUserId, take);
   }
 
+  /** 总代工资条：汇总 + 分房明细，Excel 可直接打开 */
+  @Get('general-settle/export')
+  @Roles('ADMIN', 'BRANCH', 'GENERAL', 'PROXY')
+  generalSettleExport(
+    @CurrentUser() u: { id: string; role: string },
+    @Query('generalUserId') generalUserId?: string,
+    @Query('period') period?: 'current' | 'last' | 'early',
+    @Query('periodStart') periodStart?: string,
+  ) {
+    return this.generalSettle.exportStatementCsv(this.actor(u), {
+      generalUserId,
+      period: settlePeriodKey(period),
+      periodStart,
+    });
+  }
+
+  /** 未挂总代房间总表（礼拜一账期） */
+  @Get('general-settle/direct-statement')
+  @Roles('ADMIN', 'BRANCH')
+  generalSettleDirectStatement(
+    @CurrentUser() u: { id: string; role: string },
+    @Query('period') period?: 'current' | 'last',
+  ) {
+    return this.generalSettle.directStatement(this.actor(u), {
+      period: period === 'current' ? 'current' : 'last',
+    });
+  }
+
+  @Get('general-settle/direct-export')
+  @Roles('ADMIN', 'BRANCH')
+  generalSettleDirectExport(
+    @CurrentUser() u: { id: string; role: string },
+    @Query('period') period?: 'current' | 'last',
+  ) {
+    return this.generalSettle.exportDirectCsv(this.actor(u), {
+      period: period === 'current' ? 'current' : 'last',
+    });
+  }
+
   /** 结清一个账期：汇总与每房明细定格成快照 */
   @Post('general-settle/:generalUserId/settle')
   @Roles('ADMIN', 'BRANCH')
   settleGeneralPeriod(
     @CurrentUser() u: { id: string; role: string },
     @Param('generalUserId') generalUserId: string,
-    @Body() body: { period?: 'current' | 'last'; note?: string },
+    @Body() body: { period?: 'current' | 'last' | 'early'; note?: string },
   ) {
     return this.generalSettle.settle(this.actor(u), generalUserId, {
-      period: body?.period === 'current' ? 'current' : 'last',
+      period: settlePeriodKey(body?.period),
       note: body?.note,
     });
   }
@@ -712,7 +854,12 @@ export class ConsoleController {
   bumpGeneralCreditLimit(
     @CurrentUser() u: { id: string; role: string },
     @Param('userId') userId: string,
-    @Body() body: { amount?: number; direction?: 'up' | 'down'; remark?: string },
+    @Body() body: {
+      amount?: number;
+      direction?: 'up' | 'down';
+      remark?: string;
+      clientRequestId?: string;
+    },
   ) {
     return this.players.bumpGeneralCreditLimit(
       this.actor(u),
@@ -720,6 +867,7 @@ export class ConsoleController {
       Number(body?.amount ?? 0),
       body?.direction === 'down' ? 'down' : 'up',
       body?.remark,
+      body?.clientRequestId,
     );
   }
 
@@ -799,7 +947,7 @@ export class ConsoleController {
   }
 
   @Post('agents')
-  @Roles('ADMIN', 'BRANCH', 'GENERAL')
+  @Roles('ADMIN', 'BRANCH', 'GENERAL', 'PROXY')
   createAgent(
     @CurrentUser() u: { id: string; role: string },
     @Body() body: {
@@ -810,13 +958,31 @@ export class ConsoleController {
       parentAgentUserId?: string;
       flowRate?: number;
       shareRate?: number;
-      /** 以下三项仅总代：与平台的盘口、合同额度、结算周期 */
+      /** 以下四项仅总代：与平台的盘口、合同额度、结算周期、每间房月费单价 */
       bookMode?: string;
       creditLimit?: number;
       settleCycle?: string;
+      roomMonthlyFee?: number;
+      /** 建总代时勾选哪些总监可见；仅管理有效，不传=全员可见 */
+      ownerUserIds?: string[];
     },
   ) {
     return this.players.createAgent(this.actor(u), body);
+  }
+
+  /** 改总代每间房缴给平台的月费单价：只有平台自己能定价 */
+  @Patch('agents/:userId/room-monthly-fee')
+  @Roles('ADMIN', 'BRANCH')
+  setGeneralRoomMonthlyFee(
+    @CurrentUser() u: { id: string; role: string },
+    @Param('userId') userId: string,
+    @Body() body: { amount: number },
+  ) {
+    return this.players.setGeneralRoomMonthlyFee(
+      this.actor(u),
+      userId,
+      Number(body?.amount ?? 0),
+    );
   }
 
   // ── 控奖（仅 ADMIN；Roles 在方法上收紧）──
@@ -917,6 +1083,45 @@ export class ConsoleController {
     return this.globalSoft.getOverview(this.actor(u));
   }
 
+  /**
+   * 软控介入明细：每一次「放弃自然结果」都在这里，含本来会开什么。
+   * 仅 ADMIN；总监/总代/代理/客服一律看不到。
+   */
+  @Get('soft-control-audit')
+  @Roles('ADMIN')
+  softControlAudit(
+    @Query('category') category?: 'lottery' | 'table' | 'arcade',
+    @Query('gameCode') gameCode?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page = 1,
+    @Query('pageSize', new DefaultValuePipe(50), ParseIntPipe) pageSize = 50,
+  ) {
+    return this.softAudit.list({
+      category,
+      gameCode: gameCode?.trim() || undefined,
+      from: from ? new Date(from) : undefined,
+      to: to ? new Date(to) : undefined,
+      page,
+      pageSize,
+    });
+  }
+
+  /** 软控介入率概览：分母取同期实开局数，仅 ADMIN */
+  @Get('soft-control-audit/summary')
+  @Roles('ADMIN')
+  softControlAuditSummary(@Query('from') from?: string, @Query('to') to?: string) {
+    const to2 = to ? new Date(to) : new Date();
+    const from2 = from ? new Date(from) : new Date(to2.getTime() - 7 * 24 * 3600_000);
+    return this.softAudit.summary({ from: from2, to: to2 });
+  }
+
+  /**
+   * 二次密码校验，是全站软控和资金补记的最后一道闸，必须比普通接口更紧：
+   * 全局 120/分 足够在一分钟里试两千次常见口令。会话已经是 ADMIN 才走到这，
+   * 所以限的是「拿到别人电脑/会话后暴力猜密码」，正常人点确认不会超过几次。
+   */
+  @Throttle({ default: { limit: 5, ttl: 900_000 } })
   @Post('verify-admin-password')
   @Roles('ADMIN')
   verifyAdminPassword(
@@ -1066,92 +1271,136 @@ export class ConsoleController {
     });
   }
 
-  @Get('logs')
-  async listLogs(
-    @CurrentUser() u: { id: string; role: string },
-    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page = 1,
-    @Query('pageSize', new DefaultValuePipe(20), ParseIntPipe) pageSize = 20,
-  ) {
-    const where =
-      u.role === 'ADMIN'
-        ? {}
-        : { operatorId: u.id };
-    const take = Math.min(Math.max(pageSize, 1), 100);
-    const [total, list] = await this.prisma.$transaction([
-      this.prisma.adminLog.count({ where }),
-      this.prisma.adminLog.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        skip: (Math.max(page, 1) - 1) * take,
-        take,
-        include: { operator: { select: { uid: true, nickname: true } } },
-      }),
-    ]);
-    return { total, page, pageSize: take, list };
+  /*
+   * 原先这里还有一个 GET console/logs：非超管只按 operatorId 过滤，
+   * 看不到下级操作、却能翻到自己以外的分页边界，隔离比 /admin/logs 弱一截。
+   * 前端一直走 /admin/logs（那边按管辖用户树收窄），这个入口没人用，已删。
+   */
+
+  // ── 实时开奖（每期结果 + 当期/今日下注）──
+  @Get('live-draws')
+  @Roles('ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY')
+  liveDraws(@CurrentUser() u: { id: string; role: string; uid?: string }) {
+    return this.live.list(this.actor(u));
   }
 
-  // ── 回水全局政策 ──
+  // ── 回水规则（管理定三层框；总代改代理/玩家；代理只改玩家）──
   @Get('rebate-policy')
   @Roles('ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY')
-  async getRebatePolicy() {
-    const row = await this.prisma.rebatePolicy.findUnique({ where: { id: 1 } });
-    return row ?? { id: 1, minRate: 0, maxRate: 0.03, defaults: {} };
+  getRebatePolicy(
+    @CurrentUser() u: { id: string; role: string; uid?: string },
+    @Query('roomId') roomId?: string,
+  ) {
+    return this.rebatePolicy.getForActor(this.actor(u), roomId);
   }
 
   @Patch('rebate-policy')
-  @Roles('ADMIN')
-  async patchRebatePolicy(
-    @CurrentUser() u: { id: string; role: string },
+  @Roles('ADMIN', 'GENERAL', 'AGENT', 'PROXY')
+  patchRebatePolicy(
+    @CurrentUser() u: { id: string; role: string; uid?: string },
     @Body() body: {
-      minRate?: number; maxRate?: number; defaults?: object;
-      totalRate?: number; playerMinRate?: number;
-      generalDefaultRate?: number; generalMaxRate?: number; agentDefaultRate?: number;
+      generalMinRate?: number;
+      generalMaxRate?: number;
+      generalDefaultRate?: number;
+      totalRate?: number;
+      agentMinRate?: number;
+      agentMaxRate?: number;
+      agentDefaultRate?: number;
+      playerMinRate?: number;
+      playerMaxRate?: number;
+      minRate?: number;
+      maxRate?: number;
+      downlineFlowRate?: number;
+      rebateRate?: number;
+      games?: Array<{
+        gameCode?: string;
+        mineRate?: number;
+        generalMin?: number; generalDefault?: number; generalMax?: number;
+        agentMin?: number; agentDefault?: number; agentMax?: number;
+        playerMin?: number; playerDefault?: number; playerMax?: number;
+      }>;
+      gameCode?: string;
+      mineRate?: number;
     },
   ) {
-    /* 回水比例误配成 1（100%）会让飞盘每笔流水都从平台池往外打钱，必须有硬上限 */
-    const assertRate = (v: number | undefined, label: string) => {
-      if (v == null) return;
-      if (!Number.isFinite(v) || v < 0 || v > REBATE_RATE_MAX) {
-        throw new BadRequestException(
-          `${label}须在 0~${REBATE_RATE_MAX}（${REBATE_RATE_MAX * 100}%）之间`,
-        );
-      }
-    };
-    assertRate(body.minRate, '最低回水比例');
-    assertRate(body.maxRate, '最高回水比例');
-    assertRate(body.totalRate, '回水总比例');
-    assertRate(body.playerMinRate, '玩家最低回水比例');
-    assertRate(body.generalDefaultRate, '总代整包默认');
-    assertRate(body.generalMaxRate, '总代整包上限');
-    assertRate(body.agentDefaultRate, '代理整包默认');
-    if (body.playerMinRate != null && body.totalRate != null
-      && body.playerMinRate > body.totalRate) {
-      throw new BadRequestException('玩家最低回水比例不能高于总比例');
-    }
+    return this.rebatePolicy.patchForActor(this.actor(u), body ?? {});
+  }
 
-    const row = await this.prisma.rebatePolicy.upsert({
-      where: { id: 1 },
-      update: {
-        ...(body.minRate != null ? { minRate: body.minRate } : {}),
-        ...(body.maxRate != null ? { maxRate: body.maxRate } : {}),
-        ...(body.defaults != null ? { defaults: body.defaults } : {}),
-        ...(body.totalRate != null ? { totalRate: body.totalRate } : {}),
-        ...(body.playerMinRate != null ? { playerMinRate: body.playerMinRate } : {}),
-        ...(body.generalDefaultRate != null ? { generalDefaultRate: body.generalDefaultRate } : {}),
-        ...(body.generalMaxRate != null ? { generalMaxRate: body.generalMaxRate } : {}),
-        ...(body.agentDefaultRate != null ? { agentDefaultRate: body.agentDefaultRate } : {}),
-      },
-      create: {
-        id: 1,
-        minRate: body.minRate ?? body.playerMinRate ?? 0.018,
-        maxRate: body.maxRate ?? 0.05,
-        totalRate: body.totalRate ?? 0.05,
-        playerMinRate: body.playerMinRate ?? 0.018,
-        defaults: body.defaults ?? {},
-      },
-    });
-    await this.adminLog.log(u.id, 'REBATE_POLICY', '1', body as object);
-    return row;
+  // ── 客服响应考核（代理设规则、看绩效、解锁、免除处罚） ──
+
+  /** 本代理的考核规则；时限与奖惩金额都由代理自己定 */
+  @Get('cs-sla/policy')
+  @Roles('AGENT', 'PROXY')
+  async getCsSlaPolicy(@CurrentUser() u: { id: string; role: string }) {
+    const agentId = await this.scope.scopeRootUserId(this.actor(u));
+    return this.csSla.getPolicy(agentId);
+  }
+
+  @Put('cs-sla/policy')
+  @Roles('AGENT')
+  async saveCsSlaPolicy(
+    @CurrentUser() u: { id: string; role: string },
+    @Body() body: Record<string, unknown>,
+  ) {
+    const agentId = await this.scope.scopeRootUserId(this.actor(u));
+    return this.csSla.savePolicy(agentId, body as never);
+  }
+
+  /** 绩效：每个客服的及时 / 超时 / 漏接 / 罚款 / 今日在线时长 */
+  @Get('cs-sla/stats')
+  @Roles('AGENT', 'PROXY')
+  async csSlaStats(
+    @CurrentUser() u: { id: string; role: string },
+    @Query('range') range?: string,
+  ) {
+    const agentId = await this.scope.scopeRootUserId(this.actor(u));
+    const [from, to] = shanghaiRangeBounds(isTimeRangeKey(range) ? range : 'today');
+    return this.csSla.statsByAgent(agentId, from, to);
+  }
+
+  /** 某客服的超时明细，出争议时逐条对账 */
+  @Get('cs-sla/events')
+  @Roles('AGENT', 'PROXY')
+  async csSlaEvents(
+    @CurrentUser() u: { id: string; role: string },
+    @Query('csUserId') csUserId: string,
+    @Query('range') range?: string,
+  ) {
+    await this.scope.assertUserInScope(this.actor(u), csUserId);
+    const [from, to] = shanghaiRangeBounds(isTimeRangeKey(range) ? range : 'today');
+    return this.csSla.eventsByCs(csUserId, from, to);
+  }
+
+  /** 客服线下报备后免除这一次处罚 */
+  @Post('cs-sla/events/:id/waive')
+  @Roles('AGENT')
+  async csSlaWaive(
+    @CurrentUser() u: { id: string; role: string },
+    @Param('id') id: string,
+    @Body() body: { reason?: string },
+  ) {
+    return this.csSla.waive(this.actor(u), id, body?.reason);
+  }
+
+  /**
+   * 客服端心跳：App 活着就每 30 秒报一次。
+   * 断了服务端就当他把 App 划掉了，自动转休息，不再派单也不再按漏接罚。
+   */
+  @Post('cs-sla/heartbeat')
+  @Roles('CS')
+  csHeartbeat(@CurrentUser() u: { id: string }) {
+    return this.csSla.heartbeat(u.id);
+  }
+
+  /** 漏接被锁号后，代理点这里才能让客服重新登录 */
+  @Post('cs-staff/:csUserId/sla-unlock')
+  @Roles('AGENT')
+  async csSlaUnlock(
+    @CurrentUser() u: { id: string; role: string },
+    @Param('csUserId') csUserId: string,
+  ) {
+    await this.scope.assertUserInScope(this.actor(u), csUserId);
+    return this.csSla.unlock(this.actor(u), csUserId);
   }
 
   // ── 客服账号（管理员/房主开号；代理划额与设置） ──
@@ -1162,7 +1411,7 @@ export class ConsoleController {
   }
 
   @Get('cs-staff')
-  @Roles('ADMIN', 'BRANCH', 'AGENT')
+  @Roles('ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY')
   listCsStaff(
     @CurrentUser() u: { id: string; role: string },
     @Query('parentAgentUserId') parentAgentUserId?: string,
@@ -1171,7 +1420,7 @@ export class ConsoleController {
   }
 
   @Post('cs-staff')
-  @Roles('ADMIN', 'BRANCH')
+  @Roles('ADMIN', 'BRANCH', 'GENERAL', 'PROXY')
   createCsStaff(
     @CurrentUser() u: { id: string; role: string },
     @Body() body: {
@@ -1256,7 +1505,7 @@ export class ConsoleController {
   }
 
   @Patch('cs-staff/:id/status')
-  @Roles('ADMIN', 'BRANCH')
+  @Roles('ADMIN', 'BRANCH', 'GENERAL', 'PROXY')
   setCsStaffStatus(
     @CurrentUser() u: { id: string; role: string },
     @Param('id') id: string,
@@ -1266,7 +1515,7 @@ export class ConsoleController {
   }
 
   @Post('cs-staff/:id/reset-password')
-  @Roles('ADMIN', 'BRANCH')
+  @Roles('ADMIN', 'BRANCH', 'GENERAL', 'PROXY')
   resetCsStaffPassword(
     @CurrentUser() u: { id: string; role: string },
     @Param('id') id: string,

@@ -1,19 +1,43 @@
 import {
   BadRequestException, ForbiddenException, Injectable, NotFoundException,
 } from '@nestjs/common';
-import { randomBytes, randomUUID } from 'node:crypto';
-import { asMoney, validateOpsPassword, validatePassword } from '@gamebox/shared';
+import { randomBytes } from 'node:crypto';
+import { asMoney, roundMoney, validateOpsPassword, validatePassword } from '@gamebox/shared';
 import * as bcrypt from 'bcrypt';
 import { PASSWORD_SALT_ROUNDS } from '../../common/security.constants';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
+import { isPrivateOrLocalIp } from '../../common/utils/client-ip';
 import { AdminLogService } from '../admin/admin-log.service';
 import { HangService } from '../agents/hang.service';
 import { ConsoleScopeService, type ConsoleActor } from './console-scope.service';
 import { rethrowUserUniqueConflict, throwUsernameTaken } from '../../common/utils/user-unique';
 import { pickAvatarUniqueInTx } from '../users/avatar-assign';
-import { writeAgentQuotaInTx } from './player-fund.helper';
+import { adjustCashDiskInTx, assertFundOrderNo } from './player-fund.helper';
+import {
+  consumeCreditIssueDebtInTx,
+  platformGeneralDebtFilter,
+  recordCreditIssueDebtInTx,
+} from './credit-issue-debt.helper';
+import { PointsService } from '../points/points.service';
+import {
+  agentDisplayBalance,
+  agentFlyAvailable,
+  agentWorkingDisk,
+  sumAgentCsBalancesMap,
+  sumAgentRoomPlayerBalancesMap,
+} from './credit-settle.helper';
+import { quotaSummaryScopeSql, sumAdminLogAmountsByAction } from './admin-log-sum.helper';
+import {
+  clampPlayerRateToBand,
+  pctLabel,
+  readPlatformBounds,
+  resolveDownlineFlowRate,
+  resolvePlayerBand,
+} from '../rebate/rebate-chain';
 import { normalizeSettleCycle } from './room-settle.service';
+import { hasOpenRoomSome, OPEN_ROOM_WHERE } from './open-room.where';
 
 const csDutyKey = (agentUserId: string) => `gamebox:cs-duty:${agentUserId}`;
 
@@ -29,6 +53,7 @@ export class ConsolePlayersService {
     private adminLog: AdminLogService,
     private redis: RedisService,
     private hangService: HangService,
+    private points: PointsService,
   ) {}
 
   async list(
@@ -66,7 +91,7 @@ export class ConsolePlayersService {
             OR: [
               { uid: { contains: q } },
               { nickname: { contains: q } },
-              { username: { contains: q } },
+              { username: { contains: q.toLowerCase() } },
             ],
           },
         ],
@@ -244,6 +269,250 @@ export class ConsolePlayersService {
             : null,
         };
       }),
+    };
+  }
+
+  /**
+   * 玩家画像：资金口径 + 风险 + 游戏偏好，只给管理与总监。
+   *
+   * 全部按「全历史累计」算，且每次只算一个人——这几项都要扫 Bet / PointsLedger，
+   * 放进列表里一页二十个人就是二十次全表聚合，注单上量后那一页必炸。
+   */
+  async getPlayerProfile(actor: ConsoleActor, playerId: string, roomId?: string) {
+    if (actor.role !== 'ADMIN' && actor.role !== 'BRANCH') {
+      throw new ForbiddenException('仅管理与总监可查看玩家画像');
+    }
+    if (actor.role !== 'ADMIN') await this.scope.assertUserInScope(actor, playerId);
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: playerId },
+      select: {
+        id: true,
+        uid: true,
+        username: true,
+        nickname: true,
+        status: true,
+        role: true,
+        createdAt: true,
+        lastLoginAt: true,
+        lastLoginIp: true,
+      },
+    });
+    if (!user || user.role !== 'PLAYER') throw new NotFoundException('玩家不存在');
+
+    /*
+     * 一个人可能同时在几间房，钱和注单都是按房分开的。
+     * 不选房就看合计；选了房只算那一间，免得 A 房赢 B 房输被合并成「打平」。
+     */
+    const scopeRoomId = String(roomId || '').trim();
+    if (scopeRoomId) {
+      const inRoom = await this.prisma.roomMember.count({
+        where: { playerId, roomId: scopeRoomId, status: 'APPROVED' },
+      });
+      if (!inRoom) throw new BadRequestException('该玩家不在这间房');
+    }
+    const acctRoomFilter = scopeRoomId
+      ? Prisma.sql`AND a."roomId" = ${scopeRoomId}`
+      : Prisma.empty;
+    const betRoomFilter = scopeRoomId
+      ? Prisma.sql`AND NULLIF(b.payload->'fly'->>'roomId', '') = ${scopeRoomId}`
+      : Prisma.empty;
+
+    const [members, accounts, fundRow, betRows, gameRows, alerts, biases] = await Promise.all([
+      this.prisma.roomMember.findMany({
+        where: { playerId, status: 'APPROVED' },
+        select: {
+          roomId: true,
+          room: {
+            select: {
+              roomNo: true,
+              name: true,
+              bookMode: true,
+              ownerAgent: { select: { user: { select: { nickname: true, username: true } } } },
+            },
+          },
+        },
+      }),
+      this.prisma.pointsAccount.findMany({
+        where: { ownerType: 'PLAYER', ownerId: playerId },
+        select: { roomId: true, balance: true },
+      }),
+      /* 上下分口径与报表、结账单同一把尺：只认玩家房账上的转入转出 */
+      this.prisma.$queryRaw<Array<{ up_amt: unknown; down_amt: unknown }>>`
+        SELECT
+          COALESCE(SUM(CASE
+            WHEN l.amount > 0 AND l."bizType" IN ('TRANSFER_IN', 'RECHARGE') THEN l.amount
+            ELSE 0 END), 0) AS up_amt,
+          COALESCE(SUM(CASE
+            WHEN l.amount < 0 AND l."bizType" IN ('TRANSFER_OUT', 'WITHDRAW') THEN -l.amount
+            ELSE 0 END), 0) AS down_amt
+        FROM "PointsLedger" l
+        JOIN "PointsAccount" a ON a.id = l."accountId"
+        WHERE a."ownerType" = 'PLAYER' AND a."ownerId" = ${playerId}
+          ${acctRoomFilter}
+      `,
+      this.prisma.$queryRaw<Array<{ status: string; amt: unknown; pay: unknown }>>`
+        SELECT
+          b.status::text AS status,
+          COALESCE(SUM(b.amount), 0) AS amt,
+          COALESCE(SUM(b.payout), 0) AS pay
+        FROM "Bet" b
+        WHERE b."playerId" = ${playerId}
+          AND b.status::text IN ('WON', 'LOST')
+          ${betRoomFilter}
+        GROUP BY b.status
+      `,
+      this.prisma.$queryRaw<Array<{ game_id: string; amt: unknown; cnt: number }>>`
+        SELECT
+          b."gameId" AS game_id,
+          COALESCE(SUM(b.amount), 0) AS amt,
+          COUNT(*)::int AS cnt
+        FROM "Bet" b
+        WHERE b."playerId" = ${playerId}
+          AND b.status::text IN ('WON', 'LOST', 'PENDING')
+          ${betRoomFilter}
+        GROUP BY b."gameId"
+      `,
+      this.prisma.riskEvent.findMany({
+        where: { targetId: playerId },
+        orderBy: { createdAt: 'desc' },
+        take: 20,
+        select: { id: true, type: true, level: true, handled: true, detail: true, createdAt: true },
+      }),
+      this.prisma.globalSoftBias.findMany({
+        where: { playerId, kind: { in: ['PLAYER_WIN', 'PLAYER_LOSE'] } },
+        orderBy: [{ enabled: 'desc' }, { createdAt: 'desc' }],
+        take: 10,
+        select: {
+          id: true,
+          kind: true,
+          enabled: true,
+          goalAmount: true,
+          progressAmount: true,
+          createdAt: true,
+          room: { select: { roomNo: true, name: true } },
+        },
+      }),
+    ]);
+
+    const balByRoom = new Map(accounts.map((a) => [a.roomId, asMoney(a.balance)]));
+    const rooms = members.map((m) => ({
+      roomId: m.roomId,
+      roomNo: m.room.roomNo,
+      name: m.room.name,
+      bookMode: m.room.bookMode,
+      agentNickname: m.room.ownerAgent?.user.nickname ?? null,
+      agentUsername: m.room.ownerAgent?.user.username ?? null,
+      balance: balByRoom.get(m.roomId) ?? 0,
+    }));
+    /* 玩家持分按房隔离；选了房只报那一间，不选才给合计 */
+    const totalBalance = roundMoney(
+      accounts
+        .filter((a) => !scopeRoomId || a.roomId === scopeRoomId)
+        .reduce((s, a) => s + asMoney(a.balance), 0),
+    );
+
+    const upAmount = asMoney(fundRow[0]?.up_amt ?? 0);
+    const downAmount = asMoney(fundRow[0]?.down_amt ?? 0);
+    const won = betRows.find((r) => r.status === 'WON');
+    const lost = betRows.find((r) => r.status === 'LOST');
+    const totalBet = roundMoney(
+      betRows.reduce((s, r) => s + asMoney(r.amt ?? 0), 0),
+    );
+    /* 中奖赢取取派彩，含本金，与结账单「派彩」同一口径 */
+    const winAmount = asMoney(won?.pay ?? 0);
+    const loseAmount = asMoney(lost?.amt ?? 0);
+
+    const gameIds = gameRows.map((g) => g.game_id);
+    const games = gameIds.length
+      ? await this.prisma.game.findMany({
+          where: { id: { in: gameIds } },
+          select: { id: true, code: true, name: true, category: true },
+        })
+      : [];
+    const gameMap = new Map(games.map((g) => [g.id, g]));
+    const prefTotal = roundMoney(
+      gameRows.reduce((s, g) => s + asMoney(g.amt ?? 0), 0),
+    );
+    const preferences = gameRows
+      .map((g) => {
+        const meta = gameMap.get(g.game_id);
+        const amount = asMoney(g.amt ?? 0);
+        return {
+          gameCode: meta?.code ?? g.game_id,
+          name: meta?.name ?? g.game_id,
+          category: meta?.category ?? null,
+          amount,
+          betCount: Number(g.cnt) || 0,
+          pct: prefTotal > 0 ? Math.round((amount / prefTotal) * 1000) / 10 : 0,
+        };
+      })
+      .sort((a, b) => b.amount - a.amount)
+      .slice(0, 3);
+
+    /* 同 IP 同伙：登录 IP 相同的其他玩家号，内网/本机地址不算 */
+    const ip = String(user.lastLoginIp || '').trim();
+    const sameIp = ip && !isPrivateOrLocalIp(ip)
+      ? await this.prisma.user.findMany({
+          where: { role: 'PLAYER', lastLoginIp: ip, id: { not: playerId } },
+          select: { id: true, uid: true, nickname: true, username: true, lastLoginAt: true },
+          take: 20,
+        })
+      : [];
+
+    return {
+      member: {
+        id: user.id,
+        uid: user.uid,
+        username: user.username,
+        nickname: user.nickname,
+        status: user.status,
+        createdAt: user.createdAt.toISOString(),
+        lastLoginAt: user.lastLoginAt?.toISOString() ?? null,
+        lastLoginIp: user.lastLoginIp ?? null,
+        totalBalance,
+        rooms,
+      },
+      /** 空串=全部房间合计；否则下面的资金与偏好都只算这一间 */
+      scopeRoomId,
+      funds: {
+        /** 累计充值＝累计上分毛额，不扣下分：扣了 RIP 的分母就成了净带入，看不出输赢 */
+        upAmount,
+        downAmount,
+        totalBet,
+        winAmount,
+        loseAmount,
+        /** 累计下分 ÷ 累计上分；<100% 是输，>100% 是赢。上分为 0 时给 null，前端显示「—」 */
+        rip: upAmount > 0 ? Math.round((downAmount / upAmount) * 1000) / 10 : null,
+      },
+      risk: {
+        alerts: alerts.map((a) => ({
+          id: a.id,
+          type: a.type,
+          level: a.level,
+          handled: a.handled,
+          summary: String((a.detail as { summary?: string } | null)?.summary ?? ''),
+          createdAt: a.createdAt.toISOString(),
+        })),
+        sameIpAccounts: sameIp.map((u) => ({
+          id: u.id,
+          uid: u.uid,
+          nickname: u.nickname,
+          username: u.username,
+          lastLoginAt: u.lastLoginAt?.toISOString() ?? null,
+        })),
+        softBias: biases.map((b) => ({
+          id: b.id,
+          kind: b.kind,
+          enabled: b.enabled,
+          goalAmount: asMoney(b.goalAmount ?? 0),
+          progressAmount: asMoney(b.progressAmount ?? 0),
+          roomNo: b.room?.roomNo ?? null,
+          roomName: b.room?.name ?? null,
+          createdAt: b.createdAt.toISOString(),
+        })),
+      },
+      preferences,
     };
   }
 
@@ -470,7 +739,10 @@ export class ConsolePlayersService {
     rate: number,
     roomId?: string,
   ) {
-    if (actor.role !== 'ADMIN') await this.scope.assertUserInScope(actor, playerId);
+    if (actor.role !== 'AGENT') {
+      throw new ForbiddenException('只有本房代理能改玩家回水');
+    }
+    await this.scope.assertUserInScope(actor, playerId);
     const member = await this.prisma.roomMember.findFirst({
       where: {
         playerId,
@@ -479,27 +751,37 @@ export class ConsolePlayersService {
       },
       orderBy: { updatedAt: 'desc' },
       include: {
-        room: { select: { ownerAgent: { select: { flowRate: true } } } },
+        room: {
+          select: {
+            ownerAgent: { select: { flowRate: true } },
+            generalAgent: {
+              select: {
+                flowRate: true,
+                downlineFlowRate: true,
+                playerMinRate: true,
+                playerMaxRate: true,
+              },
+            },
+          },
+        },
       },
     });
     if (!member) throw new BadRequestException('玩家未绑定房间');
 
     const policy = await this.prisma.rebatePolicy.findUnique({ where: { id: 1 } });
-    const min = policy?.playerMinRate ?? 0.018;
-    /* 上限跟发放口径对齐：本房代理整包的一半，超了会在发放时被静默截断 */
-    const agentPkg = Math.max(
-      min,
-      Number(member.room?.ownerAgent?.flowRate ?? policy?.agentDefaultRate ?? 0.05),
-    );
-    const max = agentPkg / 2;
-    if (rate < min || rate > max) {
+    const band = resolvePlayerBand({
+      platform: readPlatformBounds(policy),
+      general: member.room?.generalAgent,
+      agentFlowRate: member.room?.ownerAgent?.flowRate,
+    });
+    if (rate < band.playerMin - 1e-9 || rate > band.playerMax + 1e-9) {
       throw new BadRequestException(
-        `玩家回水须在 ${(min * 100).toFixed(1)}%～${(max * 100).toFixed(2)}%（本房代理整包 ${(agentPkg * 100).toFixed(1)}% 的一半）`,
+        `玩家回水须在 ${pctLabel(band.playerMin)}～${pctLabel(band.playerMax)}`,
       );
     }
     const row = await this.prisma.roomMember.update({
       where: { id: member.id },
-      data: { playerRebateRate: rate },
+      data: { playerRebateRate: clampPlayerRateToBand(rate, band) },
     });
     await this.adminLog.log(actor.id, 'PLAYER_REBATE', playerId, { rate, roomId: member.roomId });
     return row;
@@ -532,33 +814,82 @@ export class ConsolePlayersService {
     } = {},
   ) {
     const page = Math.max(1, opts.page ?? 1);
-    const pageSize = Math.min(100, Math.max(1, opts.pageSize ?? 20));
+    /* 账号树/结算对象按 4000 间房预留（一房一代理 + 子账号余量） */
+    const pageSize = Math.min(10_000, Math.max(1, opts.pageSize ?? 20));
     const boundOnly = opts.boundOnly !== false;
 
     let where: Record<string, unknown>;
     if (actor.role === 'AGENT') {
       /* 代理只看自己名下子账号 */
       where = { role: 'PROXY', parentId: actor.id };
+    } else if (await this.scope.isGeneralSide(actor)) {
+      const rootId = await this.scope.generalRootId(actor);
+      /* 总代及其分身：自己、自己的子账号、名下房间代理及其子账号 */
+      const roomIds = (await this.scope.grantedRoomIds(actor)) ?? [];
+      if (opts.role === 'AGENT') {
+        where = roomIds.length
+          ? { role: 'AGENT', agent: { is: hasOpenRoomSome(roomIds) } }
+          : { role: 'AGENT', id: { in: ['__none__'] } };
+      } else if (opts.role === 'GENERAL') {
+        where = { id: rootId, role: 'GENERAL' };
+      } else {
+        const agentProxy = roomIds.length
+          ? [{
+              parent: {
+                role: 'AGENT' as const,
+                agent: { is: hasOpenRoomSome(roomIds) },
+              },
+            }]
+          : [];
+        where = {
+          role: 'PROXY',
+          OR: [
+            { parentId: rootId },
+            ...agentProxy,
+          ],
+        };
+      }
     } else if (actor.role === 'PROXY') {
       const rootId = await this.scope.scopeRootUserId(actor);
       where = { role: 'PROXY', parentId: rootId };
-    } else if (actor.role === 'GENERAL') {
-      /* 总代：自己的子账号，以及名下房间绑定的代理 */
-      const roomIds = (await this.scope.grantedRoomIds(actor)) ?? [];
-      where = opts.role === 'AGENT'
-        ? roomIds.length
-          ? { role: 'AGENT', agent: { is: { rooms: { some: { id: { in: roomIds } } } } } }
-          : { role: 'AGENT', id: { in: ['__none__'] } }
-        : { role: 'PROXY', parentId: actor.id };
     } else {
       /* ADMIN / BRANCH：默认已绑房代理；可筛子账号 / 房主 */
       const role = ['BRANCH', 'AGENT', 'PROXY', 'GENERAL'].includes(opts.role || '')
         ? (opts.role as string)
         : 'AGENT';
       if (actor.role === 'BRANCH') {
-        /* 总监：总代全平台可见；代理/子账号仍只看授权房间 */
+        /* 总监：总代按总代级授权；房间代理/代理子账号仍只看授权房间 */
         if (role === 'GENERAL') {
-          where = { role: 'GENERAL' };
+          const generalIds = await this.scope.grantedGeneralAgentIds(actor);
+          where = {
+            role: 'GENERAL',
+            agent: { is: { id: { in: generalIds ?? [] } } },
+          };
+        } else if (role === 'PROXY') {
+          const [roomIds, generalIds] = await Promise.all([
+            this.scope.grantedRoomIds(actor),
+            this.scope.grantedGeneralAgentIds(actor),
+          ]);
+          const agentProxy = roomIds?.length
+            ? [{
+                parent: {
+                  agent: { is: hasOpenRoomSome(roomIds) },
+                },
+              }]
+            : [];
+          where = {
+            role: 'PROXY',
+            OR: [
+              /* 总代分身跟着总代级授权走，未授权的总代连分身也不该露出来 */
+              {
+                parent: {
+                  role: 'GENERAL',
+                  agent: { is: { id: { in: generalIds ?? [] } } },
+                },
+              },
+              ...agentProxy,
+            ],
+          };
         } else {
           const roomIds = await this.scope.grantedRoomIds(actor);
           if (!roomIds?.length) {
@@ -566,24 +897,17 @@ export class ConsolePlayersService {
           }
           if (role === 'BRANCH') {
             where = { id: actor.id, role: 'BRANCH' };
-          } else if (role === 'PROXY') {
-            where = {
-              role: 'PROXY',
-              parent: {
-                agent: { is: { rooms: { some: { id: { in: roomIds } } } } },
-              },
-            };
           } else {
             where = {
               role: 'AGENT',
-              agent: { is: { rooms: { some: { id: { in: roomIds } } } } },
+              agent: { is: hasOpenRoomSome(roomIds) },
             };
           }
         }
       } else if (role === 'AGENT' && boundOnly) {
         where = {
           role: 'AGENT',
-          agent: { is: { rooms: { some: {} } } },
+          agent: { is: hasOpenRoomSome() },
         };
       } else {
         where = { role };
@@ -599,7 +923,7 @@ export class ConsolePlayersService {
             OR: [
               { uid: { contains: q } },
               { nickname: { contains: q } },
-              { username: { contains: q } },
+              { username: { contains: q.toLowerCase() } },
             ],
           },
         ],
@@ -625,7 +949,7 @@ export class ConsolePlayersService {
     const agentUserIds = rows.filter((r) => r.role === 'AGENT' || r.role === 'GENERAL').map((r) => r.id);
     /* 子账号额度读主代理：一并加载 parent 的 Agent */
     const agentLookupIds = [...new Set([...ids, ...parentIds])];
-    const [accs, agents, parents, agentRows, childGroups] = await Promise.all([
+    const [accs, agents, parents, agentRows, childGroups, csGroups] = await Promise.all([
       this.prisma.pointsAccount.findMany({
         where: { ownerId: { in: ids } },
         select: { ownerId: true, balance: true },
@@ -641,10 +965,13 @@ export class ConsolePlayersService {
           shareRate: true,
           pointsQuota: true,
           pointsUsed: true,
-          flyCover: true,
           bookMode: true,
           creditLimit: true,
           settleCycle: true,
+          downlineFlowRate: true,
+          playerMinRate: true,
+          playerMaxRate: true,
+          roomMonthlyFee: true,
         },
       }),
       parentIds.length
@@ -664,12 +991,23 @@ export class ConsolePlayersService {
             _count: { _all: true },
           })
         : Promise.resolve([]),
+      agentUserIds.length
+        ? this.prisma.user.groupBy({
+            by: ['parentId'],
+            where: { parentId: { in: agentUserIds }, role: 'CS' },
+            _count: { _all: true },
+          })
+        : Promise.resolve([]),
     ]);
     const agentIdByUser = new Map(agentRows.map((a) => [a.userId, a.id]));
     const agentIds = [...agentIdByUser.values()];
     const childCountByParent = new Map(
       childGroups.map((g) => [g.parentId as string, g._count._all]),
     );
+    const csCountByParent = new Map(
+      csGroups.map((g) => [g.parentId as string, g._count._all]),
+    );
+    const grantedIds = actor.role === 'BRANCH' ? await this.scope.grantedRoomIds(actor) : null;
     const rooms = agentIds.length
       ? await this.prisma.room.findMany({
           where: {
@@ -677,26 +1015,43 @@ export class ConsolePlayersService {
               { ownerAgentId: { in: agentIds } },
               { generalAgentId: { in: agentIds } },
             ],
+            ...OPEN_ROOM_WHERE,
+            ...(grantedIds ? { id: { in: grantedIds.length ? grantedIds : ['__none__'] } } : {}),
           },
           select: {
             id: true, roomNo: true, name: true, status: true, ownerAgentId: true, generalAgentId: true, bookMode: true,
+            generalAgent: {
+              select: {
+                userId: true,
+                user: { select: { nickname: true, username: true } },
+              },
+            },
             _count: { select: { members: { where: { status: 'APPROVED' } } } },
           },
         })
       : [];
     type BoundRoom = {
-      id: string; roomNo: string; name: string; status: string; memberCount: number; bookMode: string;
+      id: string
+      roomNo: string
+      name: string
+      status: string
+      memberCount: number
+      bookMode: string
+      generalUserId?: string
+      generalNickname?: string
     };
     const roomsByAgentId = new Map<string, BoundRoom[]>();
     const roomsByGeneralId = new Map<string, BoundRoom[]>();
     for (const r of rooms) {
-      const item = {
+      const item: BoundRoom = {
         id: r.id,
         roomNo: r.roomNo,
         name: r.name,
         status: r.status,
         memberCount: r._count.members,
         bookMode: r.bookMode === 'CREDIT' ? 'CREDIT' : 'CASH',
+        generalUserId: r.generalAgent?.userId,
+        generalNickname: r.generalAgent?.user?.nickname || r.generalAgent?.user?.username,
       };
       if (r.ownerAgentId) {
         const arr = roomsByAgentId.get(r.ownerAgentId) ?? [];
@@ -714,6 +1069,13 @@ export class ConsolePlayersService {
     const agentMap = new Map(agents.map((a) => [a.userId, a]));
     const parentMap = new Map(parents.map((p) => [p.id, p]));
 
+    /* 上盘可飞要算「盘分 + 客服未发出 + 名下房间玩家持分」，批量取后两项 */
+    const flyLookupIds = [...new Set([...agentUserIds, ...parentIds])];
+    const [csBalMap, playerBalMap] = await Promise.all([
+      sumAgentCsBalancesMap(this.prisma, flyLookupIds),
+      sumAgentRoomPlayerBalancesMap(this.prisma, flyLookupIds),
+    ]);
+
     /* 代分：展示上级代理绑定的房间 */
     const proxyParentAgentIds = rows
       .filter((r) => r.role === 'PROXY' && r.parentId)
@@ -728,7 +1090,7 @@ export class ConsolePlayersService {
     const parentAgentIds = [...parentAgentIdByUser.values()];
     const parentRooms = parentAgentIds.length
       ? await this.prisma.room.findMany({
-          where: { ownerAgentId: { in: parentAgentIds } },
+          where: { ownerAgentId: { in: parentAgentIds }, ...OPEN_ROOM_WHERE },
           select: {
             id: true, roomNo: true, name: true, status: true, ownerAgentId: true, bookMode: true,
             _count: { select: { members: { where: { status: 'APPROVED' } } } },
@@ -810,6 +1172,17 @@ export class ConsolePlayersService {
           r.role === 'PROXY' && r.parentId
             ? agentMap.get(r.parentId) ?? ag
             : ag;
+        /* 可飞额度挂在主代理身上；子账号看的是同一个数 */
+        const flyOwnerId = r.role === 'PROXY' && r.parentId ? r.parentId : r.id;
+        const flyQuota = quotaAg ? asMoney(quotaAg.pointsQuota) : 0;
+        const flyBal = balMap.get(flyOwnerId) ?? 0;
+        const flyDisk = agentWorkingDisk(flyBal, flyQuota);
+        const flyCover = roundMoney(
+          Math.max(
+            0,
+            flyDisk + (csBalMap.get(flyOwnerId) ?? 0) + (playerBalMap.get(flyOwnerId) ?? 0),
+          ),
+        );
         return {
           ...r,
           balance: balMap.get(r.id) ?? 0,
@@ -821,16 +1194,32 @@ export class ConsolePlayersService {
           bookMode: r.role === 'GENERAL' ? (ag?.bookMode ?? 'CASH') : undefined,
           creditLimit: r.role === 'GENERAL' ? asMoney(ag?.creditLimit ?? 0) : undefined,
           settleCycle: r.role === 'GENERAL' ? (ag?.settleCycle ?? 'WEEKLY_MON') : undefined,
+          downlineFlowRate: r.role === 'GENERAL' ? Number(ag?.downlineFlowRate ?? ag?.flowRate ?? 0.05) : undefined,
+          roomMonthlyFee: r.role === 'GENERAL' ? asMoney(ag?.roomMonthlyFee ?? 0) : undefined,
+          playerMinRate: r.role === 'GENERAL' ? ag?.playerMinRate ?? null : undefined,
+          playerMaxRate: r.role === 'GENERAL' ? ag?.playerMaxRate ?? null : undefined,
           pointsQuota: r.role === 'BRANCH' ? 0 : quotaAg ? asMoney(quotaAg.pointsQuota) : 0,
           pointsUsed: r.role === 'BRANCH' ? 0 : quotaAg ? asMoney(quotaAg.pointsUsed) : 0,
-          flyCover: quotaAg ? asMoney(quotaAg.flyCover) : 0,
+          agentBalance:
+            r.role === 'BRANCH'
+              ? (balMap.get(r.id) ?? 0)
+              : agentDisplayBalance({
+                  bookMode: quotaAg?.bookMode === 'CREDIT' ? 'CREDIT' : 'CASH',
+                  balance: flyBal,
+                  pointsQuota: flyQuota,
+                }),
+          unsettledWage: undefined,
+          flyCover,
           parent: parent
             ? { id: parent.id, nickname: parent.nickname, username: parent.username, role: parent.role }
             : null,
           rooms: boundRooms,
           roomCount,
           memberCount,
-          staffCount: r.role === 'AGENT' ? (childCountByParent.get(r.id) ?? 0) : 0,
+          staffCount: r.role === 'AGENT' || r.role === 'GENERAL'
+            ? (childCountByParent.get(r.id) ?? 0)
+            : 0,
+          csCount: r.role === 'AGENT' ? (csCountByParent.get(r.id) ?? 0) : 0,
           onDuty: r.role === 'PROXY' ? dutyUserId === r.id : false,
           dutyUserId,
         };
@@ -870,8 +1259,11 @@ export class ConsolePlayersService {
         where: { userId: agentRootId },
           select: {
             id: true, commissionRate: true, rebateRate: true,
-            pointsQuota: true, pointsUsed: true, flyCover: true,
+            pointsQuota: true, pointsUsed: true,
             flowRate: true, shareRate: true,
+            downlineFlowRate: true, playerMinRate: true, playerMaxRate: true,
+            bookMode: true, creditLimit: true, settleCycle: true,
+            roomMonthlyFee: true,
           },
       }),
       user.parentId
@@ -906,10 +1298,15 @@ export class ConsolePlayersService {
         select: { id: true },
       });
       if (ownerAgent) {
+        const grantedIds = actor.role === 'BRANCH' ? await this.scope.grantedRoomIds(actor) : null;
         const rows = await this.prisma.room.findMany({
-          where: user.role === 'GENERAL'
-            ? { generalAgentId: ownerAgent.id }
-            : { ownerAgentId: ownerAgent.id },
+          where: {
+            ...(user.role === 'GENERAL'
+              ? { generalAgentId: ownerAgent.id }
+              : { ownerAgentId: ownerAgent.id }),
+            ...OPEN_ROOM_WHERE,
+            ...(grantedIds ? { id: { in: grantedIds.length ? grantedIds : ['__none__'] } } : {}),
+          },
           orderBy: { createdAt: 'desc' },
           select: {
             id: true, roomNo: true, name: true, status: true, monthlyFee: true,
@@ -942,10 +1339,12 @@ export class ConsolePlayersService {
         select: { roomId: true },
       });
       const grantedIds = grants.map((g) => g.roomId);
-      roomTotal = grantedIds.length;
       if (grantedIds.length) {
+        roomTotal = await this.prisma.room.count({
+          where: { id: { in: grantedIds }, ...OPEN_ROOM_WHERE },
+        });
         const rows = await this.prisma.room.findMany({
-          where: { id: { in: grantedIds } },
+          where: { id: { in: grantedIds }, ...OPEN_ROOM_WHERE },
           orderBy: { createdAt: 'desc' },
           take: 8,
           select: {
@@ -983,6 +1382,13 @@ export class ConsolePlayersService {
     const childBal = new Map(childAccs.map((a) => [a.ownerId, asMoney(a.balance)]));
 
     const dutyUserId = (await this.redis.get(csDutyKey(agentRootId))) || null;
+    /* 代理层不带 bookMode 字段，得按名下房间反推，跟可飞额度用同一个判定 */
+    const detailBookMode =
+      user.role === 'GENERAL'
+        ? agent?.bookMode === 'CREDIT'
+          ? 'CREDIT'
+          : 'CASH'
+        : await this.rootBookMode(agentRootId);
     const recentLogs = await this.prisma.adminLog.findMany({
       where: {
         OR: [
@@ -1005,7 +1411,27 @@ export class ConsolePlayersService {
       rebateRate: agent ? asMoney(agent.rebateRate) : 0.018,
       pointsQuota: agent ? asMoney(agent.pointsQuota) : 0,
       pointsUsed: agent ? asMoney(agent.pointsUsed) : 0,
-      flyCover: agent ? asMoney(agent.flyCover) : 0,
+      /*
+       * 可飞额度挂在主代理身上：子账号与主代理共用同一份，所以要用 agentRootId。
+       * 用子账号自己的 userId 会读到它那行空 Agent，额度显示成 0。
+       */
+      flyCover: await this.rootFlyAvailable(agentRootId),
+      agentBalance: agentDisplayBalance({
+        bookMode: detailBookMode,
+        balance: asMoney(acc?.balance ?? 0),
+        pointsQuota: agent ? asMoney(agent.pointsQuota) : 0,
+      }),
+      unsettledWage: undefined,
+      flowRate: agent ? Number(agent.flowRate ?? 0.07) : undefined,
+      shareRate: agent ? Number(agent.shareRate ?? 0.5) : undefined,
+      bookMode: user.role === 'GENERAL' ? (agent?.bookMode === 'CREDIT' ? 'CREDIT' : 'CASH') : undefined,
+      creditLimit: user.role === 'GENERAL' ? asMoney(agent?.creditLimit ?? 0) : undefined,
+      settleCycle: user.role === 'GENERAL' ? (agent?.settleCycle ?? 'WEEKLY_MON') : undefined,
+      downlineFlowRate: user.role === 'GENERAL' ? (agent?.downlineFlowRate != null ? Number(agent.downlineFlowRate) : undefined) : undefined,
+      playerMinRate: user.role === 'GENERAL' ? agent?.playerMinRate ?? null : undefined,
+      playerMaxRate: user.role === 'GENERAL' ? agent?.playerMaxRate ?? null : undefined,
+      /** 总代每开一间房、每月缴给平台的月费单价 */
+      roomMonthlyFee: user.role === 'GENERAL' ? asMoney(agent?.roomMonthlyFee ?? 0) : undefined,
       parent,
       rooms,
       roomTotal,
@@ -1048,7 +1474,7 @@ export class ConsolePlayersService {
       where: { id: userId },
       select: { id: true, role: true, parentId: true, nickname: true, username: true },
     });
-    if (!user || !['BRANCH', 'AGENT', 'PROXY', 'CS'].includes(user.role)) {
+    if (!user || !['BRANCH', 'AGENT', 'PROXY', 'CS', 'GENERAL'].includes(user.role)) {
       throw new BadRequestException('账号不存在');
     }
 
@@ -1096,9 +1522,10 @@ export class ConsolePlayersService {
       }),
       this.prisma.agent.findUnique({
         where: { userId: agentRootId },
-        select: { pointsQuota: true, pointsUsed: true, flyCover: true },
+        select: { pointsQuota: true, pointsUsed: true, bookMode: true },
       }),
     ]);
+    const flyCover = await this.rootFlyAvailable(agentRootId);
 
     const summary = await this.buildAuditSummary({
       userId,
@@ -1108,7 +1535,7 @@ export class ConsolePlayersService {
       balance: asMoney(acc?.balance ?? 0),
       pointsQuota: agentRow ? asMoney(agentRow.pointsQuota) : 0,
       pointsUsed: agentRow ? asMoney(agentRow.pointsUsed) : 0,
-      flyCover: agentRow ? asMoney(agentRow.flyCover) : 0,
+      flyCover,
       role: user.role,
     });
 
@@ -1116,7 +1543,13 @@ export class ConsolePlayersService {
       return {
         tab,
         summary,
-        ...(await this.listBalanceLedger(acc?.id, page, pageSize, tab === 'wage' ? 'wage' : 'all')),
+        ...(await this.listBalanceLedger(
+          acc?.id,
+          page,
+          pageSize,
+          tab === 'wage' ? 'wage' : 'all',
+          { from: opts.from, to: opts.to },
+        )),
       };
     }
     if (tab === 'fund') {
@@ -1144,6 +1577,29 @@ export class ConsolePlayersService {
     };
   }
 
+  /**
+   * 主代理的可飞额度。
+   *
+   * 传进来的必须是**主代理**的 userId（子账号要先解析到 agentRootId）——
+   * 额度挂在主代理身上，用子账号自己的 id 会读到它那行空 Agent，显示成 0。
+   * 盘种取该代理名下房间的约定：有信用房就按信用算（更保守）。
+   */
+  private async rootFlyAvailable(agentRootId: string): Promise<number> {
+    if (!agentRootId) return 0;
+    const bookMode = await this.rootBookMode(agentRootId);
+    return agentFlyAvailable(this.prisma, agentRootId, bookMode);
+  }
+
+  /** 该主代理对外按哪个盘种展示：名下有信用房就按信用（更保守） */
+  private async rootBookMode(agentRootId: string): Promise<'CASH' | 'CREDIT'> {
+    if (!agentRootId) return 'CASH';
+    const creditRoom = await this.prisma.room.findFirst({
+      where: { ownerAgent: { userId: agentRootId }, bookMode: 'CREDIT' },
+      select: { id: true },
+    });
+    return creditRoom ? 'CREDIT' : 'CASH';
+  }
+
   private async buildAuditSummary(p: {
     userId: string;
     agentRootId: string;
@@ -1156,62 +1612,45 @@ export class ConsolePlayersService {
     role: string;
   }) {
     /* 房主：统计「他给代理上/回收」；代理：统计「别人给他上/回收」 */
-    const quotaRows = await this.prisma.adminLog.findMany({
-      where:
-        p.role === 'BRANCH'
-          ? {
-              operatorId: p.userId,
-              action: { in: ['QUOTA_SELL', 'QUOTA_RECALL'] },
-            }
-          : {
-              OR: [
-                { action: 'QUOTA_SELL', target: p.userId },
-                { action: 'QUOTA_RECALL', target: p.userId },
-              ],
-            },
-      select: { action: true, detail: true },
-    });
-    let quotaIn = 0;
-    let quotaOut = 0;
-    for (const r of quotaRows) {
-      const d = r.detail as { amount?: number } | null;
-      const amt = Number(d?.amount || 0);
-      if (r.action === 'QUOTA_SELL') {
-        if (p.role === 'BRANCH') quotaOut += amt;
-        else quotaIn += amt;
-      }
-      if (r.action === 'QUOTA_RECALL') {
-        if (p.role === 'BRANCH') quotaIn += amt;
-        else quotaOut += amt;
-      }
-    }
-
-    const fundWhere = this.fundLogWhere(p.userId, p.agentRootId, p.staffIds, p.staffIds, p.role);
-    const fundRows = await this.prisma.adminLog.findMany({
-      where: fundWhere,
-      select: { action: true, detail: true },
-    });
-    let playerUp = 0;
-    let playerDown = 0;
-    for (const r of fundRows) {
-      const d = r.detail as { amount?: number } | null;
-      const amt = Number(d?.amount || 0);
-      if (r.action === 'CONSOLE_CREDIT') playerUp += amt;
-      if (r.action === 'CONSOLE_DEBIT') playerDown += amt;
-    }
+    const [quotaBy, fundBy] = await Promise.all([
+      sumAdminLogAmountsByAction(this.prisma, {
+        userId: p.userId,
+        agentRootId: p.agentRootId,
+        staffIds: p.staffIds,
+        operatorIds: p.staffIds,
+        role: p.role,
+        scopeSql: quotaSummaryScopeSql({ userId: p.userId, role: p.role }),
+      }),
+      sumAdminLogAmountsByAction(this.prisma, {
+        userId: p.userId,
+        agentRootId: p.agentRootId,
+        staffIds: p.staffIds,
+        operatorIds: p.staffIds,
+        role: p.role,
+      }),
+    ]);
+    const sell = quotaBy.get('QUOTA_SELL') ?? 0;
+    const recall = quotaBy.get('QUOTA_RECALL') ?? 0;
+    const quotaIn = p.role === 'BRANCH' ? recall : sell;
+    const quotaOut = p.role === 'BRANCH' ? sell : recall;
+    const playerUp = fundBy.get('CONSOLE_CREDIT') ?? 0;
+    const playerDown = fundBy.get('CONSOLE_DEBIT') ?? 0;
 
     let ledgerIn = 0;
     let ledgerOut = 0;
     if (p.accountId) {
-      const legs = await this.prisma.pointsLedger.findMany({
-        where: { accountId: p.accountId },
-        select: { amount: true },
-      });
-      for (const leg of legs) {
-        const a = asMoney(leg.amount);
-        if (a >= 0) ledgerIn += a;
-        else ledgerOut += -a;
-      }
+      const [inAgg, outAgg] = await Promise.all([
+        this.prisma.pointsLedger.aggregate({
+          where: { accountId: p.accountId, amount: { gte: 0 } },
+          _sum: { amount: true },
+        }),
+        this.prisma.pointsLedger.aggregate({
+          where: { accountId: p.accountId, amount: { lt: 0 } },
+          _sum: { amount: true },
+        }),
+      ]);
+      ledgerIn = asMoney(inAgg._sum.amount);
+      ledgerOut = Math.abs(asMoney(outAgg._sum.amount));
     }
 
     return {
@@ -1228,6 +1667,7 @@ export class ConsolePlayersService {
     };
   }
 
+  /** 资金流水列表过滤；合计走 fundLogScopeSql，两边条件必须同步 */
   private fundLogWhere(
     userId: string,
     agentRootId: string,
@@ -1241,6 +1681,15 @@ export class ConsolePlayersService {
           { action: { in: ['QUOTA_SELL', 'QUOTA_RECALL'] }, target: userId },
           { action: { in: ['QUOTA_SELL', 'QUOTA_RECALL'] }, operatorId: userId },
           { action: 'ROOM_CREDIT_LIMIT_BUMP', operatorId: userId },
+        ],
+      };
+    }
+    if (role === 'GENERAL') {
+      return {
+        OR: [
+          { action: { in: ['QUOTA_SELL', 'QUOTA_RECALL'] }, target: userId },
+          { action: { in: ['QUOTA_SELL', 'QUOTA_RECALL'] }, operatorId: userId },
+          { action: 'GENERAL_CREDIT_LIMIT_BUMP', target: userId },
         ],
       };
     }
@@ -1280,7 +1729,7 @@ export class ConsolePlayersService {
     const t = (fundType || 'all').trim().toLowerCase();
     if (!t || t === 'all') return null;
     const map: Record<string, string[]> = {
-      quota: ['QUOTA_SELL', 'QUOTA_RECALL'],
+      quota: ['QUOTA_SELL', 'QUOTA_RECALL', 'GENERAL_CREDIT_LIMIT_BUMP'],
       quota_in: ['QUOTA_SELL'],
       quota_out: ['QUOTA_RECALL'],
       player: ['CONSOLE_CREDIT', 'CONSOLE_DEBIT'],
@@ -1307,6 +1756,7 @@ export class ConsolePlayersService {
     page: number,
     pageSize: number,
     filter: 'all' | 'wage' = 'all',
+    window?: { from?: string; to?: string },
   ) {
     if (!accountId) return { total: 0, page, pageSize, list: [] as unknown[] };
     const where: Record<string, unknown> =
@@ -1321,6 +1771,15 @@ export class ConsolePlayersService {
             ],
           }
         : { accountId };
+    /* 时间筛选原先只有「上下分」那一页支持，余额和佣金两页只能看全部 */
+    const from = this.parseAuditDate(window?.from, false);
+    const to = this.parseAuditDate(window?.to, true);
+    if (from || to) {
+      where.createdAt = {
+        ...(from ? { gte: from } : {}),
+        ...(to ? { lt: to } : {}),
+      };
+    }
     const [total, rows] = await this.prisma.$transaction([
       this.prisma.pointsLedger.count({ where }),
       this.prisma.pointsLedger.findMany({
@@ -1404,7 +1863,7 @@ export class ConsolePlayersService {
     if (typeActions) and.push({ action: { in: typeActions } });
     const where = and.length === 1 ? and[0] : { AND: and };
 
-    const [total, rows, sumRows] = await this.prisma.$transaction([
+    const [total, rows, byAction] = await Promise.all([
       this.prisma.adminLog.count({ where }),
       this.prisma.adminLog.findMany({
         where,
@@ -1420,9 +1879,15 @@ export class ConsolePlayersService {
           createdAt: true,
         },
       }),
-      this.prisma.adminLog.findMany({
-        where,
-        select: { action: true, detail: true },
+      sumAdminLogAmountsByAction(this.prisma, {
+        userId: p.userId,
+        agentRootId: p.agentRootId,
+        staffIds: p.staffIds,
+        operatorIds: p.operatorIds,
+        role: p.role,
+        from,
+        to,
+        actions: typeActions,
       }),
     ]);
 
@@ -1435,16 +1900,12 @@ export class ConsolePlayersService {
       csAlloc: 0,
       csRecall: 0,
     };
-    for (const r of sumRows) {
-      const amt = Number((r.detail as { amount?: number } | null)?.amount ?? 0);
-      if (!Number.isFinite(amt) || amt === 0) continue;
-      if (r.action === 'QUOTA_SELL') fundTotals.quotaIn += amt;
-      else if (r.action === 'QUOTA_RECALL') fundTotals.quotaOut += amt;
-      else if (r.action === 'CONSOLE_CREDIT') fundTotals.playerUp += amt;
-      else if (r.action === 'CONSOLE_DEBIT') fundTotals.playerDown += amt;
-      else if (r.action === 'CS_STAFF_ALLOC') fundTotals.csAlloc += amt;
-      else if (r.action === 'CS_STAFF_RECALL') fundTotals.csRecall += amt;
-    }
+    fundTotals.quotaIn = byAction.get('QUOTA_SELL') ?? 0;
+    fundTotals.quotaOut = byAction.get('QUOTA_RECALL') ?? 0;
+    fundTotals.playerUp = byAction.get('CONSOLE_CREDIT') ?? 0;
+    fundTotals.playerDown = byAction.get('CONSOLE_DEBIT') ?? 0;
+    fundTotals.csAlloc = byAction.get('CS_STAFF_ALLOC') ?? 0;
+    fundTotals.csRecall = byAction.get('CS_STAFF_RECALL') ?? 0;
     fundTotals.quotaIn = round2(fundTotals.quotaIn);
     fundTotals.quotaOut = round2(fundTotals.quotaOut);
     fundTotals.playerUp = round2(fundTotals.playerUp);
@@ -1590,7 +2051,6 @@ export class ConsolePlayersService {
           real: d.real != null ? Number(d.real) : undefined,
           fake: d.fake != null ? Number(d.fake) : undefined,
           coverBack: d.coverBack != null ? Number(d.coverBack) : undefined,
-          byProxy: !!d.byProxy,
           fromRole: d.fromRole,
           direction: d.direction,
         },
@@ -1639,8 +2099,10 @@ export class ConsolePlayersService {
     });
     if (!target) throw new BadRequestException('账号不存在');
 
-    if (target.role === 'BRANCH') {
-      if (actor.role !== 'ADMIN') throw new ForbiddenException('仅管理员可停用/启用房主');
+    if (target.role === 'BRANCH' || target.role === 'GENERAL') {
+      if (actor.role !== 'ADMIN') {
+        throw new ForbiddenException(target.role === 'GENERAL' ? '仅管理员可停用/启用总代' : '仅管理员可停用/启用总监');
+      }
       if (target.status === status) return { id: target.id, status };
       const u = await this.prisma.user.update({
         where: { id: proxyUserId },
@@ -1650,12 +2112,15 @@ export class ConsolePlayersService {
         },
         select: { id: true, status: true },
       });
-      await this.adminLog.log(actor.id, 'USER_STATUS', proxyUserId, { status, role: 'BRANCH' });
+      await this.adminLog.log(actor.id, 'USER_STATUS', proxyUserId, { status, role: target.role });
       return u;
     }
 
     if (target.role !== 'PROXY' || !target.parentId) {
       throw new BadRequestException('目标不是子账号或房主');
+    }
+    if (proxyUserId === actor.id && status === 'DISABLED') {
+      throw new BadRequestException('不能停用当前登录的账号');
     }
     await this.assertCanHardManageProxy(actor, target.parentId);
     if (target.status === status) return { id: target.id, status };
@@ -1681,11 +2146,12 @@ export class ConsolePlayersService {
 
   /**
    * 重置玩家密码并解冻登录冻结。
-   * 仅管理员 / 房主可操作（代理不可解冻）。
+   * 管理/总监：管辖范围内全部玩家；总代（含分身）：仅名下代理房间玩家。
    */
   async resetPlayerPassword(actor: ConsoleActor, playerId: string, password?: string) {
-    if (actor.role !== 'ADMIN' && actor.role !== 'BRANCH') {
-      throw new ForbiddenException('仅房主或管理员可重置密码并解冻');
+    const generalSide = await this.scope.isGeneralSide(actor);
+    if (actor.role !== 'ADMIN' && actor.role !== 'BRANCH' && !generalSide) {
+      throw new ForbiddenException('仅管理、总监或总代可重置玩家密码');
     }
     const player = await this.prisma.user.findUnique({
       where: { id: playerId },
@@ -1736,12 +2202,14 @@ export class ConsolePlayersService {
       throw new ForbiddenException('不能重置管理员密码（忘记只能改数据库）');
     }
 
-    if (target.role === 'BRANCH') {
-      if (actor.role !== 'ADMIN') throw new ForbiddenException('仅管理员可重置房主密码');
+    if (target.role === 'BRANCH' || target.role === 'GENERAL') {
+      if (actor.role !== 'ADMIN') {
+        throw new ForbiddenException(target.role === 'GENERAL' ? '仅管理员可重置总代密码' : '仅管理员可重置总监密码');
+      }
     } else if (target.role === 'PROXY' && target.parentId) {
       await this.assertCanHardManageProxy(actor, target.parentId);
     } else {
-      throw new BadRequestException('目标不是子账号或房主');
+      throw new BadRequestException('目标不是子账号、总监或总代');
     }
 
     const plainPassword = password?.trim() || genProxyPassword();
@@ -1804,14 +2272,27 @@ export class ConsolePlayersService {
     throw new ForbiddenException('无权管理该代理的子账号');
   }
 
-  /** 重置密码/停用：仅管理员、房主（代理本人不可） */
+  /** 重置密码/停用：管理员、总监、名下总代（代理本人不可） */
   private async assertCanHardManageProxy(actor: ConsoleActor, agentUserId: string) {
     if (actor.role === 'ADMIN') return;
     if (actor.role === 'BRANCH') {
       await this.scope.assertUserInScope(actor, agentUserId);
       return;
     }
-    throw new ForbiddenException('代理不能重置密码或停用子账号，请联系管理或总监');
+    if (await this.scope.isGeneralSide(actor)) {
+      const rootId = await this.scope.generalRootId(actor);
+      if (rootId === agentUserId) return;
+      await this.scope.assertUserInScope(actor, agentUserId);
+      const hasRoom = await this.prisma.room.findFirst({
+        where: {
+          ownerAgent: { userId: agentUserId },
+          generalAgent: { userId: rootId },
+        },
+        select: { id: true },
+      });
+      if (hasRoom) return;
+    }
+    throw new ForbiddenException('无权重置密码或停用该子账号');
   }
 
   private rolePermissions(role: string) {
@@ -1834,17 +2315,200 @@ export class ConsolePlayersService {
     if (role === 'AGENT') {
       return {
         label: '代理',
-        summary: '房间绑定账号；子账号由管理/总监开通',
+        summary: '房间绑定账号；子账号由管理/总监/名下总代开通',
         can: ['报表', '回水', '机器人', '上下分', '子账号'],
         cannot: ['其他房间', '平台赔率'],
       };
     }
+    /*
+     * 子账号不能给玩家上下分——那两个接口只开给代理和客服。
+     * 挂在总代下的子账号可以代总代给下级代理发/收额度，挂在代理下的只有查看权。
+     */
     return {
       label: '子账号',
-      summary: '与代理同看，部分只读',
-      can: ['上下分', '本房报表'],
-      cannot: ['改回水/机器人', '建号'],
+      summary: '与代理同看，多为只读；玩家上下分须由代理或客服操作',
+      can: ['本房报表', '充值历史'],
+      cannot: ['给玩家上下分', '改回水/机器人', '建号'],
     };
+  }
+
+  /**
+   * 改总代每间房缴给平台的月费单价。
+   * 只影响以后结账时怎么算；已结清账期按当时的价定格，不回头改。
+   *
+   * 这个单价同时是「总代向代理收的房间月费」的下限。调高之后，存量房里
+   * 低于新单价的那些会让总代每月倒贴差额，所以要把清单报出来——
+   * 但不自动改代理那笔：那是总代跟代理谈好的价，系统不能替他单方面涨价。
+   */
+  async setGeneralRoomMonthlyFee(actor: ConsoleActor, userId: string, amount: number) {
+    if (actor.role !== 'ADMIN' && actor.role !== 'BRANCH') {
+      throw new ForbiddenException('仅管理或总监可定房间月费单价');
+    }
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        role: true,
+        agent: { select: { id: true, roomMonthlyFee: true } },
+      },
+    });
+    if (!user || user.role !== 'GENERAL' || !user.agent) {
+      throw new BadRequestException('该账号不是总代');
+    }
+    const fee = Math.max(0, Math.floor(Number(amount) || 0));
+    const before = asMoney(user.agent.roomMonthlyFee);
+    await this.prisma.agent.update({
+      where: { userId },
+      data: { roomMonthlyFee: fee },
+    });
+
+    /* 调高之后，存量房里低于新单价的那些总代要倒贴，列出来让人去谈 */
+    let underwater: { roomNo: string; name: string; monthlyFee: number }[] = [];
+    if (fee > 0) {
+      const rooms = await this.prisma.room.findMany({
+        where: {
+          generalAgentId: user.agent.id,
+          status: { not: 'CLOSED' },
+          monthlyFee: { lt: fee },
+        },
+        select: { roomNo: true, name: true, monthlyFee: true },
+        orderBy: { roomNo: 'asc' },
+        take: 200,
+      });
+      underwater = rooms.map((r) => ({
+        roomNo: r.roomNo,
+        name: r.name,
+        monthlyFee: asMoney(r.monthlyFee),
+      }));
+    }
+
+    await this.adminLog.log(actor.id, 'GENERAL_ROOM_FEE_SET', userId, {
+      before,
+      after: fee,
+      underwaterRooms: underwater.length,
+    });
+    return {
+      ok: true,
+      roomMonthlyFee: fee,
+      /** 月费低于新单价的存量房；总代每月按差额倒贴，需线下跟代理重谈 */
+      underwater,
+      message: underwater.length
+        ? `已保存。有 ${underwater.length} 间存量房月费低于新单价，`
+          + '这部分差额总代每月要自己倒贴，需与代理重新议价（系统不替总代单方面涨价）'
+        : '已保存',
+    };
+  }
+
+  /** 某个总代当前对哪些总监可见（总代详情页用） */
+  async generalOwners(actor: ConsoleActor, generalUserId: string) {
+    await this.scope.assertUserInScope(actor, generalUserId);
+    const agent = await this.prisma.agent.findUnique({
+      where: { userId: generalUserId },
+      select: { id: true, user: { select: { role: true } } },
+    });
+    if (!agent || agent.user.role !== 'GENERAL') {
+      throw new BadRequestException('该账号不是总代');
+    }
+    const [grants, branches] = await Promise.all([
+      this.prisma.generalOwnerGrant.findMany({
+        where: { generalAgentId: agent.id },
+        select: {
+          ownerId: true,
+          createdAt: true,
+          owner: { select: { uid: true, nickname: true, username: true, status: true } },
+        },
+        orderBy: { createdAt: 'asc' },
+      }),
+      this.prisma.user.findMany({
+        where: { role: 'BRANCH' },
+        select: { id: true, uid: true, nickname: true, username: true, status: true },
+        orderBy: { createdAt: 'asc' },
+      }),
+    ]);
+    return {
+      generalUserId,
+      granted: grants.map((g) => ({
+        ownerUserId: g.ownerId,
+        uid: g.owner.uid,
+        nickname: g.owner.nickname,
+        username: g.owner.username,
+        status: g.owner.status,
+        createdAt: g.createdAt.toISOString(),
+      })),
+      /* 全部总监，供前端做「还能授权给谁」的下拉 */
+      allBranches: branches.map((b) => ({
+        ownerUserId: b.id,
+        uid: b.uid,
+        nickname: b.nickname,
+        username: b.username,
+        status: b.status,
+      })),
+    };
+  }
+
+  /**
+   * 开/关某个总监对某个总代的可见性。
+   *
+   * 只有管理能改：总监之间互相屏蔽是平台的分工决定，
+   * 让总监自己改就等于他能把别人的总代抢过来看，或者把自己藏起来。
+   */
+  async setGeneralOwner(
+    actor: ConsoleActor,
+    generalUserId: string,
+    ownerUserId: string,
+    visible: boolean,
+  ) {
+    if (actor.role !== 'ADMIN') {
+      throw new ForbiddenException('仅管理员可调整总代可见范围');
+    }
+    const agent = await this.prisma.agent.findUnique({
+      where: { userId: generalUserId },
+      select: { id: true, user: { select: { role: true } } },
+    });
+    if (!agent || agent.user.role !== 'GENERAL') {
+      throw new BadRequestException('该账号不是总代');
+    }
+    const owner = await this.prisma.user.findUnique({
+      where: { id: ownerUserId },
+      select: { id: true, role: true },
+    });
+    if (!owner || owner.role !== 'BRANCH') {
+      throw new BadRequestException('目标必须是总监(BRANCH)');
+    }
+
+    /*
+     * 只改这一张表就够了：挂总代的房不看房间级那份名单（见 console-scope 文件头），
+     * 所以这里一开一关，他名下所有房间的可见性同时跟着变，不需要再去逐房同步。
+     */
+    const roomCount = await this.prisma.room.count({
+      where: { generalAgentId: agent.id },
+    });
+    if (visible) {
+      await this.prisma.generalOwnerGrant.createMany({
+        data: [{ generalAgentId: agent.id, ownerId: ownerUserId }],
+        skipDuplicates: true,
+      });
+    } else {
+      await this.prisma.generalOwnerGrant.deleteMany({
+        where: { generalAgentId: agent.id, ownerId: ownerUserId },
+      });
+    }
+
+    const left = await this.prisma.generalOwnerGrant.count({
+      where: { generalAgentId: agent.id },
+    });
+    await this.adminLog.log(
+      actor.id,
+      visible ? 'GENERAL_GRANT_OWNER' : 'GENERAL_REVOKE_OWNER',
+      generalUserId,
+      { ownerUserId, remaining: left, rooms: roomCount },
+    );
+    /*
+     * 剩 0 个总监是允许的：那表示这个总代只有管理直管。
+     * 房间授权那边要挂管理哨兵是因为「名单为空」被当成「旧房全开」，
+     * 这张表没有那个历史包袱，空就是空。
+     */
+    return { ok: true, visible, remaining: left };
   }
 
   /** 创建总监 / 总代 / 子账号。代理号只在创建房间时生成 */
@@ -1864,6 +2528,13 @@ export class ConsolePlayersService {
       creditLimit?: number;
       /** 总代与平台的结算周期 */
       settleCycle?: string;
+      /** 总代每开一间房、每月缴给平台的月费单价 */
+      roomMonthlyFee?: number;
+      /**
+       * 建总代时指定哪些总监可见（User.id，role=BRANCH）。
+       * 不传 = 全部在职总监可见（与升级前行为一致）。
+       */
+      ownerUserIds?: string[];
     },
   ) {
     const role = body.role ?? 'PROXY';
@@ -1873,19 +2544,24 @@ export class ConsolePlayersService {
     if (role === 'AGENT') {
       throw new BadRequestException('代理账号请在「房间中心」创建房间时生成，不可在此单独添加');
     }
-    if (actor.role === 'AGENT' || actor.role === 'PROXY') {
+    if (actor.role === 'AGENT' || (actor.role === 'PROXY' && !(await this.scope.isGeneralSide(actor)))) {
       throw new BadRequestException('代理/子账号不能在此开号');
     }
-    /* 总代只能给自己开助手，帮他管名下房间与额度；不能开总代、总监 */
-    if (actor.role === 'GENERAL' && role !== 'PROXY') {
+    /* 总代及其分身只能给总代开助手，帮他管名下房间与额度；不能开总代、总监 */
+    if (await this.scope.isGeneralSide(actor) && role !== 'PROXY') {
       throw new BadRequestException('总代只能开自己的子账号');
     }
     if (actor.role === 'BRANCH' && role !== 'PROXY' && role !== 'GENERAL') {
-      throw new BadRequestException('总监只能开总代或给代理开子账号');
+      throw new BadRequestException('总监只能开总代或子账号');
     }
     if (actor.role !== 'ADMIN' && role === 'BRANCH') {
       throw new BadRequestException('仅管理可创建总监');
     }
+    /* 可见范围只有管理能定；总监开的总代一律全员可见，避免他私藏 */
+    const ownerUserIds =
+      actor.role === 'ADMIN' && Array.isArray(body.ownerUserIds)
+        ? [...new Set(body.ownerUserIds.map((s) => String(s || '').trim()).filter(Boolean))]
+        : null;
 
     const username = body.username.toLowerCase().trim();
     if (!/^[a-z0-9]{8,20}$/.test(username)) {
@@ -1898,19 +2574,23 @@ export class ConsolePlayersService {
     }
 
     const policy = await this.prisma.rebatePolicy.findUnique({ where: { id: 1 } });
-    const generalMax = Number(policy?.generalMaxRate ?? 0.1);
-    const generalDef = Number(policy?.generalDefaultRate ?? 0.07);
+    const platform = readPlatformBounds(policy);
+    const generalMax = platform.generalMax;
+    const generalDef = platform.generalDefault;
     let flowRate = generalDef;
     let shareRate = 0.5;
     let bookMode = 'CASH';
     let creditLimit = 0;
     let settleCycle = 'WEEKLY_MON';
+    let roomMonthlyFee = 0;
     if (role === 'GENERAL') {
       flowRate = Number(body.flowRate);
       if (!Number.isFinite(flowRate)) flowRate = generalDef;
       if (flowRate > 1) flowRate = flowRate / 100;
-      if (flowRate < 0.018 || flowRate > generalMax + 1e-9) {
-        throw new BadRequestException(`总代流水整包须在 1.8%～${(generalMax * 100).toFixed(0)}%`);
+      if (flowRate < platform.generalMin - 1e-9 || flowRate > generalMax + 1e-9) {
+        throw new BadRequestException(
+          `总代流水整包须在 ${pctLabel(platform.generalMin)}～${pctLabel(generalMax)}`,
+        );
       }
       shareRate = Number(body.shareRate);
       if (!Number.isFinite(shareRate)) shareRate = 0.5;
@@ -1920,6 +2600,8 @@ export class ConsolePlayersService {
       }
       bookMode = body.bookMode === 'CREDIT' ? 'CREDIT' : 'CASH';
       settleCycle = normalizeSettleCycle(body.settleCycle);
+      /* 平台按这个单价向总代收每间房的月费；他向代理收多少自己定 */
+      roomMonthlyFee = Math.max(0, Math.floor(Number(body.roomMonthlyFee ?? 0) || 0));
       if (bookMode === 'CREDIT') {
         creditLimit = Math.max(0, Math.floor(Number(body.creditLimit ?? 0) || 0));
         if (creditLimit <= 0) {
@@ -1937,31 +2619,59 @@ export class ConsolePlayersService {
     } else if (role === 'GENERAL') {
       parentId = actor.id;
     } else if (role === 'PROXY') {
-      /* 总代开的子账号直接挂自己名下，范围跟着总代走 */
-      if (actor.role === 'GENERAL') {
-        parentId = actor.id;
+      /* 总代开的子账号直接挂自己名下；管理/总监可给总代或房间代理开子账号 */
+      if (await this.scope.isGeneralSide(actor)) {
+        const rootId = await this.scope.generalRootId(actor);
+        const pid = body.parentAgentUserId?.trim();
+        if (pid && pid !== rootId) {
+          await this.scope.assertUserInScope(actor, pid);
+          const parentUser = await this.prisma.user.findUnique({ where: { id: pid } });
+          if (!parentUser || parentUser.role !== 'AGENT') {
+            throw new BadRequestException('只能给名下房间代理开子账号');
+          }
+          const hasRoom = await this.prisma.room.findFirst({
+            where: {
+              ownerAgent: { userId: pid },
+              generalAgent: { userId: rootId },
+            },
+            select: { id: true },
+          });
+          if (!hasRoom) throw new BadRequestException('该代理不在你名下');
+          parentId = pid;
+          parent = parentUser;
+        } else {
+          parentId = rootId;
+          const generalParent = await this.prisma.user.findUnique({ where: { id: parentId } });
+          if (generalParent) parent = generalParent;
+        }
       } else {
         const pid = body.parentAgentUserId?.trim();
-        if (!pid) throw new BadRequestException('开子账号须指定所属代理');
-        await this.scope.assertUserInScope(actor, pid);
-        const agentUser = await this.prisma.user.findUnique({ where: { id: pid } });
-        if (!agentUser || agentUser.role !== 'AGENT') {
-          throw new BadRequestException('所属账号必须是房间绑定代理');
+        if (!pid) throw new BadRequestException('开子账号须指定所属总代或代理');
+        if (actor.role !== 'ADMIN') {
+          await this.scope.assertUserInScope(actor, pid);
         }
-        const hasRoom = await this.prisma.room.findFirst({
-          where: { ownerAgent: { userId: pid } },
-          select: { id: true },
-        });
-        if (!hasRoom) throw new BadRequestException('该代理尚未绑定房间');
+        const parentUser = await this.prisma.user.findUnique({ where: { id: pid } });
+        if (!parentUser || (parentUser.role !== 'AGENT' && parentUser.role !== 'GENERAL')) {
+          throw new BadRequestException('所属账号必须是总代或房间代理');
+        }
+        if (parentUser.role === 'AGENT') {
+          const hasRoom = await this.prisma.room.findFirst({
+            where: { ownerAgent: { userId: pid } },
+            select: { id: true },
+          });
+          if (!hasRoom) throw new BadRequestException('该代理尚未绑定房间');
+        }
         parentId = pid;
-        parent = agentUser;
+        parent = parentUser;
       }
     }
 
     const passwordHash = await bcrypt.hash(body.password, PASSWORD_SALT_ROUNDS);
     const uid = await this.allocUid();
     const nickname = body.nickname?.trim()
-      || (role === 'PROXY' ? `代理${uid.slice(-4)}` : role === 'GENERAL' ? `总代${uid.slice(-4)}` : `总监${uid.slice(-4)}`);
+      || (role === 'PROXY'
+        ? (parent?.role === 'GENERAL' ? `总代子账号${uid.slice(-4)}` : `代理${uid.slice(-4)}`)
+        : role === 'GENERAL' ? `总代${uid.slice(-4)}` : `总监${uid.slice(-4)}`);
 
     let user;
     try {
@@ -1982,24 +2692,46 @@ export class ConsolePlayersService {
             depth: parentId && parent ? parent.depth + 1 : 0,
           },
         });
-        await tx.agent.create({
+        const createdAgent = await tx.agent.create({
+          select: { id: true },
           data: {
             userId: created.id,
             ...(role === 'GENERAL'
-              ? {
-                  flowRate,
-                  shareRate,
-                  rebateRate: 0.018,
-                  bookMode,
-                  creditLimit,
-                  settleCycle,
-                }
+              ? (() => {
+                  const downline = resolveDownlineFlowRate(platform, {
+                    flowRate,
+                    downlineFlowRate: platform.agentDefault,
+                  });
+                  const band = resolvePlayerBand({
+                    platform,
+                    general: { flowRate, downlineFlowRate: downline },
+                    agentFlowRate: downline,
+                  });
+                  return {
+                    flowRate,
+                    shareRate,
+                    rebateRate: clampPlayerRateToBand(0.018, band),
+                    downlineFlowRate: downline,
+                    playerMinRate: band.playerMin,
+                    playerMaxRate: band.playerMax,
+                    bookMode,
+                    creditLimit,
+                    settleCycle,
+                    roomMonthlyFee,
+                  };
+                })()
               : {}),
           },
         });
-        /* 信用盘总代：合同额度即刻计入可用盘分，结算时再校准回这个值 */
+        await tx.pointsAccount.create({
+          data: {
+            ownerType: role === 'BRANCH' ? 'BRANCH' : role === 'PROXY' ? 'PROXY' : 'AGENT',
+            ownerId: created.id,
+          },
+        });
+        /* 信用盘总代：合同额度即刻计入盘分（余额+额度） */
         if (role === 'GENERAL' && bookMode === 'CREDIT' && creditLimit > 0) {
-          await writeAgentQuotaInTx(tx, {
+          await adjustCashDiskInTx(tx, this.points, {
             agentUserId: created.id,
             bookMode: 'CREDIT',
             delta: creditLimit,
@@ -2008,14 +2740,87 @@ export class ConsolePlayersService {
             refType: 'general_open',
             refId: created.id,
             idempotencyKey: `general_open:${created.id}`,
+            createIfMissing: true,
+          });
+          await recordCreditIssueDebtInTx(tx, {
+            ...platformGeneralDebtFilter(created.id),
+            amount: creditLimit,
+            idempotencyKey: `credit_debt:general_open:${created.id}`,
+            remark: `建号期初信用额度 ${creditLimit}`,
+            refType: 'general_open',
+            refId: created.id,
           });
         }
-        await tx.pointsAccount.create({
-          data: {
-            ownerType: role === 'BRANCH' ? 'BRANCH' : role === 'PROXY' ? 'PROXY' : 'AGENT',
-            ownerId: created.id,
-          },
-        });
+        if (role === 'GENERAL') {
+          /*
+           * 总代级可见性：没有授权行就等于对该总监完全隐身，所以建号时必须写。
+           * 不传名单时给全部在职总监（= 升级前的行为），管理员想收紧就勾选，
+           * 或者事后在总代详情里撤销。总监自己开的总代一定包含他本人，
+           * 否则他建完就看不见自己开的号。
+           */
+          const branches = await tx.user.findMany({
+            where: { role: 'BRANCH', status: 'ACTIVE' },
+            select: { id: true },
+          });
+          const allowed = new Set(branches.map((b) => b.id));
+          let owners = ownerUserIds
+            ? ownerUserIds.filter((id) => allowed.has(id))
+            : [...allowed];
+          if (actor.role === 'BRANCH' && !owners.includes(actor.id)) {
+            owners.push(actor.id);
+          }
+          owners = [...new Set(owners)];
+          if (owners.length) {
+            await tx.generalOwnerGrant.createMany({
+              data: owners.map((ownerId) => ({
+                generalAgentId: createdAgent.id,
+                ownerId,
+              })),
+              skipDuplicates: true,
+            });
+          }
+        }
+        if (role === 'BRANCH') {
+          const rooms = await tx.room.findMany({
+            /* 只处理直挂房：挂总代的房由下面那段按总代级名单决定 */
+            where: { generalAgentId: null },
+            select: {
+              id: true,
+              ownerGrants: { select: { owner: { select: { role: true } } } },
+            },
+          });
+          /* 名单为空=旧房默认全开；只有管理哨兵=明确无人可见，新总监也不该看见 */
+          const grantRooms = rooms.filter((r) => {
+            const roles = r.ownerGrants.map((g) => g.owner.role);
+            if (!roles.length) return true;
+            return roles.some((role) => role === 'BRANCH');
+          });
+          if (grantRooms.length) {
+            await tx.roomOwnerGrant.createMany({
+              data: grantRooms.map((r) => ({ roomId: r.id, ownerId: created.id })),
+              skipDuplicates: true,
+            });
+          }
+          /*
+           * 新总监对存量总代的可见性：跟房间同一个口径——
+           * 已经有总监被授权的总代，说明是「公开」的，新总监一并可见；
+           * 一个总监都没授权的（管理刻意收紧过）不给新人开。
+           */
+          const generals = await tx.agent.findMany({
+            where: { user: { role: 'GENERAL' } },
+            select: { id: true, _count: { select: { ownerGrants: true } } },
+          });
+          const openGenerals = generals.filter((g) => g._count.ownerGrants > 0);
+          if (openGenerals.length) {
+            await tx.generalOwnerGrant.createMany({
+              data: openGenerals.map((g) => ({
+                generalAgentId: g.id,
+                ownerId: created.id,
+              })),
+              skipDuplicates: true,
+            });
+          }
+        }
         return created;
       });
     } catch (e: unknown) {
@@ -2052,10 +2857,12 @@ export class ConsolePlayersService {
     amountRaw: number,
     direction: 'up' | 'down',
     remark?: string,
+    clientRequestId?: string,
   ) {
     if (actor.role !== 'ADMIN' && actor.role !== 'BRANCH') {
       throw new ForbiddenException('仅管理或总监可调整总代信用额度');
     }
+    const orderNo = assertFundOrderNo(clientRequestId);
     const amount = Math.floor(Number(amountRaw) || 0);
     if (!(amount > 0)) throw new BadRequestException('金额须大于 0');
 
@@ -2071,6 +2878,7 @@ export class ConsolePlayersService {
     }
 
     const delta = direction === 'down' ? -amount : amount;
+    const idem = `general_credit_bump:${generalUserId}:${orderNo}`;
 
     const result = await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM "Agent" WHERE "userId" = ${generalUserId} FOR UPDATE`;
@@ -2079,6 +2887,22 @@ export class ConsolePlayersService {
         select: { creditLimit: true, pointsQuota: true },
       });
       if (!locked) throw new BadRequestException('总代账户不存在');
+
+      const replayed = await tx.agentQuotaLedger.findFirst({
+        where: { idempotencyKey: idem },
+        select: { id: true },
+      });
+      if (replayed) {
+        const cur = asMoney(locked.creditLimit);
+        const quotaNow = asMoney(locked.pointsQuota);
+        return {
+          before: cur,
+          after: cur,
+          quotaBefore: quotaNow,
+          quotaAfter: quotaNow,
+          replayed: true as const,
+        };
+      }
 
       const before = asMoney(locked.creditLimit);
       const quotaBefore = asMoney(locked.pointsQuota);
@@ -2098,8 +2922,7 @@ export class ConsolePlayersService {
         where: { userId: generalUserId },
         data: { creditLimit: after },
       });
-      /* 无前端订单号，随机键只为占住流水唯一约束 */
-      await writeAgentQuotaInTx(tx, {
+      await adjustCashDiskInTx(tx, this.points, {
         agentUserId: generalUserId,
         bookMode: 'CREDIT',
         quotaTo: quotaAfter,
@@ -2107,17 +2930,36 @@ export class ConsolePlayersService {
         remark: `总代合同额度 ${before}→${after}${remark?.trim() ? `｜${remark.trim()}` : ''}`,
         refType: 'general_credit_limit',
         refId: generalUserId,
-        idempotencyKey: `general_credit_bump:${generalUserId}:${randomUUID()}`,
+        idempotencyKey: idem,
       });
-      return { before, after, quotaBefore, quotaAfter };
+      const debtFilter = platformGeneralDebtFilter(generalUserId);
+      if (direction === 'up') {
+        await recordCreditIssueDebtInTx(tx, {
+          ...debtFilter,
+          amount,
+          idempotencyKey: `credit_debt:${idem}`,
+          remark: `总代上分 ${amount}`,
+          refType: 'general_credit_limit',
+          refId: generalUserId,
+        });
+      } else {
+        await consumeCreditIssueDebtInTx(tx, debtFilter, amount);
+      }
+      return { before, after, quotaBefore, quotaAfter, replayed: false as const };
     });
 
-    await this.adminLog.log(actor.id, 'GENERAL_CREDIT_LIMIT_BUMP', generalUserId, {
-      ...result,
-      amount,
-      direction,
-      remark: remark?.trim() || null,
-    });
+    if (!result.replayed) {
+      await this.adminLog.log(actor.id, 'GENERAL_CREDIT_LIMIT_BUMP', generalUserId, {
+        before: result.before,
+        after: result.after,
+        quotaBefore: result.quotaBefore,
+        quotaAfter: result.quotaAfter,
+        amount,
+        direction,
+        remark: remark?.trim() || null,
+        clientRequestId: orderNo,
+      });
+    }
 
     const sign = direction === 'down' ? '-' : '+';
     return {
@@ -2187,14 +3029,18 @@ function adminActionLabel(action: string, detail: Record<string, unknown>) {
     const by = detail.operatorRole === 'BRANCH' ? '房主' : detail.operatorRole === 'ADMIN' ? '管理员' : '上级';
     return `${by}回收额度`;
   }
+  /* 玩家上下分入口只有代理和客服；子账号没有这条路，所以不再判 byProxy */
   if (action === 'CONSOLE_CREDIT') {
-    return detail.byCs ? '客服给玩家上分' : detail.byProxy ? '子账号给玩家上分' : '给玩家上分';
+    return detail.byCs ? '客服给玩家上分' : '给玩家上分';
   }
   if (action === 'CONSOLE_DEBIT') {
-    return detail.byCs ? '客服给玩家下分' : detail.byProxy ? '子账号给玩家下分' : '给玩家下分';
+    return detail.byCs ? '客服给玩家下分' : '给玩家下分';
   }
   if (action === 'CS_STAFF_ALLOC') return '划额度给客服';
   if (action === 'CS_STAFF_RECALL') return '收回客服额度';
+  if (action === 'GENERAL_CREDIT_LIMIT_BUMP') {
+    return detail.direction === 'down' ? '下调总代信用额度' : '上调总代信用额度';
+  }
   const map: Record<string, string> = {
     AGENT_CREATE: '开通账号',
     CS_DUTY_SET: '设置值班',
@@ -2209,6 +3055,8 @@ function adminActionLabel(action: string, detail: Record<string, unknown>) {
     ROOM_AGENT_RESET_PWD: '重置代理密码',
     ROOM_GRANT_OWNER: '授权房主可见',
     ROOM_REVOKE_OWNER: '取消房主可见',
+    GENERAL_GRANT_OWNER: '授权总监可见总代',
+    GENERAL_REVOKE_OWNER: '取消总监可见总代',
     ROOM_GAME_CONFIG: '修改房间游戏配置',
     RISK_EVENT_HANDLE: '处理风控告警',
     RISK_EVENT_BATCH_HANDLE: '批量处理风控',

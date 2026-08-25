@@ -17,6 +17,13 @@ import { TableService } from '../table/table.service';
 export class LobbyService {
   private readonly inflight = new Map<string, Promise<unknown>>();
   private static readonly CACHE_TTL_SEC = 3;
+  /**
+   * 大厅卡片只读 history[0]/[1]（上一局结果 + 相位判断），但牌桌快照带的是「当日全部
+   * 局数」——炸金花一天能开一千多局，实测让这个接口涨到 868KB，占大厅首屏流量的 99%，
+   * 在被限速的线路上光这一个请求就要 3 秒多，而且局数越攒越多、只会更慢。
+   * 这里截断到最近几局，并去掉只有验证页才用得上的种子字段。
+   */
+  private static readonly LOBBY_HISTORY_LIMIT = 8;
 
   constructor(
     private readonly lottery: LotteryService,
@@ -99,7 +106,7 @@ export class LobbyService {
     const tableEntries = await Promise.all(
       tableCodes.map(async (code) => {
         const snap = await this.table.snapshot(code).catch(() => null);
-        return [code, snap] as const;
+        return [code, snap ? LobbyService.slimTableSnapshot(snap) : null] as const;
       }),
     );
 
@@ -107,5 +114,19 @@ export class LobbyService {
       lottery: Object.fromEntries(lotteryEntries),
       table: Object.fromEntries(tableEntries),
     };
+  }
+
+  /** 只留大厅画卡片需要的字段；完整路单与种子仍由房间内的 /table/snapshot 提供 */
+  private static slimTableSnapshot(snap: unknown) {
+    if (!snap || typeof snap !== 'object') return snap;
+    const source = snap as { history?: unknown };
+    if (!Array.isArray(source.history)) return snap;
+    const history = source.history
+      .slice(0, LobbyService.LOBBY_HISTORY_LIMIT)
+      .map((item) => {
+        const row = (item ?? {}) as Record<string, unknown>;
+        return { roundNo: row.roundNo, outcome: row.outcome, createdAt: row.createdAt };
+      });
+    return { ...(snap as Record<string, unknown>), history };
   }
 }

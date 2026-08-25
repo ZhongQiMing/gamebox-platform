@@ -7,19 +7,9 @@ import {
   PlatformEmergencyService,
 } from './platform-emergency.service';
 
-export type OwnerType = 'PLATFORM' | 'BRANCH' | 'AGENT' | 'PROXY' | 'CS' | 'PLAYER' | 'ROOM';
-export type BizType =
-  | 'RECHARGE'
-  | 'WITHDRAW'
-  | 'TRANSFER_OUT'
-  | 'TRANSFER_IN'
-  | 'BET'
-  | 'WIN'
-  | 'FEE'
-  | 'COMMISSION'
-  | 'REBATE'
-  | 'ACTIVITY'
-  | 'ADJUST';
+export type { OwnerType, BizType } from './points.types';
+import type { OwnerType, BizType } from './points.types';
+import { ownerFloor } from './points-floor';
 
 export interface LedgerOpts {
   refType?: string;
@@ -47,37 +37,6 @@ export const PLATFORM_OWNER_ID = 'PLATFORM';
 /** 非玩家账户的 roomId 哨兵（空串，配合复合唯一） */
 export const NO_ROOM = '';
 
-/**
- * 平台账户余额下限。
- * 平台侧允许为负（代表已下发到生态的积分总量），但不能无底线——
- * 一旦跌破说明赔率配置或风控出了问题，此时拒绝继续派彩并让事务回滚，
- * 比闷声亏到底更容易被发现。可用 PLATFORM_BALANCE_FLOOR 覆盖。
- */
-const DEFAULT_PLATFORM_FLOOR = -100_000_000;
-
-function platformFloor(): number {
-  const raw = Number(process.env.PLATFORM_BALANCE_FLOOR);
-  return Number.isFinite(raw) ? raw : DEFAULT_PLATFORM_FLOOR;
-}
-
-/** 代理欠账下限（飞盘关闭后玩家继续赢） */
-const DEFAULT_AGENT_FLOOR = -100_000_000;
-/** 历史 ROOM 分桶下限（已废弃，结算走平台池；保留兼容旧账户） */
-const DEFAULT_ROOM_FLOOR = -100_000_000;
-
-function ownerFloor(ownerType: OwnerType): number | null {
-  if (ownerType === 'PLATFORM') return platformFloor();
-  if (ownerType === 'AGENT') {
-    const raw = Number(process.env.AGENT_BALANCE_FLOOR);
-    return Number.isFinite(raw) ? raw : DEFAULT_AGENT_FLOOR;
-  }
-  if (ownerType === 'ROOM') {
-    const raw = Number(process.env.ROOM_BALANCE_FLOOR);
-    return Number.isFinite(raw) ? raw : DEFAULT_ROOM_FLOOR;
-  }
-  return 0;
-}
-
 /** PLAYER 必须带运营房间；其余固定 '' */
 export function resolveAccountRoomId(ownerType: OwnerType, roomId?: string | null): string {
   if (ownerType === 'PLAYER') {
@@ -96,15 +55,36 @@ export function resolveAccountRoomId(ownerType: OwnerType, roomId?: string | nul
  *   3. 所有写入用 $transaction，禁止事务外更新 balance
  *   4. idempotencyKey 幂等，防重复扣/派彩
  *   5. PLATFORM 账户允许为负，但不得跌破 platformFloor()；其余账户禁止透支
- *   6. 【加锁顺序】一笔转账必须先动 PLATFORM 侧再动对手方
+ *   6. 【加锁顺序】PLATFORM/ROOM 资金池那一侧恒定放最后动，把热行持锁时间压到最短
  *   7. 【多房】PLAYER 按 (ownerType, ownerId, roomId) 分账；跨房余额互不可用
  */
+/** 合并写缓冲里的一条：账本行已落库，只差把余额加上去 */
+interface PooledWrite {
+  accountId: string;
+  ledgerId: string;
+  delta: number;
+}
+
+interface PoolBuffer {
+  /** 按发生顺序，flush 时要靠这个顺序倒推每条流水的 balanceAfter */
+  writes: PooledWrite[];
+  /** ownerType:ownerId:roomId → accountId，省掉重复查账户 */
+  accountIds: Map<string, string>;
+  ownerTypes: Map<string, OwnerType>;
+}
+
 @Injectable()
 export class PointsService {
   constructor(
     private prisma: PrismaService,
     private platformEmergency: PlatformEmergencyService,
   ) {}
+
+  /**
+   * 开启了合并写的事务。用 WeakMap 挂在 tx 对象上，事务结束即随之回收，
+   * 不需要显式清理，也不会串到别的事务。
+   */
+  private readonly poolBuffers = new WeakMap<Prisma.TransactionClient, PoolBuffer>();
 
   accountWhere(
     ownerType: OwnerType,
@@ -128,6 +108,63 @@ export class PointsService {
       select: { balance: true },
     });
     return asMoney(account?.balance ?? 0);
+  }
+
+  /**
+   * 取账户 id：只读不加锁，账户不存在才建。
+   *
+   * 和 upsert 的区别是「不碰已存在的那一行」——记账路径要的就是这一点，
+   * 任何对平台那一行的写操作都会把它变成瓶颈。
+   */
+  private async accountIdInTx(
+    tx: Prisma.TransactionClient,
+    ownerType: OwnerType,
+    ownerId: string,
+    roomId: string,
+  ): Promise<string> {
+    const where = this.accountWhere(ownerType, ownerId, roomId);
+    const found = await tx.pointsAccount.findUnique({ where, select: { id: true } });
+    if (found) return found.id;
+    try {
+      const made = await tx.pointsAccount.create({
+        data: { ownerType: ownerType as never, ownerId, roomId },
+        select: { id: true },
+      });
+      return made.id;
+    } catch {
+      /* 并发首建：另一方已插入，重读即可 */
+      const again = await tx.pointsAccount.findUnique({ where, select: { id: true } });
+      if (!again) throw new BadRequestException('账户创建失败');
+      return again.id;
+    }
+  }
+
+  /** 平台侧余额是否走「先记账、后合并」；置 0 可回退到当场改余额的老行为 */
+  private journalEnabled(): boolean {
+    return String(process.env.PLATFORM_JOURNAL ?? '1') !== '0';
+  }
+
+  /**
+   * 平台账户还没合并进余额的金额合计。
+   *
+   * 判断平台有没有跌破下限必须用「余额 + 这个数」，不能只看余额——
+   * 否则合并工人一旦停摆，账继续记而余额不动，红线就会失灵。
+   */
+  async platformPendingSum(): Promise<number> {
+    const agg = await this.prisma.platformApplyQueue.aggregate({ _sum: { amount: true } });
+    return asMoney(agg._sum.amount ?? 0);
+  }
+
+  /** 平台真实余额 = 已落账的余额 + 还在队列里等合并的金额 */
+  async platformEffectiveBalance(): Promise<number> {
+    const [acc, pending] = await Promise.all([
+      this.prisma.pointsAccount.findUnique({
+        where: this.accountWhere('PLATFORM', PLATFORM_OWNER_ID),
+        select: { balance: true },
+      }),
+      this.platformPendingSum(),
+    ]);
+    return roundMoney(asMoney(acc?.balance ?? 0) + pending);
   }
 
   /**
@@ -180,7 +217,8 @@ export class PointsService {
   }
 
   /**
-   * 事务内转账：自动保证「PLATFORM/ROOM 侧先加锁」，其余按 ownerId 排序。
+   * 事务内转账：固定把 PLATFORM/ROOM 资金池那一侧放到最后动，其余按 ownerId 排序。
+   * 顺序全局一致，既避免死锁，又把全站共享的池子热行的持锁时间压到最短。
    */
   async transferInTx(
     tx: Prisma.TransactionClient,
@@ -208,11 +246,27 @@ export class PointsService {
         roomId: to.roomId ?? opts.roomId,
       });
 
-    const poolFirst = (t: OwnerType) => t === 'PLATFORM' || t === 'ROOM';
-    if (poolFirst(from.type)) return { out: await debit(), in: await credit() };
-    if (poolFirst(to.type)) {
-      const inn = await credit();
-      return { out: await debit(), in: inn };
+    /*
+     * 资金池那一侧放到最后动。
+     *
+     * PLATFORM 是全站唯一一行，每一笔飞盘下注和派彩都要更新它。行锁一旦拿到就必须
+     * 持有到事务提交，所以「先动池子」等于让池子的锁覆盖整笔事务剩下的全部往返
+     * （玩家账户 upsert、余额更新、两条账本、以及调用方后续的回水与飞盘额度）。
+     * 那会把全站下注吞吐压在「一笔事务耗时」的倒数上。放到最后，持锁时间缩短到
+     * 一条 UPDATE 加提交。
+     *
+     * 死锁安全性不变：死锁需要两笔事务以相反顺序拿同两把锁。这里的规则依然是全局
+     * 一致的偏序——池子恒定排在最后，两侧都是池子时退回按键排序，所以不存在环。
+     */
+    const isPool = (t: OwnerType) => t === 'PLATFORM' || t === 'ROOM';
+    const bothPool = isPool(from.type) && isPool(to.type);
+    if (!bothPool) {
+      if (isPool(from.type)) {
+        /* from 是池子 → 先给对手方入账，最后再扣池子 */
+        const inn = await credit();
+        return { out: await debit(), in: inn };
+      }
+      if (isPool(to.type)) return { out: await debit(), in: await credit() };
     }
     const fromKey = `${from.id}:${resolveAccountRoomId(from.type, from.roomId)}`;
     const toKey = `${to.id}:${resolveAccountRoomId(to.type, to.roomId)}`;
@@ -254,6 +308,46 @@ export class PointsService {
     }
 
     const roomId = resolveAccountRoomId(ownerType, opts.roomId);
+
+    /*
+     * 平台账户：只写账本 + 排队，不动余额。
+     *
+     * 平台是全站唯一一行，每笔飞盘下注和派彩都要动它。当场改余额就得拿这一行的
+     * 独占锁并持到提交，全站下注因此串成一条队（实测封顶 337 笔/秒，尾延迟到 1.3 秒）。
+     * 改成只插账本之后，这条路上对平台那一行只剩外键的共享锁，并发之间互不冲突
+     * （实测 2225 笔/秒，且不再有硬上限）。余额由 PlatformBalanceMerger 批量补上。
+     *
+     * 钱不会因此丢：这条账本和对手方的余额变动在同一个事务里，要么都成要么都没有。
+     * 余额那一列退化成派生缓存，工人停摆只会让它变旧，不会让账少一笔。
+     * 代价是平台余额有不到 1 秒的延迟，以及下限判断从「当场拦」改成看门狗
+     * （见 platformEffectiveBalance —— 它把队列里的钱一起算，所以工人挂了红线依然准）。
+     */
+    if (ownerType === 'PLATFORM' && amount !== 0 && this.journalEnabled()) {
+      const accountId = await this.accountIdInTx(tx, ownerType, ownerId, roomId);
+      const ledger = await tx.pointsLedger.create({
+        data: {
+          accountId,
+          bizType: bizType as never,
+          amount: new Prisma.Decimal(amount.toFixed(2)),
+          /* 占位；合并时按队列顺序回填真值 */
+          balanceAfter: new Prisma.Decimal('0'),
+          refType: opts.refType,
+          refId: opts.refId,
+          remark: opts.remark,
+          operatorId: opts.operatorId,
+          idempotencyKey: opts.idempotencyKey,
+        },
+      });
+      await tx.platformApplyQueue.create({
+        data: {
+          accountId,
+          ledgerId: ledger.id,
+          amount: new Prisma.Decimal(amount.toFixed(2)),
+        },
+      });
+      return ledger;
+    }
+
     const account = await tx.pointsAccount.upsert({
       where: this.accountWhere(ownerType, ownerId, roomId),
       update: {},

@@ -14,6 +14,7 @@ import { FlyDiskService, type FlyHouse } from '../console/fly-disk.service';
 import { FlyRebateService } from '../console/fly-rebate.service';
 import {
   closedDiskDebitBetInTx,
+  closedDiskHouseUserId,
   closedDiskSettleWinInTx,
 } from '../console/player-fund.helper';
 
@@ -76,6 +77,7 @@ export class SettlementKernel {
     return !h.flying && h.type === 'AGENT';
   }
 
+
   private requirePlayerRoomId(h: FlyHouse, action: string): string {
     const rid = String(h.roomId || '').trim();
     if (!rid) {
@@ -119,7 +121,7 @@ export class SettlementKernel {
     if (this.isClosedDisk(h)) {
       await closedDiskDebitBetInTx(tx, this.points, {
         playerId,
-        agentUserId: h.agentUserId || h.id,
+        agentUserId: closedDiskHouseUserId(h),
         roomId: playerRoomId,
         bookMode: h.bookMode,
         amount,
@@ -167,6 +169,13 @@ export class SettlementKernel {
       /** 须与扣注时同一快照 */
       house?: FlyHouse;
       opsRoomId?: string;
+      /** 本注游戏 code：不传则整包退回房间级默认，电子/街机会按平常游戏档超发 */
+      gameCode?: string;
+      /**
+       * 下注时定死的整包比例（注单 payload.fly）。
+       * 水果机揭晓可能晚很久，期间改比例不该动到这笔已发生的流水。
+       */
+      rateSnapshot?: { agentPkg?: unknown; generalPkg?: unknown; P?: unknown } | null;
     },
   ): Promise<{ paid: number; capped: boolean; house: FlyHouse }> {
     const { playerId, roundId, betId, remark, keyPrefix } = opts;
@@ -216,17 +225,6 @@ export class SettlementKernel {
           { bizType: 'WIN', refType: 'round', refId: roundId },
         );
       }
-      if (this.flyDisk && stake > 0) {
-        await this.flyDisk.applyFlyLossInTx(
-          tx,
-          h.agentUserId,
-          true,
-          stake,
-          amount,
-          `${keyPrefix}_fly_quota_${betId}`,
-          h.bookMode,
-        );
-      }
       if (this.flyRebate && stake > 0 && !opts.skipFlowRebate) {
         await this.flyRebate.payBetFlowInTx(tx, {
           betId,
@@ -235,8 +233,12 @@ export class SettlementKernel {
           flying: true,
           roomId: playerRoomId,
           agentUserId: h.agentUserId,
+          generalUserId: h.generalUserId,
+          sitting: h.sitting || 'PLATFORM',
           bookMode: h.bookMode,
           roundId,
+          gameCode: opts.gameCode,
+          rateSnapshot: opts.rateSnapshot,
         });
       }
     } else if (h.type === 'PLATFORM') {
@@ -263,7 +265,7 @@ export class SettlementKernel {
       /* 关盘：派彩加玩家并从代理盘分赔出 */
       await closedDiskSettleWinInTx(tx, this.points, {
         playerId,
-        agentUserId: h.agentUserId || h.id,
+        agentUserId: closedDiskHouseUserId(h),
         roomId: playerRoomId,
         bookMode: h.bookMode,
         stake,
@@ -275,6 +277,7 @@ export class SettlementKernel {
         idemAgent: `${keyPrefix}_win_agent_${betId}`,
       });
       if (this.flyRebate && stake > 0 && !opts.skipFlowRebate) {
+        /* 关盘：庄家出代理自己的回水；玩家回水记进池子，六点由庄家出 */
         await this.flyRebate.payBetFlowInTx(tx, {
           betId,
           playerId,
@@ -282,8 +285,12 @@ export class SettlementKernel {
           flying: false,
           roomId: playerRoomId,
           agentUserId: h.agentUserId || h.id,
+          generalUserId: h.generalUserId,
+          sitting: h.sitting,
           bookMode: h.bookMode,
           roundId,
+          gameCode: opts.gameCode,
+          rateSnapshot: opts.rateSnapshot,
         });
       }
     }

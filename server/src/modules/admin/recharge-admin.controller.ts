@@ -6,8 +6,15 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
+/*
+ * 上下分单只给「真正经手的人」：管理、房间代理与其子账号、客服。
+ *
+ * 原先还放行了 BRANCH，但总监的可见范围是授权房间，不是代理树，
+ * 下面那段按 agentPath 前缀过滤对总监既筛不准又可能漏出未授权房的玩家单；
+ * 前端也从没给总监开过这个入口。与其修一个没人用的错口径，不如收掉。
+ */
 @Controller('admin/recharge')
-@Roles('ADMIN', 'BRANCH', 'AGENT', 'PROXY', 'CS')
+@Roles('ADMIN', 'AGENT', 'PROXY', 'CS')
 export class RechargeAdminController {
   constructor(private prisma: PrismaService) {}
 
@@ -102,10 +109,9 @@ export class RechargeAdminController {
           ];
           if (memberIds.length) or.push({ id: { in: memberIds } });
           where.player = { OR: or };
-        } else if (me.role === 'BRANCH') {
-          where.player = {
-            agentPath: { startsWith: teamPrefix },
-          };
+        } else {
+          /* 兜底：非 ADMIN 又不在上面几类里，一律看不到 */
+          where.playerId = '__none__';
         }
       }
     }
@@ -118,7 +124,7 @@ export class RechargeAdminController {
         orderBy: [{ status: 'asc' }, { createdAt: 'desc' }],
         skip: (Math.max(page, 1) - 1) * take,
         take,
-        include: { player: { select: { id: true, uid: true, nickname: true } } },
+        include: { player: { select: { id: true, uid: true, nickname: true, username: true } } },
       }),
     ]);
 
@@ -129,7 +135,7 @@ export class RechargeAdminController {
       list: list.map((o) => ({
         ...o,
         playerId: o.playerId,
-        player: { uid: o.player.uid, nickname: o.player.nickname },
+        player: { uid: o.player.uid, nickname: o.player.nickname, username: o.player.username },
       })),
     };
   }

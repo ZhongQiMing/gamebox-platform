@@ -1,11 +1,24 @@
 /**
- * 玩家上下分 / 关盘（两本账：盘分 + 玩家；现金/信用同一套）
- * - 盘分账：现金=余额+上盘额度(pointsQuota)；信用=剩余信用(pointsQuota)；可为负=超分
+ * 玩家上下分 / 关盘（两本账：盘分 + 玩家；现金/信用同一套日常记账）
+ * - 盘分账：余额与上盘额度同步增减（两盘相同）；可为负=超分
  * - 玩家账：玩家持分
  * - 上分：扣盘分 → 加玩家（盘分不够也允许，变负）
  * - 下分：扣玩家 → 加回盘分
  * - 飞盘：只动玩家↔平台，单笔输赢不改盘分
  * - 关盘：下注吃进盘分；派彩从盘分出；输则盘分留下
+ * - 信用盘只在结账多轧一笔欠款（占成反向交割），日常不另开佣金袋
+ *
+ * ── 加锁顺序约定（改这些函数前必读）──
+ *
+ * 同时动「代理」和「玩家」两个账户的地方，**一律先锁代理行、再动玩家账户**。
+ *
+ * 原因：一笔关盘结算和一笔回水领取如果顺序相反，就会形成循环等待——
+ * 结算那边握着玩家行等代理行，领取那边握着代理行等玩家行，Postgres 检测到
+ * 死锁后杀掉一方。因为上层有重试（prisma/tx-retry.ts），表面上只是偶发失败，
+ * 排查起来极其费劲，所以从源头把顺序固定下来。
+ *
+ * 回水领取路径（payCreditDiskToPlayerInTx / adjustCashDiskInTx）本来就是
+ * 先锁代理，所以这里的关盘下注与派彩也对齐成同样顺序。
  */
 import { BadRequestException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
@@ -71,6 +84,20 @@ function isCreditRoom(room: { bookMode?: string | null } | null | undefined) {
   return room?.bookMode === 'CREDIT';
 }
 
+/**
+ * 关盘坐庄方的 userId —— 吃注 / 赔付 / 退注都必须认这个人。
+ *
+ * resolveHouse 把坐庄方放在 `id`（代理关盘=房间代理，总代关盘=总代），
+ * 而 `agentUserId` 恒为房间代理，它的用途是「整包收款方 + 挂靠佣金出款方」。
+ * 总代坐庄时两者不是同一个人；早期写法 `agentUserId || id` 因为
+ * agentUserId 恒有值，永远取到房间代理，等于让代理替总代扛了输赢。
+ */
+export function closedDiskHouseUserId(
+  house: { id?: string | null; agentUserId?: string | null } | null | undefined,
+): string {
+  return String(house?.id || house?.agentUserId || '').trim();
+}
+
 /** 锁 Agent 行，防止剩余信用并发超发 / 与结账交错 */
 export async function lockAgentRowInTx(
   tx: Prisma.TransactionClient,
@@ -118,6 +145,8 @@ export async function closedDiskDebitBetInTx(
   if (!opts.roomId) throw new BadRequestException('关盘扣注缺少房间');
   if (!opts.agentUserId) throw new BadRequestException('关盘扣注缺少代理');
   const mode = await resolveClosedBookMode(tx, opts.roomId, opts.bookMode);
+  /* 加锁顺序：代理在前、玩家在后（见文件头「加锁顺序约定」） */
+  await lockAgentRowInTx(tx, opts.agentUserId);
   await points.creditInTx(tx, 'PLAYER', opts.playerId, -amount, 'BET', {
     remark: opts.remark,
     refType: opts.refType,
@@ -164,6 +193,8 @@ export async function closedDiskSettleWinInTx(
   if (!opts.roomId) throw new BadRequestException('关盘派彩缺少房间');
   if (!opts.agentUserId) throw new BadRequestException('关盘派彩缺少代理');
   const mode = await resolveClosedBookMode(tx, opts.roomId, opts.bookMode);
+  /* 加锁顺序：代理在前、玩家在后（见文件头「加锁顺序约定」） */
+  await lockAgentRowInTx(tx, opts.agentUserId);
 
   await points.creditInTx(tx, 'PLAYER', opts.playerId, payout, 'WIN', {
     remark: opts.remark,
@@ -261,41 +292,7 @@ export async function applyAgentCreditToPlayerInTx(
   const agent = await tx.agent.findUnique({ where: { userId: opts.agentUserId } });
   if (!agent) throw new BadRequestException('代理账户不存在');
 
-  // ── B 信用盘：扣盘分(剩余信用) → 加玩家；不够则盘分变负（超分）──
-  if (isCreditRoom(room)) {
-    const quota = asMoney(agent.pointsQuota);
-    const overIssue = roundMoney(Math.max(0, amount - Math.max(0, quota)));
-    const real = roundMoney(amount - overIssue);
-    await writeAgentQuotaInTx(tx, {
-      agentUserId: opts.agentUserId,
-      bookMode: 'CREDIT',
-      delta: -amount,
-      usedDelta: amount,
-      bizType: 'TRANSFER_OUT',
-      remark: opts.remark ?? (overIssue > 0 ? '上分(信用·超分)' : '上分(信用)'),
-      refType: opts.refType,
-      refId: opts.refId,
-      idempotencyKey: `${opts.idemIn}:QUOTA`,
-    });
-    await points.creditInTx(
-      tx,
-      'PLAYER',
-      opts.playerId,
-      amount,
-      opts.playerBizType ?? 'TRANSFER_IN',
-      {
-        operatorId: opts.operatorId,
-        remark: opts.remark ?? (overIssue > 0 ? '上分(信用·超分)' : '上分(信用)'),
-        refType: opts.refType,
-        refId: opts.refId,
-        idempotencyKey: opts.idemIn,
-        roomId: room.id,
-      },
-    );
-    return { real, overIssue, fromBalance: 0, roomId: room.id };
-  }
-
-  // ── A 现金盘：扣盘分（余额+上盘额度）→ 加玩家；不够则变负（超分）──
+  const credit = isCreditRoom(room);
   const acc = await tx.pointsAccount.findUnique({
     where: points.accountWhere('AGENT', opts.agentUserId),
   });
@@ -304,19 +301,22 @@ export async function applyAgentCreditToPlayerInTx(
   const disk = roundMoney(Math.min(bal, quota));
   const overIssue = roundMoney(Math.max(0, amount - Math.max(0, disk)));
   const real = roundMoney(amount - overIssue);
+  const tag = credit
+    ? overIssue > 0 ? '上分(信用·超分)' : '上分(信用)'
+    : overIssue > 0 ? '上分(盘分·超分)' : '上分(盘分)';
   await points.transferInTx(
     tx,
     {
       type: 'AGENT',
       id: opts.agentUserId,
-      remark: opts.remark ?? (overIssue > 0 ? '上分(盘分·超分)' : '上分(盘分)'),
+      remark: opts.remark ?? tag,
       idempotencyKey: opts.idemOut,
     },
     {
       type: 'PLAYER',
       id: opts.playerId,
       roomId: room.id,
-      remark: opts.remark ?? (overIssue > 0 ? '上分(盘分·超分)' : '上分(盘分)'),
+      remark: opts.remark ?? tag,
       idempotencyKey: opts.idemIn,
     },
     amount,
@@ -330,10 +330,11 @@ export async function applyAgentCreditToPlayerInTx(
   );
   await writeAgentQuotaInTx(tx, {
     agentUserId: opts.agentUserId,
-    bookMode: 'CASH',
+    bookMode: credit ? 'CREDIT' : 'CASH',
     delta: -amount,
+    usedDelta: credit ? amount : undefined,
     bizType: 'TRANSFER_OUT',
-    remark: opts.remark ?? (overIssue > 0 ? '上分(盘分·超分)' : '上分(盘分)'),
+    remark: opts.remark ?? tag,
     refType: opts.refType,
     refId: opts.refId,
     idempotencyKey: `${opts.idemOut}:QUOTA`,
@@ -343,9 +344,7 @@ export async function applyAgentCreditToPlayerInTx(
 }
 
 /**
- * 下分结算到代理（玩家分已扣）：盘分加回。
- * - CREDIT：加回剩余信用
- * - CASH：加回盘分（余额+上盘额度）
+ * 下分结算到代理（玩家分已扣）：盘分加回（余额+额度同步，两盘相同）。
  */
 export async function settlePlayerDebitToAgentInTx(
   tx: Prisma.TransactionClient,
@@ -380,27 +379,14 @@ export async function settlePlayerDebitToAgentInTx(
     }
   }
 
-  if (isCreditRoom(room)) {
-    await writeAgentQuotaInTx(tx, {
-      agentUserId: opts.agentUserId,
-      bookMode: 'CREDIT',
-      delta: amount,
-      usedDelta: -amount,
-      bizType: 'TRANSFER_IN',
-      remark: opts.remark ?? '下分回收剩余信用',
-      refType: opts.refType,
-      refId: opts.refId,
-      idempotencyKey: `${opts.idemAgent}:QUOTA`,
-    });
-    return { coverBack: 0, overIssueBack: 0, realPart: amount, roomId: room?.id ?? null };
-  }
-
-  // 现金：代理向玩家买回分 → 盘分加回
+  const credit = isCreditRoom(room);
   await adjustCashDiskInTx(tx, points, {
     agentUserId: opts.agentUserId,
+    bookMode: credit ? 'CREDIT' : 'CASH',
     delta: amount,
-    bizType: 'ADJUST',
-    remark: opts.remark ?? '下分买回盘分',
+    usedDelta: credit ? -amount : undefined,
+    bizType: 'TRANSFER_IN',
+    remark: opts.remark ?? (credit ? '下分回收盘分' : '下分买回盘分'),
     refType: opts.refType,
     refId: opts.refId,
     idempotencyKey: opts.idemAgent,
@@ -476,7 +462,7 @@ export async function applyCsCreditToPlayerInTx(
   let wage = 0;
   const rate = Number(opts.wageRate) || 0;
   // 现金/信用：本金已成功；佣金写账单，来源够则当场结清，不够记未结
-  // 现金来源=盘分；信用来源=剩余信用
+  // 来源都是代理盘分（余额+额度）
   if (rate > 0) {
     wage = roundMoney(amount * rate);
     if (wage > 0) {
@@ -570,8 +556,7 @@ export async function settleCsPlayerDebitInTx(
 
 /**
  * 客服佣金账单：先写 PENDING；来源够则当场入客服并标已结，不够保持未结（不抛错、不回滚本金）。
- * - CASH：扣代理盘分
- * - CREDIT：扣剩余信用
+ * 现金/信用都从代理盘分出（余额+额度同步）。
  */
 export async function createAndMaybeSettleWageBillInTx(
   tx: Prisma.TransactionClient,
@@ -672,42 +657,26 @@ export async function tryPayWageBillInTx(
   /* 余额判定先于抢单：不够时原样返回 false，账单要留在 PENDING 等下次结 */
   const agent = await tx.agent.findUnique({ where: { userId: opts.agentUserId } });
   const quota = asMoney(agent?.pointsQuota ?? 0);
-  if (opts.bookMode === 'CREDIT') {
-    if (quota + 1e-9 < need) return false;
-  } else {
-    const acc = await tx.pointsAccount.findUnique({
-      where: points.accountWhere('AGENT', opts.agentUserId),
-    });
-    const bal = asMoney(acc?.balance ?? 0);
-    if (Math.min(bal, quota) + 1e-9 < need) return false;
-  }
+  const acc = await tx.pointsAccount.findUnique({
+    where: points.accountWhere('AGENT', opts.agentUserId),
+  });
+  const bal = asMoney(acc?.balance ?? 0);
+  if (Math.min(bal, quota) + 1e-9 < need) return false;
 
   /* 已被并发的另一笔结清：直接收手，不能再付一遍 */
   if (!(await claimBill())) return true;
 
-  if (opts.bookMode === 'CREDIT') {
-    await writeAgentQuotaInTx(tx, {
-      agentUserId: opts.agentUserId,
-      bookMode: 'CREDIT',
-      delta: -need,
-      usedDelta: need,
-      bizType: 'TRANSFER_OUT',
-      remark: opts.diskRemark,
-      refType: opts.refType,
-      refId: opts.refId,
-      idempotencyKey: opts.diskIdem,
-    });
-  } else {
-    await adjustCashDiskInTx(tx, points, {
-      agentUserId: opts.agentUserId,
-      delta: -need,
-      bizType: 'ADJUST',
-      remark: opts.diskRemark,
-      refType: opts.refType,
-      refId: opts.refId,
-      idempotencyKey: opts.diskIdem,
-    });
-  }
+  await adjustCashDiskInTx(tx, points, {
+    agentUserId: opts.agentUserId,
+    bookMode: opts.bookMode,
+    delta: -need,
+    usedDelta: opts.bookMode === 'CREDIT' ? need : undefined,
+    bizType: 'ADJUST',
+    remark: opts.diskRemark,
+    refType: opts.refType,
+    refId: opts.refId,
+    idempotencyKey: opts.diskIdem,
+  });
 
   const ledger = await points.creditInTx(tx, 'CS', opts.csUserId, need, 'TRANSFER_IN', {
     operatorId: opts.operatorId,
@@ -751,6 +720,19 @@ export type DiskBizType =
  * 因此只能取 PointsService 认识的那几个值。
  */
 type SyncedDiskBizType = 'REBATE' | 'COMMISSION' | 'ADJUST' | 'BET' | 'WIN';
+
+function pointsBizForDisk(bizType: DiskBizType): SyncedDiskBizType {
+  if (
+    bizType === 'REBATE' ||
+    bizType === 'COMMISSION' ||
+    bizType === 'ADJUST' ||
+    bizType === 'BET' ||
+    bizType === 'WIN'
+  ) {
+    return bizType;
+  }
+  return 'ADJUST';
+}
 
 /**
  * 盘分调整的唯一落地点：改 Agent.pointsQuota / pointsUsed 并写 AgentQuotaLedger。
@@ -843,7 +825,7 @@ export async function writeAgentQuotaInTx(
 }
 
 /**
- * 现金盘分账：余额与上盘额度同步增减。
+ * 盘分账：余额与上盘额度同步增减。现金盘、信用盘日常都走这里。
  * 允许变负（超分 / 关盘赔付）；挂靠佣金等「不够不赊」须在调用方先判断。
  */
 export async function adjustCashDiskInTx(
@@ -851,28 +833,54 @@ export async function adjustCashDiskInTx(
   points: PointsService,
   opts: {
     agentUserId: string;
-    delta: number;
-    bizType: SyncedDiskBizType;
+    bookMode?: 'CASH' | 'CREDIT';
+    delta?: number;
+    quotaTo?: number;
+    usedDelta?: number;
+    usedTo?: number;
+    bizType: DiskBizType;
     remark: string;
     refType?: string;
     refId?: string;
     idempotencyKey: string;
+    createIfMissing?: boolean;
   },
 ) {
-  const delta = roundMoney(opts.delta);
-  if (delta === 0) return;
+  const bookMode = opts.bookMode ?? 'CASH';
+  const pointsBiz = pointsBizForDisk(opts.bizType);
+  if (
+    opts.quotaTo === undefined &&
+    opts.usedTo === undefined &&
+    opts.usedDelta === undefined &&
+    roundMoney(opts.delta ?? 0) === 0
+  ) {
+    return;
+  }
   await lockAgentRowInTx(tx, opts.agentUserId);
   await writeAgentQuotaInTx(tx, {
     agentUserId: opts.agentUserId,
-    bookMode: 'CASH',
-    delta,
+    bookMode,
+    delta: opts.delta,
+    quotaTo: opts.quotaTo,
+    usedDelta: opts.usedDelta,
+    usedTo: opts.usedTo,
     bizType: opts.bizType,
     remark: opts.remark,
     refType: opts.refType,
     refId: opts.refId,
     idempotencyKey: opts.idempotencyKey,
+    createIfMissing: opts.createIfMissing,
     beforeQuota: async () => {
-      await points.creditInTx(tx, 'AGENT', opts.agentUserId, delta, opts.bizType, {
+      let d = roundMoney(opts.delta ?? 0);
+      if (opts.quotaTo !== undefined) {
+        const before = await tx.agent.findUnique({
+          where: { userId: opts.agentUserId },
+          select: { pointsQuota: true },
+        });
+        d = roundMoney(opts.quotaTo - asMoney(before?.pointsQuota ?? 0));
+      }
+      if (d === 0) return;
+      await points.creditInTx(tx, 'AGENT', opts.agentUserId, d, pointsBiz, {
         remark: opts.remark,
         refType: opts.refType,
         refId: opts.refId,
@@ -883,7 +891,7 @@ export async function adjustCashDiskInTx(
 }
 
 /**
- * 按盘种调整代理盘分：现金=余额+额度；信用=只动 pointsQuota（佣金账户不动）。
+ * 按盘种调整代理盘分：两盘都是余额+额度同步。
  */
 export async function adjustAgentDiskInTx(
   tx: Prisma.TransactionClient,
@@ -899,36 +907,11 @@ export async function adjustAgentDiskInTx(
     idempotencyKey: string;
   },
 ) {
-  const delta = roundMoney(opts.delta);
-  if (delta === 0) return;
-  if (opts.bookMode === 'CREDIT') {
-    await lockAgentRowInTx(tx, opts.agentUserId);
-    await writeAgentQuotaInTx(tx, {
-      agentUserId: opts.agentUserId,
-      bookMode: 'CREDIT',
-      delta,
-      bizType: opts.bizType,
-      remark: opts.remark,
-      refType: opts.refType,
-      refId: opts.refId,
-      idempotencyKey: opts.idempotencyKey,
-    });
-    return;
-  }
-  await adjustCashDiskInTx(tx, points, {
-    agentUserId: opts.agentUserId,
-    delta,
-    bizType: opts.bizType,
-    remark: opts.remark,
-    refType: opts.refType,
-    refId: opts.refId,
-    idempotencyKey: opts.idempotencyKey,
-  });
+  await adjustCashDiskInTx(tx, points, opts);
 }
 
 /**
- * 信用盘分账 → 玩家：扣剩余信用、加玩家分（合计不变）。
- * 佣金账户（代理余额）不动。
+ * 代理盘分 → 玩家（回水/挂靠）：扣盘分、加玩家分。两盘同一条路。
  */
 export async function payCreditDiskToPlayerInTx(
   tx: Prisma.TransactionClient,
@@ -955,7 +938,7 @@ export async function payCreditDiskToPlayerInTx(
   });
   if (existed) return existed;
 
-  await writeAgentQuotaInTx(tx, {
+  await adjustCashDiskInTx(tx, points, {
     agentUserId: opts.agentUserId,
     bookMode: 'CREDIT',
     delta: -amount,
@@ -963,7 +946,7 @@ export async function payCreditDiskToPlayerInTx(
     remark: opts.remark,
     refType: opts.refType,
     refId: opts.refId,
-    idempotencyKey: `${opts.idemPlayer}:QUOTA`,
+    idempotencyKey: `${opts.idemPlayer}:DISK`,
   });
   return points.creditInTx(tx, 'PLAYER', opts.playerId, amount, opts.bizType, {
     remark: opts.remark,
@@ -972,4 +955,77 @@ export async function payCreditDiskToPlayerInTx(
     idempotencyKey: opts.idemPlayer,
     roomId: opts.roomId,
   });
+}
+
+/** 佣金袋并进盘分：两边都写成「额度+余额」之和，之后日常同步增减 */
+export function creditDiskMerge(quota: number, balance: number) {
+  const q = roundMoney(Number(quota) || 0);
+  const b = roundMoney(Number(balance) || 0);
+  const merged = roundMoney(q + b);
+  return {
+    quota: q,
+    balance: b,
+    merged,
+    alreadySynced: Math.abs(q - b) < 1e-9,
+    quotaDelta: roundMoney(merged - q),
+    balanceDelta: roundMoney(merged - b),
+  };
+}
+
+/**
+ * 把旧信用盘「剩余信用 + 未结佣金」收成一本盘分。
+ * 已同步（余额=额度）的跳过；幂等键 credit_disk_unify:{userId}。
+ */
+export async function unifyCreditAgentDiskInTx(
+  tx: Prisma.TransactionClient,
+  points: PointsService,
+  agentUserId: string,
+): Promise<boolean> {
+  const key = `credit_disk_unify:${agentUserId}`;
+  const done = await tx.agentQuotaLedger.findUnique({
+    where: { idempotencyKey: key },
+    select: { id: true },
+  });
+  if (done) return false;
+
+  await lockAgentRowInTx(tx, agentUserId);
+  const [agent, acc] = await Promise.all([
+    tx.agent.findUnique({
+      where: { userId: agentUserId },
+      select: { pointsQuota: true },
+    }),
+    tx.pointsAccount.findFirst({
+      where: { ownerType: 'AGENT', ownerId: agentUserId, roomId: '' },
+      select: { balance: true },
+    }),
+  ]);
+  if (!agent) return false;
+  const plan = creditDiskMerge(asMoney(agent.pointsQuota), asMoney(acc?.balance ?? 0));
+  if (plan.alreadySynced) return false;
+
+  /*
+   * 两边加的不是同一个数：额度吸收旧佣金（+balance），余额补上旧剩余信用（+quota），
+   * 落完都等于合并值。若走 adjustCashDisk 会把佣金加两遍。
+   */
+  await writeAgentQuotaInTx(tx, {
+    agentUserId,
+    bookMode: 'CREDIT',
+    delta: plan.quotaDelta,
+    bizType: 'ADJUST',
+    remark: '信用盘并账：佣金袋并入盘分',
+    refType: 'credit_disk_unify',
+    refId: agentUserId,
+    idempotencyKey: key,
+    createIfMissing: true,
+    beforeQuota: async () => {
+      if (plan.balanceDelta === 0) return;
+      await points.creditInTx(tx, 'AGENT', agentUserId, plan.balanceDelta, 'ADJUST', {
+        remark: '信用盘并账：剩余信用写入余额',
+        refType: 'credit_disk_unify',
+        refId: agentUserId,
+        idempotencyKey: `${key}:BAL`,
+      });
+    },
+  });
+  return true;
 }

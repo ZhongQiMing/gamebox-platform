@@ -1,9 +1,9 @@
-import { computeCreditBook } from './credit-settle.helper';
+import { computeCreditBook, creditDiskRecycle, netCreditSettlePay } from './credit-settle.helper';
 
 /**
  * 封账与实际对接之间隔了几小时，中间还在上下分、还在输赢。
- * 账单金额必须锁在封账那一刻，补额度则按「当前剩余 − 封账超出」，
- * 这样那几小时的输赢会自动留到下一期，而不是被抹掉或重复算一次。
+ * 账单金额必须锁在封账那一刻，盘分按「当前盘分 + 本期飞盘盈亏 − 整包净额」补回；
+ * 封账后那几小时的输赢留到下一期。
  */
 describe('信用盘封账快照与补额度', () => {
   const CONTRACT = 100_000;
@@ -34,7 +34,7 @@ describe('信用盘封账快照与补额度', () => {
     const quotaNow = 65_000;
     const playerNow = 3_000;
 
-    const quotaAfterSettle = Math.round((quotaNow - atClose.excess) * 100) / 100;
+    const quotaAfterSettle = Math.round((quotaNow + atClose.housePnl) * 100) / 100;
     expect(quotaAfterSettle).toBe(95_000);
 
     /* 下一期起算：只剩封账之后那 2 千的盈亏 */
@@ -57,7 +57,7 @@ describe('信用盘封账快照与补额度', () => {
       csBalances: 3_000,
       agentShareRate: 0,
     });
-    const byNewFormula = Math.round((book.pointsQuota - book.excess) * 100) / 100;
+    const byNewFormula = Math.round((book.pointsQuota + book.housePnl) * 100) / 100;
     expect(byNewFormula).toBe(book.newQuota);
   });
 
@@ -69,7 +69,7 @@ describe('信用盘封账快照与补额度', () => {
       csBalances: 0,
       agentShareRate: 0,
     });
-    const quotaAfter = first.pointsQuota - first.excess;
+    const quotaAfter = first.pointsQuota + first.housePnl;
     const second = computeCreditBook({
       creditLimit: CONTRACT,
       pointsQuota: quotaAfter - 5_000,
@@ -86,5 +86,14 @@ describe('信用盘封账快照与补额度', () => {
       agentShareRate: 0,
     });
     expect(first.housePnl + second.housePnl).toBe(oneShot.housePnl);
+  });
+
+  it('整包在盘分里时，结账补回飞盘盈亏并抽走整包，额度不滚存', () => {
+    const flyHousePnl = 30_000;
+    const rebateInDisk = 5_000;
+    const quotaNow = 70_000 + rebateInDisk;
+    const quotaAfter = Math.round((quotaNow + creditDiskRecycle(flyHousePnl, rebateInDisk)) * 100) / 100;
+    expect(quotaAfter).toBe(CONTRACT);
+    expect(netCreditSettlePay(0, rebateInDisk)).toBe(rebateInDisk);
   });
 });

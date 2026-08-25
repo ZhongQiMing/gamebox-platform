@@ -1,10 +1,28 @@
 /**
  * 控制台数据隔离：
  *   ADMIN   全部房间
- *   BRANCH  仅 RoomOwnerGrant 授权可见的房间（创建/授权时勾选）
+ *   BRANCH  见下方「总监的可见性」
  *   GENERAL 仅挂在自己名下的房间（Room.generalAgentId）
  *   AGENT   仅绑定为自己主账号的房间
- *   PROXY   与上级代理同范围；写操作另行收紧
+ *   PROXY   挂代理=该房只读收紧；挂总代=总代分身，与总代同范围同权
+ *
+ * ── 总监的可见性：按房的挂靠情况二选一，不是两道叠加的闸门 ──
+ *
+ *   挂了总代的房 → 只看**总代级**授权（GeneralOwnerGrant）
+ *   直挂房       → 只看**房间级**授权（RoomOwnerGrant）
+ *
+ * 也就是说：总代对某个总监可见，他名下**所有**房间就都可见，不能再单独关掉某一间；
+ * 总代不可见，则他本人、名下房间、代理、玩家、报表、结算、开奖全部隐藏。
+ * 这两件事是同一个开关，位置在总代详情页。
+ *
+ * 为什么不做成「两个都要过」：那会造出一种自相矛盾的状态——总监在名单里看得见
+ * 这个总代，却一间房都打不开，看着就像系统坏了；而且同一件事要维护两份名单，
+ * 两边一旦不同步就再也说不清谁该看见什么。挂总代的房本来就必须整体可见或整体
+ * 不可见（总监是按总代账期结账的，只放开一半房间，他拉出来的总表就少了另一半的
+ * 流水和月费，照着结必然算错），所以房间级那份对这类房没有存在的意义。
+ *
+ * 房间级授权因此只对直挂房有效；挂总代的房不写、不读、也不允许设置
+ * （见 console-rooms 的 grantOwner / revokeOwner）。
  */
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -19,6 +37,9 @@ export type ConsoleActor = {
 @Injectable()
 export class ConsoleScopeService {
   constructor(private prisma: PrismaService) {}
+
+  /** 旧房从未写过授权时补全总监可见，只跑一次 */
+  private directorGrantBackfill: Promise<void> | null = null;
 
   ownerTypeOf(role: string): OwnerType {
     if (role === 'ADMIN') return 'PLATFORM';
@@ -61,15 +82,63 @@ export class ConsoleScopeService {
     return { id: parent.id, role: parent.role };
   }
 
+  /** 总代本人，或挂在总代下的子账号（分身） */
+  async isGeneralSide(actor: ConsoleActor): Promise<boolean> {
+    if (actor.role === 'GENERAL') return true;
+    if (actor.role !== 'PROXY') return false;
+    const root = await this.scopeRoot(actor);
+    return root.role === 'GENERAL';
+  }
+
+  /** 总代分身操作时落到总代主号；非总代侧抛错 */
+  async generalRootId(actor: ConsoleActor): Promise<string> {
+    if (actor.role === 'GENERAL') return actor.id;
+    if (actor.role === 'PROXY') {
+      const root = await this.scopeRoot(actor);
+      if (root.role === 'GENERAL') return root.id;
+    }
+    throw new ForbiddenException('仅总代可操作');
+  }
+
+  /**
+   * 该总监被授权可见的总代 Agent.id；null = 不受总代级限制（仅超管）。
+   *
+   * 非总监角色也返回 null：总代/代理看到的本来就只有自己那一支，
+   * 再套一层总代级过滤没有意义，只会把他自己的数据也筛掉。
+   */
+  async grantedGeneralAgentIds(actor: ConsoleActor): Promise<string[] | null> {
+    if (actor.role !== 'BRANCH') return null;
+    const grants = await this.prisma.generalOwnerGrant.findMany({
+      where: { ownerId: actor.id },
+      select: { generalAgentId: true },
+    });
+    return grants.map((g) => g.generalAgentId);
+  }
+
   async grantedRoomIds(actor: ConsoleActor): Promise<string[] | null> {
     /* null = 全部房间（仅超管） */
     if (actor.role === 'ADMIN') return null;
     if (actor.role === 'BRANCH') {
-      const grants = await this.prisma.roomOwnerGrant.findMany({
-        where: { ownerId: actor.id },
-        select: { roomId: true },
+      await this.ensureLegacyDirectorGrants();
+      const generalIds = await this.grantedGeneralAgentIds(actor);
+      /*
+       * 两类房各按各自那一份名单，互不叠加（见文件头）：
+       *   挂总代 → 该总代在 GeneralOwnerGrant 里给了这个总监就整间可见
+       *   直挂   → 该房在 RoomOwnerGrant 里给了这个总监才可见
+       */
+      const rooms = await this.prisma.room.findMany({
+        where: {
+          OR: [
+            { generalAgentId: { in: generalIds ?? [] } },
+            {
+              generalAgentId: null,
+              ownerGrants: { some: { ownerId: actor.id } },
+            },
+          ],
+        },
+        select: { id: true },
       });
-      return grants.map((g) => g.roomId);
+      return rooms.map((r) => r.id);
     }
     if (
       actor.role === 'GENERAL'
@@ -95,10 +164,71 @@ export class ConsoleScopeService {
     return [];
   }
 
+  private async ensureLegacyDirectorGrants() {
+    if (!this.directorGrantBackfill) {
+      this.directorGrantBackfill = (async () => {
+        const emptyRooms = await this.prisma.room.findMany({
+          where: {
+            ownerGrants: { none: {} },
+            /*
+             * 只补直挂房。挂总代的房不看房间级那份名单，给它补等于往库里
+             * 塞一批永远不会被读到的行，下次查权限的人又要问这些是干嘛的。
+             */
+            generalAgentId: null,
+          },
+          select: { id: true },
+        });
+        if (!emptyRooms.length) return;
+        const branches = await this.prisma.user.findMany({
+          where: { role: 'BRANCH' },
+          select: { id: true },
+        });
+        if (!branches.length) return;
+        await this.prisma.roomOwnerGrant.createMany({
+          data: emptyRooms.flatMap((r) =>
+            branches.map((b) => ({ roomId: r.id, ownerId: b.id })),
+          ),
+          skipDuplicates: true,
+        });
+      })().catch((err) => {
+        this.directorGrantBackfill = null;
+        throw err;
+      });
+    }
+    await this.directorGrantBackfill;
+  }
+
   async assertRoomAccess(actor: ConsoleActor, roomId: string) {
     const ids = await this.grantedRoomIds(actor);
     if (ids === null) return;
     if (!ids.includes(roomId)) throw new ForbiddenException('无权访问该房间');
+  }
+
+  /** 该总监能否看见这个总代（传总代的 userId） */
+  async generalVisibleToBranch(
+    actor: ConsoleActor,
+    generalUserId: string,
+  ): Promise<boolean> {
+    const ids = await this.grantedGeneralAgentIds(actor);
+    if (ids === null) return true;
+    if (!ids.length) return false;
+    const agent = await this.prisma.agent.findUnique({
+      where: { userId: generalUserId },
+      select: { id: true },
+    });
+    return !!agent && ids.includes(agent.id);
+  }
+
+  /**
+   * 把房挂到某个总代名下之前调用。
+   *
+   * 不校验会留一个后门：总监看不见 A 总代，却能把新房挂到 A 名下——
+   * 房子建出来的一刻就落进自己看不见的范围，等于凭空造了一间黑房。
+   */
+  async assertGeneralAssignable(actor: ConsoleActor, generalUserId: string) {
+    if (!generalUserId) return;
+    if (await this.generalVisibleToBranch(actor, generalUserId)) return;
+    throw new ForbiddenException('无权把房间挂到该总代名下');
   }
 
   /**
@@ -107,12 +237,44 @@ export class ConsoleScopeService {
    */
   async scopedUserIds(actor: ConsoleActor): Promise<string[] | null> {
     if (actor.role === 'ADMIN') return null;
-    if (actor.role !== 'BRANCH' && actor.role !== 'GENERAL') {
+    const generalSide = await this.isGeneralSide(actor);
+    if (actor.role !== 'BRANCH' && !generalSide) {
       /* 代理侧不走此聚合，调用方应自行处理 */
       return [actor.id];
     }
+    const ids = new Set<string>([actor.id]);
+    if (actor.role === 'BRANCH') {
+      /* 只认被授权的总代；未授权的总代连人带子账号都不出现在日志/风控里 */
+      const generalIds = await this.grantedGeneralAgentIds(actor);
+      const generals = await this.prisma.user.findMany({
+        where: {
+          role: 'GENERAL',
+          agent: { is: { id: { in: generalIds ?? [] } } },
+        },
+        select: {
+          id: true,
+          children: {
+            where: { role: { in: ['PROXY', 'CS'] } },
+            select: { id: true },
+          },
+        },
+      });
+      for (const g of generals) {
+        ids.add(g.id);
+        for (const c of g.children || []) ids.add(c.id);
+      }
+    }
+    if (generalSide) {
+      const rootId = await this.generalRootId(actor);
+      ids.add(rootId);
+      const kids = await this.prisma.user.findMany({
+        where: { parentId: rootId, role: { in: ['PROXY', 'CS'] } },
+        select: { id: true },
+      });
+      for (const c of kids) ids.add(c.id);
+    }
     const roomIds = await this.grantedRoomIds(actor);
-    if (!roomIds?.length) return [actor.id];
+    if (!roomIds?.length) return [...ids];
 
     const [rooms, members] = await Promise.all([
       this.prisma.room.findMany({
@@ -140,7 +302,6 @@ export class ConsoleScopeService {
       }),
     ]);
 
-    const ids = new Set<string>([actor.id]);
     for (const r of rooms) {
       const agentUser = r.ownerAgent?.user;
       if (!agentUser) continue;
@@ -167,9 +328,22 @@ export class ConsoleScopeService {
     });
     if (!target) throw new NotFoundException('用户不存在');
 
-    /* 总监：总代全平台可见；代理/玩家仍按授权房间 */
+    /* 总监：总代及其子账号要过总代级授权；房间代理/玩家仍按授权房间 */
     if (actor.role === 'BRANCH') {
-      if (target.role === 'GENERAL') return;
+      if (target.role === 'GENERAL') {
+        if (await this.generalVisibleToBranch(actor, targetUserId)) return;
+        throw new ForbiddenException('目标用户不在管辖范围');
+      }
+      if ((target.role === 'PROXY' || target.role === 'CS') && target.parentId) {
+        const parent = await this.prisma.user.findUnique({
+          where: { id: target.parentId },
+          select: { id: true, role: true },
+        });
+        if (parent?.role === 'GENERAL') {
+          if (await this.generalVisibleToBranch(actor, parent.id)) return;
+          throw new ForbiddenException('目标用户不在管辖范围');
+        }
+      }
       const roomIds = await this.grantedRoomIds(actor);
       if (!roomIds?.length) throw new ForbiddenException('目标用户不在管辖范围');
       if (target.role === 'PLAYER') {
@@ -208,9 +382,9 @@ export class ConsoleScopeService {
      * 不能退回 agentPath 树判断——代理是建房时挂到总代下的，房间若改挂他人，
      * 树还留着旧关系，会让总代继续看到已经不归他的玩家。
      */
-    if (actor.role === 'GENERAL') {
-      /* 自己开的子账号/客服 */
-      if (target.parentId === actor.id) return;
+    if (await this.isGeneralSide(actor)) {
+      const rootId = await this.generalRootId(actor);
+      if (target.id === rootId || target.parentId === rootId) return;
       const roomIds = await this.grantedRoomIds(actor);
       if (!roomIds?.length) throw new ForbiddenException('目标用户不在管辖范围');
       const ok = await this.targetInRooms(roomIds, target);

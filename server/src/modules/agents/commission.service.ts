@@ -10,13 +10,14 @@ import {
   payCreditDiskToPlayerInTx,
   writeAgentQuotaInTx,
 } from '../console/player-fund.helper';
+import { RedisService } from '../../redis/redis.service';
 
 /**
  * 玩家挂靠佣金（推荐奖）：
  * 下级玩家在某房产生有效流水后，沿该房 RoomPlayerHang.hangPath 向上只发给「玩家」推荐人。
  * 本房无挂靠关系则不发（跨房隔离）。
  * - 现金：从代理盘分（余额+上盘额度）出；不够记 CommissionDebt，盘分补足后自动补发
- * - 信用：从剩余信用出，不动佣金账户
+ * - 信用：同样从代理盘分出（允许变负）
  */
 @Injectable()
 export class CommissionService {
@@ -27,6 +28,7 @@ export class CommissionService {
     private prisma: PrismaService,
     private points: PointsService,
     private cfg: ConfigService,
+    private redis: RedisService,
   ) {}
 
   /** 路径成环时同一祖先可能出现多次，去重后只按最近一级发一次 */
@@ -175,7 +177,8 @@ export class CommissionService {
         );
         await writeAgentQuotaInTx(tx, {
           agentUserId: payerId,
-          bookMode: 'CASH',
+          /* 盘口按出钱那间房算；写死 CASH 会让信用房的佣金在流水里标成现金盘 */
+          bookMode: isCredit ? 'CREDIT' : 'CASH',
           delta: -amount,
           bizType: 'COMMISSION',
           remark,
@@ -218,16 +221,22 @@ export class CommissionService {
   /** 定时扫一批 PENDING 欠账（防漏触发） */
   @Cron('*/30 * * * * *')
   async cronSettleCommissionDebts() {
-    const payers = await this.prisma.commissionDebt.findMany({
-      where: { status: 'PENDING' },
-      distinct: ['payerAgentUserId'],
-      take: 40,
-      select: { payerAgentUserId: true },
-      orderBy: { createdAt: 'asc' },
-    });
-    for (const row of payers) {
-      await this.settlePendingForPayer(row.payerAgentUserId);
-    }
+    /*
+     * settlingPayers 只护得住本进程；多实例会同时抢同一批欠账去补发。
+     * 这是每 30 秒一次的补发任务，取锁失败时跳过没有代价，下一轮就补上了。
+     */
+    await this.redis.runExclusive('gamebox:cron:commission-debt', 60 * 1000, async () => {
+      const payers = await this.prisma.commissionDebt.findMany({
+        where: { status: 'PENDING' },
+        distinct: ['payerAgentUserId'],
+        take: 40,
+        select: { payerAgentUserId: true },
+        orderBy: { createdAt: 'asc' },
+      });
+      for (const row of payers) {
+        await this.settlePendingForPayer(row.payerAgentUserId);
+      }
+    }, { onLockError: 'skip' });
   }
 
   async settlePendingForPayer(payerAgentUserId: string): Promise<number> {
@@ -316,6 +325,12 @@ export class CommissionService {
           debt.sourceRoundId ?? undefined,
         );
         if (!creditRoomId) return false;
+        /* 补发时补不到原单的盘口，按出钱那间房现在的盘口标 */
+        const debtRoom = await tx.room.findUnique({
+          where: { id: creditRoomId },
+          select: { bookMode: true },
+        });
+        const debtIsCredit = debtRoom?.bookMode === 'CREDIT';
 
         const { in: ledger } = await this.points.transferInTx(
           tx,
@@ -340,7 +355,7 @@ export class CommissionService {
         );
         await writeAgentQuotaInTx(tx, {
           agentUserId: debt.payerAgentUserId,
-          bookMode: 'CASH',
+          bookMode: debtIsCredit ? 'CREDIT' : 'CASH',
           delta: -amount,
           bizType: 'COMMISSION',
           remark,

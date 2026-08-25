@@ -19,6 +19,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { PointsService, PLATFORM_OWNER_ID, type OwnerType } from '../points/points.service';
 import { AdminLogService } from '../admin/admin-log.service';
 import { ConsoleScopeService, type ConsoleActor } from './console-scope.service';
+import { OPEN_ROOM_WHERE } from './open-room.where';
 import { RiskDetectorService } from '../risk/risk-detector.service';
 import {
   applyAgentCreditToPlayerInTx,
@@ -30,11 +31,21 @@ import {
   writeAgentQuotaInTx,
 } from './player-fund.helper';
 import {
-  cashDiskFlyAvailable,
-  creditDiskFlyAvailable,
+  agentDisplayBalance,
+  agentFlyAvailable,
+  generalRoomBalance,
+  generalTreeFlyAvailable,
   sumAgentCsBalances,
 } from './credit-settle.helper';
 import { CommissionService } from '../agents/commission.service';
+import {
+  consumeCreditIssueDebtInTx,
+  recordCreditIssueDebtInTx,
+  roomCreditDebtFilter,
+  type CreditDebtFilter,
+} from './credit-issue-debt.helper';
+import type { Prisma } from '@prisma/client';
+import { assertPayoutAllowed } from '../fund-recon/payout-gate.helper';
 
 const ISSUE_MAX = 50_000_000;
 
@@ -71,10 +82,11 @@ export class ConsoleWalletService {
       ownerId,
       balance: asMoney(acc?.balance ?? 0),
     };
-    /* 总代：可用额度、合同额度与自己的费率——建房时代理的上限就是按这两个费率卡的 */
-    if (actor.role === 'GENERAL') {
+    /* 总代及其分身：看总代主号的额度，子账号不另开一份钱包 */
+    if (await this.scope.isGeneralSide(actor)) {
+      const generalId = await this.scope.generalRootId(actor);
       const agent = await this.prisma.agent.findUnique({
-        where: { userId: actor.id },
+        where: { userId: generalId },
         select: {
           pointsQuota: true,
           creditLimit: true,
@@ -82,25 +94,64 @@ export class ConsoleWalletService {
           flowRate: true,
           shareRate: true,
           settleCycle: true,
+          roomMonthlyFee: true,
         },
       });
+      const acc = await this.prisma.pointsAccount.findFirst({
+        where: { ownerType: 'AGENT' as never, ownerId: generalId, roomId: '' },
+      });
       const quota = asMoney(agent?.pointsQuota ?? 0);
+      /*
+       * 总代名下所有房间的玩家持分合计。
+       * 这一段原先没算，前端「玩家持分」永远显示 0.00——总代明明有房有玩家，
+       * 卡片上却只有余额是真的。
+       */
+      const generalPlayerIds = await this.scopedPlayerIds(actor);
+      let generalPlayerPoints = 0;
+      if (generalPlayerIds.length) {
+        const accs = await this.prisma.pointsAccount.findMany({
+          where: { ownerId: { in: generalPlayerIds }, ownerType: 'PLAYER' },
+          select: { balance: true },
+        });
+        for (const a of accs) generalPlayerPoints += asMoney(a.balance);
+      }
+      const generalBookMode = agent?.bookMode === 'CREDIT' ? 'CREDIT' : 'CASH';
+      const generalWage = asMoney(acc?.balance ?? 0);
+      const [roomBalance, treeFly] = await Promise.all([
+        generalRoomBalance(this.prisma, generalId),
+        generalTreeFlyAvailable(this.prisma, generalId),
+      ]);
       return {
-        ...base,
-        bookMode: agent?.bookMode === 'CREDIT' ? 'CREDIT' : 'CASH',
+        ownerType: 'AGENT',
+        ownerId: generalId,
+        balance: generalWage,
+        bookMode: generalBookMode,
         creditLimit: asMoney(agent?.creditLimit ?? 0),
         pointsQuota: quota,
-        /* 额度发超了就是欠平台的，负数在这里翻成正的欠额 */
+        agentBalance: agentDisplayBalance({
+          bookMode: generalBookMode,
+          balance: generalWage,
+          pointsQuota: quota,
+        }),
+        unsettledWage: undefined,
+        /** 名下各代理房间那一支合计（代理盘分 + 客服 + 玩家），不含总代自己 */
+        roomBalance,
+        flyCover: treeFly,
+        flyAvailable: treeFly,
+        playerPointsTotal: roundMoney(generalPlayerPoints),
         overIssueUsed: roundMoney(Math.max(0, -quota)),
         flowRate: Number(agent?.flowRate ?? 0.07),
         shareRate: Number(agent?.shareRate ?? 0.5),
         settleCycle: agent?.settleCycle ?? 'WEEKLY_MON',
+        downlineFlowRate: Number(agent?.flowRate ?? 0.07),
+        /** 平台向他收的每间房月费单价；也是他名下房间月费的下限 */
+        roomMonthlyFee: asMoney(agent?.roomMonthlyFee ?? 0),
       };
     }
 
     if (!['AGENT', 'PROXY', 'CS'].includes(actor.role)) return base;
 
-    // PROXY 上盘额度/飞盘在主代理账上；自己钱包余额仍用 walletOwnerId
+    // 房间代理子账号：额度、飞盘、余额都看主代理账，不另开一份
     const agentUserId =
       actor.role === 'PROXY' ? await this.scope.scopeRootUserId(actor) : actor.id;
     const agent = await this.prisma.agent.findUnique({ where: { userId: agentUserId } });
@@ -128,7 +179,7 @@ export class ConsoleWalletService {
     }
     const pointsQuota = asMoney(agent.pointsQuota);
     const rooms = await this.prisma.room.findMany({
-      where: { ownerAgentId: agent.id },
+      where: { ownerAgentId: agent.id, ...OPEN_ROOM_WHERE },
       select: {
         id: true,
         bookMode: true,
@@ -143,17 +194,34 @@ export class ConsoleWalletService {
     const primary = rooms[0] ?? null;
     const bookMode = primary?.bookMode === 'CREDIT' ? 'CREDIT' : primary ? 'CASH' : undefined;
     const csBalances = await sumAgentCsBalances(this.prisma, agent.userId);
-    /* 现金/信用可飞同一套：盘分(≥0部分)+客服未发出 */
-    const flyAvailable =
-      bookMode === 'CREDIT'
-        ? await creditDiskFlyAvailable(this.prisma, agent.userId)
-        : await cashDiskFlyAvailable(this.prisma, agent.userId);
+    /* 现金/信用同一条公式：盘分 + 客服未发出 + 名下房间玩家持分（见 agentFlyAvailable） */
+    const flyAvailable = await agentFlyAvailable(
+      this.prisma,
+      agent.userId,
+      bookMode === 'CREDIT' ? 'CREDIT' : 'CASH',
+    );
     /** 未进玩家账的池：额度可为负（超分）；客服未发出仍按 ≥0 */
     const diskPoolRemaining = roundMoney(pointsQuota + Math.max(0, csBalances));
     const overIssueUsed = roundMoney(Math.max(0, -pointsQuota));
+    let sharedBalance = base.balance;
+    if (actor.role === 'PROXY') {
+      const parentAcc = await this.prisma.pointsAccount.findFirst({
+        where: { ownerType: 'AGENT' as never, ownerId: agentUserId, roomId: '' },
+      });
+      sharedBalance = asMoney(parentAcc?.balance ?? 0);
+    }
     return {
       ...base,
+      ...(actor.role === 'PROXY'
+        ? { ownerType: 'AGENT' as const, ownerId: agentUserId, balance: sharedBalance }
+        : {}),
       pointsQuota,
+      agentBalance: agentDisplayBalance({
+        bookMode,
+        balance: actor.role === 'PROXY' ? sharedBalance : base.balance,
+        pointsQuota,
+      }),
+      unsettledWage: undefined,
       csBalances,
       diskPoolRemaining,
       flyCover: flyAvailable,
@@ -201,6 +269,10 @@ export class ConsoleWalletService {
     }
     if (amount > ISSUE_MAX) throw new BadRequestException(`单笔上限 ${ISSUE_MAX}`);
     if (toUserId === actor.id) throw new BadRequestException('不能给自己上分');
+    const generalSide = await this.scope.isGeneralSide(actor);
+    if (generalSide && toUserId === await this.scope.generalRootId(actor)) {
+      throw new BadRequestException('不能给自己上分');
+    }
 
     const target = await this.prisma.user.findUnique({
       where: { id: toUserId },
@@ -216,30 +288,20 @@ export class ConsoleWalletService {
     if (target.role === 'PROXY') {
       throw new BadRequestException('子账号与主代理共用额度，请给主代理上分');
     }
-    this.assertIssueHierarchy(actor.role, target.role);
+    this.assertIssueHierarchy(generalSide ? 'GENERAL' : actor.role, target.role);
     if (actor.role !== 'ADMIN') {
       await this.scope.assertUserInScope(actor, toUserId);
+    }
+    if (target.role === 'AGENT') {
+      await this.assertPlatformNotFundingGeneralAgent(actor, toUserId);
     }
 
     if (target.role === 'PLAYER') {
       throw new BadRequestException('玩家上分请使用 credit-player 并指定 roomId');
     }
 
-    if (target.role === 'GENERAL') {
-      /* 信用盘总代的额度由合同额度决定，改合同才是唯一入口，避免两个口径打架 */
-      if ((await this.generalBookMode(target.id)) === 'CREDIT') {
-        throw new BadRequestException(
-          '信用盘总代不能用上分加款；请在账号中心用「调整信用额度」同步改合同与剩余信用',
-        );
-      }
-    } else if (await this.agentHasCreditRoom(toUserId)) {
-      throw new BadRequestException(
-        '信用盘代理不能用上下分加款；请在房间详情用「调整信用额度」同步增加合同与剩余信用',
-      );
-    }
-
-    const overIssue = actor.role === 'GENERAL'
-      ? await this.generalOverIssue(actor.id, amount)
+    const overIssue = generalSide
+      ? await this.generalOverIssue(await this.scope.generalRootId(actor), amount)
       : 0;
 
     const res = await this.sellQuotaToStaff(
@@ -276,6 +338,10 @@ export class ConsoleWalletService {
     }
     if (amount > ISSUE_MAX) throw new BadRequestException(`单笔上限 ${ISSUE_MAX}`);
     if (fromUserId === actor.id) throw new BadRequestException('不能从自己下分');
+    const generalSide = await this.scope.isGeneralSide(actor);
+    if (generalSide && fromUserId === await this.scope.generalRootId(actor)) {
+      throw new BadRequestException('不能从自己下分');
+    }
 
     const target = await this.prisma.user.findUnique({
       where: { id: fromUserId },
@@ -292,21 +358,12 @@ export class ConsoleWalletService {
       );
     }
 
-    this.assertIssueHierarchy(actor.role, target.role);
+    this.assertIssueHierarchy(generalSide ? 'GENERAL' : actor.role, target.role);
     if (actor.role !== 'ADMIN') {
       await this.scope.assertUserInScope(actor, fromUserId);
     }
-
-    if (target.role === 'GENERAL') {
-      if ((await this.generalBookMode(target.id)) === 'CREDIT') {
-        throw new BadRequestException(
-          '信用盘总代不能用下分回收；请用「调整信用额度」下调合同额度',
-        );
-      }
-    } else if (await this.agentHasCreditRoom(fromUserId)) {
-      throw new BadRequestException(
-        '信用盘代理不能用下分回收；信用只随玩家下分买回 / 收回客服额度回升',
-      );
+    if (target.role === 'AGENT') {
+      await this.assertPlatformNotFundingGeneralAgent(actor, fromUserId);
     }
 
     return this.recallQuotaFromStaff(
@@ -319,23 +376,60 @@ export class ConsoleWalletService {
     );
   }
 
-  /** 主代理是否绑定信用盘房间（信用盘禁用代理上下分） */
-  private async agentHasCreditRoom(agentUserId: string): Promise<boolean> {
-    const agent = await this.prisma.agent.findUnique({
-      where: { userId: agentUserId },
+  /**
+   * 信用收款方才记欠：总代欠平台；代理欠总代或直挂欠平台。
+   * 多间信用房禁止从账号入口上分，避免串房。下分按同一上家合并冲。
+   */
+  private async resolveCreditStaffDebt(
+    tx: Prisma.TransactionClient,
+    opts: {
+      userId: string;
+      role: string;
+      generalSide: boolean;
+      payerId: string;
+      forRecall?: boolean;
+    },
+  ): Promise<CreditDebtFilter | null> {
+    if (opts.role === 'GENERAL') {
+      const agent = await tx.agent.findUnique({
+        where: { userId: opts.userId },
+        select: { bookMode: true },
+      });
+      if (agent?.bookMode !== 'CREDIT') return null;
+      return { debtorUserId: opts.userId, creditorKind: 'PLATFORM', roomId: null };
+    }
+    if (opts.role !== 'AGENT') return null;
+    const agent = await tx.agent.findUnique({
+      where: { userId: opts.userId },
       select: { id: true },
     });
-    if (!agent) return false;
-    const n = await this.prisma.room.count({
-      where: { ownerAgentId: agent.id, bookMode: 'CREDIT' },
+    if (!agent) return null;
+    const rooms = await tx.room.findMany({
+      where: { ownerAgentId: agent.id, bookMode: 'CREDIT', ...OPEN_ROOM_WHERE },
+      select: { id: true },
     });
-    return n > 0;
+    if (!rooms.length) return null;
+    if (opts.forRecall) {
+      return {
+        debtorUserId: opts.userId,
+        creditorKind: opts.generalSide ? 'GENERAL' : 'PLATFORM',
+        creditorUserId: opts.generalSide ? opts.payerId : null,
+        anyRoom: true,
+      };
+    }
+    if (rooms.length > 1) {
+      throw new BadRequestException('该代理有多间信用房，请到房间详情上分，避免串房');
+    }
+    return roomCreditDebtFilter({
+      agentUserId: opts.userId,
+      generalUserId: opts.generalSide ? opts.payerId : null,
+      roomId: rooms[0].id,
+    });
   }
 
   /**
    * 下发额度：加接收方余额 + 上盘额度。
-   * 出资方：管理/总监走平台池；现金盘总代走自己钱包（那是他真金买来的分）；
-   * 信用盘总代手上只是平台给的信用，真钱仍从平台池出，另扣他的额度记这笔欠。
+   * 出资方：管理/总监走平台池；总代走自己盘分（现金/信用同一本）。
    */
   private async sellQuotaToStaff(
     actor: ConsoleActor,
@@ -348,12 +442,14 @@ export class ConsoleWalletService {
     if (toRole !== 'AGENT' && toRole !== 'PROXY' && toRole !== 'GENERAL') {
       throw new BadRequestException('只能给总代、代理或子账号上分');
     }
-    const payerBook = actor.role === 'GENERAL' ? await this.generalBookMode(actor.id) : null;
+    const generalSide = await this.scope.isGeneralSide(actor);
+    const payerId = generalSide ? await this.scope.generalRootId(actor) : actor.id;
+    const payerBook = generalSide ? await this.generalBookMode(payerId) : null;
+    const toBook = await this.generalBookMode(toUserId);
     /* 超管、房主共用平台池，不扣各自小金库 */
-    const fromPool =
-      actor.role === 'ADMIN' || actor.role === 'BRANCH' || payerBook === 'CREDIT';
-    const fromType = (fromPool ? 'PLATFORM' : this.scope.ownerTypeOf(actor.role)) as OwnerType;
-    const fromId = fromPool ? PLATFORM_OWNER_ID : actor.id;
+    const fromPool = actor.role === 'ADMIN' || actor.role === 'BRANCH';
+    const fromType = (fromPool ? 'PLATFORM' : this.scope.ownerTypeOf(generalSide ? 'GENERAL' : actor.role)) as OwnerType;
+    const fromId = fromPool ? PLATFORM_OWNER_ID : payerId;
     const toType = this.scope.ownerTypeOf(toRole) as OwnerType;
     /* 幂等键锚定订单号：原先拼 Date.now()，两次点击间隔 >1ms 就是两个键，等于没有幂等 */
     const idemBase = `console_quota:${orderNo}`;
@@ -390,7 +486,12 @@ export class ConsoleWalletService {
       );
       await writeAgentQuotaInTx(tx, {
         agentUserId: toUserId,
-        bookMode: 'CASH',
+        /*
+         * 盘口只对总代有定义（代理的盘口跟房间走、可能多间不同），
+         * 拿不到就退回 CASH。写死 CASH 会让同一个信用总代账上，
+         * 上下分标 CASH、开户与下发标 CREDIT，查流水时自相矛盾。
+         */
+        bookMode: toBook ?? 'CASH',
         delta: amount,
         bizType: 'TRANSFER_IN',
         remark,
@@ -400,13 +501,10 @@ export class ConsoleWalletService {
         /* 子账号首次买分时 Agent 行还不存在 */
         createIfMissing: true,
       });
-      /*
-       * 总代出资：额度从他手上划走。现金盘的余额已由上面的转账扣过，
-       * 信用盘没动余额，这一笔就是他欠平台的凭据。
-       */
-      if (actor.role === 'GENERAL') {
+      /* 总代出资：额度从他手上划走（余额已由上面的转账扣过） */
+      if (generalSide) {
         await writeAgentQuotaInTx(tx, {
-          agentUserId: actor.id,
+          agentUserId: payerId,
           bookMode: payerBook === 'CREDIT' ? 'CREDIT' : 'CASH',
           delta: -amount,
           bizType: 'TRANSFER_OUT',
@@ -427,6 +525,22 @@ export class ConsoleWalletService {
         pool: fromPool ? 'PLATFORM' : 'SELF',
         ...(payerBook ? { payerBookMode: payerBook } : {}),
       });
+      const debt = await this.resolveCreditStaffDebt(tx, {
+        userId: toUserId,
+        role: toRole,
+        generalSide,
+        payerId,
+      });
+      if (debt) {
+        await recordCreditIssueDebtInTx(tx, {
+          ...debt,
+          amount,
+          idempotencyKey: `credit_debt:${idemBase}`,
+          remark,
+          refType: 'console_quota',
+          refId: toUserId,
+        });
+      }
     });
 
     /* 盘分补足后自动补发挂靠佣金欠账 */
@@ -447,12 +561,13 @@ export class ConsoleWalletService {
     if (fromRole !== 'AGENT' && fromRole !== 'PROXY' && fromRole !== 'GENERAL') {
       throw new BadRequestException('只能从总代、代理或子账号回收');
     }
-    const payerBook = actor.role === 'GENERAL' ? await this.generalBookMode(actor.id) : null;
-    /* 与下发对称：信用盘总代的真钱本来就没经他手，退也退回平台池 */
-    const toPool =
-      actor.role === 'ADMIN' || actor.role === 'BRANCH' || payerBook === 'CREDIT';
-    const toType = (toPool ? 'PLATFORM' : this.scope.ownerTypeOf(actor.role)) as OwnerType;
-    const toId = toPool ? PLATFORM_OWNER_ID : actor.id;
+    const generalSide = await this.scope.isGeneralSide(actor);
+    const payerId = generalSide ? await this.scope.generalRootId(actor) : actor.id;
+    const payerBook = generalSide ? await this.generalBookMode(payerId) : null;
+    const fromBook = await this.generalBookMode(fromUserId);
+    const toPool = actor.role === 'ADMIN' || actor.role === 'BRANCH';
+    const toType = (toPool ? 'PLATFORM' : this.scope.ownerTypeOf(generalSide ? 'GENERAL' : actor.role)) as OwnerType;
+    const toId = toPool ? PLATFORM_OWNER_ID : payerId;
     const staffType = this.scope.ownerTypeOf(fromRole) as OwnerType;
     /* 幂等键锚定订单号；原先的 Date.now() 让连点变成两笔独立回收 */
     const idemBase = `console_quota_recall:${orderNo}`;
@@ -502,7 +617,8 @@ export class ConsoleWalletService {
       );
       await writeAgentQuotaInTx(tx, {
         agentUserId: fromUserId,
-        bookMode: 'CASH',
+        /* 与上分同理：盘口只对总代有定义，拿不到退回 CASH */
+        bookMode: fromBook ?? 'CASH',
         delta: -amount,
         bizType: 'TRANSFER_OUT',
         remark,
@@ -511,9 +627,9 @@ export class ConsoleWalletService {
         idempotencyKey: `${idemBase}:QUOTA`,
       });
       /* 总代收回：额度回到他自己名下，与下发那一笔对称 */
-      if (actor.role === 'GENERAL') {
+      if (generalSide) {
         await writeAgentQuotaInTx(tx, {
-          agentUserId: actor.id,
+          agentUserId: payerId,
           bookMode: payerBook === 'CREDIT' ? 'CREDIT' : 'CASH',
           delta: amount,
           bizType: 'TRANSFER_IN',
@@ -535,6 +651,16 @@ export class ConsoleWalletService {
         quotaBefore: quota,
         pool: toPool ? 'PLATFORM' : 'SELF',
       });
+      const debt = await this.resolveCreditStaffDebt(tx, {
+        userId: fromUserId,
+        role: fromRole,
+        generalSide,
+        payerId,
+        forRecall: true,
+      });
+      if (debt) {
+        await consumeCreditIssueDebtInTx(tx, debt, amount);
+      }
     });
 
     return { ok: true, ...(await this.myBalance(actor)) };
@@ -576,6 +702,21 @@ export class ConsoleWalletService {
     const idemIn = `${idemBase}:IN`;
 
     const result = await this.prisma.$transaction(async (tx) => {
+      /*
+       * 同一个订单号不能既走这里、又走充值审核：两条路的幂等键在不同命名空间
+       * （console_credit:{orderNo} vs recharge_approve_{内部id}），互相拦不住，
+       * 先在这上一笔、再去审核页点通过，玩家会被入账两次。
+       */
+      const sameOrder = await tx.rechargeOrder.findUnique({
+        where: { orderNo },
+        select: { id: true, status: true, type: true },
+      });
+      if (sameOrder) {
+        throw new BadRequestException(
+          `订单号 ${orderNo} 已存在充值/下分申请单，请到「客服上下分」里审核，不要在这里重复上分`,
+        );
+      }
+
       const existedIn = await tx.pointsLedger.findUnique({
         where: { idempotencyKey: idemIn },
       });
@@ -689,20 +830,6 @@ export class ConsoleWalletService {
     return { ok: true, ...result, ...(await this.myBalance(actor)) };
   }
 
-  /** BRANCH 给玩家上分时，优先找到房间绑定代理以维护 flyCover */
-  private async findAgentForPlayer(playerId: string, actor: ConsoleActor): Promise<string> {
-    const member = await this.prisma.roomMember.findFirst({
-      where: { playerId, status: 'APPROVED', room: { ownerAgentId: { not: null } } },
-      include: { room: { include: { ownerAgent: { select: { userId: true } } } } },
-      orderBy: { updatedAt: 'desc' },
-    });
-    if (member?.room?.ownerAgent?.userId) {
-      await this.scope.assertUserInScope(actor, member.room.ownerAgent.userId).catch(() => undefined);
-      return member.room.ownerAgent.userId;
-    }
-    return actor.id;
-  }
-
   async debitPlayer(
     actor: ConsoleActor,
     playerId: string,
@@ -714,6 +841,8 @@ export class ConsoleWalletService {
     if (actor.role !== 'AGENT' && actor.role !== 'CS') {
       throw new ForbiddenException('玩家下分由主代理或客服操作');
     }
+    /* 钱真正离开平台的动作，过闸门：对账不平时不准出款 */
+    await assertPayoutAllowed(this.prisma, `后台下分 player=${playerId}`);
     const amount = roundMoney(amountRaw);
     if (!isValidMoney(amount) || amount <= 0) throw new BadRequestException('金额无效');
     if (amount < PLAYER_DOWN_MIN) throw new BadRequestException(`下分最低 ${PLAYER_DOWN_MIN}`);
@@ -736,6 +865,17 @@ export class ConsoleWalletService {
     const idemOut = `${idemBase}:OUT`;
 
     const replayed = await this.prisma.$transaction(async (tx) => {
+      /* 与上分同理：同一订单号不能既在这里下分、又在审核页通过一次 */
+      const sameOrder = await tx.rechargeOrder.findUnique({
+        where: { orderNo },
+        select: { id: true },
+      });
+      if (sameOrder) {
+        throw new BadRequestException(
+          `订单号 ${orderNo} 已存在充值/下分申请单，请到「客服上下分」里审核，不要在这里重复下分`,
+        );
+      }
+
       const existedOut = await tx.pointsLedger.findUnique({
         where: { idempotencyKey: idemOut },
       });
@@ -845,18 +985,32 @@ export class ConsoleWalletService {
     };
   }
 
+  /**
+   * 挂了总代的房间：管理/总监不能再给房间代理加减分，走总代账户。
+   */
+  private async assertPlatformNotFundingGeneralAgent(actor: ConsoleActor, agentUserId: string) {
+    if (actor.role !== 'ADMIN' && actor.role !== 'BRANCH') return;
+    const room = await this.prisma.room.findFirst({
+      where: { ownerAgent: { userId: agentUserId } },
+      select: { generalAgentId: true },
+    });
+    if (room?.generalAgentId) {
+      throw new BadRequestException('该房间挂了总代，请到总代账户给房间代理加减分');
+    }
+  }
+
   private assertIssueHierarchy(fromRole: string, toRole: string) {
     /*
-     * 额度只给主代理与总代；子账号共用主代理额度；玩家上下分仅代理/子账号。
-     * 挂了总代的房间，代理的分找总代买，平台不再直接对这个代理下发——
-     * 那层限制在 issue 里按房间判断，这里只管角色组合是否成立。
+     * 这里管的是「谁能给谁下发额度」，只有三种组合成立。
+     *
+     * 玩家上下分不走这里（走 creditPlayer / debitPlayer，入口只开给代理和客服），
+     * 所以曾经写在这里的 AGENT→PLAYER、PROXY→PLAYER 两条永远命中不到，已删。
+     * 挂了总代的房间由 issue 按房间另判，这里只管角色组合。
      */
     const ok =
       (fromRole === 'ADMIN' && (toRole === 'AGENT' || toRole === 'GENERAL')) ||
       (fromRole === 'BRANCH' && (toRole === 'AGENT' || toRole === 'GENERAL')) ||
-      (fromRole === 'GENERAL' && toRole === 'AGENT') ||
-      (fromRole === 'AGENT' && toRole === 'PLAYER') ||
-      (fromRole === 'PROXY' && toRole === 'PLAYER');
+      (fromRole === 'GENERAL' && toRole === 'AGENT');
     if (!ok) throw new ForbiddenException(`不允许 ${fromRole} → ${toRole} 下发`);
   }
 

@@ -24,6 +24,8 @@ beforeAll(async () => {
     { consumeFixedWindow: () => Promise.resolve(1) } as never,
     {} as never,
     {} as never,
+    /* csSla：上传闸门用不到，给个空替身 */
+    {} as never,
   );
   await wipeMoneyTables(prisma);
 });

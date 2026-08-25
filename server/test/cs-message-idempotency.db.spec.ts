@@ -43,6 +43,8 @@ beforeAll(async () => {
     redisStub,
     recharge,
     staffStub,
+    /* csSla：消息幂等用不到，给个空替身 */
+    {} as never,
   );
   await wipeMoneyTables(prisma);
 });

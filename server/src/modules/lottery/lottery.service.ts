@@ -19,11 +19,16 @@ import { GameConfigCache } from '../game-core/game-config.cache';
 import { LotteryGameRegistry } from './lottery-game.registry';
 import type { LotteryBetPayload, LotteryPayTable } from './lottery.types';
 import type { Prisma } from '@prisma/client';
-import { asMoney, capWin, highOddsBetCap, isValidMoney, roundMoney } from '@gamebox/shared';
+import { resolveTimeWindow } from '../../common/shanghai-range';
+import {
+  asMoney, capWin, highOddsBetCap, isValidMoney, parsePlayLimits, resolvePlayBetRange, roundMoney,
+} from '@gamebox/shared';
 import { businessNo } from '../game-core/business-id';
 import { RoomChatService } from '../rooms/room-chat.service';
 import type { RoomChatPlayLine } from '../rooms/room-chat.types';
 import { formatLotteryPlayLabel } from './play-label';
+import { lotteryPlayLimitKey } from './play-limit-key';
+import { assertAmountInPlayRange } from '../games/game-play-catalog';
 import { lotteryPrepSec } from './lottery-intervals';
 import { ConsoleControlService } from '../console/console-control.service';
 import { GlobalSoftControlService } from '../console/global-soft-control.service';
@@ -41,8 +46,11 @@ import {
 } from '../console/control-pick.util';
 import { FlyDiskService } from '../console/fly-disk.service';
 import { FlyRebateService } from '../console/fly-rebate.service';
+import { SoftControlAuditService } from '../console/soft-control-audit.service';
+import { withTxRetry } from '../../prisma/tx-retry';
 import {
   closedDiskDebitBetInTx,
+  closedDiskHouseUserId,
   closedDiskRefundBetInTx,
   closedDiskSettleWinInTx,
 } from '../console/player-fund.helper';
@@ -80,6 +88,13 @@ function genIssueNo(openAt: Date, intervalSec: number, _gameCode?: string): stri
   return `${md}${Math.max(1, seq).toString().padStart(6, '0')}`;
 }
 
+/** 开奖号码摘要：给人看的一行字，用来事后核对「本来会开什么、最后开了什么」 */
+function drawDigest(d: { numbers?: number[]; sum?: number } | null | undefined): string {
+  if (!d) return '';
+  const nums = Array.isArray(d.numbers) ? d.numbers.join(',') : '';
+  return `${nums}${d.sum != null ? ` 和=${d.sum}` : ''}`.slice(0, 120);
+}
+
 function genSeedPair() {
   const serverSeed = randomBytes(16).toString('hex');
   const serverSeedHash = createHash('sha256').update(serverSeed).digest('hex');
@@ -89,6 +104,20 @@ function genSeedPair() {
 @Injectable()
 export class LotteryService {
   private readonly logger = new Logger(LotteryService.name);
+
+  /**
+   * 游戏内快照缓存。
+   *
+   * H5 每 2 秒拉一次 /snapshot，内容对同一游戏的所有玩家完全一样（没有按人区分的字段），
+   * 但原来每个请求都实打实走 4 条查询——currentIssue 和 history 各自又查了一遍 game 行。
+   * 一个游戏 500 人在线就是 1000 查询/秒，而且负载是跟人数走的，这是上线后最大的单点。
+   *
+   * TTL 取 1 秒：倒计时用的是 openAt / lockAt 绝对时间戳、由前端本地推算，缓存不会让它卡住；
+   * 1 秒也短于一个轮询间隔，开奖结果最多迟一秒露出，同时已经把并发塌成每秒一次查询。
+   */
+  private static readonly SNAPSHOT_TTL_MS = 1_000;
+  private readonly snapshotCache = new Map<string, { at: number; data: unknown }>();
+  private readonly snapshotInflight = new Map<string, Promise<unknown>>();
 
   constructor(
     private prisma: PrismaService,
@@ -104,6 +133,7 @@ export class LotteryService {
     private globalSoft?: GlobalSoftControlService,
     @Optional() private flyDisk?: FlyDiskService,
     @Optional() private flyRebate?: FlyRebateService,
+    @Optional() private softAudit?: SoftControlAuditService,
   ) {}
 
   private async houseForPlayer(
@@ -121,10 +151,10 @@ export class LotteryService {
   // ─── 期号管理 ─────────────────────────────────────────
 
   /**
-   * 预创今后 N 期期号（scheduler 每分钟调用，保证总有待开期）
+   * 预创期号，保证队列里始终有 N 期待开（scheduler 每 15s 调用）
    * @param gameCode  游戏 code
    * @param intervalSec  开奖间隔秒数
-   * @param ahead  预创多少期（默认 3）
+   * @param ahead  未来待开期目标条数，不足才补（默认 3）
    */
   async preCreateIssues(gameCode: string, intervalSec: number, ahead = 3) {
     const game = await this.prisma.game.findUnique({
@@ -212,11 +242,29 @@ export class LotteryService {
           orderBy: { openAt: 'desc' },
         });
 
+    /*
+     * ahead 是「队列里要留几期未来待开」，不是「每次再铺几期」。
+     *
+     * 原先无条件从最远一期后面再铺 ahead 期，而本方法每 15s 被调一次，于是每分钟把
+     * 队列往未来推 4×ahead 期，永远追不上也永远不停：实测一天堆出 12 万行空期号、
+     * 最远排到 15 天后。除了白占库和拖慢每 2s 一次的待开期扫描，期号和开奖时间还被
+     * 提前钉死，改动开奖间隔后这些期全部作废。这里只补足差额。
+     */
+    const aheadCount = await this.prisma.lotteryIssue.count({
+      where: {
+        gameId: game.id,
+        status: { in: ['PENDING', 'LOCKED'] },
+        openAt: { gt: new Date() },
+      },
+    });
+    const need = ahead - aheadCount;
+    if (need <= 0) return;
+
     let nextOpen = last
       ? new Date(last.openAt.getTime() + intervalSec * 1000)
       : this._nextAlignedTime(intervalSec);
 
-    for (let i = 0; i < ahead; i++) {
+    for (let i = 0; i < need; i++) {
       const lockAt = new Date(nextOpen.getTime() - prepMs);
       const issueNo = genIssueNo(nextOpen, intervalSec, gameCode);
       const { serverSeed, serverSeedHash } = genSeedPair();
@@ -350,6 +398,16 @@ export class LotteryService {
         } catch {
           /* 冷却失败不影响开奖 */
         }
+        /* 介入留痕：只有 ADMIN 能查，写失败也不能拖累开奖 */
+        if (picked.audit && this.softAudit) {
+          await this.softAudit.record({
+            category: 'lottery',
+            gameCode: issue.game.code,
+            refNo: issue.issueNo,
+            refId: issue.id,
+            ...picked.audit,
+          });
+        }
       }
     }
 
@@ -406,8 +464,12 @@ export class LotteryService {
 
     const bigWins: Array<{ betId: string; playerId: string; amount: number; payout: number }> = [];
     const biasTouches: Array<{ roomId: string; playerId: string; stake: number; payout: number }> = [];
-    // 在事务内结算所有注单
-    await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    /*
+     * 在事务内结算所有注单。
+     * 死锁自动重试：与回水领取撞车时 Postgres 会杀掉一方，
+     * 不重试就表现为「整期开奖失败」。回滚是完整的，重放不会重复派彩。
+     */
+    await withTxRetry(() => this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       // CAS 抢占：事务第一条语句拿下期号行锁并推进状态，
       // 并发 draw 只有一个能抢到（count=1），其余直接返回，根治双开奖。
       const claimed = await tx.lotteryIssue.updateMany({
@@ -463,6 +525,7 @@ export class LotteryService {
           type?: string; id?: string; flying?: boolean; agentUserId?: string;
           generalUserId?: string; sitting?: 'PLATFORM' | 'GENERAL' | 'AGENT';
           roomId?: string; bookMode?: string;
+          agentPkg?: number; generalPkg?: number;
         } } | null)?.fly;
         const touchRoomId = String(flyMeta?.roomId || '').trim();
         if (touchRoomId && !isRefund) {
@@ -504,7 +567,7 @@ export class LotteryService {
           /* 关盘：含和局退本；现金只动玩家持分 */
           await closedDiskSettleWinInTx(tx, this.points, {
             playerId: bet.playerId,
-            agentUserId: flyMeta?.agentUserId || String(flyMeta?.id || ''),
+            agentUserId: closedDiskHouseUserId(flyMeta),
             roomId: flyMeta?.roomId,
             bookMode: flyMeta?.bookMode,
             stake: amt,
@@ -515,16 +578,6 @@ export class LotteryService {
             idemPlayer: `win_player_${bet.id}`,
             idemAgent: `win_agent_${bet.id}`,
           });
-        } else if (!isRefund && flying && this.flyDisk) {
-          await this.flyDisk.applyFlyLossInTx(
-            tx,
-            flyMeta?.agentUserId,
-            true,
-            amt,
-            payout,
-            `lottery_fly_quota_${bet.id}`,
-            flyMeta?.bookMode,
-          );
         }
         if (this.flyRebate && !isRefund) {
           await this.flyRebate.payBetFlowInTx(tx, {
@@ -537,6 +590,9 @@ export class LotteryService {
             generalUserId: flyMeta?.generalUserId,
             sitting: flyMeta?.sitting,
             bookMode: flyMeta?.bookMode,
+            gameCode: issue.game.code,
+            /* 用下注当时定死的整包比例结算，而不是开奖这一刻的现值 */
+            rateSnapshot: flyMeta,
           });
         }
       }
@@ -545,7 +601,7 @@ export class LotteryService {
         where: { id: issue.id },
         data: { totalFlow: settledFlow },
       });
-    });
+    }), { label: `彩票开奖 ${issue.game.code} ${issue.issueNo}` });
 
     /* 事务成功后：补封盘线（若跳过 LOCKED）+ 结果卡（若未预推）+ 中奖核对 */
     try {
@@ -658,15 +714,10 @@ export class LotteryService {
     const batchPayTable = (game.configs[0]?.payTable || {}) as unknown as LotteryPayTable;
     for (const b of bets) {
       if (!isValidMoney(b.amount, 1)) throw new BadRequestException('投注额无效');
-      const minBet = asMoney(game.minBet);
-      const maxBet = asMoney(game.maxBet);
-      if (b.amount < minBet || b.amount > maxBet) {
-        throw new BadRequestException(`投注额须在 ${minBet}~${maxBet} 之间`);
-      }
       if (!gameDef.validateBet(b.betType, b.betValue)) {
         throw new BadRequestException(`玩法参数无效: ${b.betType}`);
       }
-      this.assertHighOddsCap(gameDef, batchPayTable, b);
+      this.assertLotteryPlayAmount(game, gameDef, batchPayTable, b);
     }
 
     const now = new Date();
@@ -684,8 +735,9 @@ export class LotteryService {
     const totalAmount = bets.reduce((s, b) => s + b.amount, 0);
     /* 整批按合计额判断能否飞；不足则整批关盘、代理坐庄；必须带 roomNo */
     const batchHouse = await this.houseForPlayer(playerId, totalAmount, opts?.roomNo);
-    const batchP = this.flyDisk
-      ? await this.flyDisk.resolvePlayerRate(playerId, batchHouse.roomId)
+    /* 三个比例都在下注这一刻定死，开奖结算时按快照发放，不受期间调整影响 */
+    const batchP: { P: number; agentPkg?: number; generalPkg?: number } = this.flyDisk
+      ? await this.flyDisk.resolvePlayerRate(playerId, batchHouse.roomId, gameCode)
       : { P: 0.018 };
 
     return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
@@ -701,14 +753,14 @@ export class LotteryService {
       for (let i = 0; i < bets.length; i++) {
         const b = bets[i]!;
         const house = batchHouse;
-        const { P } = batchP;
+        const { P, agentPkg, generalPkg } = batchP;
         const payload: LotteryBetPayload & { fly?: object } = {
           betType: b.betType, value: b.betValue,
           fly: {
             type: house.type, id: house.id, flying: house.flying,
             roomId: house.roomId, agentUserId: house.agentUserId,
             generalUserId: house.generalUserId, sitting: house.sitting,
-            bookMode: house.bookMode, P,
+            bookMode: house.bookMode, P, agentPkg, generalPkg,
           },
         };
         const bet = await tx.bet.create({
@@ -747,7 +799,7 @@ export class LotteryService {
         } else {
           await closedDiskDebitBetInTx(tx, this.points, {
             playerId,
-            agentUserId: house.agentUserId || house.id,
+            agentUserId: closedDiskHouseUserId(house),
             roomId: house.roomId,
             bookMode: house.bookMode,
             amount: b.amount,
@@ -932,14 +984,12 @@ export class LotteryService {
 
     const game = await this.configCache.get(gameCode);
     if (!game || game.status !== 'ONLINE') throw new NotFoundException('游戏未上架');
-    if (amount < asMoney(game.minBet) || amount > asMoney(game.maxBet)) {
-      throw new BadRequestException(`投注额须在 ${asMoney(game.minBet)}~${asMoney(game.maxBet)} 之间`);
-    }
 
     const gameDef = this.registry.get(gameCode);
     if (!gameDef) throw new BadRequestException('游戏类型不支持');
     if (!gameDef.validateBet(betType, betValue)) throw new BadRequestException('玩法参数无效');
-    this.assertHighOddsCap(
+    this.assertLotteryPlayAmount(
+      game,
       gameDef,
       (game.configs[0]?.payTable || {}) as unknown as LotteryPayTable,
       { betType, betValue, amount },
@@ -965,8 +1015,9 @@ export class LotteryService {
       await this.lockIssueForBet(tx, issue.id);
 
       const house = await this.houseForPlayer(playerId, amount, roomNo);
-      const { P } = this.flyDisk
-        ? await this.flyDisk.resolvePlayerRate(playerId, house.roomId)
+      /* 三个比例都在下注这一刻定死，开奖结算时按快照发放，不受期间调整影响 */
+      const rates: { P: number; agentPkg?: number; generalPkg?: number } = this.flyDisk
+        ? await this.flyDisk.resolvePlayerRate(playerId, house.roomId, gameCode)
         : { P: 0.018 };
       const payloadWithFly = {
         ...payload,
@@ -979,7 +1030,9 @@ export class LotteryService {
           generalUserId: house.generalUserId,
           sitting: house.sitting,
           bookMode: house.bookMode,
-          P,
+          P: rates.P,
+          agentPkg: rates.agentPkg,
+          generalPkg: rates.generalPkg,
         },
       };
 
@@ -1017,7 +1070,7 @@ export class LotteryService {
       } else {
         await closedDiskDebitBetInTx(tx, this.points, {
           playerId,
-          agentUserId: house.agentUserId || house.id,
+          agentUserId: closedDiskHouseUserId(house),
           roomId: house.roomId,
           bookMode: house.bookMode,
           amount,
@@ -1127,7 +1180,7 @@ export class LotteryService {
         } else {
           await closedDiskRefundBetInTx(tx, this.points, {
             playerId,
-            agentUserId: cFly?.agentUserId || String(cFly?.id || ''),
+            agentUserId: closedDiskHouseUserId(cFly),
             roomId: cFly?.roomId,
             bookMode: cFly?.bookMode,
             amount: amt,
@@ -1162,7 +1215,20 @@ export class LotteryService {
     gameDef: LotteryGameDef,
     payTable: LotteryPayTable,
     pendingBets: { amount: unknown; payload: unknown; playerId?: string }[],
-  ): Promise<{ result: DrawResult; nonce: number; softCommit: 'none' | 'mark' | 'consume' }> {
+  ): Promise<{
+    result: DrawResult;
+    nonce: number;
+    softCommit: 'none' | 'mark' | 'consume';
+    /** 介入时的留痕素材；未介入为空 */
+    audit?: {
+      reason: string;
+      tries: number;
+      naturalDigest: string;
+      adoptedDigest: string;
+      stake: number;
+      estPayout: number;
+    };
+  }> {
     const natural = gameDef.draw(serverSeed, 'server', 1);
     const globalRt = this.globalSoft
       ? await this.globalSoft.getDrawRuntime(gameCode)
@@ -1240,6 +1306,8 @@ export class LotteryService {
 
     let best = natural;
     let bestNonce = 1;
+    /* 被采用候选的预估派彩，只用于介入留痕 */
+    let bestPay = 0;
     let bestRank: SoftPickRank = {
       valid: false,
       day: Number.POSITIVE_INFINITY,
@@ -1331,6 +1399,7 @@ export class LotteryService {
         bestRank = rank;
         best = cand;
         bestNonce = nonce;
+        bestPay = periodPay;
       }
     }
 
@@ -1344,6 +1413,12 @@ export class LotteryService {
     }
 
     const sameAsNatural = bestNonce === 1;
+    /* 触发来源：留痕要能回答「为什么改」，不能只留一个布尔 */
+    const reasons: string[] = [];
+    if (guard.steer) reasons.push('period');
+    if (globalRt.daySteer) reasons.push('dayNet');
+    if (biases.length) reasons.push('bias');
+    if (brakeFirst) reasons.push('brake');
     this.logger.log(
       `control global game=${gameCode} mode=${globalRt.mode} gear=${globalRt.gear} ` +
         `tries=${tries} nonce=${bestNonce} steer=${guard.steer} ` +
@@ -1357,31 +1432,44 @@ export class LotteryService {
       result: best,
       nonce: bestNonce,
       softCommit: sameAsNatural ? 'none' : 'mark',
+      audit: sameAsNatural
+        ? undefined
+        : {
+            reason: reasons.length ? reasons.join('+') : 'unknown',
+            tries,
+            naturalDigest: drawDigest(natural),
+            adoptedDigest: drawDigest(best),
+            stake: periodStake,
+            estPayout: bestPay,
+          },
     };
   }
 
   /**
-   * 高赔率玩法单注限红。
-   *
-   * 通用限红是按「一局最多输多少」定的，对 9000 倍这种玩法完全不适用：
-   * 押满 10 万中一次要赔 9 亿，撞上 2000 万绝对封顶后玩家还拿不到挂牌赔率。
-   * 这里按该注**可能拿到的最高倍率**卡，连码那种一注能命中多档的也盖得住。
+   * 按玩法限红。单独配过的用后台那条；没配则游戏默认限红，
+   * 高赔玩法再叠一层默认硬顶（四全中这类）。
    */
-  private assertHighOddsCap(
+  private assertLotteryPlayAmount(
+    game: { minBet: unknown; maxBet: unknown; playLimits?: unknown },
     gameDef: LotteryGameDef,
     payTable: LotteryPayTable,
     bet: { betType: string; betValue?: string | number; amount: number },
   ): void {
+    const key = lotteryPlayLimitKey(bet.betType, bet.betValue, payTable);
     const payload: LotteryBetPayload = { betType: bet.betType, value: bet.betValue };
     const odds = gameDef.maxOdds
       ? gameDef.maxOdds(payload, payTable)
       : (payTable[bet.betType]?.multiplier ?? 0);
-    const cap = highOddsBetCap(odds);
-    if (cap != null && bet.amount > cap) {
-      throw new BadRequestException(
-        `该玩法赔率 ${odds} 倍，单注最多 ${cap}`,
-      );
-    }
+    const limits = parsePlayLimits(game.playLimits);
+    const extraMax = limits[key] ? null : highOddsBetCap(odds);
+    const range = resolvePlayBetRange({
+      gameMin: asMoney(game.minBet),
+      gameMax: asMoney(game.maxBet),
+      playLimits: limits,
+      playKey: key,
+      extraMax,
+    });
+    assertAmountInPlayRange(bet.amount, range);
   }
 
   /**
@@ -1436,7 +1524,53 @@ export class LotteryService {
     return issue;
   }
 
-  /** 历史开奖（最近 N 期） */
+  /**
+   * 当前期 + 历史开奖合并（游戏内高频轮询入口）。
+   *
+   * 未知 gameCode 会让底层抛 NotFound，promise 走 reject、不落缓存，
+   * 所以拿随便编的 code 刷不出缓存条目；键的规模就是「有效游戏数 × limit」，有界。
+   */
+  async snapshot(gameCode: string, limit: number) {
+    const key = `${gameCode}:${limit}`;
+    /*
+     * now 是客户端校时的唯一基准，必须逐次现取。
+     * 它一旦跟着 current/history 进缓存，命中缓存的那一秒内所有玩家拿到的都是同一个
+     * 旧时刻，校出来的偏移最多差一整个 TTL，倒计时反而更不准。
+     */
+    const hit = this.snapshotCache.get(key);
+    if (hit && Date.now() - hit.at < LotteryService.SNAPSHOT_TTL_MS) {
+      return { ...(hit.data as object), now: Date.now() };
+    }
+
+    /* 缓存刚过期的瞬间会有一批请求同时落到 DB，这里把它们并到同一次查询上 */
+    const running = this.snapshotInflight.get(key);
+    if (running) return { ...((await running) as object), now: Date.now() };
+
+    const promise = (async () => {
+      const [current, history] = await Promise.all([
+        this.currentIssue(gameCode),
+        this.history(gameCode, Math.min(limit, 80)),
+      ]);
+      return { current, history };
+    })();
+    this.snapshotInflight.set(key, promise);
+    try {
+      const data = await promise;
+      this.snapshotCache.set(key, { at: Date.now(), data });
+      return { ...data, now: Date.now() };
+    } finally {
+      if (this.snapshotInflight.get(key) === promise) this.snapshotInflight.delete(key);
+    }
+  }
+
+  /**
+   * 历史开奖（最近 N 期）。
+   *
+   * **不返回 nonce**：彩票的候选是「同一把种子的第 N 页」，nonce>1 就等于公开宣布
+   * 这一期放弃了自然结果。种子与指纹照常公布，玩家仍能用 seed:server:nonce 复算——
+   * 只是那个 nonce 由后台留痕持有，不再挂在公开接口上。
+   * 牌桌已在改独立候选种子时堵掉同类泄漏，这里补齐彩票这一侧。
+   */
   async history(gameCode: string, limit = 10) {
     const game = await this.prisma.game.findUnique({ where: { code: gameCode } });
     if (!game) throw new NotFoundException('游戏不存在');
@@ -1447,18 +1581,19 @@ export class LotteryService {
       take: limit,
       select: {
         id: true, issueNo: true, drawNumbers: true, drawnAt: true,
-        openAt: true, serverSeed: true, serverSeedHash: true, nonce: true, totalFlow: true,
+        openAt: true, serverSeed: true, serverSeedHash: true, totalFlow: true,
       },
     });
   }
 
-  /** 玩家自己的投注记录（可按期号过滤） */
+  /** 玩家自己的投注记录（可按期号或时间窗过滤） */
   async myBets(
     playerId: string,
     gameCode: string,
     page = 1,
     pageSize = 20,
     issueNo?: string,
+    window?: { range?: string; fromMs?: number; toMs?: number },
   ) {
     const game = await this.prisma.game.findUnique({ where: { code: gameCode } });
     if (!game) throw new NotFoundException('游戏不存在');
@@ -1476,6 +1611,17 @@ export class LotteryService {
         return { total: 0, page: 1, pageSize: 0, list: [] };
       }
       where.issueId = issue.id;
+    } else if (window) {
+      /*
+       * 只在没指定期号时套时间窗：按期号查是「核对这一期」的动作，
+       * 不该被界面上残留的日期筛选清空成空列表。
+       */
+      const bounds = resolveTimeWindow({
+        range: window.range,
+        fromMs: window.fromMs,
+        toMs: window.toMs,
+      });
+      if (bounds) where.createdAt = { gte: bounds[0], lt: bounds[1] };
     }
 
     const take = Math.min(Math.max(pageSize, 1), wantIssue ? 100 : 50);
@@ -1493,11 +1639,23 @@ export class LotteryService {
         },
       }),
     ]);
-    /* 开奖中（LOCKED）号码已预生成供动画，注单接口仍对玩家隐藏，避免偷看结果 */
+    /*
+     * 开奖中（LOCKED）号码已预生成供动画，注单接口仍对玩家隐藏，避免偷看结果。
+     *
+     * 金额一律转成数字：Decimal 直接序列化会变成字符串，前端把「累计投注额」
+     * 写成 sum += b.amount 时就成了字符串拼接，注单页出现
+     * 「500,005,000.005,00…」这种越滚越长的数字。
+     */
     const safeList = list.map((b) => {
-      if (b.issue?.status === 'DRAWN') return b;
+      const money = {
+        amount: asMoney(b.amount),
+        payout: asMoney(b.payout),
+        validFlow: asMoney(b.validFlow),
+      };
+      if (b.issue?.status === 'DRAWN') return { ...b, ...money };
       return {
         ...b,
+        ...money,
         issue: b.issue
           ? { ...b.issue, drawNumbers: null as string | null }
           : b.issue,

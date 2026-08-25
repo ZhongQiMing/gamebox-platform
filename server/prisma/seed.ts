@@ -314,12 +314,12 @@ async function main() {
     for (const r of ROOMS) {
       await prisma.room.upsert({
         where: { roomNo: r.roomNo },
-        update: { name: r.name, status: 'OPEN', icon: '/images/rooms/default-room.png' },
+        update: { name: r.name, status: 'OPEN', icon: '/images/rooms/default-room.webp' },
         create: {
           roomNo: r.roomNo,
           name: r.name,
           status: 'OPEN',
-          icon: '/images/rooms/default-room.png',
+          icon: '/images/rooms/default-room.webp',
           enabledGames: '[]',
         },
       });

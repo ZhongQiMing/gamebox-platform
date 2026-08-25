@@ -1,5 +1,33 @@
 import { GameOpsScheduler } from './game-ops.scheduler';
 
+/*
+ * 这些用例断言的是「维护窗真的生效」，所以必须屏蔽开发者本地 .env 里可能存在的
+ * DISABLE_DAILY_MAINT=1（夜间联调常开），否则调度器会整段跳过、断言凭空失败。
+ */
+const savedDisableMaint = process.env.DISABLE_DAILY_MAINT;
+beforeAll(() => {
+  delete process.env.DISABLE_DAILY_MAINT;
+});
+afterAll(() => {
+  if (savedDisableMaint === undefined) delete process.env.DISABLE_DAILY_MAINT;
+  else process.env.DISABLE_DAILY_MAINT = savedDisableMaint;
+});
+
+/**
+ * 调度器的日切/维护 cron 外面包了单实例锁。
+ * 测试是单进程，锁直接放行，断言的仍是锁内的业务行为。
+ */
+function runExclusiveMock() {
+  return {
+    runExclusive: jest.fn(
+      async (_key: string, _ttl: number, task: () => Promise<void>) => {
+        await task();
+        return 'ran' as const;
+      },
+    ),
+  };
+}
+
 function makeScheduler(opts: { autoCount: number; autoCodes?: string[] }) {
   const prisma = {
     game: {
@@ -17,6 +45,7 @@ function makeScheduler(opts: { autoCount: number; autoCodes?: string[] }) {
   const redis = {
     get: jest.fn().mockResolvedValue(null),
     del: jest.fn().mockResolvedValue(undefined),
+    ...runExclusiveMock(),
   };
   const scheduler = new GameOpsScheduler(
     prisma as never,
@@ -80,6 +109,7 @@ describe('GameOpsScheduler 重启恢复', () => {
       get: jest.fn().mockResolvedValue(JSON.stringify({ batchId: 'stale-batch' })),
       set: jest.fn().mockResolvedValue(undefined),
       del: jest.fn().mockResolvedValue(undefined),
+      ...runExclusiveMock(),
     };
     const cache = { invalidateAll: jest.fn() };
     const scheduler = new GameOpsScheduler(
@@ -127,6 +157,7 @@ describe('GameOpsScheduler 重启恢复', () => {
       get: jest.fn().mockResolvedValue(JSON.stringify({ batchId: 'gone-batch' })),
       set: jest.fn().mockResolvedValue(undefined),
       del: jest.fn().mockResolvedValue(undefined),
+      ...runExclusiveMock(),
     };
     const scheduler = new GameOpsScheduler(
       prisma as never,

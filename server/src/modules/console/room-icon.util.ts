@@ -2,7 +2,7 @@ import { BadRequestException } from '@nestjs/common';
 import { isRealImage } from '../../common/utils/image-magic';
 
 /** 未自定义时前端/接口回落用的默认房间图 */
-export const DEFAULT_ROOM_ICON = '/images/rooms/default-room.png';
+export const DEFAULT_ROOM_ICON = '/images/rooms/default-room.webp';
 
 /**
  * 把 data URL 存成房间图标文件，返回可公开访问的路径。

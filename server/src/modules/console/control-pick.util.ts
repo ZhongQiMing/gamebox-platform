@@ -327,14 +327,6 @@ export function isBetterSoftGlobalPick(
   return a.brake < b.brake;
 }
 
-export function matchRoomHoldPolicy<T extends HoldPolicyRef>(
-  policies: T[],
-  roomId: string | null | undefined,
-): T | null {
-  if (!roomId) return null;
-  return policies.find((p) => p.roomId === roomId) ?? null;
-}
-
 export function matchPlayerPolicy<T extends { roomId: string; playerId: string }>(
   policies: T[],
   roomId: string | null | undefined,
@@ -344,110 +336,19 @@ export function matchPlayerPolicy<T extends { roomId: string; playerId: string }
   return policies.find((p) => p.roomId === roomId && p.playerId === playerId) ?? null;
 }
 
-/** 共盘候选：单人目标 + 可选留存分 */
-export type SharedDrawRank = {
-  /** 偏赢时是否满足庄家底线；无偏赢目标则为 true */
-  valid: boolean;
-  /** 越小越好：偏赢用 −派彩，偏输用 +派彩 */
-  playerObjective: number;
-  holdScore: number;
-};
-
-export function rankSharedDrawCandidate(opts: {
-  playerTargets: Array<{
-    direction: PlayerBiasDirection;
-    playerPayout: number;
-    roomStake: number;
-    roomPayout: number;
-  }>;
-  holdScore: number;
-  houseFloor?: number;
-}): SharedDrawRank {
-  const floor = opts.houseFloor ?? CONTROL_PLAYER_WIN_HOUSE_FLOOR;
-  let valid = true;
-  let playerObjective = 0;
-  for (const t of opts.playerTargets) {
-    if (t.direction === 'WIN') {
-      const housePnl = t.roomStake - t.roomPayout;
-      if (housePnl + 1e-9 < floor) valid = false;
-      playerObjective -= t.playerPayout;
-    } else {
-      playerObjective += t.playerPayout;
-    }
-  }
-  return { valid, playerObjective, holdScore: opts.holdScore };
-}
-
-/** true = a 优于 b */
-export function isBetterSharedDrawRank(a: SharedDrawRank, b: SharedDrawRank): boolean {
-  if (a.valid !== b.valid) return a.valid;
-  if (a.playerObjective !== b.playerObjective) return a.playerObjective < b.playerObjective;
-  return a.holdScore < b.holdScore;
-}
-
-/**
- * 街机/电子：开奖前重摇 serverSeed，挑派彩最接近目标的候选。
- * simulate(seed) 须返回与真实结算一致的派彩（含封顶）。
- */
-export function pickSeedByHoldTarget<T extends { payout: number }>(opts: {
-  policy: HoldPolicyRef | null;
-  stake: number;
-  tries?: number;
-  gen: () => { seed: string; hash: string };
-  simulate: (seed: string, hash: string) => T;
-}): T & { seed: string; hash: string } {
-  const tries = opts.policy ? (opts.tries ?? CONTROL_FIXED_CANDIDATE_TRIES) : 1;
-  const target = opts.policy
-    ? holdTargetPayout(opts.stake, opts.policy.holdRatio)
-    : null;
-
-  let bestSeed = opts.gen();
-  let bestBody = opts.simulate(bestSeed.seed, bestSeed.hash);
-  let bestScore = target == null
-    ? 0
-    : holdScore(bestBody.payout, target, opts.stake);
-
-  for (let i = 1; i < tries; i++) {
-    const candSeed = opts.gen();
-    const body = opts.simulate(candSeed.seed, candSeed.hash);
-    if (target == null) break;
-    const score = holdScore(body.payout, target, opts.stake);
-    if (score < bestScore) {
-      bestScore = score;
-      bestSeed = candSeed;
-      bestBody = body;
-    }
-  }
-
-  return { ...bestBody, seed: bestSeed.seed, hash: bestSeed.hash };
-}
-
-/** @deprecated 旧共盘日账街机路径；请用 ArcadePoolPickRuntime */
-export type SoftGlobalPickRuntime = {
-  needPick: boolean;
-  tries: number;
-  dayF: number;
-  dayG: number;
-  dayC: number;
-  targetNetPct: number;
-  maxPeriodLossPct: number;
-  commissionRatePct: number;
-  biases: SoftBiasRef[];
-};
-
-/** 单游戏长期资金池挑号（余额=流水−派彩；无房间偏置/铁律） */
+/** 单游戏长期资金池挑号运行时（余额=流水−派彩；无房间偏置/铁律） */
 export type ArcadePoolPickRuntime = {
   needPick: boolean;
   tries: number;
+  /** 统计窗口内该游戏的累计流水与派彩 */
   poolStake: number;
   poolPayout: number;
-  /** 目标返还率 0~1：等价于希望池余额≈流水×(1−targetRtp) */
   targetRtp: number;
 };
 
 /**
- * 开完本局后：池余额相对「目标留存」的加权偏差（越小越好）。
- * 余额 = Σ(下注−派彩)；目标余额 = 累计流水 × (1−目标返还率)。
+ * 池余额偏离目标返还率的程度（越小越好）。
+ * 把本局并进池子后再算返还率，与目标比。
  */
 export function arcadePoolBalanceScore(opts: {
   poolStake: number;
@@ -456,42 +357,34 @@ export function arcadePoolBalanceScore(opts: {
   periodPayout: number;
   targetRtp: number;
 }): number {
-  const F = opts.poolStake + opts.periodStake;
-  if (F <= 1e-9) return 0;
-  const balance = (opts.poolStake - opts.poolPayout)
-    + (opts.periodStake - opts.periodPayout);
-  const keep = Math.min(0.7, Math.max(0.01, 1 - opts.targetRtp));
-  const targetBalance = F * keep;
-  return Math.abs(balance - targetBalance) * F;
-}
-
-/** @deprecated 使用 arcadePoolBalanceScore */
-export function arcadePoolRtpScore(opts: {
-  poolStake: number;
-  poolPayout: number;
-  periodStake: number;
-  periodPayout: number;
-  targetRtp: number;
-}): number {
-  return arcadePoolBalanceScore(opts);
+  const stake = opts.poolStake + opts.periodStake;
+  if (stake <= 1e-9) return 0;
+  const rtp = (opts.poolPayout + opts.periodPayout) / stake;
+  return Math.abs(rtp - opts.targetRtp) * Math.max(stake, 1);
 }
 
 /**
  * 单游戏资金池：按池余额贴近目标留存挑 seed。
- * 不套共盘铁律、不套房间/玩家偏置。
+ * 不套共盘铁律、不套房间/玩家偏置——街机是一人一局，没有旁人可比。
  */
 export function pickSeedForArcadePool<T extends { payout: number }>(opts: {
   runtime: ArcadePoolPickRuntime | null | undefined;
   stake: number;
   gen: () => { seed: string; hash: string };
   simulate: (seed: string, hash: string) => T;
-}): { result: T & { seed: string; hash: string }; steered: boolean } {
+}): {
+  result: T & { seed: string; hash: string };
+  steered: boolean;
+  /** 被放弃的自然结果：介入留痕要能回答「本来会开什么」 */
+  natural: T & { seed: string; hash: string };
+  tries: number;
+} {
   const first = opts.gen();
   const firstBody = opts.simulate(first.seed, first.hash);
   const natural = { ...firstBody, seed: first.seed, hash: first.hash };
   const rt = opts.runtime;
   if (!rt?.needPick) {
-    return { result: natural, steered: false };
+    return { result: natural, steered: false, natural, tries: 1 };
   }
 
   const tries = Math.max(1, rt.tries);
@@ -520,133 +413,5 @@ export function pickSeedForArcadePool<T extends { payout: number }>(opts: {
     }
   }
 
-  return { result: best, steered: best.seed !== natural.seed };
-}
-
-/**
- * 街机/电子一人一局：按全局软控挑 serverSeed。
- * 电玩无旁人，PLAYER_WIN 不套共盘庄家底线；冷却/门槛由调用方处理 needPick。
- */
-export function pickSeedForGlobalSoftArcade<T extends { payout: number }>(opts: {
-  runtime: SoftGlobalPickRuntime | null | undefined;
-  stake: number;
-  roomId?: string | null;
-  playerId: string;
-  /** 该玩家是否触发缓刹（派彩越少越好） */
-  brakePlayer?: boolean;
-  gen: () => { seed: string; hash: string };
-  simulate: (seed: string, hash: string) => T;
-}): { result: T & { seed: string; hash: string }; steered: boolean } {
-  const first = opts.gen();
-  const firstBody = opts.simulate(first.seed, first.hash);
-  const natural = { ...firstBody, seed: first.seed, hash: first.hash };
-  const rt = opts.runtime;
-  if (!rt?.needPick) {
-    return { result: natural, steered: false };
-  }
-
-  const periodStake = opts.stake;
-  const periodCommission = periodStake * (rt.commissionRatePct / 100);
-  const dayTol = Math.max(1, periodStake * 0.001 + rt.dayF * 0.0005);
-  const tries = Math.max(1, rt.tries);
-  const roomId = opts.roomId || '';
-  const biases = rt.biases || [];
-
-  let best = natural;
-  let bestRank = {
-    valid: false,
-    day: Number.POSITIVE_INFINITY,
-    bias: Number.POSITIVE_INFINITY,
-    brake: Number.POSITIVE_INFINITY,
-  };
-  let sawLegal = false;
-
-  for (let i = 0; i < tries; i++) {
-    const candSeed = i === 0 ? first : opts.gen();
-    const body = i === 0 ? firstBody : opts.simulate(candSeed.seed, candSeed.hash);
-    const periodPay = body.payout;
-    if (!periodIronLegal({
-      periodStake,
-      periodPayout: periodPay,
-      maxPeriodLossPct: rt.maxPeriodLossPct,
-    })) continue;
-    sawLegal = true;
-
-    const day = globalDayNetScore({
-      dayF: rt.dayF,
-      dayG: rt.dayG,
-      dayC: rt.dayC,
-      periodStake,
-      periodPayout: periodPay,
-      periodCommission,
-      targetNetPct: rt.targetNetPct,
-    });
-
-    const roomBooks = new Map<string, { stake: number; payout: number }>();
-    const playerPayouts = new Map<string, number>();
-    if (roomId) {
-      roomBooks.set(roomId, { stake: periodStake, payout: periodPay });
-      playerPayouts.set(`${roomId}|${opts.playerId}`, periodPay);
-    }
-    const biasRes = softBiasScore({
-      biases,
-      roomBooks,
-      playerPayouts,
-      /* 一人一局：偏赢允许庄家单期为负，不套共盘底线 */
-      houseFloor: Number.NEGATIVE_INFINITY,
-    });
-    if (!biasRes.valid) continue;
-
-    const brake = opts.brakePlayer ? periodPay : 0;
-    const rank = { valid: true, day, bias: biasRes.score, brake };
-    if (isBetterSoftGlobalPick(rank, bestRank, dayTol, {
-      brakeFirst: !!opts.brakePlayer,
-    })) {
-      bestRank = rank;
-      best = { ...body, seed: candSeed.seed, hash: candSeed.hash };
-    }
-  }
-
-  if (!sawLegal || !bestRank.valid) {
-    return { result: natural, steered: false };
-  }
-  return { result: best, steered: best.seed !== natural.seed };
-}
-
-/**
- * @deprecated 旧硬控已停用；街机请改用 pickSeedForArcadePool
- */
-export function pickSeedForArcadeControl<T extends { payout: number }>(opts: {
-  playerDirection: PlayerBiasDirection | null;
-  holdPolicy: HoldPolicyRef | null;
-  stake: number;
-  tries?: number;
-  gen: () => { seed: string; hash: string };
-  simulate: (seed: string, hash: string) => T;
-}): T & { seed: string; hash: string } {
-  if (opts.playerDirection) {
-    const tries = opts.tries ?? CONTROL_FIXED_CANDIDATE_TRIES;
-    const wantWin = opts.playerDirection === 'WIN';
-    let bestSeed = opts.gen();
-    let bestBody = opts.simulate(bestSeed.seed, bestSeed.hash);
-    let bestPay = bestBody.payout;
-    for (let i = 1; i < tries; i++) {
-      const candSeed = opts.gen();
-      const body = opts.simulate(candSeed.seed, candSeed.hash);
-      const better = wantWin ? body.payout > bestPay : body.payout < bestPay;
-      if (better) {
-        bestPay = body.payout;
-        bestSeed = candSeed;
-        bestBody = body;
-      }
-    }
-    return { ...bestBody, seed: bestSeed.seed, hash: bestSeed.hash };
-  }
-  return pickSeedByHoldTarget({
-    policy: opts.holdPolicy,
-    stake: opts.stake,
-    tries: opts.tries,
-    gen: opts.gen,
-    simulate: opts.simulate,
-  });
+  return { result: best, steered: best.seed !== natural.seed, natural, tries };
 }

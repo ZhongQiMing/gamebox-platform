@@ -148,7 +148,19 @@ export class UsersService {
       await this.prisma.user.update({ where: { id }, data: { avatar } });
       u.avatar = avatar;
     }
-    return this.toProfile(u);
+    const profile = this.toProfile(u);
+    if (u.role !== 'PROXY' && u.role !== 'CS') {
+      return { ...profile, parentId: null as string | null, parentRole: null as string | null };
+    }
+    const me = await this.prisma.user.findUnique({
+      where: { id },
+      select: { parentId: true, parent: { select: { role: true } } },
+    });
+    return {
+      ...profile,
+      parentId: me?.parentId ?? null,
+      parentRole: me?.parent?.role ?? null,
+    };
   }
 
   async updateNickname(id: string, nickname: string) {

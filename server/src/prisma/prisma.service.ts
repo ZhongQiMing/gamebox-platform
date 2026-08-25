@@ -21,6 +21,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   }
 
   async onModuleInit() {
+    /* 进程启动时连库；Prisma Client 须已 generate */
     await this.$connect();
   }
 

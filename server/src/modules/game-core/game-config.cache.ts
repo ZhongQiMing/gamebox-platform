@@ -2,7 +2,10 @@ import { Global, Injectable, Module } from '@nestjs/common';
 import type { Game, GameConfig } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
-export type GameWithActiveConfig = Game & { configs: GameConfig[] };
+export type GameWithActiveConfig = Game & {
+  configs: GameConfig[]
+  playLimits?: unknown
+};
 
 /**
  * GameConfig 进程内缓存。

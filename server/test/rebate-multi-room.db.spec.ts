@@ -16,6 +16,17 @@ const ROOM_A = 'rebate-room-a';
 const ROOM_B = 'rebate-room-b';
 let prisma: PrismaClient;
 
+/**
+ * RebateService 只在定时任务里用 Redis 抢单实例锁，领取路径不碰它。
+ * 这里给一个直接放行的替身，让用例专注在发钱的正确性上。
+ */
+const redisStub = {
+  runExclusive: async (_k: string, _t: number, task: () => Promise<void>) => {
+    await task();
+    return 'ran' as const;
+  },
+} as never;
+
 function todayShanghai(): string {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Shanghai',
@@ -94,6 +105,7 @@ describe('每日回水按房间结算', () => {
       prisma as unknown as PrismaService,
       createPointsService(prisma),
       fly,
+      redisStub,
     );
 
     const status = await rebate.getStatus(playerId);
@@ -121,6 +133,76 @@ describe('每日回水按房间结算', () => {
         where: { bizType: 'REBATE', account: { ownerType: 'PLAYER', ownerId: playerId } },
       }),
     ).toBe(2);
+
+    /* 领过的注单要打上已领标记，作为游标之外的第二道闸 */
+    const marked = await prisma.$queryRaw<Array<{ n: bigint }>>`
+      SELECT COUNT(*)::bigint AS n FROM "Bet"
+      WHERE "playerId" = ${playerId}
+        AND COALESCE(payload #>> '{flowRebatePaid}', 'false') = 'true'
+    `;
+    expect(Number(marked[0]!.n)).toBe(2);
+  });
+
+  it('已领标记能独立挡住重发：把游标清掉也不会再发一次', async () => {
+    const playerId = await makeUser(prisma);
+    await joinRoom(prisma, playerId, ROOM_A);
+    /* 平台池可能已被同文件前面的用例建过 */
+    await prisma.pointsAccount.upsert({
+      where: {
+        ownerType_ownerId_roomId: { ownerType: 'PLATFORM', ownerId: 'PLATFORM', roomId: '' },
+      },
+      update: { balance: 10_000 },
+      create: { ownerType: 'PLATFORM', ownerId: 'PLATFORM', roomId: '', balance: 10_000 },
+    });
+    const game = await prisma.game.create({
+      data: {
+        code: `rebate-test-${randomUUID().slice(0, 8)}`,
+        name: '回水标记测试',
+        category: 'SLOT',
+        status: 'ONLINE',
+        configs: { create: { version: 1, active: true, rtp: 0.95, payTable: {}, params: {} } },
+      },
+    });
+    await prisma.bet.create({
+      data: {
+        betNo: `RB${randomUUID()}`,
+        playerId,
+        gameId: game.id,
+        amount: 1000,
+        payout: 0,
+        validFlow: 1000,
+        status: 'LOST',
+        settledAt: new Date(),
+        payload: { fly: { roomId: ROOM_A, flying: true } },
+      },
+    });
+    const fly = {
+      resolvePlayerRate: jest.fn().mockResolvedValue({ P: 0.01 }),
+      resolveHouse: jest.fn((_: string, roomId: string) =>
+        Promise.resolve({ type: 'PLATFORM', id: 'PLATFORM', flying: true, roomId }),
+      ),
+    } as unknown as FlyDiskService;
+    const rebate = new RebateService(
+      prisma as unknown as PrismaService,
+      createPointsService(prisma),
+      fly,
+      redisStub,
+    );
+
+    const first = await rebate.claimDate(playerId, todayShanghai(), 'MANUAL');
+    expect(Number(first.amount)).toBe(10);
+    expect(await readBalance(prisma, 'PLAYER', playerId, ROOM_A)).toBe(10);
+
+    /*
+     * 模拟「游标逻辑被改错」或「有人手工动了结算表」这类将来可能发生的事故：
+     * 把游标记录整个删掉。只要注单上的已领标记还在，就不该再发第二次。
+     */
+    await prisma.dailyRebateSettlement.deleteMany({ where: { playerId } });
+    await expect(
+      rebate.claimDate(playerId, todayShanghai(), 'MANUAL'),
+    ).rejects.toThrow('无可领取');
+    /* 余额没有被再加一次 */
+    expect(await readBalance(prisma, 'PLAYER', playerId, ROOM_A)).toBe(10);
   });
 
   it('迁移前 roomId=null 的历史游标继续阻挡所有房间旧流水', async () => {
@@ -213,6 +295,7 @@ describe('每日回水按房间结算', () => {
           Promise.resolve({ type: 'PLATFORM', id: 'PLATFORM', flying: true, roomId }),
         ),
       } as unknown as FlyDiskService,
+      redisStub,
     );
 
     const result = await rebate.claimDate(playerId, todayShanghai(), 'MANUAL');
@@ -286,6 +369,7 @@ describe('每日回水按房间结算', () => {
       prisma as unknown as PrismaService,
       createPointsService(prisma),
       fly,
+      redisStub,
     );
 
     const result = await rebate.claimDate(playerId, todayShanghai(), 'MANUAL');

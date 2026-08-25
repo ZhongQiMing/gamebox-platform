@@ -13,7 +13,30 @@ import { requestIdMiddleware } from './common/middleware/request-id.middleware';
 import { assertProdSecrets } from './common/utils/assert-prod-secrets';
 import { CAPACITOR_APP_ORIGINS } from './common/security.constants';
 
+/**
+ * 兜住未处理的 Promise 失败与未捕获异常，别让进程直接退出。
+ *
+ * Node 22+ 默认把 unhandled rejection 当致命错误。实测过一次：Redis 抖了一下，
+ * ioredis 抛出 MaxRetriesPerRequestError 时那个 Promise 已经没人接，
+ * **整个后端进程就退出了**——玩家看到的是全站掉线，而起因只是缓存抖动。
+ *
+ * 这里只做「记下来、继续跑」：真正的资金安全由事务与幂等键保证，不靠进程自杀。
+ * 但日志必须吵，否则会掩盖真 bug。
+ */
+function installCrashGuards() {
+  process.on('unhandledRejection', (reason) => {
+    const msg = reason instanceof Error ? (reason.stack ?? reason.message) : String(reason);
+     
+    console.error(`[fatal-guard] 未处理的 Promise 失败（进程继续运行）：${msg}`);
+  });
+  process.on('uncaughtException', (err) => {
+     
+    console.error(`[fatal-guard] 未捕获异常（进程继续运行）：${err.stack ?? err.message}`);
+  });
+}
+
 async function bootstrap() {
+  installCrashGuards();
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   const config = app.get(ConfigService);
   const isProd = (config.get<string>('NODE_ENV') ?? 'development') === 'production';
@@ -77,6 +100,12 @@ async function bootstrap() {
     index: false,
     dotfiles: 'deny',
   });
+  /* 下载落地页背景 / 徽章 / APK，不走 /uploads */
+  app.useStaticAssets(join(process.cwd(), 'public'), {
+    prefix: '/public/',
+    index: false,
+    dotfiles: 'deny',
+  });
 
   app.setGlobalPrefix('api');
   app.useGlobalPipes(
@@ -116,6 +145,21 @@ async function bootstrap() {
    */
   const host = (config.get<string>('HOST') ?? '0.0.0.0').trim() || '0.0.0.0';
   await app.listen(port, host);
+
+  /*
+   * HTTP 层超时。
+   *
+   * 原先没设，一个慢结算或慢查询能把连接一直占着；连接池耗尽后所有新请求排队，
+   * 一个慢接口就能拖垮整个服务。这里主动切断异常慢的请求。
+   *
+   * headersTimeout 必须大于 requestTimeout，否则慢速上传会先被判成请求头超时，
+   * 客户端拿到的错误具有误导性。keepAliveTimeout 留短一点，配合前面的 Nginx。
+   */
+  const httpServer = app.getHttpServer() as import('node:http').Server;
+  const requestTimeoutMs = Number(config.get<string>('HTTP_REQUEST_TIMEOUT_MS') ?? 30_000);
+  httpServer.requestTimeout = requestTimeoutMs;
+  httpServer.headersTimeout = requestTimeoutMs + 5_000;
+  httpServer.keepAliveTimeout = 65_000;
    
   console.log(`[server] listening on http://${host}:${port}/api`);
 }

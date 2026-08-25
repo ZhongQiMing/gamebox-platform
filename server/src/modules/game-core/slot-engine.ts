@@ -15,7 +15,7 @@ import {
 } from '@nestjs/common';
 import { asMoney, roundMoney, capWin } from '@gamebox/shared';
 import { PrismaService } from '../../prisma/prisma.service';
-import { PointsService, PLATFORM_OWNER_ID } from '../points/points.service';
+import { PointsService } from '../points/points.service';
 import { CommissionService } from '../agents/commission.service';
 import { GameConfigCache } from './game-config.cache';
 import { genServerSeed, deriveRandom, weightedPick } from './fairness.util';
@@ -23,6 +23,7 @@ import type { IGameEngine, PlaceBetInput, SettlementSummary } from './types';
 import { businessNo } from './business-id';
 import { RiskService } from '../risk/risk.service';
 import { SettlementKernel } from './settlement-kernel';
+import { SoftControlAuditService } from '../console/soft-control-audit.service';
 import { ConsoleControlService } from '../console/console-control.service';
 import { GlobalSoftControlService } from '../console/global-soft-control.service';
 import { FlyDiskService } from '../console/fly-disk.service';
@@ -47,6 +48,7 @@ export class SlotEngine implements IGameEngine {
     @Optional() @Inject(forwardRef(() => GlobalSoftControlService))
     private globalSoft?: GlobalSoftControlService,
     @Optional() private flyDisk?: FlyDiskService,
+    @Optional() private softAudit?: SoftControlAuditService,
   ) {}
 
   /**
@@ -109,6 +111,10 @@ export class SlotEngine implements IGameEngine {
       },
     });
     const { seed: serverSeed, hash: serverSeedHash, rnd, idx, prize } = softPick.result;
+    /* 三个比例都在下注时定死：结算时才现算的话，中途改比例会把历史流水一起改掉 */
+    const rates = this.flyDisk && house?.roomId
+      ? await this.flyDisk.resolvePlayerRate(playerId, house.roomId, gameCode)
+      : undefined;
     const flyPayload = house
       ? {
           type: house.type,
@@ -116,7 +122,12 @@ export class SlotEngine implements IGameEngine {
           flying: house.flying,
           roomId: house.roomId,
           agentUserId: house.agentUserId,
+          generalUserId: house.generalUserId,
+          sitting: house.sitting,
           bookMode: house.bookMode,
+          P: rates?.P,
+          agentPkg: rates?.agentPkg,
+          generalPkg: rates?.generalPkg,
         }
       : undefined;
 
@@ -129,6 +140,21 @@ export class SlotEngine implements IGameEngine {
           state: 'PLAYING', serverSeed, serverSeedHash, clientSeed, nonce: 1,
         },
       });
+      /* 介入留痕：只有 ADMIN 能查，写失败也不能拖累开奖 */
+      if (softPick.steered && this.softAudit) {
+        await this.softAudit.record({
+          category: 'arcade',
+          gameCode,
+          refNo: roundNo,
+          refId: round.id,
+          reason: 'arcadePool',
+          tries: softPick.tries,
+          naturalDigest: `${softPick.natural.prize.label} x${softPick.natural.prize.multiplier}`,
+          adoptedDigest: `${prize.label} x${prize.multiplier}`,
+          stake: amount,
+          estPayout: softPick.result.payout,
+        });
+      }
       const bet = await tx.bet.create({
         data: {
           betNo: businessNo('B'),
@@ -158,6 +184,8 @@ export class SlotEngine implements IGameEngine {
         keyPrefix: 'slot',
         stake: amount,
         house: house ?? undefined,
+        gameCode,
+        rateSnapshot: flyPayload,
       });
       const won = payout > 0;
 
@@ -264,172 +292,33 @@ export class SlotEngine implements IGameEngine {
     };
   }
 
-  async placeBet(input: PlaceBetInput): Promise<{ betId: string; roundId: string }> {
-    const { playerId, gameCode, amount, clientSeed = 'default' } = input;
-    if (!Number.isInteger(amount) || amount < 1) throw new BadRequestException('下注额无效');
-
-    const game = await this.prisma.game.findUnique({
-      where: { code: gameCode },
-      include: { configs: { where: { active: true }, take: 1 } },
-    });
-    if (!game || game.status !== 'ONLINE') throw new NotFoundException('游戏不存在或已下架');
-    if (amount < asMoney(game.minBet) || amount > asMoney(game.maxBet)) {
-      throw new BadRequestException(`下注额须在 ${asMoney(game.minBet)}~${asMoney(game.maxBet)} 之间`);
-    }
-    const config = game.configs[0];
-    if (!config) throw new BadRequestException('游戏未配置');
-
-    const { seed: serverSeed, hash: serverSeedHash } = genServerSeed();
-
-    return this.prisma.$transaction(async (tx) => {
-      const round = await tx.gameRound.create({
-        data: {
-          roundNo: businessNo('R'),
-          gameId: game.id,
-          category: 'SLOT',
-          playerId,
-          configVer: config.version,
-          state: 'PLAYING',
-          serverSeed,
-          serverSeedHash,
-          clientSeed,
-          nonce: 1,
-        },
-      });
-      const bet = await tx.bet.create({
-        data: {
-          betNo: businessNo('B'),
-          playerId,
-          gameId: game.id,
-          roundId: round.id,
-          amount,
-          betType: 'SPIN',
-          status: 'PENDING',
-        },
-      });
-      const opsRoomId = this.flyDisk
-        ? await this.flyDisk.requireOpsRoomId(playerId, input.roomNo)
-        : '';
-      if (!opsRoomId) throw new BadRequestException('请先进入房间再下注');
-      await this.points.transferInTx(
-        tx,
-        {
-          type: 'PLAYER',
-          id: playerId,
-          roomId: opsRoomId,
-          remark: `下注 ${game.name}`,
-          idempotencyKey: `bet_player_${bet.id}`,
-        },
-        {
-          type: 'PLATFORM', id: PLATFORM_OWNER_ID,
-          remark: `${game.name} 注资`, idempotencyKey: `bet_plat_${bet.id}`,
-        },
-        amount,
-        { bizType: 'BET', refType: 'round', refId: round.id },
-      );
-      return { betId: bet.id, roundId: round.id };
-    });
+  /**
+   * @deprecated 两段式下注已废弃，禁止调用。
+   *
+   * 这段旧实现下注时**恒定把钱扣进平台池**，而 settle 会在派彩时重新解析房主。
+   * 关盘（代理坐庄）的注单于是从错误的口袋出账：钱进了平台、赔的是代理，
+   * 平台与代理之间发生一笔没有任何凭据的静默转移，对账也查不出来
+   * （两边流水各自都是自洽的）。
+   *
+   * 对外只暴露单事务的 spin，这里保留签名只为满足 IGameEngine 契约。
+   * 直接抛错，杜绝将来有人复用。
+   */
+  async placeBet(_input: PlaceBetInput): Promise<{ betId: string; roundId: string }> {
+    throw new BadRequestException(
+      '老虎机两段式下注已废弃（会走错资金口袋），请使用 spin',
+    );
   }
 
-  async settle(refId: string): Promise<SettlementSummary> {
-    const round = await this.prisma.gameRound.findUnique({
-      where: { id: refId },
-      include: {
-        game: true,
-        bets: { where: { status: 'PENDING' }, include: { player: { select: { id: true, agentPath: true } } } },
-      },
-    });
-    if (!round) throw new NotFoundException('局不存在');
-    if (round.state === 'SETTLED') throw new BadRequestException('局已结算');
-
-    const config = await this.prisma.gameConfig.findUnique({
-      where: { gameId_version: { gameId: round.gameId, version: round.configVer } },
-    });
-    if (!config) throw new BadRequestException('配置缺失');
-    const payTable = config.payTable as unknown as PayItem[];
-    const weights = payTable.map(p => p.weight);
-    const clientSeed = round.clientSeed || 'default';
-    const serverSeed = round.serverSeed!;
-    const rnd = deriveRandom(serverSeed, clientSeed, round.nonce);
-    const idx = weightedPick(weights, rnd);
-    const prize = payTable[idx];
-
-    const result = await this.prisma.$transaction(async (tx) => {
-      /*
-       * 抢占本局：两个请求同时 settle 时，只有把 PLAYING 改成 SETTLING 成功的那个
-       * 继续往下走。上面那次 state 检查是事务外读的，挡不住并发。
-       * 派彩本身有幂等键不会重复给钱，但注单状态和 totalFlow 会被写两遍。
-       */
-      const claimed = await tx.gameRound.updateMany({
-        where: { id: round.id, state: 'PLAYING' },
-        data: { state: 'SETTLING' },
-      });
-      if (claimed.count === 0) throw new BadRequestException('局已结算');
-
-      const summaries: SettlementSummary['bets'] = [];
-      let totalFlow = 0;
-      for (const bet of round.bets) {
-        const amt = asMoney(bet.amount);
-        totalFlow = roundMoney(totalFlow + amt);
-        const rawPayout = roundMoney(amt * prize.multiplier);
-        const settleRoomId = String(
-          (bet.payload as { fly?: { roomId?: string } } | null)?.fly?.roomId || '',
-        ).trim();
-        const { paid: payout } = await this.kernel.creditWinInTx(tx, {
-          playerId: bet.playerId,
-          roundId: round.id,
-          betId: bet.id,
-          amount: rawPayout,
-          remark: `${round.game.name} 命中 ${prize.label}`,
-          keyPrefix: 'slot',
-          stake: amt,
-          opsRoomId: settleRoomId || undefined,
-        });
-        const won = payout > 0;
-        await tx.bet.update({
-          where: { id: bet.id },
-          data: {
-            status: won ? 'WON' : 'LOST',
-            payout,
-            odds: prize.multiplier,
-            multiplier: prize.multiplier,
-            validFlow: amt,
-            settledAt: new Date(),
-          },
-        });
-        summaries.push({
-          betId: bet.id,
-          playerId: bet.playerId,
-          amount: amt,
-          payout,
-          multiplier: prize.multiplier,
-          odds: prize.multiplier,
-          won,
-          validFlow: amt,
-        });
-      }
-      await tx.gameRound.update({
-        where: { id: round.id },
-        data: {
-          state: 'SETTLED',
-          endedAt: new Date(),
-          totalFlow,
-           
-          outcome: { prize, index: idx, rnd: rnd.toFixed(8) } as any,
-        },
-      });
-      return {
-        gameCode: round.game.code,
-        category: 'SLOT' as const,
-        refType: 'round' as const,
-        refId: round.id,
-        totalFlow,
-        outcome: { prize, index: idx },
-        bets: summaries,
-        serverSeed,
-        serverSeedHash: round.serverSeedHash ?? undefined,
-      };
-    });
-    return result;
+  /**
+   * @deprecated 两段式结算已废弃，禁止调用。
+   *
+   * 这段旧实现在派彩时**重新解析房主**，而配套的 placeBet 下注时恒定扣进平台池，
+   * 两边口径不一致，关盘注单会从错误的口袋出账。对外只暴露单事务的 spin，
+   * 这里保留签名只为满足 IGameEngine 契约。
+   */
+  async settle(_refId: string): Promise<SettlementSummary> {
+    throw new BadRequestException(
+      '老虎机两段式结算已废弃（会走错资金口袋），请使用 spin',
+    );
   }
 }

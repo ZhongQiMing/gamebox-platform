@@ -1,5 +1,6 @@
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { SkipThrottle } from '@nestjs/throttler';
+import { BetRateGuard } from '../../common/guards/bet-rate.guard';
 import { IsInt, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { Type } from 'class-transformer';
 import { Public } from '../../common/decorators/public.decorator';
@@ -62,7 +63,12 @@ export class TableController {
   /**
    * POST /api/table/:gameCode/bet — 下注阶段挂单扣分（非整结）
    * 封盘后由 TableService 统一发牌结算
+   *
+   * 跳过全局按 IP 的 120 次/分，换成 BetRateGuard 的按玩家计数：
+   * 连点筹码的手速远超 2 次/秒，且共用出口 IP 的玩家不该互相挤占额度。
    */
+  @SkipThrottle()
+  @UseGuards(BetRateGuard)
   @Post(':gameCode/bet')
   placeBet(
     @CurrentUser() u: { id: string; role?: string },
@@ -77,5 +83,15 @@ export class TableController {
       clientKey: dto.clientKey,
       roomNo: dto.roomNo,
     });
+  }
+
+  /** POST /api/table/:gameCode/cancel-bets — 撤销本局我的全部挂单（仅下注期） */
+  @Post(':gameCode/cancel-bets')
+  cancelBets(
+    @CurrentUser() u: { id: string; role?: string },
+    @Param('gameCode') gameCode: string,
+  ) {
+    assertCanPlaceBet(u.role);
+    return this.tableService.cancelMyBets(u.id, gameCode);
   }
 }

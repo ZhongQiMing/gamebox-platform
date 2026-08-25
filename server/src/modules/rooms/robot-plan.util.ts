@@ -18,14 +18,28 @@ export type RobotTimingPlan = {
 };
 
 /** 一天内按时段托人数（上海时区） */
+export type RobotDaySlotKey = 'night' | 'morning' | 'noon' | 'afternoon' | 'peak';
+
 export type RobotDaySlot = {
-  key: 'morning' | 'afternoon' | 'peak' | 'night';
+  key: RobotDaySlotKey;
   /** 起始小时 0–23 */
   startHour: number;
   /** 结束小时 1–24（不含；24=当天结束） */
   endHour: number;
+  /** 兼容旧数据：固定人数；有 min/max 时作区间中值 */
   count: number;
+  /** 时段内随机下限（含） */
+  countMin?: number;
+  /** 时段内随机上限（含） */
+  countMax?: number;
 };
+
+/** 水果机/奔驰宝马不走聊天托人 */
+export const NO_CHAT_ROBOT_GAMES = ['fruit-machine', 'bcbm'] as const;
+
+export function isNoChatRobotGame(code: string): boolean {
+  return (NO_CHAT_ROBOT_GAMES as readonly string[]).includes(code);
+}
 
 export type NormalizedRobotPlan = {
   scheme: string;
@@ -56,7 +70,43 @@ export const DEFAULT_ROBOT_TIMING: RobotTimingPlan = {
 export const DEFAULT_FUND_UP = [200, 500, 1000, 2000];
 export const DEFAULT_FUND_DOWN = [200, 500, 1000, 2000];
 
-const SLOT_KEYS = ['morning', 'afternoon', 'peak', 'night'] as const;
+export const SLOT_KEYS = ['night', 'morning', 'noon', 'afternoon', 'peak'] as const;
+
+function clampCount(n: number): number {
+  return Math.min(50, Math.max(0, Math.floor(n)));
+}
+
+function midCount(min: number, max: number): number {
+  return clampCount(Math.round((min + max) / 2));
+}
+
+/** 建房默认：上海时区五段，人数在区间内随机 */
+export const PLATFORM_DEFAULT_DAY_SLOTS: RobotDaySlot[] = [
+  { key: 'night', startHour: 0, endHour: 6, count: 40, countMin: 35, countMax: 45 },
+  { key: 'morning', startHour: 6, endHour: 10, count: 5, countMin: 3, countMax: 8 },
+  { key: 'noon', startHour: 10, endHour: 12, count: 8, countMin: 5, countMax: 12 },
+  { key: 'afternoon', startHour: 12, endHour: 18, count: 30, countMin: 25, countMax: 35 },
+  { key: 'peak', startHour: 18, endHour: 24, count: 45, countMin: 40, countMax: 50 },
+];
+
+export function platformDefaultDaySlots(): RobotDaySlot[] {
+  return PLATFORM_DEFAULT_DAY_SLOTS.map((s) => ({ ...s }));
+}
+
+export function platformDefaultRobotPlan(): NormalizedRobotPlan {
+  return normalizeRobotPlan({
+    scheme: 'CUSTOM',
+    betStyle: 'random',
+    intensity: 3,
+    winBias: 0,
+    robotCount: 50,
+    daySlots: platformDefaultDaySlots(),
+  });
+}
+
+export function offRobotPlan(): NormalizedRobotPlan {
+  return normalizeRobotPlan({ scheme: 'OFF', robotCount: 0, daySlots: platformDefaultDaySlots() });
+}
 
 /** 旧 key → 新 key（白天并入下午） */
 function migrateSlotKey(raw: string): RobotDaySlot['key'] | null {
@@ -65,18 +115,40 @@ function migrateSlotKey(raw: string): RobotDaySlot['key'] | null {
   return null;
 }
 
-/** 默认：上午 8–12、下午 12–18、高峰 18–24、夜间 0–8；高峰20→10/12/20/15 */
+export function slotRange(slot: Pick<RobotDaySlot, 'count' | 'countMin' | 'countMax'>): {
+  min: number;
+  max: number;
+} {
+  const hasMin = slot.countMin != null && Number.isFinite(Number(slot.countMin));
+  const hasMax = slot.countMax != null && Number.isFinite(Number(slot.countMax));
+  const fallback = clampCount(Number(slot.count) || 0);
+  const a = hasMin ? clampCount(Number(slot.countMin)) : fallback;
+  const b = hasMax ? clampCount(Number(slot.countMax)) : fallback;
+  return { min: Math.min(a, b), max: Math.max(a, b) };
+}
+
+/** 默认五段随机人数；robotCount<=0 时全关 */
 export function defaultDaySlots(robotCount: number): RobotDaySlot[] {
-  const peak = Math.min(50, Math.max(0, Math.floor(robotCount) || 0));
-  const morning = peak <= 0 ? 0 : Math.min(50, Math.max(1, Math.round((peak * 10) / 20)));
-  const afternoon = peak <= 0 ? 0 : Math.min(50, Math.max(1, Math.round((peak * 12) / 20)));
-  const night = peak <= 0 ? 0 : Math.min(50, Math.max(1, Math.round((peak * 15) / 20)));
-  return [
-    { key: 'morning', startHour: 8, endHour: 12, count: morning },
-    { key: 'afternoon', startHour: 12, endHour: 18, count: afternoon },
-    { key: 'peak', startHour: 18, endHour: 24, count: peak },
-    { key: 'night', startHour: 0, endHour: 8, count: night },
-  ];
+  if (robotCount <= 0) {
+    return platformDefaultDaySlots().map((s) => ({
+      ...s,
+      count: 0,
+      countMin: 0,
+      countMax: 0,
+    }));
+  }
+  return platformDefaultDaySlots();
+}
+
+function stableInt(min: number, max: number, seed: string): number {
+  if (min >= max) return min;
+  let h = 2166136261;
+  for (let i = 0; i < seed.length; i++) {
+    h ^= seed.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  const span = max - min + 1;
+  return min + (Math.abs(h) % span);
 }
 
 /** 当前小时是否落在 [start, end)（支持跨午夜） */
@@ -100,21 +172,27 @@ export function shanghaiHour(d = new Date()): number {
   return new Date(t).getUTCHours();
 }
 
-/** 按上海时区取当前时段托人数 */
-export function resolveActiveRobotCount(plan: NormalizedRobotPlan, now = new Date()): number {
+/** 按上海时区取当前时段托人数；有区间则约每 10 分钟在区间内稳住一个随机值 */
+export function resolveActiveRobotCount(
+  plan: NormalizedRobotPlan,
+  now = new Date(),
+  seed = '',
+): number {
   if (plan.scheme === 'OFF' || plan.robotCount <= 0) return 0;
   const h = shanghaiHour(now);
   for (const slot of plan.daySlots) {
-    if (hourInSlot(h, slot.startHour, slot.endHour)) {
-      return Math.min(50, Math.max(0, slot.count));
-    }
+    if (!hourInSlot(h, slot.startHour, slot.endHour)) continue;
+    const { min, max } = slotRange(slot);
+    if (min <= 0 && max <= 0) return 0;
+    const bucket = Math.floor((now.getTime() + TZ_OFFSET_MS) / (10 * 60 * 1000));
+    return stableInt(min, max, `${seed}:${slot.key}:${bucket}`);
   }
   return Math.min(50, Math.max(0, plan.robotCount));
 }
 
-/** 名册人数取各时段与基准的最大值，保证名字够用 */
+/** 名册人数取各时段上限与基准的最大值，保证名字够用 */
 export function rosterSizeFor(plan: NormalizedRobotPlan): number {
-  const slotMax = plan.daySlots.reduce((m, s) => Math.max(m, s.count), 0);
+  const slotMax = plan.daySlots.reduce((m, s) => Math.max(m, slotRange(s).max), 0);
   return Math.min(50, Math.max(plan.robotCount, slotMax, 0));
 }
 
@@ -170,10 +248,25 @@ function normalizeDaySlots(raw: unknown, robotCount: number): RobotDaySlot[] {
     }
     startHour = Math.min(23, Math.max(0, startHour));
     endHour = Math.min(24, Math.max(0, endHour));
-    count = Math.min(50, Math.max(0, count));
-    byKey.set(key, { key, startHour, endHour, count });
+    const range = slotRange({
+      count: Number.isFinite(count) ? clampCount(count) : fb.count,
+      countMin: row.countMin as number | undefined,
+      countMax: row.countMax as number | undefined,
+    });
+    byKey.set(key, {
+      key,
+      startHour,
+      endHour,
+      count: midCount(range.min, range.max),
+      countMin: range.min,
+      countMax: range.max,
+    });
   }
-  return SLOT_KEYS.map((k) => byKey.get(k) ?? fallback.find((s) => s.key === k)!);
+  return SLOT_KEYS.map((k) => {
+    const hit = byKey.get(k);
+    if (hit) return hit;
+    return { ...fallback.find((s) => s.key === k)! };
+  });
 }
 
 export function normalizeRobotPlan(raw: unknown, robotCountFallback?: number): NormalizedRobotPlan {
@@ -226,15 +319,23 @@ export function normalizeRobotPlan(raw: unknown, robotCountFallback?: number): N
 
   const daySlots = normalizeDaySlots(src.daySlots, robotCount);
   if (scheme === 'OFF') {
-    for (const s of daySlots) s.count = 0;
+    for (const s of daySlots) {
+      s.count = 0;
+      s.countMin = 0;
+      s.countMax = 0;
+    }
   }
+  const roster = Math.max(
+    robotCount,
+    ...daySlots.map((s) => slotRange(s).max),
+  );
 
   return {
     scheme,
     betStyle,
     intensity,
     winBias,
-    robotCount,
+    robotCount: scheme === 'OFF' ? 0 : Math.min(50, Math.max(0, roster)),
     remark: remark || undefined,
     amounts,
     plays,
