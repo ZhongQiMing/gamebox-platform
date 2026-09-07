@@ -68,8 +68,8 @@ router.beforeEach(async (to) => {
   const store = useAdminStore()
 
   /*
-   * 刷新页面后内存里的 profile 没了，但会话 Cookie 还在（JS 读不到它）。
-   * 所以「上次登录过」就先问一次服务端：Cookie 有效就恢复登录态，无效就当登出。
+   * 同一标签刷新后内存里的 profile 没了，但会话 Cookie 还在（JS 读不到它）。
+   * sessionStorage 里有「本标签登录过」才去问服务端；关标签再开标记没了，直接当登出。
    */
   if (store.hadSession && !store.profile) {
     try {

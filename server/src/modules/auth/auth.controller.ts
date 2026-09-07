@@ -5,7 +5,7 @@ import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { clearAuthCookies, setAuthCookies } from './auth-cookie';
 import { Public } from '../../common/decorators/public.decorator';
-import { IsString, IsOptional, MinLength, MaxLength } from 'class-validator';
+import { IsString, IsOptional, IsBoolean, MinLength, MaxLength } from 'class-validator';
 import { PASSWORD_MAX_LEN, PASSWORD_MIN_LEN } from '@gamebox/shared';
 import { extractClientIp } from '../../common/utils/client-ip';
 
@@ -21,6 +21,8 @@ export class RegisterDto {
 export class LoginDto {
   @IsString() @MaxLength(64) username!: string;
   @IsString() @MaxLength(128) password!: string;
+  /** false：会话 Cookie，关浏览器即失效。管理后台传这个；玩家网页版不传，默认持久。 */
+  @IsOptional() @IsBoolean() persist?: boolean;
 }
 
 @Controller('auth')
@@ -41,10 +43,15 @@ export class AuthController {
    *   管理后台 —— 用下面这两个 Cookie，忽略响应体里的 token
    * 一律下发 Cookie 是为了少一个「这次要不要下发」的判断分支；App 存了也不会用。
    */
-  private withCookies<T extends { token: string }>(res: Response, out: T) {
+  private withCookies<T extends { token: string }>(
+    res: Response,
+    out: T,
+    persist?: boolean,
+  ) {
     const csrf = setAuthCookies(res, out.token, {
       isProd: this.isProd,
       expiresIn: this.expiresIn,
+      persist,
     });
     return { ...out, csrfToken: csrf };
   }
@@ -72,7 +79,7 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const out = await this.auth.login(dto.username, dto.password, extractClientIp(req));
-    return this.withCookies(res, out);
+    return this.withCookies(res, out, dto.persist);
   }
 
   /**

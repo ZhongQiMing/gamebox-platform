@@ -43,18 +43,27 @@ export function newCsrfToken(): string {
 export function setAuthCookies(
   res: Response,
   token: string,
-  opts: { isProd: boolean; expiresIn: string },
+  opts: { isProd: boolean; expiresIn: string; persist?: boolean },
 ): string {
   const csrf = newCsrfToken();
-  const maxAge = maxAgeMs(opts.expiresIn);
-  const base = {
+  /*
+   * persist !== false：写 maxAge，关浏览器也还在（玩家网页版）。
+   * persist === false：会话 Cookie，关浏览器进程就掉（管理后台）。
+   */
+  const persist = opts.persist !== false;
+  const base: {
+    sameSite: 'strict';
+    secure: boolean;
+    path: string;
+    maxAge?: number;
+  } = {
     /* Strict：跨站请求一律不带，CSRF 的第一道闸 */
-    sameSite: 'strict' as const,
+    sameSite: 'strict',
     /* 生产必须 Secure；本地 http 调试下加了会导致浏览器直接丢弃 */
     secure: opts.isProd,
     path: '/',
-    maxAge,
   };
+  if (persist) base.maxAge = maxAgeMs(opts.expiresIn);
   res.cookie(AUTH_COOKIE, token, { ...base, httpOnly: true });
   /* 这个要给前端读，不能 httpOnly */
   res.cookie(CSRF_COOKIE, csrf, { ...base, httpOnly: false });

@@ -64,7 +64,10 @@ async function doLogin() {
   if (!await formRef.value?.validate().catch(() => false)) return
   loading.value = true
   try {
-    const res = await http.post<AuthResult, AuthResult>('/auth/login', form.value)
+    const res = await http.post<AuthResult, AuthResult>('/auth/login', {
+      ...form.value,
+      persist: false,
+    })
     if (!['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY', 'CS'].includes(res.user.role)) {
       ElMessage.error('该账号无控制台权限（需管理/总监/总代/代理/子账号/客服）')
       return
