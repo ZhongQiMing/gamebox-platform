@@ -1,7 +1,8 @@
 /**
  * 管理后台开奖图：路径与游戏内 / 玩家大厅同一套。
- * 不走 gameOrigin，后台同源代理 /games-assets 与 /images。
+ * 生产打到游戏 Origin（后台静态站没有 /games-assets）；开发仍走 Vite 同源代理。
  */
+import { adminStaticUrl } from '@/utils/adminStaticUrl'
 
 export type DrawKind = 'digit5' | 'dice3' | 'pk10' | 'lhc' | 'table' | 'fruit' | 'bcbm'
 
@@ -46,17 +47,17 @@ export function drawKindOf(gameCode: string): DrawKind | undefined {
 export function pk10BallUrl(gameKey: string, n: string) {
   const base = PK10_BALL_BASE[gameKey] || PK10_BALL_BASE['speed-racing']
   const num = Math.max(1, Math.min(10, Number(n) || 1))
-  return `${base}/ball-${String(num).padStart(2, '0')}.png`
+  return adminStaticUrl(`${base}/ball-${String(num).padStart(2, '0')}.png`)
 }
 
 export function kuai3DiceUrl(n: string) {
   const num = Math.max(1, Math.min(6, Number(n) || 1))
-  return `/games-assets/kuai3/assets/result/icon-${String(num).padStart(2, '0')}.png`
+  return adminStaticUrl(`/games-assets/kuai3/assets/result/icon-${String(num).padStart(2, '0')}.png`)
 }
 
 export function lhcBallUrl(n: string) {
   const num = Math.max(1, Math.min(49, Number(n) || 1))
-  return `/games-assets/lhc/assets/balls/ball_${String(num).padStart(2, '0')}.png`
+  return adminStaticUrl(`/games-assets/lhc/assets/balls/ball_${String(num).padStart(2, '0')}.png`)
 }
 
 export function lhcFootNums(nums: string[]): string[] {

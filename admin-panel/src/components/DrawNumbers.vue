@@ -66,6 +66,7 @@ import {
   parseDrawTokens,
   tableDrawBead,
 } from '@gamebox/shared'
+import { adminStaticUrlOrNull } from '@/utils/adminStaticUrl'
 import {
   drawKindOf,
   kuai3DiceUrl,
@@ -84,14 +85,14 @@ const lobbyKey = computed(() => lobbyDrawKey(props.gameCode))
 const kind = computed(() => drawKindOf(props.gameCode))
 const nums = computed(() => parseDrawTokens(props.draw))
 
-const fruitIcon = computed(() => fruitDrawIconPath(nums.value[0] || ''))
+const fruitIcon = computed(() => adminStaticUrlOrNull(fruitDrawIconPath(nums.value[0] || '')))
 const fruitText = computed(() => {
   const [head, ...rest] = nums.value
   const label = fruitDrawLabel(head || '')
   return [label || head, ...rest].filter(Boolean).join(' · ')
 })
 
-const bcbmIcon = computed(() => bcbmDrawIconPath(nums.value[0] || ''))
+const bcbmIcon = computed(() => adminStaticUrlOrNull(bcbmDrawIconPath(nums.value[0] || '')))
 const bcbmText = computed(() => {
   const [head, ...rest] = nums.value
   const label = bcbmDrawLabel(head || '')
