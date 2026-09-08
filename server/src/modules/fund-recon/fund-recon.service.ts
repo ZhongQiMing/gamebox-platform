@@ -49,7 +49,7 @@ export type ReconTrigger = 'cron' | 'manual' | 'gate';
  * 哪些检查项算「账本被破坏」，才有资格拦出款。
  *
  * 没进这个集合的项只告警：
- *  - credit_conservation：正常经营本就偏离（玩家赢=超发、输=少发），偏离量就是待结算超出
+ *  - credit_conservation：房间层恒等式，误伤会把全站出款停掉；不平先告警、再按房间查
  *  - frozen_orders：某一单审核流程卡住，是单点问题
  *  - swallowed_bets：是玩家损失，要立刻处理，但停掉全站出款并不能解决它
  * 拿正常波动去停全站出款，结果就是所有人天天点放行，闸门也就废了。
@@ -574,32 +574,6 @@ export class FundReconService {
   }
 
   /**
-   * 信用盘守恒。完整口径是：
-   *
-   *   剩余信用 + 玩家持分 + 客服未发出 = 合同额度 − 上家赢走的净额
-   *
-   * 「上家」= 飞盘时的平台，或总代坐庄时的总代。这两种情况下注码进出的都是
-   * 本房体系之外的口袋，所以左边会整体下降；代理自己坐庄、上下分、领回水、
-   * 划客服额度、挂靠佣金全都只是在体系内部挪，左边不动。
-   *
-   * ── 为什么不能只比「三项合计 vs 合同额度」 ──
-   *
-   * 那样比出来的偏离，绝大部分是**还没结账的正常输赢**，量级动辄几十万，
-   * 于是这一项长期挂着刺眼的「对不上」，而真出了错反而淹没在里面看不见。
-   * 更糟的是结账会把剩余信用无条件校准成「合同额度 − 玩家 − 客服」，
-   * 也就是说结完账那个偏离一定归零——所以旧口径**永远抓不到真错误**，
-   * 它测的其实是经营量，不是正确性。
-   *
-   * 另外旧口径读的是**房间代理**的剩余信用，可总代坐庄时钱进的是**总代**的额度，
-   * 于是玩家余额单边减少、代理这边没有对应增加，凭空看起来少了一笔。
-   * 结账公式早就为这件事改过了（占成不再用「合同额度 − 三项合计」算），
-   * 这里是最后一处还在用旧恒等式的地方。
-   *
-   * 现在改成拿注单反推：把自上次结账以来上家赢走的净额算出来，
-   * 能被它解释掉的偏离就是「待结算」，不报；解释不掉的那部分才是真的对不上。
-   * 这样一来「有告警」就真的等于「账错了」，而不是「该结账了」。
-   */
-  /**
    * 总代坐庄的钱有没有真进他账。
    *
    *   总代盘分账里 BET + WIN 的净额  ==  他坐庄那些注单的（下注额 − 派彩）
@@ -655,6 +629,28 @@ export class FundReconService {
     });
   }
 
+  /**
+   * 信用盘守恒。完整口径是：
+   *
+   *   剩余信用 + 玩家持分 + 客服未发出
+   *     = 合同额度 − 上家赢走的净额 + 已进盘分的整包/并账 + 平台打进本房的玩家回水
+   *
+   * 「上家」= 飞盘时的平台，或总代坐庄时的总代。这两种情况下注码进出的都是
+   * 本房体系之外的口袋，所以左边会整体下降。
+   *
+   * 代理自己坐庄、上下分、划客服额度、挂靠佣金（代理出、本房玩家进）
+   * 全都只是在体系内部挪，左边不动。
+   *
+   * 飞盘玩家回水不是内部挪：六点（或提前领）由平台打进玩家分，左边会涨。
+   * 代理整包回水已经走 AgentQuotaLedger.REBATE，算在「整包/并账」里；
+   * 玩家那一截若再漏掉，账面会比应有高出已领回水，对账项会一直红。
+   *
+   * 待开奖飞盘注：分已经从玩家扣走，派彩还是 0，必须算进「上家净额」，
+   * 否则挂机未开奖期间会假红。
+   *
+   * 只算上次结清之后：结账会把剩余信用校准成「合同额度 − 玩家 − 客服」，
+   * 再把老注单/老回水加进来就会重复。没结过账的从建房算起。
+   */
   private async checkCreditConservation(): Promise<ReconCheck> {
     /*
      * 容差：金额都是 Decimal(18,2) 精确运算，实测两间房分到分吻合。
@@ -704,15 +700,34 @@ export class FundReconService {
           AND q."createdAt" >= COALESCE(lsx.since, rx."createdAt")
         GROUP BY q."agentUserId"
       ),
+      player_in AS (
+        /* 平台打进本房玩家的回水（飞盘六点 / 关盘已预扣后的领取）。
+         * 代理盘分出的那一截已在 disk_extra 里（幂等键 :DISK），这里必须排除，否则左右各加一次。 */
+        SELECT a."roomId",
+               COALESCE(SUM(l.amount), 0) AS amt
+        FROM "PointsLedger" l
+        JOIN "PointsAccount" a
+          ON a.id = l."accountId"
+         AND a."ownerType" = 'PLAYER'
+        JOIN "Room" r3 ON r3.id = a."roomId"
+        LEFT JOIN last_settle ls3 ON ls3."roomId" = r3.id
+        WHERE l."bizType" = 'REBATE'
+          AND l.amount > 0
+          AND l."createdAt" >= COALESCE(ls3.since, r3."createdAt")
+          AND NOT EXISTS (
+            SELECT 1 FROM "AgentQuotaLedger" q
+            WHERE q."idempotencyKey" = l."idempotencyKey" || ':DISK'
+          )
+        GROUP BY a."roomId"
+      ),
       outside_house AS (
         /*
          * 「上家」赢走的净额：只算飞盘与总代坐庄。
          * 代理自己坐庄时钱在体系内部挪，不影响守恒式，必须排除。
          * 老注单没写 sitting，按 flying 兜底推断。
          *
-         * 只算**上次结清之后**的注单：结账会把剩余信用校准成
-         * 「合同额度 − 玩家 − 客服」，等于把此前的输赢一次性抹平，
-         * 再把老注单算进来就会重复计一遍。没结过账的从建房算起。
+         * PENDING 派彩仍为 0，但注码已从玩家扣走，必须算进去。
+         * 归期用 COALESCE(开奖时间, 下注时间)，否则待开奖行的 settledAt 为空会被整段丢掉。
          */
         SELECT r2."id" AS room_id,
                COALESCE(SUM(b."amount" - b."payout"), 0) AS house_net
@@ -720,46 +735,46 @@ export class FundReconService {
         LEFT JOIN last_settle ls ON ls."roomId" = r2."id"
         LEFT JOIN "Bet" b
           ON NULLIF(b.payload->'fly'->>'roomId', '') = r2."id"
-         AND b."status" IN ('WON', 'LOST')
-         /* 与结账同一把尺：按开奖时间归期，结完的那一期不会再被算一遍 */
-         AND b."settledAt" >= COALESCE(ls.since, r2."createdAt")
+         AND b."status" IN ('WON', 'LOST', 'PENDING')
+         AND COALESCE(b."settledAt", b."createdAt") >= COALESCE(ls.since, r2."createdAt")
          AND COALESCE(
                b.payload->'fly'->>'sitting',
                CASE WHEN b.payload->'fly'->>'flying' = 'true' THEN 'PLATFORM' ELSE 'AGENT' END
              ) IN ('PLATFORM', 'GENERAL')
         WHERE r2."bookMode" = 'CREDIT' AND r2."status" <> 'CLOSED'
         GROUP BY r2."id"
+      ),
+      scored AS (
+        SELECT r."id"                                          AS id,
+               r."name" || '（' || r."roomNo" || '）'           AS label,
+               (ag."pointsQuota"
+                 + COALESCE(rp.player_sum, 0)
+                 + COALESCE(cs.cs_sum, 0))::float8             AS actual,
+               (r."creditLimit"
+                 - COALESCE(oh.house_net, 0)
+                 + COALESCE(ex.extra, 0)
+                 + COALESCE(pi.amt, 0))::float8                AS expected
+        FROM "Room" r
+        JOIN "Agent" ag ON ag."id" = r."ownerAgentId"
+        LEFT JOIN room_players rp ON rp."roomId" = r."id"
+        LEFT JOIN agent_cs cs ON cs.agent_user_id = ag."userId"
+        LEFT JOIN outside_house oh ON oh.room_id = r."id"
+        LEFT JOIN disk_extra ex ON ex.agent_user_id = ag."userId"
+        LEFT JOIN player_in pi ON pi."roomId" = r."id"
+        WHERE r."bookMode" = 'CREDIT'
+          AND r."status" <> 'CLOSED'
+          AND r."creditLimit" > 0
       )
-      SELECT r."id"                                          AS id,
-             r."name" || '（' || r."roomNo" || '）'           AS label,
-             (ag."pointsQuota"
-               + COALESCE(rp.player_sum, 0)
-               + COALESCE(cs.cs_sum, 0))::float8             AS actual,
-             /* 按注单应为 = 合同额度 − 上家赢走的净额 + 已进盘分的整包/并账 */
-             (r."creditLimit" - COALESCE(oh.house_net, 0) + COALESCE(ex.extra, 0))::float8 AS expected
-      FROM "Room" r
-      JOIN "Agent" ag ON ag."id" = r."ownerAgentId"
-      LEFT JOIN room_players rp ON rp."roomId" = r."id"
-      LEFT JOIN agent_cs cs ON cs.agent_user_id = ag."userId"
-      LEFT JOIN outside_house oh ON oh.room_id = r."id"
-      LEFT JOIN disk_extra ex ON ex.agent_user_id = ag."userId"
-      WHERE r."bookMode" = 'CREDIT'
-        AND r."status" <> 'CLOSED'
-        AND r."creditLimit" > 0
-        AND ABS(
-              ag."pointsQuota" + COALESCE(rp.player_sum, 0) + COALESCE(cs.cs_sum, 0)
-              - (r."creditLimit" - COALESCE(oh.house_net, 0) + COALESCE(ex.extra, 0))
-            ) > ${tolerance}
-      ORDER BY ABS(
-                 ag."pointsQuota" + COALESCE(rp.player_sum, 0) + COALESCE(cs.cs_sum, 0)
-                 - (r."creditLimit" - COALESCE(oh.house_net, 0) + COALESCE(ex.extra, 0))
-               ) DESC
+      SELECT id, label, actual, expected
+      FROM scored
+      WHERE ABS(actual - expected) > ${tolerance}
+      ORDER BY ABS(actual - expected) DESC
       LIMIT ${MAX_ROWS + 1}
     `;
     return this.pack({
       key: 'credit_conservation',
       label: '信用盘额度与注单不符',
-      hint: '代理侧合计（剩余额度＋玩家持分＋客服额度）与注单推算值不符，未结账输赢已剔除，须技术核对。',
+      hint: '代理侧合计（剩余额度＋玩家持分＋客服额度）与注单推算值不符。飞盘玩家回水、待开奖注已计入应有值；仍对不上须技术核对。',
       scope: 'NONE',
       rows,
     });

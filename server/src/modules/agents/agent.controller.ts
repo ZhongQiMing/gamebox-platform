@@ -8,6 +8,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { HangService } from './hang.service';
+import { shanghaiRangeBounds } from '../../common/shanghai-range';
 
 class HangDto {
   @IsString()
@@ -55,8 +56,7 @@ export class AgentController {
       },
     });
 
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
+    const [todayStart] = shanghaiRangeBounds('today');
 
     const [directCount, teamCount, totalAgg, todayAgg] = await Promise.all([
       this.prisma.user.count({ where: { parentId: u.id } }),

@@ -324,7 +324,7 @@ import DeskDialog from '@/components/DeskDialog.vue'
 import { consoleApi, type DashboardData, type ReportSummary } from '@/api/console'
 import { useAdminStore } from '@/stores/admin'
 import { CLOSED_FLOW_COLOR } from '@/utils/labels'
-import { formatMoney, isGeneralSide } from '@gamebox/shared'
+import { formatMoney, formatShanghaiDateTimeShort, isGeneralSide } from '@gamebox/shared'
 
 type TrendPoint = { date: string; betFlow: number; pnl: number; newUsers: number }
 type Kpi = { label: string; value: string; color: string; hot?: boolean }
@@ -422,8 +422,7 @@ function barPct(v: number, max: number) {
   return `${Math.max(p, v > 0 ? 4 : 0)}%`
 }
 function fmtTime(iso: string) {
-  const d = new Date(iso)
-  return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  return formatShanghaiDateTimeShort(iso)
 }
 function shortTarget(t: string) {
   if (!t) return ''

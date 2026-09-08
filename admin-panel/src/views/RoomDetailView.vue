@@ -1453,7 +1453,7 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { formatMoney, isGeneralSide, OPS_PASSWORD_HINT, validateOpsPassword } from '@gamebox/shared'
+import { formatMoney, formatShanghaiDate, formatShanghaiDateTime, formatShanghaiDateTimeShort, isGeneralSide, OPS_PASSWORD_HINT, validateOpsPassword } from '@gamebox/shared'
 import DeskDialog from '@/components/DeskDialog.vue'
 import {
   consoleApi,
@@ -2146,22 +2146,14 @@ function pnlColor(n?: number | null) {
   return n >= 0 ? '#67c23a' : '#f56c6c'
 }
 function formatDate(v?: string | null) {
-  if (!v) return '—'
-  return String(v).slice(0, 10)
+  return formatShanghaiDate(v)
 }
 function formatDt(v?: string | null) {
-  if (!v) return '—'
-  const s = String(v)
-  if (s.length >= 16) return `${s.slice(0, 10)} ${s.slice(11, 16)}`
-  return s.slice(0, 10)
+  return formatShanghaiDateTime(v)
 }
 /** 经营概况右侧流水：MM-DD HH:mm，避免撑出横向滚动 */
 function formatDtShort(v?: string | null) {
-  if (!v) return '—'
-  const s = String(v)
-  if (s.length >= 16) return `${s.slice(5, 10)} ${s.slice(11, 16)}`
-  if (s.length >= 10) return s.slice(5, 10)
-  return s
+  return formatShanghaiDateTimeShort(v)
 }
 
 async function loadStaff() {

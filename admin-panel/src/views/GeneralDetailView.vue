@@ -534,7 +534,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import DeskDialog from '@/components/DeskDialog.vue'
 import { consoleApi, type AgentAuditRow, type AgentDetail, type ConsoleRoom, type GeneralOwnerRow, type ReportByRoomRow, type ReportSummary } from '@/api/console'
-import { formatMoney, formatSignedMoney } from '@gamebox/shared'
+import { formatMoney, formatShanghaiDateTime, formatShanghaiDateTimeShort, formatSignedMoney } from '@gamebox/shared'
 import { useAdminStore } from '@/stores/admin'
 import {
   CLOSED_FLOW_COLOR,
@@ -821,16 +821,10 @@ function pnlColor(n?: number | null) {
   return 'var(--el-text-color-regular)'
 }
 function formatDt(v?: string | null) {
-  if (!v) return '—'
-  const s = String(v)
-  if (s.length >= 16) return `${s.slice(0, 10)} ${s.slice(11, 16)}`
-  return s.slice(0, 10)
+  return formatShanghaiDateTime(v)
 }
 function formatDtShort(v?: string | null) {
-  if (!v) return '—'
-  const s = String(v)
-  if (s.length >= 16) return `${s.slice(5, 10)} ${s.slice(11, 16)}`
-  return s.slice(0, 10)
+  return formatShanghaiDateTimeShort(v)
 }
 function ovSummaryCols(n: number) {
   const cols = Math.max(1, Math.min(6, n || 1))

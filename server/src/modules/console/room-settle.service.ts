@@ -83,6 +83,47 @@ export function settleCycleLabel(c: SettleCycle): string {
 }
 
 /**
+ * 「上期」要不要改指最近一张已结单（提前结账封在本期里的那一段）。
+ *
+ * 日历上一期若已经结清、或关账单上有流水/盈亏/交割额，必须留着——那是真正待结/已结的上一期。
+ * 周一 cron 会给空周写一张全 0 的 CLOSED，那种空单不能挡住回放，否则刚提前结完账，
+ * 「上期」会跳到上周那张 0，刚封的数字只剩结清历史里能看见。
+ */
+export function shouldReplayLatestSettledAsLast(opts: {
+  calendarStatus?: string | null;
+  calendarBetFlow?: number;
+  calendarHousePnl?: number;
+  calendarSettlePay?: number;
+}): boolean {
+  if (opts.calendarStatus === 'SETTLED') return false;
+  const n = (v?: number) => Number(v || 0);
+  if (n(opts.calendarBetFlow) !== 0 || n(opts.calendarHousePnl) !== 0 || n(opts.calendarSettlePay) !== 0) {
+    return false;
+  }
+  return true;
+}
+
+/** 空的日历上周 vs 最近已结单：后者 weekStart 不同就改指过去，不再跟 JS 日历午夜比时间戳 */
+export function pickReplaySettledSheet<T extends { weekStart: Date; weekEnd: Date }>(opts: {
+  calendarStatus?: string | null;
+  calendarBetFlow?: number;
+  calendarHousePnl?: number;
+  calendarSettlePay?: number;
+  calendarWeekStart?: Date | null;
+  latestSettled: T | null;
+}): T | null {
+  if (!opts.latestSettled) return null;
+  if (!shouldReplayLatestSettledAsLast(opts)) return null;
+  if (
+    opts.calendarWeekStart
+    && opts.latestSettled.weekStart.getTime() === opts.calendarWeekStart.getTime()
+  ) {
+    return null;
+  }
+  return opts.latestSettled;
+}
+
+/**
  * 房间月费进哪一期结账。现金盘与信用盘同一套口径：
  *
  * 到期时间（Room.nextBillAt）的锚点是建房那一刻，建完立刻到期，
@@ -697,28 +738,58 @@ export class RoomSettleService {
           /* 提前结账封的不是整周，按单子上记的收尾时间取，别把区间拉到周末去 */
           const sheet = await this.prisma.roomWeekSettle.findUnique({
             where: { roomId_weekStart: { roomId, weekStart: ws } },
-            select: { weekEnd: true },
+            select: {
+              weekStart: true, weekEnd: true, status: true,
+              betFlow: true, housePnl: true, settlePay: true,
+            },
           });
-          periodEnd = sheet?.weekEnd
-            ?? (ws.getTime() === last.periodStart.getTime()
-              ? last.periodEnd
-              : settlePeriodEndFor(cycle, ws));
+          /*
+           * 前端会把 overview.lastWeek.weekStart 原样传回来。
+           * 只要钉死的是 cron 全 0 关账单，就改指最近已结单。
+           * 不拿 ws 去跟 shanghaiSettleBounds 的午夜比相等——Prisma 无时区列会差 8 小时。
+           */
+          const replay = pickReplaySettledSheet({
+            calendarStatus: sheet?.status,
+            calendarBetFlow: sheet ? Number(sheet.betFlow) : undefined,
+            calendarHousePnl: sheet ? Number(sheet.housePnl) : undefined,
+            calendarSettlePay: sheet ? Number(sheet.settlePay) : undefined,
+            calendarWeekStart: sheet?.weekStart ?? ws,
+            latestSettled: await this.lastSettledSheet(roomId),
+          });
+          if (replay) {
+            periodStart = replay.weekStart;
+            periodEnd = replay.weekEnd;
+          } else {
+            periodEnd = sheet?.weekEnd
+              ?? (ws.getTime() === last.periodStart.getTime()
+                ? last.periodEnd
+                : settlePeriodEndFor(cycle, ws));
+          }
         }
       } else {
         /*
-         * 「上一期」按日历取常常是空的：提前结账封的那一段落在本期里，
-         * 日历上一期连一张单都没有。日历上一期没账单时改成回放最近一张已结单，
-         * 按它自己的起止重算——注单不会倒着变，数跟当时封的一样。
+         * 「上一期」按日历取常常是空的：提前结账封的那一段落在本期里。
+         * 日历上周若只是 cron 写的全 0 关账单，改成回放最近一张已结单。
+         * 不再拿 JS 上海午夜去跟 Prisma 时间戳比相等——时区差 8 小时会让回放永远打不着。
          */
         const onCalendar = await this.prisma.roomWeekSettle.findUnique({
           where: { roomId_weekStart: { roomId, weekStart: last.periodStart } },
-          select: { id: true },
+          select: {
+            weekStart: true, weekEnd: true, status: true,
+            betFlow: true, housePnl: true, settlePay: true,
+          },
         });
-        const lastSettled = onCalendar ? null : await this.lastSettledSheet(roomId);
-        /* 只在「最近那张单比日历上一期还新」时改指过去，免得盖掉真正待结的上一期 */
-        if (lastSettled && lastSettled.weekEnd.getTime() > last.periodEnd.getTime()) {
-          periodStart = lastSettled.weekStart;
-          periodEnd = lastSettled.weekEnd;
+        const replay = pickReplaySettledSheet({
+          calendarStatus: onCalendar?.status,
+          calendarBetFlow: onCalendar ? Number(onCalendar.betFlow) : undefined,
+          calendarHousePnl: onCalendar ? Number(onCalendar.housePnl) : undefined,
+          calendarSettlePay: onCalendar ? Number(onCalendar.settlePay) : undefined,
+          calendarWeekStart: onCalendar?.weekStart ?? last.periodStart,
+          latestSettled: await this.lastSettledSheet(roomId),
+        });
+        if (replay) {
+          periodStart = replay.weekStart;
+          periodEnd = replay.weekEnd;
         }
       }
     } else {
@@ -1619,12 +1690,23 @@ export class RoomSettleService {
     const lastSplit = this.agentFlySplit(lastAgg, share, generalShareRate);
 
     /*
-     * 日历上一期没账单时，指向最近那张更新的已结单（提前结账封的那一段就落在本期里），
-     * 否则「上期」永远是空的，标签也永远显示未结。
+     * 日历上周若只是 cron 空关账单，指向最近那张更新的已结单
+     * （提前结账封的那一段就落在本期里），否则「上期」全是 0。
      */
-    const lastRow =
-      histMap.get(last.periodStart.toISOString())
-      ?? history.find((h) => h.status === 'SETTLED' && h.weekEnd.getTime() > last.periodEnd.getTime());
+    const calendarLast = histMap.get(last.periodStart.toISOString())
+      ?? history.find((h) => fmtSh(h.weekStart) === fmtSh(last.periodStart));
+    const newestSettled = [...history]
+      .filter((h) => h.status === 'SETTLED')
+      .sort((a, b) => b.weekEnd.getTime() - a.weekEnd.getTime())[0] ?? null;
+    const replay = pickReplaySettledSheet({
+      calendarStatus: calendarLast?.status,
+      calendarBetFlow: calendarLast ? Number(calendarLast.betFlow) : undefined,
+      calendarHousePnl: calendarLast ? Number(calendarLast.housePnl) : undefined,
+      calendarSettlePay: calendarLast ? Number(calendarLast.settlePay) : undefined,
+      calendarWeekStart: calendarLast?.weekStart ?? last.periodStart,
+      latestSettled: newestSettled,
+    });
+    const lastRow = replay ?? calendarLast ?? newestSettled;
     const lastFrom = lastRow?.weekStart ?? last.periodStart;
     const lastTo = lastRow?.weekEnd ?? last.periodEnd;
     const lastStatus = lastRow?.status

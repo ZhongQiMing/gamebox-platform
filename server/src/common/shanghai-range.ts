@@ -1,4 +1,10 @@
-/** 上海时区日界工具：与前端 timeRange / 回水结算对齐 */
+/**
+ * 上海时区日界工具：与前端 timeRange / 回水结算对齐。
+ *
+ * 这里算出的 Date 是「上海 00:00」对应的 UTC 瞬间。
+ * Prisma DateTime 若是 timestamp without time zone，Postgres 会话时区必须是 UTC，
+ * 否则比较时会被再加 8 小时，凌晨数据全部记到昨天（见 prisma/pg-utc-timezone.ts）。
+ */
 
 export const SHANGHAI_TZ_OFFSET_MS = 8 * 3600 * 1000;
 const DAY_MS = 86400000;

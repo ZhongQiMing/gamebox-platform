@@ -5,7 +5,11 @@
  * 后一半的流水既不进这期也不进下期，等于凭空少算一截钱，
  * 而且要等代理对账时才发现。四类边界（月末 31/30、2 月、跨年）都钉住。
  */
-import { settlePeriodEndFor } from './room-settle.service';
+import {
+  pickReplaySettledSheet,
+  settlePeriodEndFor,
+  shouldReplayLatestSettledAsLast,
+} from './room-settle.service';
 
 const SH_MS = 8 * 3600 * 1000;
 
@@ -78,5 +82,88 @@ describe('settlePeriodEndFor', () => {
         }
       }
     }
+  });
+});
+
+describe('shouldReplayLatestSettledAsLast', () => {
+  it('日历上周是 cron 全 0 关账单时，上期改指最近一张已结单', () => {
+    expect(shouldReplayLatestSettledAsLast({
+      calendarStatus: 'CLOSED',
+      calendarBetFlow: 0,
+      calendarHousePnl: 0,
+      calendarSettlePay: 0,
+    })).toBe(true);
+  });
+
+  it('日历上周没有账单时同样回放', () => {
+    expect(shouldReplayLatestSettledAsLast({})).toBe(true);
+  });
+
+  it('日历上周已经结清则不回放，避免盖掉真正的上一期', () => {
+    expect(shouldReplayLatestSettledAsLast({
+      calendarStatus: 'SETTLED',
+      calendarBetFlow: 0,
+    })).toBe(false);
+  });
+
+  it('日历上周关账单上有流水则不回放', () => {
+    expect(shouldReplayLatestSettledAsLast({
+      calendarStatus: 'CLOSED',
+      calendarBetFlow: 1000,
+    })).toBe(false);
+  });
+});
+
+describe('pickReplaySettledSheet', () => {
+  const calendarStart = sh(2026, 8, 17);
+  const calendarEnd = sh(2026, 8, 24);
+  const settled = {
+    weekStart: sh(2026, 8, 24),
+    weekEnd: new Date(Date.UTC(2026, 7, 29, 14, 5, 0)),
+  };
+  const emptyClosed = {
+    calendarStatus: 'CLOSED' as const,
+    calendarBetFlow: 0,
+    calendarHousePnl: 0,
+    calendarSettlePay: 0,
+  };
+
+  it('前端钉死日历上周全 0 关账单时，改指最近已结单，不要求钉死时间戳等于 JS 日历午夜', () => {
+    const pinned = new Date('2026-08-17T00:00:00.000Z');
+    expect(pinned.getTime()).not.toBe(calendarStart.getTime());
+    expect(pickReplaySettledSheet({
+      ...emptyClosed,
+      calendarWeekStart: pinned,
+      latestSettled: settled,
+    })).toEqual(settled);
+  });
+
+  it('已结单 weekEnd 不晚于日历上周终点时仍回放（旧逻辑要求 weekEnd > periodEnd，时区对齐时会打不着）', () => {
+    const settledEqCalendarEnd = {
+      weekStart: sh(2026, 8, 24),
+      weekEnd: calendarEnd,
+    };
+    expect(settledEqCalendarEnd.weekEnd.getTime()).not.toBeGreaterThan(calendarEnd.getTime());
+    expect(pickReplaySettledSheet({
+      ...emptyClosed,
+      calendarWeekStart: calendarStart,
+      latestSettled: settledEqCalendarEnd,
+    })).toEqual(settledEqCalendarEnd);
+  });
+
+  it('钉死的就是那张已结单时不改指', () => {
+    expect(pickReplaySettledSheet({
+      calendarStatus: 'SETTLED',
+      calendarWeekStart: settled.weekStart,
+      latestSettled: settled,
+    })).toBeNull();
+  });
+
+  it('没有已结单时不改指', () => {
+    expect(pickReplaySettledSheet({
+      ...emptyClosed,
+      calendarWeekStart: calendarStart,
+      latestSettled: null,
+    })).toBeNull();
   });
 });

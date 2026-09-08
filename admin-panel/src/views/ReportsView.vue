@@ -743,7 +743,7 @@ import {
   type ReportRoomBetRow,
   type ReportSummary,
 } from '@/api/console'
-import { formatMoney, isGeneralSide } from '@gamebox/shared'
+import { formatMoney, formatShanghaiDateTime, formatShanghaiDateTimeShort, isGeneralSide } from '@gamebox/shared'
 import { useAdminStore } from '@/stores/admin'
 import { CLOSED_FLOW_COLOR, GAME_OPTIONS, gameLabel, type KpiChip } from '@/utils/labels'
 
@@ -889,15 +889,10 @@ function pnlColor(n?: number | null) {
   return n >= 0 ? '#67c23a' : '#f56c6c'
 }
 function formatDt(v?: string | null) {
-  if (!v) return '—'
-  return String(v).replace('T', ' ').slice(0, 19)
+  return formatShanghaiDateTime(v)
 }
 function formatDtShort(v?: string | null) {
-  if (!v) return '—'
-  const s = String(v)
-  if (s.length >= 16) return `${s.slice(5, 10)} ${s.slice(11, 16)}`
-  if (s.length >= 10) return s.slice(5, 10)
-  return s
+  return formatShanghaiDateTimeShort(v)
 }
 function roomStatusText(s: string) {
   const map: Record<string, string> = {

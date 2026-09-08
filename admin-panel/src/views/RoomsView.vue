@@ -631,7 +631,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { formatMoney, isGeneralSide, OPS_PASSWORD_HINT, validateOpsPassword } from '@gamebox/shared'
+import { formatMoney, formatShanghaiDate, isGeneralSide, OPS_PASSWORD_HINT, validateOpsPassword } from '@gamebox/shared'
 import PageHeader from '@/components/PageHeader.vue'
 import DeskDialog from '@/components/DeskDialog.vue'
 import { consoleApi, type ConsoleRoom, type WalletMe } from '@/api/console'
@@ -1031,10 +1031,7 @@ function settleShort(row: ConsoleRoom) {
   return '礼拜一'
 }
 function formatDate(v?: string | null) {
-  if (!v) return '—'
-  const s = String(v)
-  if (s.length >= 16) return `${s.slice(0, 10)} ${s.slice(11, 16)}`
-  return s.slice(0, 10)
+  return formatShanghaiDate(v)
 }
 async function copyText(text: string) {
   try {
