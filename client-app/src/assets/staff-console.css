@@ -16,7 +16,9 @@
 
 /* 顶栏：显示标题；返回更醒目；刷新做成右侧金 pill，与返回对称 */
 .deco-bg .staff-console-page .app-bar {
+  padding-top: var(--safe-top);
   padding-right: 72px;
+  min-height: calc(64px + var(--safe-top));
 }
 /*
  * 运营端页面标题的定位。外观（字号、字距、金色渐变）在 common.css 里与玩家端的
@@ -26,6 +28,8 @@
 .deco-bg .staff-console-page .app-bar .title {
   visibility: visible !important;
   position: absolute;
+  top: var(--safe-top);
+  height: 64px;
   left: 64px;
   right: 64px;
   text-align: center;
@@ -40,7 +44,7 @@
 .deco-bg .staff-console-page .app-bar .back {
   width: 44px;
   height: 44px;
-  top: 10px;
+  top: calc(10px + var(--safe-top));
   left: 10px;
   filter: drop-shadow(0 0 8px rgba(244, 211, 107, 0.55)) brightness(1.2);
 }
@@ -92,6 +96,9 @@
   transform: scale(0.96);
   filter: brightness(1.18);
   border-color: rgba(255, 244, 194, 0.85);
+}
+.staff-console-page .app-bar .right.sc-bar-act {
+  top: calc(11px + var(--safe-top));
 }
 
 .sc-welcome {

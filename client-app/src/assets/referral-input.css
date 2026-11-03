@@ -86,7 +86,7 @@ body.referral-bg::before {
 
 .page-settings-fixed {
   position: fixed;
-  top: 12px;
+  top: calc(12px + var(--safe-top));
   right: 60px;
   z-index: 100;
   width: 40px;

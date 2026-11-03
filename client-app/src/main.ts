@@ -11,6 +11,9 @@ import { syncApiClients } from './api/apiBase'
 import { probeAllOrigins } from './utils/originPool'
 import { applyLiveGameOrigin } from './utils/gameOrigin'
 import { loadWebFontsAfterPaint } from './utils/loadWebFonts'
+import { installIosSafeArea } from './utils/iosSafeArea'
+
+installIosSafeArea()
 
 async function bootstrap() {
   /*

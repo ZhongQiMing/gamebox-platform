@@ -21,6 +21,9 @@ img {
 :root {
   /* 底栏实高。页面底部避让按它算，改这里就够，别在各页另写数字 */
   --tabbar-h: 60px;
+  /* 苹果灵动岛 / Home 条。默认跟系统走，iOS 读不到时由 iosSafeArea 写上具体像素 */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
 
   /*
    * 屏幕级装饰层（四角卷草、皇冠）的底部收边位置。
@@ -281,7 +284,7 @@ body.deco-bg .page { position: relative; z-index: 1; }
 .deco-bg .app-bar .back,
 .deco-bg .brand-bar .back-btn {
   position: absolute;        /* 脱离父容器流，钉到页面左上角 */
-  top: 12px;
+  top: calc(12px + var(--safe-top));
   left: 12px;
   z-index: 5;
   margin: 0;
@@ -420,7 +423,7 @@ a:hover { color: var(--gold-bright); }
 .page-title {
   height: 48px;
   /* 左右各让出一颗 40px fixed 顶角按钮加安全距；上 8 使标题中线与按钮中线对齐 */
-  margin: 8px 64px 16px;
+  margin: calc(8px + var(--safe-top)) 64px 16px;
 }
 
 /* ============ 屏幕级 fixed 顶角金圈按钮（任何页面都能用，无需 .deco-bg） ============
@@ -432,7 +435,7 @@ a:hover { color: var(--gold-bright); }
 .page-back-fixed,
 .page-logout-fixed {
   position: fixed;
-  top: 12px;
+  top: calc(12px + var(--safe-top));
   z-index: 100;
   width: 40px;
   height: 40px;
@@ -1622,15 +1625,16 @@ a:hover { color: var(--gold-bright); }
 
 /* 游戏内全屏子页没有底栏，.page 也就没有那份 padding，安全区由占位块自己顶 */
 body:not(.has-tabbar) .lobby-spacer {
-  height: max(16px, env(safe-area-inset-bottom, 0px));
+  height: max(16px, var(--safe-bottom));
 }
 
 .lobby-tabbar {
   position: fixed;
   left: 0; right: 0; bottom: 0;
   display: flex;
-  height: var(--tabbar-h);
-  padding-bottom: env(safe-area-inset-bottom, 0);
+  /* 60px 留给图标和文字，Home 条的高度另加在下面，不能挤进这 60px */
+  height: calc(var(--tabbar-h) + var(--safe-bottom));
+  padding-bottom: var(--safe-bottom);
   /* 原来是 0.95/0.98 半透明，滚上来的文字会从底栏后面透出来，改成不透明 */
   background:
     linear-gradient(180deg, rgb(28, 20, 12) 0%, rgb(15, 10, 6) 100%);
@@ -1705,11 +1709,11 @@ body:not(.has-tabbar) .lobby-spacer {
 
 /* 挂了底栏就给 .page 留出底栏那么高的 padding —— 全站唯一一处底部避让，别再另加 */
 body.has-tabbar .page {
-  padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0));
+  padding-bottom: calc(var(--tabbar-h) + var(--safe-bottom));
 }
 /* 同时把屏幕级装饰层的底部收边抬到底栏上沿，见 :root 里 --deco-bottom 的说明 */
 body.has-tabbar {
-  --deco-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px));
+  --deco-bottom: calc(var(--tabbar-h) + var(--safe-bottom));
 }
 
 /* ============ 时间筛选按钮（今日/昨日/本周/上周/本月） ============
