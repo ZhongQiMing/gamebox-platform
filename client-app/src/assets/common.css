@@ -4,6 +4,10 @@
 
 /* 壳是 App：长按不要出系统的复制/选择栏。输入框仍可长按粘贴。
    iPhone 只写在 html 上压不住子元素，必须铺到每一个节点。 */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
 html, body, #app, #app * {
   -webkit-user-select: none;
   user-select: none;

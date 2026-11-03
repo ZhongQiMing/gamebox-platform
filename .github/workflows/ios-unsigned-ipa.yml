@@ -32,6 +32,14 @@ jobs:
           pnpm --filter @gamebox/shared build
           pnpm --filter @gamebox/client-app exec cap add ios
           pnpm --filter @gamebox/client-app app:release:ios
+          # 安卓 MainActivity 里的壳行为写进苹果工程。cap add 会覆盖 ios/，所以每次生成后再补。
+          DELEGATE=client-app/ios/App/App/AppDelegate.swift
+          STORY=client-app/ios/App/App/Base.lproj/Main.storyboard
+          grep -q 'import WebKit' "$DELEGATE" || sed -i '' '1s/^/import WebKit\n/' "$DELEGATE"
+          cat client-app/ios-extra/GoldHubViewController.swift >> "$DELEGATE"
+          sed -i '' 's/customClass="CAPBridgeViewController" customModule="Capacitor"/customClass="GoldHubViewController" customModule="App"/' "$STORY"
+          grep -q 'class GoldHubViewController' "$DELEGATE"
+          grep -q 'customClass="GoldHubViewController"' "$STORY"
 
       - name: Compile unsigned iOS app
         working-directory: client-app/ios/App
