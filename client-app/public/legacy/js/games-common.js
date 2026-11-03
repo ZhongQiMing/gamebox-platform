@@ -19,6 +19,18 @@
 
   window.App = window.App || {}
 
+  /* iPhone 长按图片和聊天气泡会出复制条。输入框除外。 */
+  ;(function blockCallout() {
+    const style = document.createElement('style')
+    style.textContent = 'html,body,body *{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}input,textarea,[contenteditable="true"]{-webkit-user-select:text;user-select:text;-webkit-touch-callout:default}'
+    document.head.appendChild(style)
+    document.addEventListener('contextmenu', function (ev) {
+      const t = ev.target
+      if (t && t.closest && t.closest('input, textarea, [contenteditable="true"]')) return
+      ev.preventDefault()
+    }, true)
+  })()
+
   /**
    * 单笔上下分上限，与 @gamebox/shared 的 PLAYER_FUND_MAX 一致。
    * 各游戏聊天室只卡了最低额，最高额原来要等服务端拒绝才知道；
@@ -133,8 +145,10 @@
     }
   })()
 
-  App.getUser = function () {
+  App._user = null
 
+  App.getUser = function () {
+    if (App._user && App._user.uid) return App._user
     try {
       const raw = localStorage.getItem('gamebox_user')
       if (raw) {
@@ -150,7 +164,10 @@
   }
 
   App.setUser = function (user) {
-    localStorage.setItem('gamebox_user', JSON.stringify(user))
+    App._user = user
+    try {
+      localStorage.setItem('gamebox_user', JSON.stringify(user))
+    } catch (_) { /* iPhone 里游戏页经常写不进本地存储，认人改走内存 */ }
   }
 
   /** 只读缓存；uid 参数保留兼容，忽略 */

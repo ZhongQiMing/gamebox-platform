@@ -164,6 +164,7 @@ services:
     volumes:
       - /opt/gamebox-data/admin-dist:/usr/share/nginx/html/admin:ro
       - /opt/gamebox-data/game-hotfix/room-chat.js:/usr/share/nginx/html/games-assets/_lottery-common/room-chat.js:ro
+      - /opt/gamebox-data/game-hotfix/legacy/games-common.js:/usr/share/nginx/html/legacy/js/games-common.js:ro
       - /opt/gamebox-data/game-hotfix/ssc/index.html:/usr/share/nginx/html/games-assets/ssc/index.html:ro
       - /opt/gamebox-data/game-hotfix/ssc/js/ssc.js:/usr/share/nginx/html/games-assets/ssc/js/ssc.js:ro
       - /opt/gamebox-data/game-hotfix/ffc/index.html:/usr/share/nginx/html/games-assets/ffc/index.html:ro

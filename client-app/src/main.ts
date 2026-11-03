@@ -15,6 +15,14 @@ import { installIosSafeArea } from './utils/iosSafeArea'
 
 installIosSafeArea()
 
+/* iPhone 长按会出复制条。壳里拦掉；输入框仍留给系统粘贴。游戏页在自己的文档里另拦。 */
+document.addEventListener('contextmenu', (ev) => {
+  const el = ev.target
+  if (!(el instanceof Element)) return
+  if (el.closest('input, textarea, [contenteditable="true"]')) return
+  ev.preventDefault()
+})
+
 async function bootstrap() {
   /*
    * Native 必须先从 Keystore/Keychain 恢复 token，再让 Pinia/路由读取同步缓存；
