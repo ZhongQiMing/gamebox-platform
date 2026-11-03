@@ -29,6 +29,7 @@ jobs:
           CI: "true"
         run: |
           unset CAP_DEV_URL || true
+          pnpm --filter @gamebox/shared build
           pnpm --filter @gamebox/client-app exec cap add ios
           pnpm --filter @gamebox/client-app app:release:ios
 
