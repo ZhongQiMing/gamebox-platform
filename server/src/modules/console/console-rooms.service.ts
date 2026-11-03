@@ -13,7 +13,20 @@ import { ConsoleScopeService, type ConsoleActor } from './console-scope.service'
 import {
   normalizeSettleCycle,
   settleCycleToWeekday,
+  shanghaiSettleBounds,
 } from './room-settle.service';
+import {
+  DIRECT_AGENT_SHARE_CAP,
+  GENERAL_SHARE_SCHEDULE_SELECT,
+  materializeShareSchedule,
+  parseAgentShareRate,
+  publicRoomAgentShareView,
+  ROOM_AGENT_SHARE_SCHEDULE_SELECT,
+  roomAgentShareCap,
+  roomSchedulePrismaData,
+  scheduleFromAgent,
+  scheduleFromRoom,
+} from './general-share-rate.helper';
 import {
   computeCreditBook,
   agentDisplayBalance,
@@ -136,7 +149,7 @@ export class ConsoleRoomsService {
             id: true,
             userId: true,
             flowRate: true,
-            shareRate: true,
+            ...GENERAL_SHARE_SCHEDULE_SELECT,
             user: { select: { uid: true, nickname: true, username: true } },
           },
         },
@@ -163,7 +176,12 @@ export class ConsoleRoomsService {
     const roomIds = rooms.map((r) => r.id);
     const flyMembers = roomIds.length
       ? await this.prisma.roomMember.findMany({
-          where: { roomId: { in: roomIds }, status: 'APPROVED' },
+          where: {
+            roomId: { in: roomIds },
+            status: 'APPROVED',
+            /* 代理/管理进游戏大厅也会写一条成员，不能算进玩家飞盘人数 */
+            player: { role: 'PLAYER' },
+          },
           select: { roomId: true, flyEnabled: true },
         })
       : [];
@@ -232,7 +250,7 @@ export class ConsoleRoomsService {
         icon: displayRoomIcon(r.icon),
         status: r.status,
         enabledGames: safeJsonArr(r.enabledGames),
-        memberCount: r._count.members,
+        memberCount: fly.memberCount,
         monthlyFee: asMoney(r.monthlyFee),
         billingDay: r.billingDay,
         nextBillAt: r.nextBillAt,
@@ -241,7 +259,7 @@ export class ConsoleRoomsService {
         overIssueLimit: 0,
         overIssueUsed: 0,
         bookMode,
-        agentShareRate: Number(r.agentShareRate ?? 0),
+        ...publicRoomAgentShareView(r),
         generalFlyEnabled: r.generalFlyEnabled !== false,
         general: r.generalAgent
           ? {
@@ -377,6 +395,7 @@ export class ConsoleRoomsService {
       playerMinRate: number | null;
       playerMaxRate: number | null;
       roomMonthlyFee: number;
+      shareCap: number;
     } | null = null;
     let generalUserId = String(body.generalAgentUserId || '').trim();
     if (await this.scope.isGeneralSide(actor)) {
@@ -393,7 +412,7 @@ export class ConsoleRoomsService {
               id: true,
               bookMode: true,
               flowRate: true,
-              shareRate: true,
+              ...GENERAL_SHARE_SCHEDULE_SELECT,
               downlineFlowRate: true,
               playerMinRate: true,
               playerMaxRate: true,
@@ -417,6 +436,7 @@ export class ConsoleRoomsService {
         playerMinRate: gu.agent.playerMinRate,
         playerMaxRate: gu.agent.playerMaxRate,
         roomMonthlyFee: asMoney(gu.agent.roomMonthlyFee),
+        shareCap: roomAgentShareCap(scheduleFromAgent(gu.agent)),
       };
     }
 
@@ -439,7 +459,7 @@ export class ConsoleRoomsService {
     let agentShareRate = Number(body.agentShareRate);
     if (!Number.isFinite(agentShareRate)) agentShareRate = 0.5;
     if (agentShareRate > 1) agentShareRate = agentShareRate / 100;
-    const shareCap = generalAgentRow ? Math.min(0.7, generalAgentRow.shareRate) : 0.5;
+    const shareCap = generalAgentRow ? Math.min(0.7, generalAgentRow.shareCap) : 0.5;
     if (agentShareRate < 0 || agentShareRate > shareCap + 1e-9) {
       throw new BadRequestException(`代理占成须在 0%～${(shareCap * 100).toFixed(0)}%`);
     }
@@ -1059,6 +1079,91 @@ export class ConsoleRoomsService {
   }
 
   /**
+   * 总代（或管理/总监）改本房代理占成。本期房间账单仍按旧档，从该房下一账期起换新档。
+   * 新档不能超过总代当前/已预约里更严的一档。
+   */
+  async setAgentShareRate(actor: ConsoleActor, roomId: string, shareRateRaw: number) {
+    await this.scope.assertRoomAccess(actor, roomId);
+    const room = await this.prisma.room.findUnique({
+      where: { id: roomId },
+      select: {
+        id: true,
+        status: true,
+        settleCycle: true,
+        ownerAgentId: true,
+        generalAgentId: true,
+        ...ROOM_AGENT_SHARE_SCHEDULE_SELECT,
+        generalAgent: {
+          select: { userId: true, ...GENERAL_SHARE_SCHEDULE_SELECT },
+        },
+      },
+    });
+    if (!room) throw new NotFoundException('房间不存在');
+    if (room.status === 'CLOSED') throw new BadRequestException('房间已关闭，不能改占成');
+
+    const generalSide = await this.scope.isGeneralSide(actor);
+    if (generalSide) {
+      const rootId = await this.scope.generalRootId(actor);
+      if (!room.generalAgent || room.generalAgent.userId !== rootId) {
+        throw new ForbiddenException('只能改自己名下房间的代理占成');
+      }
+    } else if (actor.role !== 'ADMIN' && actor.role !== 'BRANCH') {
+      throw new ForbiddenException('仅总代或管理可改代理占成');
+    }
+
+    const cap = room.generalAgent
+      ? roomAgentShareCap(scheduleFromAgent(room.generalAgent))
+      : DIRECT_AGENT_SHARE_CAP;
+    const nextRate = parseAgentShareRate(shareRateRaw, cap);
+
+    const cycle = normalizeSettleCycle(room.settleCycle);
+    const calendar = shanghaiSettleBounds(cycle, 0);
+    const live = materializeShareSchedule(scheduleFromRoom(room), calendar.periodStart);
+    const sameAsCurrent = Math.abs(live.shareRate - nextRate) < 1e-9;
+    const next = sameAsCurrent
+      ? { ...live, pendingShareRate: null, pendingShareFrom: null }
+      : { ...live, pendingShareRate: nextRate, pendingShareFrom: calendar.periodEnd };
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.room.update({
+        where: { id: roomId },
+        data: roomSchedulePrismaData(next),
+      });
+      /* 代理档案上的占成跟房间本期档对齐，列表不至于和房间详情各说各的 */
+      if (room.ownerAgentId) {
+        await tx.agent.update({
+          where: { id: room.ownerAgentId },
+          data: { shareRate: next.shareRate },
+        });
+      }
+    });
+
+    const view = publicRoomAgentShareView({
+      agentShareRate: next.shareRate,
+      agentShareRateSince: next.shareRateSince,
+      prevAgentShareRate: next.prevShareRate,
+      pendingAgentShareRate: next.pendingShareRate,
+      pendingAgentShareFrom: next.pendingShareFrom,
+    });
+    await this.adminLog.log(actor.id, 'ROOM_AGENT_SHARE_SET', roomId, {
+      before: publicRoomAgentShareView(room),
+      after: view,
+      nextRate,
+      cap,
+      effectiveFrom: next.pendingShareFrom,
+    });
+    return {
+      ok: true,
+      ...view,
+      pendingAgentShareFrom: view.pendingAgentShareFrom?.toISOString() ?? null,
+      agentShareCap: cap,
+      message: view.pendingAgentShareRate == null
+        ? '已保存。与本期占成相同，未预约下期变更'
+        : '已保存。本期仍按原占成结算，下期起按新占成',
+    };
+  }
+
+  /**
    * 删除房间 = 关闭（CLOSED），数据保留。
    * 列表默认隐藏，勾选「显示已关闭」可查看；不做物理删除。
    */
@@ -1466,7 +1571,7 @@ export class ConsoleRoomsService {
             id: true,
             userId: true,
             flowRate: true,
-            shareRate: true,
+            ...GENERAL_SHARE_SCHEDULE_SELECT,
             user: { select: { uid: true, nickname: true, username: true } },
           },
         },
@@ -1491,7 +1596,7 @@ export class ConsoleRoomsService {
 
     // 本房玩家当前积分合计 + 飞盘开/关人数
     const members = await this.prisma.roomMember.findMany({
-      where: { roomId, status: 'APPROVED' },
+      where: { roomId, status: 'APPROVED', player: { role: 'PLAYER' } },
       select: { playerId: true, flyEnabled: true },
     });
     const memberPlayerIds = members.map((m) => m.playerId);
@@ -1523,6 +1628,7 @@ export class ConsoleRoomsService {
       room.ownerAgent?.userId,
       bookMode,
     );
+    const agentShareView = publicRoomAgentShareView(room);
     const creditBook =
       bookMode === 'CREDIT' && creditLimit > 0
         ? computeCreditBook({
@@ -1530,7 +1636,7 @@ export class ConsoleRoomsService {
             pointsQuota,
             playerBalances: asMoney(playerPointsTotal),
             csBalances,
-            agentShareRate: Number(room.agentShareRate ?? 0),
+            agentShareRate: agentShareView.agentShareRate,
           })
         : null;
     return {
@@ -1549,7 +1655,10 @@ export class ConsoleRoomsService {
       overIssueLimit: 0,
       overIssueUsed: 0,
       bookMode,
-      agentShareRate: Number(room.agentShareRate ?? 0),
+      ...publicRoomAgentShareView(room),
+      agentShareCap: room.generalAgent
+        ? roomAgentShareCap(scheduleFromAgent(room.generalAgent))
+        : DIRECT_AGENT_SHARE_CAP,
       generalFlyEnabled: room.generalFlyEnabled !== false,
       general: room.generalAgent
         ? {
@@ -1567,7 +1676,7 @@ export class ConsoleRoomsService {
       settleWeekday: room.settleWeekday ?? 1,
       createdAt: room.createdAt,
       updatedAt: room.updatedAt,
-      memberCount: room._count.members,
+      memberCount: members.length,
       roundCount: room._count.gameRounds,
       gameConfigs: room.gameConfigs,
       playerPointsTotal: asMoney(playerPointsTotal),
@@ -1881,7 +1990,7 @@ export class ConsoleRoomsService {
     return {
       ok: true,
       flyEnabled,
-      message: flyEnabled ? '已整房开启飞盘（飞向平台）' : '已整房关闭飞盘（总代坐庄）',
+      message: flyEnabled ? '已开启飞盘' : '已关闭飞盘',
     };
   }
 
@@ -1912,9 +2021,7 @@ export class ConsoleRoomsService {
       ok: true,
       flyEnabled,
       updated: updated.count,
-      message: flyEnabled
-        ? `已整房开启飞盘（${updated.count} 名玩家）`
-        : `已整房关闭飞盘（${updated.count} 名玩家）`,
+      message: flyEnabled ? '已开启飞盘' : '已关闭飞盘',
     };
   }
 

@@ -43,7 +43,24 @@
         >接单占比</el-button>
       </div>
 
-      <div class="panel-body">
+      <div v-if="narrow" class="cs-cards">
+        <article v-for="row in filteredList" :key="row.id" class="cs-card">
+          <div class="cell-name">{{ row.nickname }}</div>
+          <div class="cell-meta mono">{{ row.username }} · {{ row.uid }}</div>
+          <div class="cs-card__meta">
+            <span>{{ row.status === 'DISABLED' ? '停用' : (row.workStatus === 'IDLE' ? '接单中' : '休息') }}</span>
+            <span>额度 {{ fmt(row.balance) }}</span>
+            <span>佣金 {{ wageLabel(row.wageRate) }}</span>
+          </div>
+          <div class="ops">
+            <el-button size="small" type="primary" @click="openMoney(row, 'up')">划额度</el-button>
+            <el-button size="small" :disabled="row.balance <= 0" @click="openMoney(row, 'down')">收回</el-button>
+            <el-button size="small" @click="openWage(row)">佣金</el-button>
+          </div>
+        </article>
+        <div v-if="!filteredList.length" class="muted cs-empty">{{ emptyText }}</div>
+      </div>
+      <div v-else class="panel-body">
         <el-table
           :data="filteredList"
           class="cs-staff-table"
@@ -311,7 +328,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
 import DeskDialog from '@/components/DeskDialog.vue'
@@ -702,8 +719,19 @@ async function toggleWork(row: CsStaffRow, idle: boolean) {
   }
 }
 
+const narrow = ref(false)
+let narrowQuery: MediaQueryList | null = null
+function syncNarrow() {
+  narrow.value = narrowQuery?.matches ?? window.innerWidth <= 720
+}
 onMounted(() => {
+  narrowQuery = window.matchMedia('(max-width: 720px)')
+  syncNarrow()
+  narrowQuery.addEventListener('change', syncNarrow)
   void reloadAll()
+})
+onBeforeUnmount(() => {
+  narrowQuery?.removeEventListener('change', syncNarrow)
 })
 </script>
 
@@ -765,6 +793,15 @@ onMounted(() => {
   min-height: 0;
   padding: 0;
   background: #fff;
+}
+.cs-cards { display: flex; flex-direction: column; gap: 8px; padding: 12px; overflow: auto; }
+.cs-card { padding: 12px 14px; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; }
+.cs-card__meta { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 6px; font-size: 12px; color: #475569; }
+.cs-card .ops { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.cs-empty { padding: 24px; text-align: center; }
+@media (max-width: 720px) {
+  .rooms-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .panel-toolbar { flex-wrap: wrap; }
 }
 .panel-body :deep(.el-table) {
   --el-table-header-bg-color: #f1f5f9;

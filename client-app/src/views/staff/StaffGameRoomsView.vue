@@ -21,79 +21,139 @@
       <div v-if="loading && !rooms.length" class="sp-empty">加载中…</div>
       <div v-else-if="!rooms.length" class="sp-empty">暂无房间</div>
 
-      <button
-        v-for="r in rooms"
-        :key="r.id"
-        type="button"
-        class="gr-card"
-        :class="{ 'is-closed': r.status !== 'OPEN' }"
-        @click="enterLobby(r)"
-      >
-        <i class="gr-corner tl" aria-hidden="true"></i>
-        <i class="gr-corner tr" aria-hidden="true"></i>
-        <i class="gr-corner bl" aria-hidden="true"></i>
-        <i class="gr-corner br" aria-hidden="true"></i>
-
-        <div class="gr-top">
-          <div class="gr-icon-wrap">
-            <img
-              class="gr-icon"
-              :src="r.icon || defaultIcon"
-              :alt="r.name"
-              loading="lazy"
-              @error="onIconError"
-            >
-          </div>
-          <div class="gr-main">
-            <div class="gr-hd">
-              <div class="gr-title">
-                <span class="gr-agent-tag">本房代理</span>
-                <span class="gr-name">{{ displayName(r) }}</span>
+      <section v-for="g in groups" :key="g.key" class="gd-wrap">
+        <button v-if="!flatOwn" type="button" class="gr-card gd-head" @click="toggleGroup(g.key)">
+          <i class="gr-corner tl" aria-hidden="true"></i>
+          <i class="gr-corner tr" aria-hidden="true"></i>
+          <i class="gr-corner bl" aria-hidden="true"></i>
+          <i class="gr-corner br" aria-hidden="true"></i>
+          <div class="gr-top">
+            <div class="gr-icon-wrap gd-seal" aria-hidden="true">
+              <span>{{ g.key === '__none__' ? '直' : '总' }}</span>
+            </div>
+            <div class="gr-main">
+              <div class="gr-hd">
+                <div class="gr-title">
+                  <span class="gr-agent-tag">{{ g.key === '__none__' ? '直挂' : '总代' }}</span>
+                  <span class="gr-name">{{ g.name }}</span>
+                </div>
+                <span class="gd-chev" :class="{ open: isOpen(g.key) }"></span>
               </div>
-              <div class="gr-tags">
-                <span class="gr-chip">{{ r.bookMode === 'CREDIT' ? 'B·信用' : 'A·现金' }}</span>
-                <span class="gr-st" :class="r.status.toLowerCase()">{{ statusLabel(r.status) }}</span>
+              <div class="gd-pills">
+                <span v-if="g.key !== '__none__'" class="gr-chip">占成 {{ g.sharePct }}%</span>
+                <span v-if="g.key !== '__none__'" class="gr-chip">整包 {{ g.flowPct }}%</span>
+                <span v-if="g.bookMode" class="gr-chip">{{ g.bookMode === 'CREDIT' ? 'B·信用' : 'A·现金' }}</span>
+                <span class="gr-chip">{{ g.rooms.length }} 间房</span>
               </div>
             </div>
-            <div class="gr-code">
-              <span class="gr-code-k">进房码</span>
-              <span class="gr-code-v">{{ r.roomNo }}</span>
-            </div>
           </div>
-        </div>
+          <div class="gr-grid">
+            <template v-if="g.key !== '__none__'">
+              <div class="gr-cell">
+                <span class="mk">{{ g.bookMode === 'CREDIT' ? '剩余信用' : '可用额度' }}</span>
+                <span class="mv">{{ g.quotaText }}</span>
+              </div>
+              <div class="gr-cell">
+                <span class="mk">{{ g.bookMode === 'CREDIT' ? '合同额度' : '余额' }}</span>
+                <span class="mv">{{ g.bookMode === 'CREDIT' ? g.creditText : g.balanceText }}</span>
+              </div>
+              <div class="gr-cell">
+                <span class="mk">上盘可飞</span>
+                <span class="mv">{{ g.flyText }}</span>
+              </div>
+              <div class="gr-cell">
+                <span class="mk">玩家</span>
+                <span class="mv">{{ g.members }}</span>
+              </div>
+            </template>
+            <template v-else>
+              <div class="gr-cell">
+                <span class="mk">房间</span>
+                <span class="mv">{{ g.rooms.length }}</span>
+              </div>
+              <div class="gr-cell">
+                <span class="mk">玩家</span>
+                <span class="mv">{{ g.members }}</span>
+              </div>
+            </template>
+          </div>
+        </button>
 
-        <!-- 2×2：每格单行「标签 + 数值」 -->
-        <div class="gr-grid">
-          <div class="gr-cell">
-            <span class="mk">玩家</span>
-            <span class="mv">{{ r.memberCount ?? 0 }}</span>
-          </div>
-          <div class="gr-cell">
-            <span class="mk">游戏</span>
-            <span class="mv">{{ (r.enabledGames || []).length }}</span>
-          </div>
-          <template v-if="r.bookMode === 'CREDIT'">
-            <div class="gr-cell">
-              <span class="mk">剩余信用</span>
-              <span class="mv">{{ r.agent ? fmt(r.agent.pointsQuota) : '—' }}</span>
+        <div v-show="flatOwn || isOpen(g.key)" :class="{ 'gd-body': !flatOwn }">
+          <button
+            v-for="r in g.rooms"
+            :key="r.id"
+            type="button"
+            class="gr-card gd-room"
+            :class="{ 'is-closed': r.status !== 'OPEN' }"
+            @click="enterLobby(r)"
+          >
+            <i class="gr-corner tl" aria-hidden="true"></i>
+            <i class="gr-corner tr" aria-hidden="true"></i>
+            <i class="gr-corner bl" aria-hidden="true"></i>
+            <i class="gr-corner br" aria-hidden="true"></i>
+
+            <div class="gr-top">
+              <div class="gr-icon-wrap">
+                <img
+                  class="gr-icon"
+                  :src="r.icon || defaultIcon"
+                  :alt="r.name"
+                  loading="lazy"
+                  @error="onIconError"
+                >
+              </div>
+              <div class="gr-main">
+                <div class="gr-hd">
+                  <div class="gr-title">
+                    <span class="gr-agent-tag">本房代理</span>
+                    <span class="gr-name">{{ displayName(r) }}</span>
+                  </div>
+                  <div class="gr-tags">
+                    <span class="gr-chip">{{ r.bookMode === 'CREDIT' ? 'B·信用' : 'A·现金' }}</span>
+                    <span class="gr-st" :class="r.status.toLowerCase()">{{ statusLabel(r.status) }}</span>
+                  </div>
+                </div>
+                <div class="gr-code">
+                  <span class="gr-code-k">进房码</span>
+                  <span class="gr-code-v">{{ r.roomNo }}</span>
+                </div>
+              </div>
             </div>
-            <div class="gr-cell">
-              <span class="mk">合同额度</span>
-              <span class="mv">{{ fmt(r.creditLimit) }}</span>
+
+            <div class="gr-grid">
+              <div class="gr-cell">
+                <span class="mk">玩家</span>
+                <span class="mv">{{ r.memberCount ?? 0 }}</span>
+              </div>
+              <div class="gr-cell">
+                <span class="mk">游戏</span>
+                <span class="mv">{{ (r.enabledGames || []).length }}</span>
+              </div>
+              <template v-if="r.bookMode === 'CREDIT'">
+                <div class="gr-cell">
+                  <span class="mk">剩余信用</span>
+                  <span class="mv">{{ r.agent ? fmt(r.agent.pointsQuota) : '—' }}</span>
+                </div>
+                <div class="gr-cell">
+                  <span class="mk">合同额度</span>
+                  <span class="mv">{{ fmt(r.creditLimit) }}</span>
+                </div>
+              </template>
+              <template v-else>
+                <div class="gr-cell">
+                  <span class="mk">可用额度</span>
+                  <span class="mv">{{ r.agent ? fmt(r.agent.pointsQuota) : '—' }}</span>
+                </div>
+                <div class="gr-cell">
+                  <span class="mk">上盘可飞</span>
+                  <span class="mv">{{ r.agent ? fmt(r.agent.flyCover) : '—' }}</span>
+                </div>
+              </template>
             </div>
-          </template>
-          <template v-else>
-            <div class="gr-cell">
-              <span class="mk">可用额度</span>
-              <span class="mv">{{ r.agent ? fmt(r.agent.pointsQuota) : '—' }}</span>
-            </div>
-            <div class="gr-cell">
-              <span class="mk">上盘可飞</span>
-              <span class="mv">{{ r.agent ? fmt(r.agent.flyCover) : '—' }}</span>
-            </div>
-          </template>
+          </button>
         </div>
-      </button>
+      </section>
     </div>
     <StaffTabBar />
   </div>
@@ -102,8 +162,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { staffConsoleApi, type StaffRoom } from '@/api/staffConsole'
+import { staffConsoleApi, type StaffAgentRow, type StaffRoom } from '@/api/staffConsole'
 import StaffTabBar from '@/components/StaffTabBar.vue'
+import { useStaffStore } from '@/stores/staff'
 import { useToast } from '@/composables/useToast'
 import { formatMoney } from '@gamebox/shared'
 import { useBodyClass } from '@/composables/useBodyClass'
@@ -112,7 +173,10 @@ import '@/assets/staff-console.css'
 useBodyClass('deco-bg')
 
 const router = useRouter()
+const staff = useStaffStore()
 const { toast } = useToast()
+/** 总代自己看，名下房间直接铺开，不再套一层自己的抽屉 */
+const flatOwn = computed(() => staff.isGeneral)
 
 const defaultIcon = '/images/rooms/default-room.webp'
 const loading = ref(false)
@@ -132,6 +196,89 @@ function displayName(r: StaffRoom) {
   const name = String(r.name || '').trim()
   return name || '未绑定'
 }
+function pctLabel(rate?: number) {
+  const n = Number(rate)
+  if (!Number.isFinite(n)) return '—'
+  const pct = n > 1 ? n : n * 100
+  return String(Math.round(pct * 10) / 10)
+}
+
+type GeneralBrief = StaffAgentRow & {
+  bookMode?: string
+  creditLimit?: number
+}
+
+const generalMap = ref<Record<string, GeneralBrief>>({})
+
+type RoomGroup = {
+  key: string
+  name: string
+  sharePct: string
+  flowPct: string
+  bookMode: string
+  quotaText: string
+  flyText: string
+  creditText: string
+  balanceText: string
+  members: number
+  rooms: StaffRoom[]
+}
+
+const groups = computed<RoomGroup[]>(() => {
+  const map = new Map<string, RoomGroup>()
+  for (const room of rooms.value) {
+    const key = room.general?.userId || '__none__'
+    let group = map.get(key)
+    if (!group) {
+      const wallet = generalMap.value[key]
+      const bookMode = wallet?.bookMode === 'CREDIT' ? 'CREDIT' : wallet ? 'CASH' : ''
+      group = {
+        key,
+        name: String(room.general?.nickname || room.general?.username || '').trim() || '直挂平台',
+        sharePct: pctLabel(room.general?.shareRate),
+        flowPct: pctLabel(room.general?.flowRate),
+        bookMode,
+        quotaText: wallet ? fmt(wallet.pointsQuota) : '—',
+        flyText: wallet ? fmt(wallet.flyCover) : '—',
+        creditText: wallet ? fmt(wallet.creditLimit) : '—',
+        balanceText: wallet ? fmt(wallet.agentBalance ?? wallet.balance) : '—',
+        members: 0,
+        rooms: [],
+      }
+      map.set(key, group)
+    }
+    group.rooms.push(room)
+    group.members += Number(room.memberCount || 0)
+  }
+  for (const group of map.values()) {
+    if (group.key === '__none__') continue
+    const wallet = generalMap.value[group.key]
+    if (!wallet) continue
+    const seen = new Set<string>()
+    let down = 0
+    for (const room of group.rooms) {
+      const id = room.agent?.userId || room.agent?.agentId
+      if (!id || seen.has(id)) continue
+      seen.add(id)
+      down += Number(room.agent?.flyCover || 0)
+    }
+    /* 总代「上盘可飞」是整棵树：他自己这一支，加上名下每个代理那一支 */
+    group.flyText = fmt(Number(wallet.flyCover || 0) + down)
+  }
+  return [...map.values()].sort((a, b) => {
+    if (a.key === '__none__') return 1
+    if (b.key === '__none__') return -1
+    return a.name.localeCompare(b.name, 'zh-CN')
+  })
+})
+
+const opened = ref<Record<string, boolean>>({})
+function isOpen(key: string) {
+  return opened.value[key] !== false && (opened.value[key] === true || groups.value.length === 1)
+}
+function toggleGroup(key: string) {
+  opened.value = { ...opened.value, [key]: !isOpen(key) }
+}
 function onIconError(e: Event) {
   const img = e.target as HTMLImageElement | null
   if (img && img.src !== defaultIcon) img.src = defaultIcon
@@ -148,7 +295,16 @@ function enterLobby(r: StaffRoom) {
 async function load() {
   loading.value = true
   try {
-    rooms.value = (await staffConsoleApi.rooms()) || []
+    const [roomList, agentPage] = await Promise.all([
+      staffConsoleApi.rooms(),
+      staffConsoleApi.agents({ role: 'GENERAL', page: 1, pageSize: 500, boundOnly: false }).catch(() => null),
+    ])
+    rooms.value = roomList || []
+    const next: Record<string, GeneralBrief> = {}
+    for (const row of (agentPage?.list || []) as GeneralBrief[]) {
+      if (row?.id) next[row.id] = row
+    }
+    generalMap.value = next
   } catch (e: unknown) {
     toast(e instanceof Error ? e.message : '加载失败')
   } finally {
@@ -343,6 +499,58 @@ onMounted(() => { void load() })
   color: rgba(244, 211, 107, 0.72);
   white-space: nowrap;
 }
+.gd-wrap { margin-bottom: 18px; }
+.gd-head { margin-bottom: 0; }
+.gd-seal {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.gd-seal span {
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  color: #f5d36b;
+  text-shadow: 0 0 12px rgba(245, 211, 107, 0.4);
+}
+.gd-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.gd-chev {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(212, 175, 55, 0.5);
+  background: rgba(0, 0, 0, 0.32);
+}
+.gd-chev::before {
+  content: '';
+  position: absolute;
+  left: 9px;
+  top: 8px;
+  width: 8px;
+  height: 8px;
+  border-right: 1.5px solid #f5d36b;
+  border-bottom: 1.5px solid #f5d36b;
+  transform: rotate(45deg);
+  transition: transform 0.15s ease, top 0.15s ease;
+}
+.gd-chev.open::before {
+  top: 11px;
+  transform: rotate(225deg);
+}
+.gd-body {
+  position: relative;
+  margin: 8px 2px 0 20px;
+  padding-left: 12px;
+  border-left: 1px solid rgba(212, 175, 55, 0.42);
+}
+.gd-room { margin-bottom: 10px; }
+.gd-room:last-child { margin-bottom: 0; }
 .gr-tags {
   display: flex;
   align-items: center;

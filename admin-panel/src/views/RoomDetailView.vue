@@ -116,7 +116,17 @@
           </div>
           <div class="kv">
             <div class="k">盘口 / 占成</div>
-            <div class="v">{{ bookBrief }}</div>
+            <div class="v">
+              <div>{{ bookBrief }}</div>
+              <div v-if="pendingAgentShareText" class="sub">{{ pendingAgentShareText }}</div>
+              <el-button
+                v-if="canEditAgentShare"
+                type="primary"
+                link
+                size="small"
+                @click="openAgentShareEdit"
+              >改占成</el-button>
+            </div>
           </div>
           <div class="kv">
             <div class="k">结账日</div>
@@ -1446,6 +1456,32 @@
         />
       </div>
     </DeskDialog>
+
+    <DeskDialog v-model="agentShareVisible" title="修改代理占成" width="420px">
+      <el-alert type="info" :closable="false" show-icon class="mb12">
+        保存后从本房下一账期开始生效，本期账单仍按当前占成结算。
+        不能超过总代占成上限 {{ agentShareCapPct }}%。
+      </el-alert>
+      <el-form label-width="88px">
+        <el-form-item label="当前占成">
+          <span>{{ sharePctText }}</span>
+        </el-form-item>
+        <el-form-item label="新占成" required>
+          <el-input-number
+            v-model="agentShareEditPct"
+            :min="0"
+            :max="agentShareCapPct"
+            :step="1"
+            controls-position="right"
+          />
+          <span class="unit-hint">%</span>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="agentShareVisible = false">取消</el-button>
+        <el-button type="primary" :loading="agentShareBusy" @click="doSetAgentShare">确认修改</el-button>
+      </template>
+    </DeskDialog>
   </div>
 </template>
 
@@ -1493,6 +1529,9 @@ type RoomDetail = {
   overIssueUsed?: number
   bookMode?: 'CASH' | 'CREDIT'
   agentShareRate?: number
+  pendingAgentShareRate?: number | null
+  pendingAgentShareFrom?: string | Date | null
+  agentShareCap?: number
   creditLimit?: number
   settleCycle?: 'WEEKLY_MON' | 'MONTHLY_1' | 'MONTHLY_15_30' | string
   settleWeekday?: number
@@ -1626,6 +1665,61 @@ const canSetGeneralFly = computed(() => {
   const gid = room.value?.general?.userId
   if (!gid) return false
   return gid === store.profile?.id || gid === store.profile?.parentId
+})
+/** 总代改名下代理；管理/总监也能改（下调总代占成前先把超标房间降下来） */
+const canEditAgentShare = computed(() => {
+  if (room.value?.status === 'CLOSED') return false
+  if (isAdmin.value || isBranch.value) return true
+  return canSetGeneralFly.value
+})
+
+const agentShareVisible = ref(false)
+const agentShareBusy = ref(false)
+const agentShareEditPct = ref(50)
+const agentShareCapPct = computed(() => {
+  const cap = Number(room.value?.agentShareCap)
+  if (Number.isFinite(cap) && cap > 0) return Math.round((cap > 1 ? cap : cap * 100))
+  const g = Number(room.value?.general?.shareRate)
+  if (Number.isFinite(g) && g > 0) return Math.round((g > 1 ? g : g * 100))
+  return 50
+})
+
+function shareToPct(n?: number | null) {
+  const v = Number(n)
+  if (!Number.isFinite(v)) return 50
+  return Math.round(v > 1 ? v : v * 100)
+}
+
+function openAgentShareEdit() {
+  agentShareEditPct.value = shareToPct(room.value?.pendingAgentShareRate ?? room.value?.agentShareRate)
+  agentShareVisible.value = true
+}
+
+async function doSetAgentShare() {
+  const id = String(route.params.id || '')
+  if (!id) return
+  if (agentShareEditPct.value < 0 || agentShareEditPct.value > agentShareCapPct.value) {
+    ElMessage.warning(`代理占成须在 0%～${agentShareCapPct.value}%`)
+    return
+  }
+  agentShareBusy.value = true
+  try {
+    const res = await consoleApi.setRoomAgentShareRate(id, agentShareEditPct.value / 100)
+    ElMessage.success((res as { message?: string }).message || '已保存')
+    agentShareVisible.value = false
+    await load()
+  } catch (e) {
+    ElMessage.error((e as Error).message || '修改失败')
+  } finally {
+    agentShareBusy.value = false
+  }
+}
+
+const pendingAgentShareText = computed(() => {
+  const r = room.value
+  if (r?.pendingAgentShareRate == null || !r.pendingAgentShareFrom) return ''
+  const pct = shareToPct(r.pendingAgentShareRate)
+  return `下期 ${pct}% · ${formatDtShort(String(r.pendingAgentShareFrom))} 起`
 })
 /** 开盘状态：管理员/房主/总代（含分身）/代理 */
 const canSetRoomStatus = computed(() => {
@@ -2084,8 +2178,17 @@ const coreKpis = computed<KpiChip[]>(() => {
     { label: '飞盘', value: fmt(displayFlownFlow(v)), color: 'var(--desk-accent, #38bdf8)' },
     { label: '关盘', value: fmt(v?.closedBetFlow), color: CLOSED_FLOW_COLOR },
     { label: '庄家盈亏', value: fmt(v?.satHousePnl), color: pnlColor(v?.satHousePnl) },
-    { label: '我的占成', value: fmt(v?.myShareAmount), color: pnlColor(v?.myShareAmount) },
-    { label: '我本期净赚', value: fmt(v?.myNetEarning), color: pnlColor(v?.myNetEarning), hot: true },
+    {
+      label: isGeneral.value ? '总盈利' : '我的占成',
+      value: fmt(v?.myShareAmount),
+      color: pnlColor(v?.myShareAmount),
+    },
+    {
+      label: isLandlordSide.value ? '扣返水盈亏' : isGeneral.value ? '加返水总盈利' : '我本期净赚',
+      value: fmt(isLandlordSide.value || isGeneral.value ? v?.realNetEarning : v?.myNetEarning),
+      color: pnlColor(isLandlordSide.value || isGeneral.value ? v?.realNetEarning : v?.myNetEarning),
+      hot: true,
+    },
   ]
 })
 
@@ -3223,6 +3326,8 @@ onUnmounted(() => {
 <style scoped src="./room-detail/room-detail.css"></style>
 
 <style scoped>
+.mb12 { margin-bottom: 12px; }
+.unit-hint { margin-left: 8px; color: var(--el-text-color-secondary); }
 .basic-info-hd .room-icon-preview {
   width: 36px;
   height: 36px;

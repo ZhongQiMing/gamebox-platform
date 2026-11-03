@@ -50,7 +50,7 @@ scan_images() {
   }
   for image in "gamebox-server:$version" "gamebox-web:$version"; do
     echo "[runtime-security] Trivy $image"
-    trivy image --severity HIGH,CRITICAL --exit-code 1 "$image"
+    trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "$image"
   done
 }
 

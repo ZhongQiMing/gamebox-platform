@@ -5,10 +5,14 @@ import { Public } from '../../common/decorators/public.decorator'
 import * as fs from 'fs'
 import * as path from 'path'
 
-/** 当前 APP 版本信息（后期迁移到数据库 + 后台配置） */
+/**
+ * 当前已发布的安装包版本。
+ * 换新包时必须把 versionCode 加大，并与 android/app/build.gradle 的 versionCode 一致。
+ * 不加大的话，游戏里的「检查更新」会一直认为已是最新。
+ */
 const APP_VERSION = {
-  version: '1.0.0',
-  versionCode: 1,
+  version: '1.0.5',
+  versionCode: 6,
   forceUpdate: false,
   updateUrl: '',
   releaseNote: '官方安卓安装包',

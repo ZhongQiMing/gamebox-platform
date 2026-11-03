@@ -33,7 +33,7 @@
         </div>
       </button>
 
-      <div :class="['settings-card', 'wallet-card', hidden ? 'is-hidden' : '']">
+      <div :class="['settings-card', 'wallet-card', hidden ? 'is-hidden' : '', isPlatform ? 'platform-book' : '']">
         <div class="wc-title-row">
           <span class="wc-title">{{ isCs ? '我 的 口 袋' : (isPlatform ? '平 台 账 本' : '额 度 中 心') }}</span>
           <div class="wc-actions">
@@ -68,7 +68,7 @@
         <div v-if="!isCs" class="wc-stats-row">
           <div v-for="s in quotaStats" :key="s.k" class="wc-stat">
             <span class="ws-label">{{ s.k }}</span>
-            <span class="ws-value">{{ hidden ? '***' : (s.raw || fmt(s.v)) }}</span>
+            <span class="ws-value" :class="s.cls">{{ hidden ? '***' : (s.raw || (s.signed ? fmtSigned(s.v) : fmt(s.v))) }}</span>
           </div>
         </div>
       </div>
@@ -436,9 +436,14 @@ const roomCount = ref(0)
 /** 代理「我的」头像 = 本房房间图标 */
 const roomIcon = ref('')
 const agentRoomId = ref('')
-const todayHousePnl = ref(0)
-const todayUp = ref(0)
-const todayDown = ref(0)
+const todayBook = ref({
+  realNet: 0,
+  share: 0,
+  house: 0,
+  rebateGeneral: 0,
+  rebateAgent: 0,
+  rebatePlayer: 0,
+})
 const csStatusBusy = ref(false)
 const pendingFundOnLogout = ref(0)
 
@@ -472,25 +477,35 @@ const avatarSrc = computed(() => {
 
 const mainQuota = computed(() => {
   if (isCs.value) return Number(csMe.value?.balance ?? wallet.value?.balance ?? 0)
-  if (isPlatform.value) return Number(todayHousePnl.value)
+  if (isPlatform.value) return todayBook.value.realNet
   return Number(wallet.value?.pointsQuota || 0)
 })
 const mainQuotaLabel = computed(() => {
   if (isCs.value) return '可用额度'
-  if (isPlatform.value) return '今日庄家盈亏'
+  if (isPlatform.value) return '扣返水盈亏'
   /* 房主与代理同一个叫法：现金＝可用额度，信用＝剩余信用，都别跟「上盘可飞」混 */
   return isCreditBook.value ? '剩余信用' : '可用额度'
 })
 
-type QuotaStat = { k: string; v: number; raw?: string }
+type QuotaStat = { k: string; v: number; raw?: string; cls?: string; signed?: boolean }
+
+function signedCls(n: number) {
+  if (n > 0) return 'is-pos'
+  if (n < 0) return 'is-neg'
+  return ''
+}
 
 const quotaStats = computed((): QuotaStat[] => {
   if (isCs.value) return []
   if (isPlatform.value) {
+    const b = todayBook.value
     return [
+      { k: '平台占成', v: b.share, cls: signedCls(b.share), signed: true },
+      { k: '庄家盈亏', v: b.house, cls: signedCls(b.house), signed: true },
+      { k: '总代返水', v: b.rebateGeneral },
+      { k: '代理返水', v: b.rebateAgent },
+      { k: '玩家回水', v: b.rebatePlayer },
       { k: '房间数', v: roomCount.value, raw: String(roomCount.value) },
-      { k: '今日上分', v: Number(todayUp.value) },
-      { k: '今日下分', v: Number(todayDown.value) },
     ]
   }
   if (isCreditBook.value) {
@@ -632,14 +647,19 @@ async function load() {
           .catch(() => { roomCount.value = 0 }),
         staffConsoleApi.reportSummary({ range: 'today' })
           .then((s) => {
-            todayHousePnl.value = Number(s?.housePnl || 0)
-            todayUp.value = Number(s?.upAmount || 0)
-            todayDown.value = Number(s?.downAmount || 0)
+            const house = Number(s?.satHousePnl ?? s?.housePnl ?? 0)
+            const pack = Number(s?.rebatePackage ?? 0)
+            todayBook.value = {
+              realNet: s?.realNetEarning != null ? Number(s.realNetEarning) : house - pack,
+              share: Number(s?.myShareAmount ?? s?.platformShareAmount ?? 0),
+              house,
+              rebateGeneral: Number(s?.rebateGeneral ?? 0),
+              rebateAgent: Number(s?.rebateAgent ?? 0),
+              rebatePlayer: Number(s?.rebatePlayer ?? 0),
+            }
           })
           .catch(() => {
-            todayHousePnl.value = 0
-            todayUp.value = 0
-            todayDown.value = 0
+            todayBook.value = { realNet: 0, share: 0, house: 0, rebateGeneral: 0, rebateAgent: 0, rebatePlayer: 0 }
           }),
         staffConsoleApi.riskSummary()
           .then((s) => { riskUnhandled.value = s.unhandled || 0 })
@@ -682,8 +702,18 @@ onMounted(() => { void load() })
   align-items: center;
   gap: 8px;
 }
+.wc-balance.up,
+.wc-balance.down {
+  background: none;
+  -webkit-text-fill-color: currentColor;
+  text-shadow: none;
+}
 .wc-balance.up { color: #86efac; }
 .wc-balance.down { color: #fca5a5; }
+.staff-settings-page :deep(.wallet-card.platform-book .wc-stats-row) {
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 16px;
+}
 .gc-item {
   position: relative;
 }

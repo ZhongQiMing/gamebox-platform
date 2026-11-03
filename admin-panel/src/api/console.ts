@@ -161,6 +161,16 @@ export const consoleApi = {
       message: string
     }>(`/console/rooms/${roomId}/reset-agent-password`, { password }),
 
+  setRoomAgentShareRate: (roomId: string, shareRate: number) =>
+    http.patch<{
+      ok: boolean
+      agentShareRate: number
+      pendingAgentShareRate: number | null
+      pendingAgentShareFrom: string | null
+      agentShareCap?: number
+      message?: string
+    }>(`/console/rooms/${roomId}/agent-share-rate`, { shareRate }),
+
   updateRoomBilling: (
     roomId: string,
     data: { monthlyFee?: number; billingDay?: number; nextBillAt?: string | null },
@@ -484,6 +494,16 @@ export const consoleApi = {
       `/console/agents/${userId}/room-monthly-fee`,
       { amount },
     ),
+
+  /** 改总代占成：本期不动，下一账期生效 */
+  setGeneralShareRate: (userId: string, shareRate: number) =>
+    http.patch<{
+      ok: boolean
+      shareRate: number
+      pendingShareRate: number | null
+      pendingShareFrom: string | null
+      message?: string
+    }>(`/console/agents/${userId}/share-rate`, { shareRate }),
 
   setCommissionRate: (userId: string, rate: number) =>
     http.patch(`/console/agents/${userId}/commission-rate`, { rate }),
@@ -813,6 +833,8 @@ export interface WalletMe {
   /** 总代自己的费率：建房时代理的流水/占成上限就是这两个值 */
   flowRate?: number
   shareRate?: number
+  pendingShareRate?: number | null
+  pendingShareFrom?: string | null
   downlineFlowRate?: number
 }
 
@@ -852,6 +874,9 @@ export interface ConsoleRoom {
   bookMode?: 'CASH' | 'CREDIT' | string
   creditLimit?: number
   agentShareRate?: number
+  pendingAgentShareRate?: number | null
+  pendingAgentShareFrom?: string | Date | null
+  agentShareCap?: number
   settleCycle?: string
   generalFlyEnabled?: boolean
   general?: {
@@ -1124,6 +1149,8 @@ export interface AgentPage {
     rebateRate?: number
     flowRate?: number
     shareRate?: number
+    pendingShareRate?: number | null
+    pendingShareFrom?: string | Date | null
     downlineFlowRate?: number
     playerMinRate?: number | null
     playerMaxRate?: number | null
@@ -1165,6 +1192,8 @@ export interface AgentDetail {
   flyCover: number
   flowRate?: number
   shareRate?: number
+  pendingShareRate?: number | null
+  pendingShareFrom?: string | Date | null
   bookMode?: 'CASH' | 'CREDIT'
   creditLimit?: number
   settleCycle?: string
@@ -1613,6 +1642,16 @@ export interface ReportSummary {
   myShareAmount?: number
   /** 我今日净赚：代理已扣挂靠佣金 */
   myNetEarning?: number
+  /** 平台整包返水：总代实发 + 代理实发 + 玩家回水 */
+  rebatePackage?: number
+  /** 总代自己留下的返水 */
+  rebateGeneral?: number
+  /** 代理收到的返水 */
+  rebateAgent?: number
+  /** 玩家回水，含未领 */
+  rebatePlayer?: number
+  /** 平台真正盈亏：庄家盈亏 − 整包返水 */
+  realNetEarning?: number
   shareBasis?: 'PLATFORM' | 'GENERAL_DIFF' | 'HOUSE'
   netChange?: number
   netPnl?: number

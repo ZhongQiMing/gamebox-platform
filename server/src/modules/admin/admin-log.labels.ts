@@ -59,6 +59,8 @@ export const ADMIN_ACTION_META: Record<string, { label: string; group: string }>
   ROOM_WEEK_SETTLE_PAYMENT: { label: '结账实付已收款', group: '结账' },
   GENERAL_PERIOD_SETTLE: { label: '总代账期结清', group: '结账' },
   GENERAL_ROOM_FEE_SET: { label: '总代房间月费单价', group: '结账' },
+  GENERAL_SHARE_RATE_SET: { label: '总代占成', group: '结账' },
+  ROOM_AGENT_SHARE_SET: { label: '房间代理占成', group: '结账' },
 
   REBATE_POLICY: { label: '回水规则', group: '回水' },
   REBATE_POLICY_DOWNLINE: { label: '下级回水规则', group: '回水' },
@@ -284,6 +286,10 @@ export function summarizeAdminLog(
       }`;
     case 'GENERAL_ROOM_FEE_SET':
       return `总代 ${target || '—'} 房间月费单价改为 ${money(d.roomMonthlyFee ?? d.after)}`;
+    case 'GENERAL_SHARE_RATE_SET':
+      return `总代 ${target || '—'} 占成改为 ${pct(d.nextRate)}（下期生效）`;
+    case 'ROOM_AGENT_SHARE_SET':
+      return `房间 ${target || '—'} 代理占成改为 ${pct(d.nextRate)}（下期生效）`;
     case 'GENERAL_PERIOD_SETTLE':
       return `总代 ${target || '—'} 账期结清${
         d.roomCount != null ? ` · ${d.roomCount} 间房` : ''

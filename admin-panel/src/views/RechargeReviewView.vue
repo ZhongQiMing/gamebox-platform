@@ -148,7 +148,7 @@
               <template v-else>
                 <div class="room-meta alone">
                   <div class="room-name">客服对话</div>
-                  <div class="room-sub">在左侧点玩家后开始</div>
+                  <div class="room-sub">点会话里的玩家后开始</div>
                 </div>
                 <div v-if="canDeskTools && !isCs" class="room-ops">
                   <button type="button" class="ghost-btn" @click="openCsSettings">设置</button>
@@ -2795,11 +2795,26 @@ onUnmounted(() => {
   }
 }
 @media (max-width: 720px) {
-  .cs-desk { height: auto; min-height: 0; }
-  .shell {
+  .cs-status-bar { flex-wrap: wrap; }
+  .cs-settings-btn { margin-left: 0; }
+  .cs-desk { height: auto; min-height: 0; width: 100%; }
+  .shell,
+  .shell:not(.cs-only),
+  .shell.cs-only {
+    width: 100%;
     height: auto;
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto;
+  }
+  .contacts,
+  .room,
+  .queue,
+  .shell:not(.cs-only) .room,
+  .shell:not(.cs-only) .queue {
+    grid-column: 1 / -1;
+    width: 100%;
+    max-width: none;
+    min-width: 0;
   }
   .contacts { max-height: 280px; }
   .room, .queue { min-height: 360px; }

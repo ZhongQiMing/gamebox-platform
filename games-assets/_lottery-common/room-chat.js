@@ -205,7 +205,7 @@
     }
     if (typeof opts.appendMsg === 'function') {
       opts.appendMsg({
-        name: opts.robotName || '机器人',
+        name: opts.robotName || '开奖员',
         robot: true,
         html: html,
         skipPersist: true,
@@ -444,7 +444,7 @@
             : '开盘 ' + nextIssue;
         if (html && typeof opts.appendMsg === 'function') {
           opts.appendMsg({
-            name: (pending.msg && pending.msg.senderName) || opts.robotFallbackName || '机器人',
+            name: (pending.msg && pending.msg.senderName) || opts.robotFallbackName || '开奖员',
             avatar: (pending.msg && pending.msg.senderAvatar) || '',
             robot: true,
             html: html,
@@ -489,9 +489,13 @@
       if (!html) html = esc(String(p.text || ''));
       if (!html || typeof opts.appendMsg !== 'function') return;
       var userName = typeof opts.getUserName === 'function' ? opts.getUserName() : '';
-      var self = !msg.isRobot && msg.senderName === userName;
+      var userId = typeof opts.getUserId === 'function' ? String(opts.getUserId() || '') : '';
+      var self = !msg.isRobot && (
+        (userId && msg.senderId && String(msg.senderId) === userId) ||
+        !!(userName && msg.senderName && msg.senderName === userName)
+      );
       opts.appendMsg({
-        name: msg.senderName || (msg.isRobot ? opts.robotFallbackName || '机器人' : '玩家'),
+        name: msg.senderName || (msg.isRobot ? opts.robotFallbackName || '开奖员' : '玩家'),
         avatar: msg.senderAvatar || '',
         robot: !!msg.isRobot && !self,
         self: self,
@@ -753,7 +757,7 @@
       if (!html) return false;
       /* 进聊天流，不钉底；停留靠暂停自动滚 */
       opts.appendMsg({
-        name: opts.robotFallbackName || '机器人',
+        name: opts.robotFallbackName || '开奖员',
         robot: true,
         html: html,
         skipPersist: true,
@@ -1010,11 +1014,15 @@
       }
 
       var userName = typeof opts.getUserName === 'function' ? opts.getUserName() : '';
-      var self = !msg.isRobot && msg.senderName === userName;
+      var userId = typeof opts.getUserId === 'function' ? String(opts.getUserId() || '') : '';
+      var self = !msg.isRobot && (
+        (userId && msg.senderId && String(msg.senderId) === userId) ||
+        !!(userName && msg.senderName && msg.senderName === userName)
+      );
       /* 结果/核对进聊天流，不钉底；揭晓时只暂停自动滚以「停留」 */
       if (html && typeof opts.appendMsg === 'function') {
         opts.appendMsg({
-          name: msg.senderName || (isRobot ? opts.robotFallbackName || '机器人' : '玩家'),
+          name: msg.senderName || (isRobot ? opts.robotFallbackName || '开奖员' : '玩家'),
           avatar: msg.senderAvatar || '',
           robot: isRobot && !self,
           self: self,
@@ -1105,10 +1113,19 @@
         });
     }
 
+    function identityReady() {
+      var App = global.App;
+      if (App && App._bridgeReady) return true;
+      var id = typeof opts.getUserId === 'function' ? String(opts.getUserId() || '') : '';
+      if (id) return true;
+      var u = App && App.getUser ? App.getUser() : null;
+      return !!(u && u.id);
+    }
+
     function startPolling() {
       var App = global.App;
       bindFeedScrollRelease();
-      sync(true);
+      if (identityReady()) sync(true);
       var activeMs = Math.max(500, Number(opts.pollActiveMs) || 2000);
       var hiddenMs = Math.max(activeMs, Number(opts.pollHiddenMs) || 5000);
       if (pollHandle && pollHandle.stop) {

@@ -35,8 +35,9 @@ RUN pnpm install --frozen-lockfile --prod --filter @gamebox/server... \
 FROM ${NODE_IMAGE} AS runner
 ARG DEBIAN_MIRROR
 RUN sed -i "s|deb.debian.org|${DEBIAN_MIRROR}|g" /etc/apt/sources.list.d/debian.sources \
-    && apt-get update && apt-get install -y --no-install-recommends openssl \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get update && apt-get upgrade -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends openssl libpcre2-8-0 perl-base \
+    && rm -rf /var/lib/apt/lists/* /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 ENV NODE_ENV=production
 WORKDIR /repo
 

@@ -222,6 +222,13 @@ model Agent {
   playerMaxRate    Float?
   /// 占成：总代默认 50%（上限 70%）、代理默认 50%（不能超过总代）
   shareRate      Float @default(0.5)
+  /// 总代占成何时落到 shareRate；空=从建号起一直是这一档
+  shareRateSince DateTime?
+  /// shareRateSince 之前未结账期仍用这一档
+  prevShareRate  Float?
+  /// 已预约、下期才生效的总代占成
+  pendingShareRate Float?
+  pendingShareFrom DateTime?
 
   // ── 以下三项只对总代有意义：代理的盘口与结算周期跟着房间走 ──
   /// 总代与平台的结算方式：CASH=先付款再给额度 / CREDIT=先给额度事后结
@@ -421,6 +428,11 @@ model Room {
   overIssueUsed    Decimal   @default(0) @db.Decimal(18, 2)
   bookMode         String    @default("CASH")
   agentShareRate   Float     @default(0)
+  /// 代理占成何时落到 agentShareRate；空=从建房起一直是这一档
+  agentShareRateSince DateTime?
+  prevAgentShareRate  Float?
+  pendingAgentShareRate Float?
+  pendingAgentShareFrom DateTime?
   creditLimit      Decimal   @default(0) @db.Decimal(18, 2)
   settleCycle      String    @default("WEEKLY_MON")
   settleWeekday    Int       @default(1)

@@ -28,14 +28,11 @@ class HangDto {
 const AGENT_ROLES = new Set(['BRANCH', 'AGENT', 'PROXY']);
 
 /*
- * 类级 @Roles 收口。
- *
- * 方法里虽然都用 isAgentRole 挡了，但那是一条条手写的——
- * 以后随手加个接口忘了写，任何登录用户都能调。放到类上兜底，
- * 方法内的检查保留（返回的是更具体的中文提示）。
+ * 类级角色只挡住没登录的人。玩家点「推广中心」看的是自己的团队和佣金，
+ * 必须放行 PLAYER。挂靠仍在方法里限制为代理。
  */
 @Controller('agent')
-@Roles('ADMIN', 'BRANCH', 'AGENT', 'PROXY')
+@Roles('ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY', 'CS', 'PLAYER')
 export class AgentController {
   constructor(
     private prisma: PrismaService,

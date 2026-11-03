@@ -72,46 +72,93 @@
         <div v-if="loading" class="sp-empty">加载中…</div>
         <div v-else-if="!list.length" class="sp-empty">暂无已绑房代理</div>
 
-        <div v-for="a in list" :key="a.id" class="agent-card">
-          <div class="agent-card-hd">
-            <div>
-              <div class="agent-name">{{ a.nickname }}</div>
-              <div class="agent-sub">{{ a.username }} · {{ a.uid }}</div>
+        <section
+          v-for="b in agentBlocks"
+          :key="b.key"
+          class="sg-wrap"
+          :class="{ 'sg-plain': b.kind === 'agent' }"
+        >
+          <div v-if="b.kind === 'general'" class="agent-card sg-head">
+            <button type="button" class="sg-toggle" @click="toggleGroup(b.key)">
+              <div class="agent-card-hd">
+                <div>
+                  <div class="agent-name"><em class="sg-tag">总代</em>{{ b.name }}</div>
+                  <div class="agent-sub">{{ b.sub }}</div>
+                  <div class="sg-pills">
+                    <span class="sg-pill">占成 {{ b.sharePct }}%</span>
+                    <span class="sg-pill">整包 {{ b.flowPct }}%</span>
+                    <span class="sg-pill">{{ b.bookLabel }}</span>
+                    <span class="sg-pill">{{ b.agents.length }} 位代理</span>
+                  </div>
+                </div>
+                <span class="sg-chev" :class="{ open: isGroupOpen(b.key) }"></span>
+              </div>
+            </button>
+            <div class="room-metrics">
+              <div class="m">
+                <span class="mk">{{ b.quotaLabel }}</span>
+                <span class="mv">{{ b.quotaText }}</span>
+              </div>
+              <div class="m">
+                <span class="mk">{{ b.secondLabel }}</span>
+                <span class="mv">{{ b.secondText }}</span>
+              </div>
+              <div v-if="b.bookLabel === 'B·信用'" class="m">
+                <span class="mk">上盘可飞</span>
+                <span class="mv">{{ b.flyText }}</span>
+              </div>
+              <div v-if="b.bookLabel !== 'B·信用'" class="m">
+                <span class="mk">余额</span>
+                <span class="mv gold">{{ b.balanceText }}</span>
+              </div>
             </div>
-            <span class="st" :class="isCreditAgent(a) ? 'maintenance' : 'open'">
-              {{ isCreditAgent(a) ? 'B·信用' : 'A·现金' }}
-            </span>
+            <div v-if="generalRow(b.key)" class="ops">
+              <button type="button" @click="openFund(generalRow(b.key)!, 'up')">上分</button>
+              <button type="button" class="down" @click="openFund(generalRow(b.key)!, 'down')">下分</button>
+            </div>
           </div>
-          <div class="room-metrics">
-            <!-- 同一本盘分账：现金叫可用额度，信用叫剩余信用，字段都是 pointsQuota -->
-            <div class="m">
-              <span class="mk">{{ isCreditAgent(a) ? '剩余信用' : '可用额度' }}</span>
-              <span class="mv">{{ fmt(a.pointsQuota) }}</span>
+          <div v-show="b.kind === 'agent' || isGroupOpen(b.key)" :class="{ 'sg-body': b.kind === 'general' }">
+            <div v-for="a in b.agents" :key="a.id" class="agent-card">
+              <div class="agent-card-hd">
+                <div>
+                  <div class="agent-name"><em class="sg-tag">代理</em>{{ a.nickname }}</div>
+                  <div class="agent-sub">{{ a.username }} · {{ a.uid }}</div>
+                </div>
+                <span class="st" :class="isCreditAgent(a) ? 'maintenance' : 'open'">
+                  {{ isCreditAgent(a) ? 'B·信用' : 'A·现金' }}
+                </span>
+              </div>
+              <div class="room-metrics">
+                <div class="m">
+                  <span class="mk">{{ isCreditAgent(a) ? '剩余信用' : '可用额度' }}</span>
+                  <span class="mv">{{ fmt(a.pointsQuota) }}</span>
+                </div>
+                <div class="m">
+                  <span class="mk">代理余额</span>
+                  <span class="mv gold">{{ fmt(agentBalanceOf(a)) }}</span>
+                </div>
+                <div class="m">
+                  <span class="mk">上盘可飞</span>
+                  <span class="mv">{{ fmt(a.flyCover) }}</span>
+                </div>
+                <div class="m"><span class="mk">房间</span><span class="mv sm">{{ roomText(a) }}</span></div>
+              </div>
+              <div class="ops">
+                <button
+                  v-if="a.rooms?.[0]?.id"
+                  type="button"
+                  class="ghost"
+                  @click="router.push({ name: 'staff-room-detail', params: { id: a.rooms[0].id } })"
+                >进房间</button>
+                <template v-if="showAgentFund(a)">
+                  <button type="button" @click="openFund(a, 'up')">上分</button>
+                  <button type="button" class="down" @click="openFund(a, 'down')">下分</button>
+                </template>
+                <span v-else-if="showAgentCreditHint(a)" class="credit-hint">信用盘 · 进房调额度</span>
+              </div>
             </div>
-            <div class="m">
-              <span class="mk">代理余额</span>
-              <span class="mv gold">{{ fmt(agentBalanceOf(a)) }}</span>
-            </div>
-            <div class="m">
-              <span class="mk">上盘可飞</span>
-              <span class="mv">{{ fmt(a.flyCover) }}</span>
-            </div>
-            <div class="m"><span class="mk">房间</span><span class="mv sm">{{ roomText(a) }}</span></div>
           </div>
-          <div class="ops">
-            <button
-              v-if="a.rooms?.[0]?.id"
-              type="button"
-              class="ghost"
-              @click="router.push({ name: 'staff-room-detail', params: { id: a.rooms[0].id } })"
-            >进房间</button>
-            <template v-if="canFund && !isCreditAgent(a)">
-              <button type="button" @click="openFund(a, 'up')">上分</button>
-              <button type="button" class="down" @click="openFund(a, 'down')">下分</button>
-            </template>
-            <span v-else-if="canFund && isCreditAgent(a)" class="credit-hint">信用盘 · 进房调额度</span>
-          </div>
-        </div>
+        </section>
 
         <div v-if="list.length < total" class="sp-empty">
           <button type="button" class="sc-logout" :disabled="loading" @click="loadMore">加载更多</button>
@@ -122,7 +169,10 @@
     <div v-if="fundVisible" class="sp-sheet" @click.self="fundBusy || (fundVisible = false)">
       <div class="sp-sheet-panel">
         <h3>{{ fundMode === 'up' ? '上分' : '下分' }}</h3>
-        <p class="hint">{{ fundTarget?.nickname }} · 额度 {{ fmt(fundTarget?.pointsQuota) }}</p>
+        <p class="hint">
+          {{ fundTarget?.role === 'GENERAL' ? '总代' : '代理' }}
+          {{ fundTarget?.nickname }} · 额度 {{ fmt(fundTarget?.pointsQuota) }}
+        </p>
         <input v-model.number="fundAmount" type="number" min="1" :max="FUND_MAX" step="1" placeholder="金额">
         <p v-if="fundConfirming" class="hint confirm">
           确认给 {{ fundTarget?.nickname }} {{ fundMode === 'up' ? '上分' : '下分' }}
@@ -155,6 +205,13 @@ import { useBodyClass } from '@/composables/useBodyClass'
 import { TIME_RANGES } from '@/composables/timeRange'
 import { formatMoney, formatSignedMoney } from '@gamebox/shared'
 import { newFundOrderNo } from '@/utils/fundOrderNo'
+import {
+  loadStaffGenerals,
+  moneyOrDash,
+  pctOfRate,
+  treeFly,
+  type StaffGeneralRow,
+} from '@/utils/staffGenerals'
 import '@/assets/staff-console.css'
 
 useBodyClass('deco-bg')
@@ -165,7 +222,25 @@ const { toast } = useToast()
 
 const isAgentSide = computed(() => staff.isAgentSide)
 const pageTitle = computed(() => (isAgentSide.value ? '代理报表' : '代理管理'))
-const canFund = computed(() => staff.isBranch || staff.isGeneral)
+/** 平台只给总代，以及没挂总代的直挂代理。总代只给自己名下的代理。 */
+function showAgentFund(a: StaffAgentRow) {
+  if (isCreditAgent(a)) return false
+  if (staff.isGeneral) return true
+  if (staff.isBranch) return !generalIdOf(a)
+  return false
+}
+function showAgentCreditHint(a: StaffAgentRow) {
+  if (!isCreditAgent(a)) return false
+  if (staff.isGeneral) return true
+  if (staff.isBranch) return !generalIdOf(a)
+  return false
+}
+function generalRow(key: string) {
+  if (!staff.isBranch) return null
+  const row = generalMap.value[key]
+  if (!row || row.status === 'DISABLED') return null
+  return row
+}
 
 const ranges = TIME_RANGES
 
@@ -184,6 +259,7 @@ const flowList = ref<{
 
 const keyword = ref('')
 const list = ref<StaffAgentRow[]>([])
+const generalMap = ref<Record<string, StaffGeneralRow>>({})
 const page = ref(1)
 const total = ref(0)
 const pageSize = 20
@@ -219,6 +295,87 @@ function isCreditAgent(a: StaffAgentRow) {
 function agentBalanceOf(a: StaffAgentRow) {
   if (a.agentBalance != null) return Number(a.agentBalance)
   return Number(a.balance || 0)
+}
+
+function generalIdOf(a: StaffAgentRow) {
+  return a.parent?.role === 'GENERAL' ? a.parent.id : ''
+}
+
+type AgentBlock = {
+  key: string
+  kind: 'agent' | 'general'
+  name: string
+  sub: string
+  sharePct: string
+  flowPct: string
+  bookLabel: string
+  quotaLabel: string
+  quotaText: string
+  secondLabel: string
+  secondText: string
+  flyText: string
+  balanceText: string
+  agents: StaffAgentRow[]
+}
+
+const agentBlocks = computed<AgentBlock[]>(() => {
+  const blocks: AgentBlock[] = []
+  const seen = new Set<string>()
+  for (const agent of list.value) {
+    const gid = staff.isGeneral ? '' : generalIdOf(agent)
+    if (!gid) {
+      blocks.push({
+        key: agent.id,
+        kind: 'agent',
+        name: '',
+        sub: '',
+        sharePct: '',
+        flowPct: '',
+        bookLabel: '',
+        quotaLabel: '',
+        quotaText: '',
+        secondLabel: '',
+        secondText: '',
+        flyText: '',
+        balanceText: '',
+        agents: [agent],
+      })
+      continue
+    }
+    if (seen.has(gid)) continue
+    seen.add(gid)
+    const agents = list.value.filter((item) => generalIdOf(item) === gid)
+    const wallet = generalMap.value[gid]
+    const credit = wallet?.bookMode === 'CREDIT'
+    const parentName = String(agent.parent?.nickname || agent.parent?.username || '').trim()
+    blocks.push({
+      key: gid,
+      kind: 'general',
+      name: String(wallet?.nickname || parentName || '总代').trim(),
+      sub: [wallet?.username || agent.parent?.username, wallet?.uid || ''].filter(Boolean).join(' · '),
+      sharePct: pctOfRate(wallet?.shareRate),
+      flowPct: pctOfRate(wallet?.flowRate),
+      bookLabel: wallet ? (credit ? 'B·信用' : 'A·现金') : '—',
+      quotaLabel: credit ? '剩余信用' : '可用额度',
+      quotaText: moneyOrDash(wallet, wallet?.pointsQuota),
+      secondLabel: credit ? '合同额度' : '上盘可飞',
+      secondText: moneyOrDash(wallet, credit ? wallet?.creditLimit : treeFly(Number(wallet?.flyCover || 0), agents.map((item) => Number(item.flyCover || 0)))),
+      flyText: moneyOrDash(wallet, treeFly(Number(wallet?.flyCover || 0), agents.map((item) => Number(item.flyCover || 0)))),
+      balanceText: moneyOrDash(wallet, wallet?.agentBalance ?? wallet?.balance),
+      agents,
+    })
+  }
+  return blocks
+})
+
+const openedGroups = ref<Record<string, boolean>>({})
+function isGroupOpen(key: string) {
+  if (openedGroups.value[key] != null) return openedGroups.value[key]
+  const groups = agentBlocks.value.filter((b) => b.kind === 'general')
+  return groups.length <= 1 || groups[0]?.key === key
+}
+function toggleGroup(key: string) {
+  openedGroups.value = { ...openedGroups.value, [key]: !isGroupOpen(key) }
 }
 function openFund(a: StaffAgentRow, mode: 'up' | 'down') {
   fundTarget.value = a
@@ -281,16 +438,20 @@ function switchRange(key: string) {
 async function fetchAgents(p: number, append: boolean) {
   loading.value = true
   try {
-    const res = await staffConsoleApi.agents({
-      page: p,
-      pageSize,
-      role: 'AGENT',
-      q: keyword.value.trim() || undefined,
-      boundOnly: true,
-    })
+    const [res, gens] = await Promise.all([
+      staffConsoleApi.agents({
+        page: p,
+        pageSize,
+        role: 'AGENT',
+        q: keyword.value.trim() || undefined,
+        boundOnly: true,
+      }),
+      loadStaffGenerals().catch(() => ({})),
+    ])
     total.value = res.total
     page.value = p
     list.value = append ? [...list.value, ...res.list] : res.list
+    generalMap.value = gens
   } catch (e: unknown) {
     toast(e instanceof Error ? e.message : '加载失败')
   } finally {
@@ -408,5 +569,16 @@ onMounted(() => { void reload() })
   letter-spacing: 0.5px;
   text-align: right;
   line-height: 1.3;
+}
+.sg-toggle {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 </style>

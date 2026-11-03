@@ -34,6 +34,13 @@ import {
   sumUnsettledCreditDebt,
 } from './credit-issue-debt.helper';
 import { dueMonthsUntil } from './general-room-fee.helper';
+import {
+  GENERAL_SHARE_SCHEDULE_SELECT,
+  ROOM_AGENT_SHARE_SCHEDULE_SELECT,
+  effectiveGeneralShareRate,
+  scheduleFromAgent,
+  scheduleFromRoom,
+} from './general-share-rate.helper';
 
 const SH_MS = 8 * 3600 * 1000;
 const DAY_MS = 86400000;
@@ -406,7 +413,7 @@ export class RoomSettleService {
       playerBalances,
       csBalances,
       agentShareRate: Number(room.agentShareRate ?? 0),
-      generalShareRate: this.roomShareRates(room).generalShareRate,
+      generalShareRate: this.roomShareRates(room, new Date()).generalShareRate,
     });
   }
 
@@ -428,7 +435,7 @@ export class RoomSettleService {
         name: true,
         roomNo: true,
         bookMode: true,
-        agentShareRate: true,
+        ...ROOM_AGENT_SHARE_SCHEDULE_SELECT,
         creditLimit: true,
         settleCycle: true,
         settleWeekday: true,
@@ -444,7 +451,7 @@ export class RoomSettleService {
         },
         generalAgent: {
           select: {
-            shareRate: true,
+            ...GENERAL_SHARE_SCHEDULE_SELECT,
             userId: true,
             user: { select: { nickname: true } },
           },
@@ -507,10 +514,13 @@ export class RoomSettleService {
     );
   }
 
-  private roomShareRates(room: Awaited<ReturnType<RoomSettleService['roomOrThrow']>>) {
-    const agentShareRate = Math.min(1, Math.max(0, Number(room.agentShareRate ?? 0)));
+  private roomShareRates(
+    room: Awaited<ReturnType<RoomSettleService['roomOrThrow']>>,
+    periodStart: Date,
+  ) {
+    const agentShareRate = effectiveGeneralShareRate(scheduleFromRoom(room), periodStart);
     const generalShareRate = room.generalAgent
-      ? Math.min(1, Math.max(0, Number(room.generalAgent.shareRate ?? 0)))
+      ? effectiveGeneralShareRate(scheduleFromAgent(room.generalAgent), periodStart)
       : null;
     return { agentShareRate, generalShareRate };
   }
@@ -700,7 +710,6 @@ export class RoomSettleService {
   ) {
     const room = await this.roomOrThrow(actor, roomId);
     const cycle = normalizeSettleCycle(room.settleCycle);
-    const { agentShareRate: share, generalShareRate } = this.roomShareRates(room);
     const isCredit = room.bookMode === 'CREDIT';
     const periodKey = opts?.period === 'last' ? 'last' : opts?.period === 'early' ? 'early' : 'current';
 
@@ -806,6 +815,8 @@ export class RoomSettleService {
       periodEnd = current.periodEnd;
       periodLabel = '本期进行中';
     }
+
+    const { agentShareRate: share, generalShareRate } = this.roomShareRates(room, periodStart);
 
     const settledSheet = await this.prisma.roomWeekSettle.findFirst({
       where: { roomId, status: 'SETTLED', weekStart: periodStart },
@@ -1665,7 +1676,8 @@ export class RoomSettleService {
     const cycle = normalizeSettleCycle(room.settleCycle);
     const current = shanghaiSettleBounds(cycle, 0);
     const last = shanghaiSettleBounds(cycle, -1);
-    const { agentShareRate: share, generalShareRate } = this.roomShareRates(room);
+    const curRates = this.roomShareRates(room, current.periodStart);
+    const lastRates = this.roomShareRates(room, last.periodStart);
     const isCredit = room.bookMode === 'CREDIT';
 
     const [curAgg, lastAgg, history, creditBook] = await Promise.all([
@@ -1686,8 +1698,8 @@ export class RoomSettleService {
      * 原先信用盘走 creditBook（额度差）：那是「此刻」的额度快照，没有账期概念，
      * 结果本期与上期显示同一个数，还跟结算单对不上。额度账本另有 creditBook 字段单独给。
      */
-    const curSplit = this.agentFlySplit(curAgg, share, generalShareRate);
-    const lastSplit = this.agentFlySplit(lastAgg, share, generalShareRate);
+    const curSplit = this.agentFlySplit(curAgg, curRates.agentShareRate, curRates.generalShareRate);
+    const lastSplit = this.agentFlySplit(lastAgg, lastRates.agentShareRate, lastRates.generalShareRate);
 
     /*
      * 日历上周若只是 cron 空关账单，指向最近那张更新的已结单
@@ -1717,9 +1729,9 @@ export class RoomSettleService {
       contract: {
         bookMode: isCredit ? 'CREDIT' : 'CASH',
         bookLabel: isCredit ? 'B · 信用盘' : 'A · 现金盘',
-        agentShareRate: share,
-        agentSharePct: Math.round(share * 1000) / 10,
-        platformSharePct: Math.round((1 - share) * 1000) / 10,
+        agentShareRate: curRates.agentShareRate,
+        agentSharePct: Math.round(curRates.agentShareRate * 1000) / 10,
+        platformSharePct: Math.round((1 - curRates.agentShareRate) * 1000) / 10,
         creditLimit: Number(room.creditLimit ?? 0),
         settleCycle: cycle,
         settleWeekday: settleCycleToWeekday(cycle),
@@ -1881,7 +1893,7 @@ export class RoomSettleService {
       weekStart,
       weekEnd,
     );
-    const { agentShareRate: share, generalShareRate } = this.roomShareRates(room);
+    const { agentShareRate: share, generalShareRate } = this.roomShareRates(room, weekStart);
     const bookMode = room.bookMode === 'CREDIT' ? 'CREDIT' : 'CASH';
     const flying = this.agentFlySplit(agg, share, generalShareRate);
     const commission = side.flyRebateToAgent;

@@ -48,7 +48,17 @@
             </div>
             <div class="kv">
               <div class="k">盘口 / 占成</div>
-              <div class="v">{{ bookBrief }}</div>
+              <div class="v">
+                <div>{{ bookBrief }}</div>
+                <div v-if="pendingShareText" class="sub">{{ pendingShareText }}</div>
+                <el-button
+                  v-if="canEditShare"
+                  type="primary"
+                  link
+                  size="small"
+                  @click="openShareEdit"
+                >改占成</el-button>
+              </div>
             </div>
             <div class="kv">
               <div class="k">流水费率</div>
@@ -511,6 +521,32 @@
       </div>
     </div>
 
+    <DeskDialog v-model="shareVisible" title="修改总代占成" width="420px">
+      <el-alert type="info" :closable="false" show-icon class="mb12">
+        保存后从该总代下一账期开始生效，本期账单仍按当前占成结算。
+        名下未关房的代理占成不能高于新占成。
+      </el-alert>
+      <el-form label-width="88px">
+        <el-form-item label="当前占成">
+          <span>{{ pct(detail?.shareRate) }}%</span>
+        </el-form-item>
+        <el-form-item label="新占成" required>
+          <el-input-number
+            v-model="shareEditPct"
+            :min="0"
+            :max="70"
+            :step="1"
+            controls-position="right"
+          />
+          <span class="unit-hint">%</span>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="shareVisible = false">取消</el-button>
+        <el-button type="primary" :loading="shareBusy" @click="doSetShare">确认修改</el-button>
+      </template>
+    </DeskDialog>
+
     <DeskDialog v-model="fundVisible" :title="fundMode === 'up' ? '总代上分' : '总代下分'" width="400px">
       <el-form label-width="72px">
         <el-form-item label="金额">
@@ -641,6 +677,46 @@ const canFund = computed(() =>
   && detail.value?.role === 'GENERAL'
   && detail.value?.status === 'ACTIVE',
 )
+const canEditShare = computed(() => isAdminOrBranch.value && detail.value?.status === 'ACTIVE')
+
+const shareVisible = ref(false)
+const shareBusy = ref(false)
+const shareEditPct = ref(50)
+
+function shareToPct(n?: number | null) {
+  const v = Number(n)
+  if (!Number.isFinite(v)) return 50
+  return Math.round(v > 1 ? v : v * 100)
+}
+
+function openShareEdit() {
+  shareEditPct.value = shareToPct(detail.value?.pendingShareRate ?? detail.value?.shareRate)
+  shareVisible.value = true
+}
+
+async function doSetShare() {
+  if (shareEditPct.value < 0 || shareEditPct.value > 70) {
+    ElMessage.warning('总代占成须在 0%～70%')
+    return
+  }
+  shareBusy.value = true
+  try {
+    const res = await consoleApi.setGeneralShareRate(id.value, shareEditPct.value / 100)
+    ElMessage.success((res as { message?: string }).message || '已保存')
+    shareVisible.value = false
+    await load()
+  } catch (e) {
+    ElMessage.error((e as Error).message || '修改失败')
+  } finally {
+    shareBusy.value = false
+  }
+}
+
+const pendingShareText = computed(() => {
+  const d = detail.value
+  if (d?.pendingShareRate == null || !d.pendingShareFrom) return ''
+  return `下期 ${pct(d.pendingShareRate)}% · ${formatDtShort(String(d.pendingShareFrom))} 起`
+})
 const backLabel = computed(() => {
   const from = String(route.query.from || '')
   if (from === 'room') return '返回本房'
@@ -662,7 +738,8 @@ const todayAgg = computed(() => {
   let monthly = 0
   for (const r of rooms.value) {
     members += Number(r.memberCount || 0)
-    monthly += Number(r.monthlyFee || 0)
+    // 关房已停月费，合计只加未关房（维护/冻结仍算）
+    if (r.status !== 'CLOSED') monthly += Number(r.monthlyFee || 0)
     if (r.status === 'OPEN') open += 1
     betFlow += Number(r.todayStats?.betFlow || 0)
     flown += Number(r.todayStats?.flownBetFlow || 0)
@@ -1044,5 +1121,7 @@ onMounted(() => {
 .down { color: #ef4444; }
 .pager { margin-top: 12px; justify-content: flex-end; }
 .fund-tip-text { margin: 0 0 12px; color: var(--el-text-color-secondary); font-size: 13px; line-height: 1.5; }
+.mb12 { margin-bottom: 12px; }
+.unit-hint { margin-left: 8px; color: var(--el-text-color-secondary); }
 .is-clickable-table :deep(.el-table__row) { cursor: pointer; }
 </style>

@@ -30,7 +30,7 @@
         <div class="hero-en">G O L D &nbsp;·&nbsp; H U B</div>
       </div>
 
-      <form class="register-form" @submit.prevent>
+      <form class="register-form" @submit.prevent="doRegister">
         <div class="field-luxe">
           <span class="ic" aria-hidden="true"><img src="/images/icon-user.svg" alt=""></span>
           <input v-model="account" type="text" class="field" placeholder="账号（8 位以上，英文+数字）" maxlength="20" autocomplete="username">
@@ -47,7 +47,7 @@
         </div>
 
         <div class="register-actions">
-          <button class="btn btn-primary btn-block" :disabled="loading" @click="doRegister">
+          <button type="submit" class="btn btn-primary btn-block" :disabled="loading">
             <span class="ruby ruby-l"></span>
             <span class="btn-text">{{ loading ? '注册中...' : '立 即 注 册' }}</span>
             <span class="ruby ruby-r"></span>

@@ -20,6 +20,11 @@ import { PointsService, PLATFORM_OWNER_ID, type OwnerType } from '../points/poin
 import { AdminLogService } from '../admin/admin-log.service';
 import { ConsoleScopeService, type ConsoleActor } from './console-scope.service';
 import { OPEN_ROOM_WHERE } from './open-room.where';
+import {
+  GENERAL_SHARE_SCHEDULE_SELECT,
+  publicGeneralShareView,
+  scheduleFromAgent,
+} from './general-share-rate.helper';
 import { RiskDetectorService } from '../risk/risk-detector.service';
 import {
   applyAgentCreditToPlayerInTx,
@@ -92,9 +97,9 @@ export class ConsoleWalletService {
           creditLimit: true,
           bookMode: true,
           flowRate: true,
-          shareRate: true,
           settleCycle: true,
           roomMonthlyFee: true,
+          ...GENERAL_SHARE_SCHEDULE_SELECT,
         },
       });
       const acc = await this.prisma.pointsAccount.findFirst({
@@ -141,7 +146,7 @@ export class ConsoleWalletService {
         playerPointsTotal: roundMoney(generalPlayerPoints),
         overIssueUsed: roundMoney(Math.max(0, -quota)),
         flowRate: Number(agent?.flowRate ?? 0.07),
-        shareRate: Number(agent?.shareRate ?? 0.5),
+        ...publicGeneralShareView(scheduleFromAgent(agent ?? { shareRate: 0.5 })),
         settleCycle: agent?.settleCycle ?? 'WEEKLY_MON',
         downlineFlowRate: Number(agent?.flowRate ?? 0.07),
         /** 平台向他收的每间房月费单价；也是他名下房间月费的下限 */

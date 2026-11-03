@@ -38,7 +38,7 @@
           </div>
           <div
             class="rp-hero-row"
-            :class="{ 'cols-4': isLandlordOverview, 'cols-2': heroMetrics.length === 2 }"
+            :class="{ 'cols-4': isLandlordOverview || isGeneralOverview || isAgentOverview, 'cols-2': heroMetrics.length === 2 }"
           >
             <div v-for="m in heroMetrics" :key="m.k">
               <span class="k">{{ m.k }}</span>
@@ -48,7 +48,7 @@
         </section>
 
         <!-- 管理/房主：详细单行清单；其他角色保留原格子（子报表可无格子） -->
-        <div v-if="isLandlordOverview && summaryCells.length" class="rp-detail">
+        <div v-if="(isLandlordOverview || isGeneralOverview || isAgentOverview) && summaryCells.length" class="rp-detail">
           <div v-for="c in summaryCells" :key="c.k" class="rp-detail-row">
             <span class="k">{{ c.k }}</span>
             <b class="v" :class="c.cls || ''">{{ c.v }}</b>
@@ -65,21 +65,46 @@
         <template v-if="view === 'guess'">
           <div class="sc-sec-title">分游戏竞猜</div>
           <div v-if="!(summary?.byGame || []).length" class="sp-empty">该区间暂无已结算注单</div>
-          <div v-for="g in summary?.byGame || []" :key="g.gameCode" class="rp-card is-static">
-            <div class="rp-card-hd">
-              <div class="rp-card-name">
-                <b>{{ g.gameName || g.gameCode }}</b>
+          <section v-for="g in summary?.byGame || []" :key="g.gameCode" class="sg-wrap">
+            <button type="button" class="rp-card sg-head" @click="toggleGame(g.gameCode)">
+              <div class="rp-card-hd">
+                <div class="rp-card-name">
+                  <b>{{ g.gameName || g.gameCode }}</b>
+                  <span>注单 {{ formatCount(g.betCount) }} · 流水 {{ fmt(g.betFlow) }}</span>
+                </div>
+                <div class="rg-side">
+                  <div class="rp-card-pnl" :class="pnlClass(gamePnl(g.housePnl))">{{ fmtSigned(gamePnl(g.housePnl)) }}</div>
+                  <span class="sg-chev" :class="{ open: isGameOpen(g.gameCode) }"></span>
+                </div>
               </div>
-              <div class="rp-card-pnl" :class="pnlClass(isAgentSide ? -g.housePnl : g.housePnl)">
-                {{ fmtSigned(isAgentSide ? -g.housePnl : g.housePnl) }}
+              <div class="rp-metrics cols-3">
+                <div class="rp-m"><em>注单</em><b>{{ formatCount(g.betCount) }}</b></div>
+                <div class="rp-m"><em>流水</em><b>{{ fmt(g.betFlow) }}</b></div>
+                <div class="rp-m"><em>派彩</em><b>{{ fmt(g.payout) }}</b></div>
+              </div>
+            </button>
+            <div v-show="isGameOpen(g.gameCode)" class="sg-body">
+              <div v-if="gameState(g.gameCode).loading && !gameState(g.gameCode).list.length" class="sp-empty">加载中…</div>
+              <div v-else-if="!gameState(g.gameCode).list.length" class="sp-empty">该游戏暂无注单</div>
+              <div v-for="b in gameState(g.gameCode).list" :key="b.id" class="sp-row sf-row">
+                <div class="top">
+                  <div class="name">{{ b.playerNickname || '—' }}</div>
+                  <div class="bal" :class="pnlClass(b.playerPnl)">{{ fmtSigned(b.playerPnl) }}</div>
+                </div>
+                <div class="meta">
+                  {{ betStatusLabel(b.status) }}
+                  <template v-if="betTypeLabel(b.betType)"> · {{ betTypeLabel(b.betType) }}</template>
+                  · 投 {{ fmt(b.amount) }} · 派 {{ fmt(b.payout) }}
+                  · {{ fmtTime(b.createdAt) }}
+                </div>
+              </div>
+              <div v-if="gameState(g.gameCode).list.length < gameState(g.gameCode).total" class="sp-empty">
+                <button type="button" class="sc-logout" :disabled="gameState(g.gameCode).loading" @click="loadMoreGame(g.gameCode)">
+                  {{ gameState(g.gameCode).loading ? '加载中…' : '加载更多' }}
+                </button>
               </div>
             </div>
-            <div class="rp-metrics cols-3">
-              <div class="rp-m"><em>注单</em><b>{{ formatCount(g.betCount) }}</b></div>
-              <div class="rp-m"><em>流水</em><b>{{ fmt(g.betFlow) }}</b></div>
-              <div class="rp-m"><em>派彩</em><b>{{ fmt(g.payout) }}</b></div>
-            </div>
-          </div>
+          </section>
         </template>
 
         <!-- 积分：玩家持分名单 -->
@@ -112,45 +137,88 @@
 
         <!-- 分房间：管理/房主只读；代理端可点进详情 -->
         <template v-else-if="showRoomBreakdown">
-          <div class="sc-sec-title">{{ view === 'fund' ? '分房间上下分' : '分房间' }}</div>
-          <component
-            :is="isLandlordOverview ? 'div' : 'button'"
-            v-for="r in roomRows"
-            :key="r.roomId"
-            v-bind="isLandlordOverview ? {} : { type: 'button' }"
-            class="rp-card"
-            :class="{ 'is-static': isLandlordOverview }"
-            @click="onRoomCardClick(r.roomId)"
+          <div class="sc-sec-title">{{ roomSectionTitle }}</div>
+          <section
+            v-for="b in roomBlocks"
+            :key="b.key"
+            class="rg"
+            :class="{ 'rg-plain': b.kind === 'room' }"
           >
-            <div class="rp-card-hd">
-              <div class="rp-card-name">
-                <b>{{ r.name }}</b>
-                <span>进房码 {{ r.roomNo }} · 玩家 {{ r.memberCount ?? 0 }}</span>
+            <button
+              v-if="b.kind === 'general'"
+              type="button"
+              class="rp-card rg-head"
+              @click="toggleGroup(b.key)"
+            >
+              <div class="rp-card-hd">
+                <div class="rp-card-name">
+                  <b><em class="rg-tag">总代</em>{{ b.name }}</b>
+                  <div class="rg-pills">
+                    <i v-if="b.sharePct">占成 {{ b.sharePct }}%</i>
+                    <i v-if="b.flowPct">整包 {{ b.flowPct }}%</i>
+                    <i>{{ b.rooms.length }} 间房</i>
+                  </div>
+                </div>
+                <div class="rg-side">
+                  <div class="rp-card-pnl" :class="pnlClass(groupHeadline(b))">{{ fmtSigned(groupHeadline(b)) }}</div>
+                  <span class="rg-chev" :class="{ open: isGroupOpen(b.key) }"></span>
+                </div>
               </div>
-              <div
-                class="rp-card-pnl"
-                :class="pnlClass(roomPnl(r))"
-              >{{ fmtSigned(roomPnl(r)) }}</div>
+              <div class="rp-line-grid" v-if="isLandlordOverview">
+                <div class="rp-line"><span>流水</span><b>{{ fmt(b.flow) }}</b></div>
+                <div class="rp-line"><span>庄家盈亏</span><b :class="pnlClass(b.house)">{{ fmtSigned(b.house) }}</b></div>
+                <div class="rp-line"><span>总代占成</span><b :class="pnlClass(b.generalShare)">{{ fmtSigned(b.generalShare) }}</b></div>
+                <div class="rp-line"><span>平台占成</span><b :class="pnlClass(b.platformShare)">{{ fmtSigned(b.platformShare) }}</b></div>
+              </div>
+              <div v-else-if="view === 'fund'" class="rp-metrics">
+                <div class="rp-m"><em>上分</em><b class="up">{{ fmt(b.up) }}</b></div>
+                <div class="rp-m"><em>下分</em><b class="down">{{ fmt(b.down) }}</b></div>
+              </div>
+              <div v-else class="rp-metrics">
+                <div class="rp-m"><em>流水</em><b>{{ fmt(b.flow) }}</b></div>
+                <div class="rp-m"><em>玩家</em><b>{{ b.members }}</b></div>
+              </div>
+            </button>
+            <div v-show="b.kind === 'room' || isGroupOpen(b.key)" :class="{ 'rg-body': b.kind === 'general' }">
+              <component
+                :is="isLandlordOverview ? 'div' : 'button'"
+                v-for="r in b.rooms"
+                :key="r.roomId"
+                v-bind="isLandlordOverview ? {} : { type: 'button' }"
+                class="rp-card"
+                :class="{ 'is-static': isLandlordOverview }"
+                @click="onRoomCardClick(r.roomId)"
+              >
+                <div class="rp-card-hd">
+                  <div class="rp-card-name">
+                    <b><em v-if="agentTitle(r) !== r.name" class="rg-tag">本房代理</em>{{ agentTitle(r) }}</b>
+                    <span>{{ roomSub(r) }}</span>
+                  </div>
+                  <div class="rp-card-pnl" :class="pnlClass(roomPnl(r))">{{ fmtSigned(roomPnl(r)) }}</div>
+                </div>
+                <div class="rp-line-grid" v-if="isLandlordOverview || isGeneralOverview || isAgentOverview">
+                  <div class="rp-line"><span>流水</span><b>{{ fmt(r.betFlow) }}</b></div>
+                  <div class="rp-line"><span>庄家盈亏</span><b :class="pnlClass(r.housePnl)">{{ fmtSigned(r.housePnl) }}</b></div>
+                  <div class="rp-line">
+                    <span>{{ roomShareLabel }}</span>
+                    <b :class="pnlClass(roomShareValue(r))">{{ fmtSigned(roomShareValue(r)) }}</b>
+                  </div>
+                  <div v-if="isLandlordOverview" class="rp-line"><span>代理佣金</span><b class="gold">{{ fmt(r.commissionAmount) }}</b></div>
+                  <div class="rp-line"><span>注单</span><b>{{ formatCount(r.betCount) }}</b></div>
+                </div>
+                <div v-else-if="view === 'fund'" class="rp-metrics">
+                  <div class="rp-m"><em>上分</em><b class="up">{{ fmt(r.upAmount) }}</b></div>
+                  <div class="rp-m"><em>下分</em><b class="down">{{ fmt(r.downAmount) }}</b></div>
+                </div>
+                <div v-else class="rp-metrics">
+                  <div class="rp-m"><em>注单</em><b>{{ formatCount(r.betCount) }}</b></div>
+                  <div class="rp-m"><em>流水</em><b>{{ fmt(r.betFlow) }}</b></div>
+                  <div class="rp-m"><em>上分</em><b class="up">{{ fmt(r.upAmount) }}</b></div>
+                  <div class="rp-m"><em>下分</em><b class="down">{{ fmt(r.downAmount) }}</b></div>
+                </div>
+              </component>
             </div>
-            <div class="rp-line-grid" v-if="isLandlordOverview">
-              <div class="rp-line"><span>流水</span><b>{{ fmt(r.betFlow) }}</b></div>
-              <div class="rp-line"><span>庄家盈亏</span><b :class="pnlClass(r.housePnl)">{{ fmtSigned(r.housePnl) }}</b></div>
-              <div class="rp-line"><span>平台占成</span><b :class="pnlClass(r.platformShareAmount ?? r.housePnl)">{{ fmtSigned(r.platformShareAmount ?? r.housePnl) }}</b></div>
-              <div class="rp-line"><span>代理佣金</span><b class="down">{{ fmt(r.commissionAmount) }}</b></div>
-              <div class="rp-line"><span>平台净盈</span><b :class="pnlClass(roomNetPnl(r))">{{ fmtSigned(roomNetPnl(r)) }}</b></div>
-              <div class="rp-line"><span>注单</span><b>{{ formatCount(r.betCount) }}</b></div>
-            </div>
-            <div v-else-if="view === 'fund'" class="rp-metrics">
-              <div class="rp-m"><em>上分</em><b class="up">{{ fmt(r.upAmount) }}</b></div>
-              <div class="rp-m"><em>下分</em><b class="down">{{ fmt(r.downAmount) }}</b></div>
-            </div>
-            <div v-else class="rp-metrics">
-              <div class="rp-m"><em>注单</em><b>{{ formatCount(r.betCount) }}</b></div>
-              <div class="rp-m"><em>流水</em><b>{{ fmt(r.betFlow) }}</b></div>
-              <div class="rp-m"><em>上分</em><b class="up">{{ fmt(r.upAmount) }}</b></div>
-              <div class="rp-m"><em>下分</em><b class="down">{{ fmt(r.downAmount) }}</b></div>
-            </div>
-          </component>
+          </section>
         </template>
 
         <!-- 上下分：区间内明细，全部 / 上分 / 下分 -->
@@ -208,6 +276,7 @@ import {
   type StaffPlayerRow,
   type StaffReportByRoomRow,
   type StaffReportSummary,
+  type StaffRoomBet,
   type StaffWalletMe,
 } from '@/api/staffConsole'
 import { useToast } from '@/composables/useToast'
@@ -230,6 +299,15 @@ const loading = ref(false)
 const summary = ref<StaffReportSummary | null>(null)
 const roomRows = ref<StaffReportByRoomRow[]>([])
 const wallet = ref<StaffWalletMe | null>(null)
+
+type RoomLink = {
+  generalUserId: string
+  generalName: string
+  shareRate?: number
+  flowRate?: number
+  agentName: string
+}
+const roomMeta = ref<Record<string, RoomLink>>({})
 
 type FundTypeKey = '' | 'UP' | 'DOWN'
 const fundTypeTabs: { key: FundTypeKey; label: string }[] = [
@@ -288,11 +366,16 @@ const pageTitle = computed(() => {
   return '经营报表'
 })
 
-/** 管理/房主总览始终展示分房；代理端单房不重复拆；竞猜/积分不拆房 */
+/** 管理/总代总览展示分房。代理只有一间房时，上面的账就是这间房，不再重复一张本房账单。 */
 const showRoomBreakdown = computed(() => {
   if (view.value === 'guess' || view.value === 'points') return false
+  if (isAgentOverview.value) return roomRows.value.length > 1
   if (isLandlordOverview.value || isGeneralOverview.value) return roomRows.value.length > 0
   return roomRows.value.length > 1
+})
+const roomSectionTitle = computed(() => {
+  if (view.value === 'fund') return '分房间上下分'
+  return '分房间'
 })
 
 const pageReady = computed(() => {
@@ -303,8 +386,10 @@ const pageReady = computed(() => {
 const heroLabel = computed(() => {
   if (view.value === 'points') return '玩家持分合计'
   if (view.value === 'fund') return '本期净上下分'
-  if (isLandlordOverview.value) return '平台净盈亏'
-  return isAgentSide.value ? '玩家盈亏' : '庄家盈亏'
+  if (isLandlordOverview.value) return '扣返水盈亏'
+  if (isGeneralOverview.value) return '加返水总盈利'
+  if (isAgentOverview.value) return '加返水总盈利'
+  return '庄家盈亏'
 })
 
 const heroValue = computed(() => {
@@ -314,8 +399,17 @@ const heroValue = computed(() => {
   }
   if (isLandlordOverview.value) {
     const s = summary.value
-    if (s?.netPnl != null) return Number(s.netPnl)
-    return Number(s?.platformShareAmount ?? s?.housePnl ?? 0) - Number(s?.commissionAmount ?? 0)
+    if (s?.realNetEarning != null) return Number(s.realNetEarning)
+    return Number(s?.satHousePnl ?? s?.housePnl ?? 0) - Number(s?.rebatePackage ?? 0)
+  }
+  if (isGeneralOverview.value) {
+    const s = summary.value
+    if (s?.realNetEarning != null) return Number(s.realNetEarning)
+    return Number(s?.myShareAmount || 0) + Number(s?.rebateGeneral || 0)
+  }
+  if (isAgentOverview.value) {
+    const s = summary.value
+    return Number(s?.myShareAmount || 0) + Number(s?.rebateAgent || 0)
   }
   return isAgentSide.value
     ? Number(summary.value?.playerPnl || 0)
@@ -356,14 +450,31 @@ const heroMetrics = computed(() => {
     ]
   }
   if (isLandlordOverview.value) {
+    const share = s.myShareAmount ?? s.platformShareAmount ?? s.housePnl
     return [
-      { k: '流水', v: fmt(s.betFlow) },
-      { k: '派彩', v: fmt(s.payout) },
-      { k: '庄家盈亏', v: fmtSigned(s.housePnl), cls: pnlClass(s.housePnl) },
-      { k: '平台占成', v: fmtSigned(s.platformShareAmount ?? s.housePnl), cls: pnlClass(s.platformShareAmount ?? s.housePnl) },
+      { k: '平台占成', v: fmtSigned(share), cls: pnlClass(share) },
+      { k: '总代返水', v: fmt(s.rebateGeneral), cls: 'gold' },
+      { k: '代理返水', v: fmt(s.rebateAgent), cls: 'gold' },
+      { k: '玩家回水', v: fmt(s.rebatePlayer), cls: 'gold' },
     ]
   }
-  /* 明细总览 */
+  if (isGeneralOverview.value) {
+    const share = Number(s.myShareAmount || 0)
+    return [
+      { k: '总盈利', v: fmtSigned(share), cls: pnlClass(share) },
+      { k: '我的返水', v: fmt(s.rebateGeneral), cls: 'gold' },
+      { k: '代理返水', v: fmt(s.rebateAgent), cls: 'gold' },
+      { k: '玩家回水', v: fmt(s.rebatePlayer), cls: 'gold' },
+    ]
+  }
+  if (isAgentOverview.value) {
+    const share = Number(s.myShareAmount || 0)
+    return [
+      { k: '总盈利', v: fmtSigned(share), cls: pnlClass(share) },
+      { k: '我的返水', v: fmt(s.rebateAgent), cls: 'gold' },
+      { k: '玩家回水', v: fmt(s.rebatePlayer), cls: 'gold' },
+    ]
+  }
   return [
     { k: '流水', v: fmt(s.betFlow) },
     { k: '派彩', v: fmt(s.payout) },
@@ -379,11 +490,40 @@ const summaryCells = computed(() => {
   // 管理/房主：平台视角（盈利 / 流水 / 佣金），不含代理待审
   if (isLandlordOverview.value) {
     const commission = Number(s.commissionAmount || 0)
+    const house = s.satHousePnl ?? s.housePnl
     return [
+      { k: '庄家盈亏', v: fmtSigned(house), cls: pnlClass(house) },
+      { k: '流水', v: fmt(s.betFlow) },
+      { k: '派彩', v: fmt(s.payout) },
       { k: '注单数', v: formatCount(s.betCount) },
       { k: '玩家盈亏', v: fmtSigned(s.playerPnl), cls: pnlClass(s.playerPnl) },
-      { k: '代理佣金', v: fmt(commission), cls: commission > 0 ? 'down' : '' },
+      { k: '代理佣金', v: fmt(commission), cls: commission > 0 ? 'gold' : '' },
       { k: '佣金笔数', v: String(s.commissionCount ?? 0) },
+      { k: '上分合计', v: fmt(s.upAmount), cls: 'up' },
+      { k: '下分合计', v: fmt(s.downAmount), cls: 'down' },
+      { k: '活跃玩家', v: String(s.activePlayers ?? 0) },
+      { k: '房间数', v: String(s.roomCount ?? 0) },
+    ]
+  }
+  if (isGeneralOverview.value) {
+    const house = s.housePnl
+    return [
+      { k: '庄家盈亏', v: fmtSigned(house), cls: pnlClass(house) },
+      { k: '流水', v: fmt(s.betFlow) },
+      { k: '派彩', v: fmt(s.payout) },
+      { k: '注单数', v: formatCount(s.betCount) },
+      { k: '上分合计', v: fmt(s.upAmount), cls: 'up' },
+      { k: '下分合计', v: fmt(s.downAmount), cls: 'down' },
+      { k: '活跃玩家', v: String(s.activePlayers ?? 0) },
+      { k: '房间数', v: String(s.roomCount ?? 0) },
+    ]
+  }
+  if (isAgentOverview.value) {
+    return [
+      { k: '庄家盈亏', v: fmtSigned(s.housePnl), cls: pnlClass(s.housePnl) },
+      { k: '流水', v: fmt(s.betFlow) },
+      { k: '派彩', v: fmt(s.payout) },
+      { k: '注单数', v: formatCount(s.betCount) },
       { k: '上分合计', v: fmt(s.upAmount), cls: 'up' },
       { k: '下分合计', v: fmt(s.downAmount), cls: 'down' },
       { k: '活跃玩家', v: String(s.activePlayers ?? 0) },
@@ -407,14 +547,115 @@ function roomPnl(r: StaffReportByRoomRow) {
   if (view.value === 'fund') {
     return Number(r.upAmount || 0) - Number(r.downAmount || 0)
   }
-  if (isLandlordOverview.value) return roomNetPnl(r)
+  if (isLandlordOverview.value) return Number(r.platformShareAmount ?? r.housePnl ?? 0)
+  if (isGeneralOverview.value) return Number(r.generalShareAmount || 0)
+  if (isAgentOverview.value) return Number(r.agentShareAmount || 0)
   return isAgentSide.value ? Number(r.playerPnl || 0) : Number(r.housePnl || 0)
 }
-function roomNetPnl(r: StaffReportByRoomRow) {
-  if (r.netPnl != null) return Number(r.netPnl)
-  return Number(r.platformShareAmount ?? r.housePnl ?? 0) - Number(r.commissionAmount ?? 0)
+
+const roomShareLabel = computed(() => (isLandlordOverview.value ? '平台占成' : '总盈利'))
+function roomShareValue(r: StaffReportByRoomRow) {
+  if (isGeneralOverview.value) return Number(r.generalShareAmount || 0)
+  if (isAgentOverview.value) return Number(r.agentShareAmount || 0)
+  return Number(r.platformShareAmount ?? r.housePnl ?? 0)
 }
 
+function pctLabel(rate?: number) {
+  const n = Number(rate)
+  if (!Number.isFinite(n) || n === 0) return ''
+  const pct = n > 1 ? n : n * 100
+  return String(Math.round(pct * 10) / 10)
+}
+
+function agentTitle(r: StaffReportByRoomRow) {
+  if (isAgentSide.value) return r.name
+  return String(r.agentNickname || roomMeta.value[r.roomId]?.agentName || '').trim() || r.name
+}
+
+function roomSub(r: StaffReportByRoomRow) {
+  const bits = [`进房码 ${r.roomNo}`, `玩家 ${r.memberCount ?? 0}`]
+  if (agentTitle(r) !== r.name) bits.unshift(r.name)
+  return bits.join(' · ')
+}
+
+type RoomBlock = {
+  key: string
+  kind: 'room' | 'general'
+  name: string
+  sharePct: string
+  flowPct: string
+  rooms: StaffReportByRoomRow[]
+  flow: number
+  house: number
+  generalShare: number
+  platformShare: number
+  members: number
+  up: number
+  down: number
+}
+
+const roomBlocks = computed<RoomBlock[]>(() => {
+  const blocks: RoomBlock[] = []
+  const seen = new Set<string>()
+  for (const row of roomRows.value) {
+    const link = roomMeta.value[row.roomId]
+    const gid = isGeneral.value || isAgentSide.value ? '' : (link?.generalUserId || '')
+    if (!gid) {
+      blocks.push({
+        key: row.roomId,
+        kind: 'room',
+        name: '',
+        sharePct: '',
+        flowPct: '',
+        rooms: [row],
+        flow: 0,
+        house: 0,
+        generalShare: 0,
+        platformShare: 0,
+        members: 0,
+        up: 0,
+        down: 0,
+      })
+      continue
+    }
+    if (seen.has(gid)) continue
+    seen.add(gid)
+    const rooms = roomRows.value.filter((item) => roomMeta.value[item.roomId]?.generalUserId === gid)
+    blocks.push({
+      key: gid,
+      kind: 'general',
+      name: link?.generalName || '总代',
+      sharePct: pctLabel(link?.shareRate),
+      flowPct: pctLabel(link?.flowRate),
+      rooms,
+      flow: rooms.reduce((s, item) => s + Number(item.betFlow || 0), 0),
+      house: rooms.reduce((s, item) => s + Number(item.housePnl || 0), 0),
+      generalShare: rooms.reduce((s, item) => s + Number(item.generalShareAmount || 0), 0),
+      platformShare: rooms.reduce((s, item) => s + Number(item.platformShareAmount ?? item.housePnl ?? 0), 0),
+      members: rooms.reduce((s, item) => s + Number(item.memberCount || 0), 0),
+      up: rooms.reduce((s, item) => s + Number(item.upAmount || 0), 0),
+      down: rooms.reduce((s, item) => s + Number(item.downAmount || 0), 0),
+    })
+  }
+  return blocks
+})
+
+const openedGroups = ref<Record<string, boolean>>({})
+function isGroupOpen(key: string) {
+  if (openedGroups.value[key] != null) return openedGroups.value[key]
+  const groups = roomBlocks.value.filter((b) => b.kind === 'general')
+  return groups.length <= 1 || groups[0]?.key === key
+}
+function toggleGroup(key: string) {
+  openedGroups.value = { ...openedGroups.value, [key]: !isGroupOpen(key) }
+}
+function groupHeadline(b: RoomBlock) {
+  if (view.value === 'fund') return b.up - b.down
+  if (isLandlordOverview.value) return b.generalShare
+  return isAgentSide.value
+    ? b.rooms.reduce((s, item) => s + Number(item.playerPnl || 0), 0)
+    : b.house
+}
 function fmt(n?: number | null) {
   return formatMoney(n ?? 0)
 }
@@ -511,8 +752,83 @@ function channelLabel(ch?: string | null) {
   return map[ch] || ch
 }
 
+type GameBetState = { list: StaffRoomBet[]; total: number; page: number; loading: boolean }
+const openGames = ref<Record<string, boolean>>({})
+const gameBets = ref<Record<string, GameBetState>>({})
+const guessRoomIds = ref<string[]>([])
+
+function gameState(code: string): GameBetState {
+  return gameBets.value[code] || { list: [], total: 0, page: 0, loading: false }
+}
+function isGameOpen(code: string) {
+  return !!openGames.value[code]
+}
+function gamePnl(house: number) {
+  return isAgentSide.value ? -Number(house || 0) : Number(house || 0)
+}
+function betStatusLabel(status: string) {
+  return ({ PENDING: '未开奖', WON: '已中', LOST: '未中', CANCELLED: '已取消' } as Record<string, string>)[status] || status
+}
+function betTypeLabel(betType?: string | null) {
+  if (!betType) return ''
+  const map: Record<string, string> = {
+    big: '大', small: '小', odd: '单', even: '双',
+    top2big: '冠亚大', top2small: '冠亚小', top2odd: '冠亚单', top2even: '冠亚双',
+    triplet: '三同', straight: '三连', alldiff: '三不同',
+  }
+  return map[betType] || betType
+}
+
+async function loadGameBets(code: string, page: number, append: boolean) {
+  const prev = gameState(code)
+  gameBets.value = { ...gameBets.value, [code]: { ...prev, loading: true } }
+  try {
+    if (!guessRoomIds.value.length) {
+      const rooms = await staffConsoleApi.rooms().catch(() => [])
+      guessRoomIds.value = (rooms || []).map((room) => room.id)
+    }
+    if (!guessRoomIds.value.length) {
+      gameBets.value = { ...gameBets.value, [code]: { list: [], total: 0, page: 1, loading: false } }
+      return
+    }
+    const pages = await Promise.all(guessRoomIds.value.map((roomId) =>
+      staffConsoleApi.reportRoomBets({
+        roomId,
+        range: range.value,
+        page,
+        pageSize: 20,
+        gameCode: code,
+      }),
+    ))
+    const incoming = pages.flatMap((item) => item.list || [])
+    incoming.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+    const total = pages.reduce((sum, item) => sum + Number(item.total || 0), 0)
+    const current = append ? gameState(code).list : []
+    gameBets.value = {
+      ...gameBets.value,
+      [code]: { list: [...current, ...incoming], total, page, loading: false },
+    }
+  } catch (e: unknown) {
+    toast(e instanceof Error ? e.message : '注单加载失败')
+    gameBets.value = { ...gameBets.value, [code]: { ...gameState(code), loading: false } }
+  }
+}
+
+function toggleGame(code: string) {
+  const next = !isGameOpen(code)
+  openGames.value = { ...openGames.value, [code]: next }
+  if (next && !gameBets.value[code]) void loadGameBets(code, 1, false)
+}
+function loadMoreGame(code: string) {
+  const state = gameState(code)
+  if (state.loading || state.list.length >= state.total) return
+  void loadGameBets(code, state.page + 1, true)
+}
+
 async function load() {
   loading.value = true
+  openGames.value = {}
+  gameBets.value = {}
   try {
     const tasks: Promise<unknown>[] = []
     if (view.value === 'points') {
@@ -533,9 +849,25 @@ async function load() {
           staffConsoleApi.reportByRoom({ range: range.value })
             .then((byRoom) => { roomRows.value = byRoom.list || [] })
             .catch(() => { roomRows.value = [] }),
+          staffConsoleApi.rooms()
+            .then((list) => {
+              const next: Record<string, RoomLink> = {}
+              for (const room of list || []) {
+                next[room.id] = {
+                  generalUserId: room.general?.userId || '',
+                  generalName: String(room.general?.nickname || room.general?.username || '').trim(),
+                  shareRate: room.general?.shareRate,
+                  flowRate: room.general?.flowRate,
+                  agentName: String(room.agent?.nickname || room.agent?.username || '').trim(),
+                }
+              }
+              roomMeta.value = next
+            })
+            .catch(() => { roomMeta.value = {} }),
         )
       } else {
         roomRows.value = []
+        roomMeta.value = {}
       }
       if (!view.value) {
         tasks.push(
@@ -603,8 +935,8 @@ onMounted(() => { void load() })
   border-top: 1px solid rgba(244, 211, 107, 0.14);
 }
 .rp-hero-row.cols-4 {
-  grid-template-columns: repeat(4, 1fr);
-  gap: 6px;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 12px;
 }
 .rp-hero-row.cols-2 {
   grid-template-columns: repeat(2, 1fr);
@@ -622,9 +954,12 @@ onMounted(() => { void load() })
   font-variant-numeric: tabular-nums;
   word-break: break-all;
 }
-.rp-hero-row.cols-4 .v { font-size: 12px; }
+.rp-hero-row.cols-4 .v { font-size: 16px; }
 .rp-hero-row .v.up { color: #86efac; }
 .rp-hero-row .v.down { color: #fca5a5; }
+.rp-hero-row .v.gold,
+.rp-detail-row .v.gold,
+.rp-line b.gold { color: #f5d36b; }
 
 .rp-detail {
   margin-bottom: 14px;
@@ -675,6 +1010,73 @@ onMounted(() => { void load() })
 .rp-card.is-static {
   cursor: default;
 }
+.rg { margin-bottom: 12px; }
+.rg-plain { margin-bottom: 0; }
+.rg-head { margin-bottom: 0; }
+.rg-tag {
+  margin-right: 6px;
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 1px;
+  color: rgba(244, 211, 107, 0.72);
+}
+.rg-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.rg-pills i {
+  font-style: normal;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  color: #d4af37;
+  border: 1px solid rgba(212, 175, 55, 0.4);
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+.rg-side {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.rg-side .rp-card-pnl {
+  max-width: none;
+  white-space: nowrap;
+  word-break: normal;
+  font-size: 16px;
+}
+.rg-chev {
+  position: relative;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid rgba(212, 175, 55, 0.5);
+  background: rgba(0, 0, 0, 0.32);
+}
+.rg-chev::before {
+  content: '';
+  position: absolute;
+  left: 8px;
+  top: 7px;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid #f5d36b;
+  border-bottom: 1.5px solid #f5d36b;
+  transform: rotate(45deg);
+}
+.rg-chev.open::before {
+  top: 10px;
+  transform: rotate(225deg);
+}
+.rg-body {
+  margin: 8px 0 0 16px;
+  padding-left: 10px;
+  border-left: 1px solid rgba(212, 175, 55, 0.42);
+}
+.rg-body .rp-card:last-child { margin-bottom: 0; }
 .rp-card:not(.is-static):active { background: rgba(244, 211, 107, 0.06); }
 
 .rp-line-grid {

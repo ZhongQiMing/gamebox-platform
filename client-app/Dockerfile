@@ -32,6 +32,7 @@ FROM ${NGINX_IMAGE} AS runner
 ARG PLAYER_ORIGIN
 ARG GAME_ORIGIN
 USER root
+RUN apk update && apk upgrade --no-cache
 COPY --from=builder --chown=101:101 /repo/client-app/dist /usr/share/nginx/html
 COPY --from=builder --chown=101:101 /repo/admin-panel/dist /usr/share/nginx/html/admin
 COPY client-app/deploy/nginx.conf /etc/nginx/conf.d/default.conf

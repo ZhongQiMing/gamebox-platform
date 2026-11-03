@@ -87,6 +87,61 @@
         暂无绑定房间
       </div>
 
+      <div v-else-if="!redirecting && narrow && grouped" class="panel-body room-cards">
+        <section v-for="g in generalGroups" :key="g._key" class="general-card">
+          <header class="general-card__hd">
+            <div class="general-card__who">
+              <div class="cell-name">{{ rowTitle(g) }}</div>
+              <div class="cell-meta">
+                {{ rowChain(g) }}
+                <template v-if="g.userId"> · 占成 {{ Math.round(Number(g.shareRate || 0) * 100) }}%</template>
+              </div>
+            </div>
+            <div class="general-card__nums">
+              <span>流水 {{ fmtMoney(g.stats.betFlow) }}</span>
+              <span :style="{ color: pnlColor(g.stats.housePnl) }">盈亏 {{ fmtMoney(g.stats.housePnl) }}</span>
+              <button v-if="g.userId" type="button" class="card-link" @click="goGeneral(g.userId)">总代详情</button>
+            </div>
+          </header>
+          <button
+            v-for="room in g.children"
+            :key="room.id"
+            type="button"
+            class="room-card"
+            @click="goDetail(room.id)"
+          >
+            <div>
+              <div class="cell-name">{{ room.name }}</div>
+              <div class="cell-meta">{{ room.roomNo }} · 代理 {{ room.agent?.nickname || '未绑定' }}</div>
+            </div>
+            <div class="room-card__side">
+              <span>{{ roomStatusLabel(room.status) }}</span>
+              <span>流水 {{ fmtMoney(room.todayStats?.betFlow) }}</span>
+              <span :style="{ color: pnlColor(room.todayStats?.housePnl) }">{{ fmtMoney(room.todayStats?.housePnl) }}</span>
+            </div>
+          </button>
+        </section>
+      </div>
+      <div v-else-if="!redirecting && narrow" class="panel-body room-cards">
+        <button
+          v-for="room in flatRooms"
+          :key="room.id"
+          type="button"
+          class="room-card"
+          @click="goDetail(room.id)"
+        >
+          <div>
+            <div class="cell-name">{{ room.name }}</div>
+            <div class="cell-meta">{{ room.roomNo }} · 代理 {{ room.agent?.nickname || '未绑定' }}</div>
+            <div v-if="room.general" class="cell-meta">总代 {{ room.general.nickname }}</div>
+          </div>
+          <div class="room-card__side">
+            <span>{{ roomStatusLabel(room.status) }}</span>
+            <span>流水 {{ fmtMoney(room.todayStats?.betFlow) }}</span>
+            <span :style="{ color: pnlColor(room.todayStats?.housePnl) }">{{ fmtMoney(room.todayStats?.housePnl) }}</span>
+          </div>
+        </button>
+      </div>
       <div v-else-if="!redirecting" class="panel-body">
         <el-table
           ref="roomsTableRef"
@@ -628,7 +683,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { formatMoney, formatShanghaiDate, isGeneralSide, OPS_PASSWORD_HINT, validateOpsPassword } from '@gamebox/shared'
@@ -648,6 +703,8 @@ type StaffOpt = {
   role: string
   flowRate?: number
   shareRate?: number
+  pendingShareRate?: number | null
+  pendingShareFrom?: string | Date | null
   downlineFlowRate?: number
   bookMode?: string
   /** 平台向该总代收的每间房月费单价；也是名下房间月费的下限 */
@@ -780,14 +837,19 @@ const rebateBounds = reactive({
   agentDefault: 5,
 })
 const agentFlowMin = computed(() => rebateBounds.agentMin)
+function generalShareCapPct(g?: { shareRate?: number; pendingShareRate?: number | null } | null) {
+  const live = Math.round(pctNum(g?.shareRate) || 50)
+  const pending = g?.pendingShareRate == null ? null : Math.round(pctNum(g.pendingShareRate))
+  const cap = pending == null ? live : Math.min(live, pending)
+  return Math.min(70, cap)
+}
+
 /* 总代自己建房时，上限是他自己的成数与整包；后端也按这两个值卡 */
 const agentShareMax = computed(() => {
-  if (isGeneralUser.value) {
-    return Math.min(70, Math.round(pctNum(myGeneral.value?.shareRate) || 50))
-  }
+  if (isGeneralUser.value) return generalShareCapPct(myGeneral.value)
   const g = pickedGeneral.value
   if (!g) return 50
-  return Math.min(70, Math.round(pctNum(g.shareRate) || 50))
+  return generalShareCapPct(g)
 })
 const agentFlowMax = computed(() => {
   const platMax = rebateBounds.agentMax
@@ -834,7 +896,9 @@ const visibilityText = computed(() => {
 const capSourceText = computed(() => {
   const g = isGeneralUser.value ? myGeneral.value : pickedGeneral.value
   if (!g) return `平台上限 ${agentFlowMax.value}% / 50%`
-  return `不超过总代（整包 ${pctNum(g.flowRate)}% · 成数 ${pctNum(g.shareRate)}%）`
+  const cap = generalShareCapPct(g)
+  const pending = g.pendingShareRate == null ? '' : `，下期 ${pctNum(g.pendingShareRate)}%`
+  return `不超过总代（整包 ${pctNum(g.flowRate)}% · 成数 ${cap}%${pending}）`
 })
 
 const filteredList = computed(() => {
@@ -870,6 +934,17 @@ const filteredList = computed(() => {
  * 房间代理侧只有自己那几间，分组反而多一层，保持平铺。
  */
 const grouped = computed(() => isAdminOrBranch.value)
+const narrow = ref(false)
+let narrowQuery: MediaQueryList | null = null
+function syncNarrow() {
+  narrow.value = narrowQuery?.matches ?? window.innerWidth <= 720
+}
+const generalGroups = computed(() =>
+  displayList.value.filter((row): row is GroupRow => Boolean((row as GroupRow)._group)),
+)
+const flatRooms = computed(() =>
+  displayList.value.filter((row): row is ConsoleRoom & { _key: string } => !(row as GroupRow)._group),
+)
 
 type GroupRow = {
   _key: string
@@ -1224,7 +1299,9 @@ async function loadStaff() {
       })),
       ...generals.list.map((a) => ({
         id: a.id, uid: a.uid, nickname: a.nickname, role: a.role,
-        flowRate: a.flowRate, shareRate: a.shareRate, bookMode: a.bookMode,
+        flowRate: a.flowRate, shareRate: a.shareRate,
+        pendingShareRate: a.pendingShareRate, pendingShareFrom: a.pendingShareFrom,
+        bookMode: a.bookMode,
         downlineFlowRate: a.downlineFlowRate,
         roomMonthlyFee: a.roomMonthlyFee,
       })),
@@ -1495,8 +1572,15 @@ async function onPurge(row: ConsoleRoom) {
 }
 
 onMounted(async () => {
+  narrowQuery = window.matchMedia('(max-width: 720px)')
+  syncNarrow()
+  narrowQuery.addEventListener('change', syncNarrow)
   await load()
   await Promise.all([loadStaff(), loadMyGeneral()])
+})
+
+onBeforeUnmount(() => {
+  narrowQuery?.removeEventListener('change', syncNarrow)
 })
 </script>
 
@@ -1727,6 +1811,79 @@ onMounted(async () => {
 @media (max-width: 1100px) {
   .rooms-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .sum-chip { border-bottom: 1px solid #f1f5f9; }
+}
+@media (max-width: 720px) {
+  .rooms-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .sum-chip {
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 2px;
+    min-height: 56px;
+    padding: 8px 12px;
+  }
+  .sum-val { font-size: 16px; }
+}
+.room-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  overflow: auto;
+}
+.general-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+.general-card__hd {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
+}
+.general-card__who { min-width: 0; }
+.general-card__nums {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  font-size: 12px;
+  color: #475569;
+  white-space: nowrap;
+}
+.card-link {
+  border: 0;
+  background: transparent;
+  color: var(--el-color-primary);
+  font-size: 12px;
+  padding: 0;
+  cursor: pointer;
+}
+.room-card {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 0;
+  border-top: 1px solid #f1f5f9;
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+}
+.room-card:first-of-type { border-top: 0; }
+.room-card__side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  font-size: 12px;
+  color: #475569;
+  white-space: nowrap;
 }
 .create-icon-row {
   display: flex;

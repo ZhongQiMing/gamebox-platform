@@ -14,10 +14,6 @@
     </div>
 
     <div class="page-body">
-      <p class="hang-tip">
-        挂靠按房间隔离：只能挂本房玩家；本房流水才返给本房挂靠上级。
-      </p>
-
       <div v-if="rooms.length > 1" class="hang-room">
         <label class="hang-label">选择房间</label>
         <select v-model="roomId" class="hang-input" @change="onRoomChange">
@@ -26,9 +22,6 @@
           </option>
         </select>
       </div>
-      <p v-else-if="activeRoom" class="hang-room-one">
-        当前房间：{{ activeRoom.name || activeRoom.roomNo }}
-      </p>
 
       <div v-if="under" class="hang-under">
         <div class="hang-under-hd">
@@ -106,7 +99,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { staffConsoleApi, type StaffPlayerRow, type StaffRoom } from '@/api/staffConsole'
 import StaffTabBar from '@/components/StaffTabBar.vue'
@@ -121,7 +114,6 @@ const { toast } = useToast()
 
 const rooms = ref<StaffRoom[]>([])
 const roomId = ref('')
-const activeRoom = computed(() => rooms.value.find((r) => r.id === roomId.value) || null)
 
 const keyword = ref('')
 const loading = ref(false)
@@ -233,21 +225,8 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.hang-tip {
-  margin: 0 0 12px;
-  font-size: 12px;
-  line-height: 1.5;
-  color: rgba(232, 212, 168, 0.72);
-}
-
 .hang-room {
   margin-bottom: 12px;
-}
-
-.hang-room-one {
-  margin: 0 0 12px;
-  font-size: 12px;
-  color: rgba(232, 212, 168, 0.65);
 }
 
 .hang-under {

@@ -216,7 +216,7 @@
           </el-table-column>
           <el-table-column label="整包佣金" min-width="104" align="right">
             <template #default="{ row }: { row: any }">
-              {{ fmt((row.generalWageAmount || 0) + (row.playerRebate || 0)) }}
+              <span :class="tone(pkgOf(row))">{{ fmt(pkgOf(row)) }}</span>
             </template>
           </el-table-column>
           <el-table-column prop="generalWageKeep" label="总代佣金" min-width="104" align="right">
@@ -227,6 +227,11 @@
           <el-table-column prop="agentWageAmount" label="代理佣金" min-width="104" align="right">
             <template #default="{ row }: { row: any }">
               <span :class="tone(row.agentWageAmount)">{{ fmt(row.agentWageAmount) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="playerRebate" label="玩家回水" min-width="104" align="right">
+            <template #default="{ row }: { row: any }">
+              <span :class="tone(row.playerRebate)">{{ fmt(row.playerRebate) }}</span>
             </template>
           </el-table-column>
           <!-- 与 hero 卡片同一字段，必须同名，不能一处叫「成数差」一处叫「总代占成」 -->
@@ -359,10 +364,8 @@ const canPickGeneral = computed(
 /** 管理/总监跟总代结：只看平台↔总代。总代自己看的是拆开的佣金和代理占成。 */
 const isAdminBill = computed(() => canPickGeneral.value)
 const isCredit = computed(() => stmt.value?.general.bookMode === 'CREDIT')
-/** 总代整包佣金 = 实发总代 + 玩家回水 */
-const generalPkgGross = computed(() =>
-  Number(stmt.value?.totals.generalWageAmount || 0) + Number(stmt.value?.totals.playerRebate || 0),
-)
+/** 与房间账单同一笔：总代佣金 + 代理佣金 + 玩家回水 */
+const generalPkgGross = computed(() => pkgOf(stmt.value?.totals))
 /** 总表跟总代结：下家占成并进总代 */
 const generalShareToPay = computed(() =>
   Number(stmt.value?.totals.generalShareAmount || 0) + Number(stmt.value?.totals.agentShareAmount || 0),
@@ -444,10 +447,19 @@ function roomFeeOf(roomId: string) {
   return Number(line?.amount || 0)
 }
 
-function roomSummary({ columns }: { columns: Array<{ property?: string }> }) {
+function pkgOf(row?: { generalWageKeep?: number; agentWageAmount?: number; playerRebate?: number } | null) {
+  return (
+    Number(row?.generalWageKeep || 0) +
+    Number(row?.agentWageAmount || 0) +
+    Number(row?.playerRebate || 0)
+  )
+}
+
+function roomSummary({ columns }: { columns: Array<{ property?: string; label?: string }> }) {
   const t = stmt.value?.totals
   return columns.map((col, i) => {
     if (i === 0) return '合计'
+    if (col.label === '整包佣金') return fmt(pkgOf(t))
     const key = col.property
     if (!t || !key || !(key in t)) return ''
     const v = (t as Record<string, unknown>)[key]
@@ -703,6 +715,15 @@ defineExpose({ reload })
 }
 .hero-val.num-up { color: #16a34a; }
 .hero-val.num-down { color: #ef4444; }
+@media (max-width: 720px) {
+  .hero-row.slip,
+  .hero-row.cols-4,
+  .result-row,
+  .result-row.cols-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .hero-card,
+  .result-card { padding: 12px; min-width: 0; }
+  .hero-val { font-size: 18px; overflow-wrap: anywhere; }
+}
 
 .gs-alert {
   margin: 0;

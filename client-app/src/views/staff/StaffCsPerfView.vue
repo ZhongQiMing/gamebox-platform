@@ -166,7 +166,6 @@
         <label class="cp-f"><span>踢下线时限（分钟）</span><input v-model.number="kickMin" type="number" min="2"></label>
         <label class="cp-f"><span>超时罚款</span><input v-model.number="form.lateFine" type="number" min="0"></label>
         <label class="cp-f"><span>漏接罚款</span><input v-model.number="form.missFine" type="number" min="0"></label>
-        <label class="cp-f"><span>单日罚款上限（占佣金 %）</span><input v-model.number="capPct" type="number" min="0" max="100"></label>
         <label class="cp-f"><span>日奖及时率（%）</span><input v-model.number="bonusRatePct" type="number" min="0" max="100"></label>
         <label class="cp-f"><span>日奖最少接单</span><input v-model.number="form.bonusMinRounds" type="number" min="1"></label>
         <label class="cp-f"><span>日奖金额</span><input v-model.number="form.dailyBonus" type="number" min="0"></label>
@@ -247,10 +246,6 @@ const remindMin = computed({
 const kickMin = computed({
   get: () => Math.round(form.value.kickSec / 60),
   set: (v: number) => { form.value.kickSec = Math.max(2, Math.round(v)) * 60 },
-})
-const capPct = computed({
-  get: () => Math.round(form.value.dailyFineCapRate * 100),
-  set: (v: number) => { form.value.dailyFineCapRate = Math.min(100, Math.max(0, v)) / 100 },
 })
 const bonusRatePct = computed({
   get: () => Math.round(form.value.bonusMinRate * 100),

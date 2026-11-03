@@ -47,7 +47,7 @@
         <div class="hero-en">G O L D &nbsp;·&nbsp; H U B</div>
       </div>
 
-      <form class="welcome-form" @submit.prevent>
+      <form class="welcome-form" @submit.prevent="doLogin">
         <div class="field-luxe">
           <span class="ic" aria-hidden="true"><img src="/images/icon-user.svg" alt=""></span>
           <input
@@ -78,7 +78,7 @@
           </label>
         </div>
         <div class="welcome-actions">
-          <button class="btn btn-primary btn-block" :disabled="loading" @click="doLogin">
+          <button type="submit" class="btn btn-primary btn-block" :disabled="loading">
             <span class="ruby ruby-l"></span>
             <span class="btn-text">{{ loading ? '登录中...' : '登 录' }}</span>
             <span class="ruby ruby-r"></span>

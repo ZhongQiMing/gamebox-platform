@@ -214,15 +214,19 @@
 
 <script setup lang="ts">
 import { ref, computed, reactive, onActivated, onMounted } from 'vue'
+import { Capacitor } from '@capacitor/core'
+import { App as CapApp } from '@capacitor/app'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { useWalletStore } from '@/stores/wallet'
 import { useToast } from '@/composables/useToast'
 import { useBodyClass } from '@/composables/useBodyClass'
 import { rangeBounds } from '@/composables/timeRange'
-import { userApi } from '@/api/user'
-import { rebateApi } from '@/api/rebate'
 import http from '@/api/http'
+import { userApi } from '@/api/user'
+import { apkDownloadUrl, decideUpdate, type RemoteAppVersion } from '@/utils/appUpdate'
+import { getLiveOrigin } from '@/utils/originPool'
+import { rebateApi } from '@/api/rebate'
 import { formatMoney, formatSignedMoney } from '@gamebox/shared'
 import TabBar from '@/components/TabBar.vue'
 import AppModal from '@/components/AppModal.vue'
@@ -315,8 +319,41 @@ async function loadWalletStats() {
   }
 }
 
-function checkUpdate() {
-  toast('当前已是最新版本 v1.0.0')
+let checkingUpdate = false
+
+async function localVersionCode(): Promise<number> {
+  if (!Capacitor.isNativePlatform()) return 1
+  try {
+    const info = await CapApp.getInfo()
+    const code = Number(info.build)
+    return Number.isFinite(code) && code > 0 ? code : 1
+  } catch {
+    return 1
+  }
+}
+
+async function checkUpdate() {
+  if (checkingUpdate) return
+  checkingUpdate = true
+  try {
+    const remote = await http.get<RemoteAppVersion, RemoteAppVersion>('/version')
+    const decision = decideUpdate(await localVersionCode(), remote)
+    if (decision.kind === 'current') {
+      toast(`当前已是最新版本 v${decision.version}`)
+      return
+    }
+    if (Capacitor.getPlatform() === 'ios') {
+      toast(`发现新版本 v${decision.version}，请通过新的安装链接安装`)
+      return
+    }
+    const ok = window.confirm(`发现新版本 v${decision.version}，是否下载安装包？`)
+    if (!ok) return
+    window.open(apkDownloadUrl(getLiveOrigin('api')), '_blank', 'noopener')
+  } catch {
+    toast('连不上服务器，无法检查更新')
+  } finally {
+    checkingUpdate = false
+  }
 }
 
 const showLogoutModal = ref(false)

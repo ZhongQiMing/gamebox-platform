@@ -73,6 +73,10 @@ export interface StaffRoom {
     uid: string
     nickname: string
     username: string
+    /** 总代占成，0.4 = 40% */
+    shareRate?: number
+    /** 总代整包，0.07 = 7% */
+    flowRate?: number
   } | null
 }
 
@@ -262,7 +266,19 @@ export interface StaffReportSummary {
   commissionCount?: number
   /** 管理/房主：平台占成 */
   platformShareAmount?: number
-  /** 管理/房主：平台占成 − 佣金；代理：庄家盈亏 − 佣金 */
+  /** 我自己坐庄那部分的毛输赢 */
+  satHousePnl?: number
+  /** 平台占成 / 总代成数差 / 代理占成 */
+  myShareAmount?: number
+  myNetEarning?: number
+  /** 总代实发 + 代理实发 + 玩家回水 */
+  rebatePackage?: number
+  rebateGeneral?: number
+  rebateAgent?: number
+  rebatePlayer?: number
+  /** 平台：庄家盈亏 − 整包。总代：占成 + 自己的返水 */
+  realNetEarning?: number
+  /** 管理/房主：平台占成；代理：庄家盈亏 − 佣金 */
   netPnl?: number
   netChange?: number
   byGame?: {
@@ -274,6 +290,26 @@ export interface StaffReportSummary {
     housePnl: number
   }[]
   range?: { from: string; to: string; fromText?: string; toText?: string }
+}
+
+export interface StaffRoomBet {
+  id: string
+  betNo: string
+  playerNickname: string
+  playerUid: string | null
+  betType: string | null
+  amount: number
+  payout: number
+  playerPnl: number
+  status: string
+  createdAt: string
+}
+
+export interface StaffRoomBetPage {
+  total: number
+  page: number
+  pageSize: number
+  list: StaffRoomBet[]
 }
 
 export interface StaffFundOrder {
@@ -346,6 +382,11 @@ export interface StaffAgentRow {
   staffCount?: number
   rooms?: { id: string; roomNo: string; name: string; status: string; bookMode?: string }[]
   lastLoginAt?: string | null
+  parent?: { id: string; nickname: string; username: string; role: string } | null
+  bookMode?: string
+  creditLimit?: number
+  shareRate?: number
+  flowRate?: number
 }
 
 export interface StaffAgentPage {
@@ -404,12 +445,50 @@ export interface StaffReportByRoomRow {
   downAmount: number
   commissionAmount?: number
   platformShareAmount?: number
+  agentShareAmount?: number
+  /** 这间房里总代自己的占成 */
+  generalShareAmount?: number
   netPnl?: number
   agentNickname?: string | null
 }
 
 function withPublicRoomIcon<T extends { icon?: string | null }>(room: T): T {
   return { ...room, icon: publicMediaUrl(room.icon) || null }
+}
+
+type CountedRoom = {
+  id: string
+  memberCount?: number
+  fly?: { onCount: number; offCount: number; memberCount: number; effective?: boolean; flyCover?: number }
+}
+
+/**
+ * 房间成员数会把进过游戏大厅的代理/管理算进去。
+ * 玩家列表只认注册玩家，展示人数和飞盘开关都以它为准。
+ */
+async function withRegisteredPlayers<T extends CountedRoom>(room: T): Promise<T> {
+  try {
+    const page = await staffHttp.get<StaffPlayerPage, StaffPlayerPage>('/console/players', {
+      params: { roomId: room.id, page: 1, pageSize: 1 },
+    })
+    const players = Number(page?.total ?? 0)
+    const fly = room.fly
+    if (!fly) return { ...room, memberCount: players }
+    const extra = Math.max(0, Number(fly.memberCount || 0) - players)
+    const onCount = Math.max(0, Number(fly.onCount || 0) - extra)
+    return {
+      ...room,
+      memberCount: players,
+      fly: {
+        ...fly,
+        memberCount: players,
+        onCount,
+        offCount: Math.max(0, players - onCount),
+      },
+    }
+  } catch {
+    return room
+  }
 }
 
 /** 实时开奖里的一个游戏 */
@@ -452,10 +531,10 @@ export const staffConsoleApi = {
     staffHttp.get<StaffLiveDrawsPayload, StaffLiveDrawsPayload>('/console/live-draws'),
 
   rooms: () => staffHttp.get<StaffRoom[], StaffRoom[]>('/console/rooms')
-    .then((rooms) => rooms.map(withPublicRoomIcon)),
+    .then((rooms) => Promise.all(rooms.map((room) => withRegisteredPlayers(withPublicRoomIcon(room))))),
 
   room: (id: string) => staffHttp.get<StaffRoomDetail, StaffRoomDetail>(`/console/rooms/${id}`)
-    .then(withPublicRoomIcon),
+    .then((room) => withRegisteredPlayers(withPublicRoomIcon(room))),
 
   /** 上传房间图标（管理/房主/代理）；data URL */
   uploadRoomIcon: (roomId: string, image: string) =>
@@ -792,6 +871,15 @@ export const staffConsoleApi = {
 
   reportSummary: (params?: { range?: string; roomId?: string }) =>
     staffHttp.get<StaffReportSummary, StaffReportSummary>('/console/reports/summary', { params }),
+
+  reportRoomBets: (params: {
+    roomId: string
+    range?: string
+    page?: number
+    pageSize?: number
+    gameCode?: string
+  }) =>
+    staffHttp.get<StaffRoomBetPage, StaffRoomBetPage>('/console/reports/room-bets', { params }),
 
   reportByRoom: (params?: { range?: string }) =>
     staffHttp.get<{ list: StaffReportByRoomRow[] }, { list: StaffReportByRoomRow[] }>(

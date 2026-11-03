@@ -435,7 +435,7 @@ case "$MODE" in
   : "${DB_PASSWORD:?当前 .env.prod 缺少 DB_PASSWORD}"
   dc run --rm --no-deps \
     -e "DATABASE_URL=postgresql://$DB_USER:${DB_PASSWORD}@postgres:5432/$DB_NAME?schema=public" \
-    server node ../node_modules/prisma/build/index.js migrate deploy
+    server node node_modules/prisma/build/index.js migrate deploy
 
   echo "==> 起应用..."
   dc up -d

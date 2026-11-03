@@ -69,7 +69,28 @@
           共 {{ chainRowTotal }} 行，账号较多已默认收起，点大项那一行展开。数据是全的，没有被截断。
         </p>
 
-        <div class="panel-body">
+        <div v-if="narrow" class="chain-cards">
+          <article
+            v-for="row in flatChain"
+            :key="row.key"
+            class="chain-card"
+            :class="`is-${row.kind}`"
+            :style="{ marginLeft: `${row.depth * 10}px` }"
+          >
+            <div class="cell-name">{{ row.title }}</div>
+            <div v-if="row.chain" class="cell-meta">{{ row.chain }}</div>
+            <div v-if="row.username || row.uid" class="cell-meta mono">{{ row.username }} {{ row.uid }}</div>
+            <div class="cell-meta">{{ countText(row) }}</div>
+            <div v-if="row.kind !== 'group'" class="ops">
+              <template v-if="row.kind === 'general' && row.status === 'ACTIVE' && isAdminOrBranch">
+                <el-button size="small" @click="openFund(row.raw!, 'up')">上分</el-button>
+                <el-button size="small" @click="openFund(row.raw!, 'down')">下分</el-button>
+              </template>
+              <el-button size="small" type="primary" @click="onChainClick(row)">{{ chainActionLabel(row) }}</el-button>
+            </div>
+          </article>
+        </div>
+        <div v-else class="panel-body">
         <el-table
           ref="chainTableRef"
           :data="chainTree"
@@ -441,7 +462,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { formatMoney, isGeneralSide, validateOpsPassword } from '@gamebox/shared'
@@ -627,6 +648,11 @@ function filterChain(rows: ChainRow[], q: string): ChainRow[] {
   return walk(rows)
 }
 
+const narrow = ref(false)
+let narrowQuery: MediaQueryList | null = null
+function syncNarrow() {
+  narrow.value = narrowQuery?.matches ?? window.innerWidth <= 720
+}
 const chainTree = computed<ChainRow[]>(() => {
   const under = new Map<string, Row[]>()
   const direct: Row[] = []
@@ -740,6 +766,18 @@ const chainTree = computed<ChainRow[]>(() => {
     })
   }
   return filterChain(roots, keyword.value.trim().toLowerCase())
+})
+
+const flatChain = computed(() => {
+  const out: Array<ChainRow & { depth: number }> = []
+  const walk = (rows: ChainRow[], depth: number) => {
+    for (const row of rows) {
+      out.push({ ...row, depth })
+      if (row.children?.length) walk(row.children, depth + 1)
+    }
+  }
+  walk(chainTree.value, 0)
+  return out
 })
 
 /**
@@ -1336,8 +1374,14 @@ async function doFund() {
 }
 
 onMounted(() => {
+  narrowQuery = window.matchMedia('(max-width: 720px)')
+  syncNarrow()
+  narrowQuery.addEventListener('change', syncNarrow)
   roleFilter.value = 'GENERAL'
   load()
+})
+onBeforeUnmount(() => {
+  narrowQuery?.removeEventListener('change', syncNarrow)
 })
 </script>
 
@@ -1357,6 +1401,39 @@ onMounted(() => {
 }
 .chain-summary {
   grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+.chain-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  overflow: auto;
+}
+.chain-card {
+  padding: 12px 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+}
+.chain-card.is-group,
+.chain-card.is-branch { background: #f8fafc; }
+.chain-card.is-general { background: #eef3f9; }
+.chain-card .ops {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+@media (max-width: 720px) {
+  .chain-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .rooms-summary .sum-chip {
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    min-height: 58px;
+    padding: 8px 10px;
+  }
+  .rooms-summary .sum-label { white-space: normal; }
 }
 .count-line {
   font-size: 13px;

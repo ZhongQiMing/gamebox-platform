@@ -34,50 +34,108 @@
           · 代理余额 {{ fmt(agentBalance) }}
         </div>
       </section>
-      <p v-else class="fly-land-tip">只读查看各房飞盘开关；开/关仍由本房代理操作</p>
+      <p v-else class="fly-land-tip">只读查看</p>
 
       <div class="sc-sec-title">{{ isLandlord ? '各房上盘' : '房间上盘' }}</div>
       <div v-if="loading && !rooms.length" class="sp-empty">加载中…</div>
       <div v-else-if="!rooms.length" class="sp-empty">暂无房间</div>
 
-      <div v-for="r in rooms" :key="r.id" class="fly-card">
-        <div class="fly-card-hd">
-          <div>
-            <b>{{ r.name }}</b>
-            <em>
-              {{ r.roomNo }} · {{ r.status === 'OPEN' ? '营业' : r.status }}
-              <template v-if="r.bookMode === 'CREDIT'"> · 信用盘</template>
-            </em>
+      <section
+        v-for="b in flyBlocks"
+        :key="b.key"
+        class="sg-wrap"
+        :class="{ 'sg-plain': b.kind === 'room' }"
+      >
+        <button
+          v-if="b.kind === 'general'"
+          type="button"
+          class="fly-card sg-head"
+          @click="toggleGroup(b.key)"
+        >
+          <div class="fly-card-hd">
+            <div>
+              <b><em class="sg-tag">总代</em>{{ b.name }}</b>
+              <div class="sg-pills">
+                <span class="sg-pill">占成 {{ b.sharePct }}%</span>
+                <span class="sg-pill">整包 {{ b.flowPct }}%</span>
+                <span class="sg-pill">{{ b.bookLabel }}</span>
+                <span class="sg-pill">{{ b.rooms.length }} 间房</span>
+              </div>
+            </div>
+            <span class="sg-chev" :class="{ open: isGroupOpen(b.key) }"></span>
           </div>
-          <div v-if="r.bookMode !== 'CREDIT'" class="fly-cover">
-            {{ fmt(r.fly?.flyCover ?? r.agent?.flyCover) }}
+          <div class="fly-hero-grid">
+            <div>
+              <div class="fly-k">{{ b.quotaLabel }}</div>
+              <div class="fly-v">{{ b.quotaText }}</div>
+            </div>
+            <div>
+              <div class="fly-k">{{ b.secondLabel }}</div>
+              <div class="fly-v">{{ b.secondText }}</div>
+            </div>
           </div>
-          <div v-else class="fly-cover credit">开关</div>
-        </div>
+          <div class="fly-sub">上盘可飞 {{ b.flyText }} · 玩家 {{ b.members }}</div>
+        </button>
 
-        <div class="fly-status" :class="`is-${toggleMode(r)}`">
-          <span class="fly-mode">{{ flyModeLabel(r) }}</span>
-          <span class="fly-stat">{{ flyStatText(r) }}</span>
-        </div>
+        <div v-show="b.kind === 'room' || isGroupOpen(b.key)" :class="{ 'sg-body': b.kind === 'general' }">
+          <div v-for="r in b.rooms" :key="r.id" class="fly-card">
+            <div class="fly-card-hd">
+              <div>
+                <b>{{ isAgentView ? (r.name || '本房') : (r.agent?.nickname || r.agent?.username || r.name) }}</b>
+                <em>
+                  <template v-if="!isAgentView">{{ r.name }} · </template>{{ r.roomNo }} · {{ r.status === 'OPEN' ? '营业' : r.status }}
+                  <template v-if="r.bookMode === 'CREDIT'"> · 信用盘</template>
+                </em>
+              </div>
+              <div v-if="r.bookMode !== 'CREDIT'" class="fly-cover">
+                {{ fmt(r.fly?.flyCover ?? r.agent?.flyCover) }}
+              </div>
+              <div v-else class="fly-cover credit">开关</div>
+            </div>
 
-        <div v-if="canToggleAgent || canToggleGeneral" class="fly-ops">
-          <button
-            type="button"
-            class="fly-btn on"
-            :class="{ active: toggleMode(r) === 'on' }"
-            :disabled="busyId === r.id || toggleMode(r) === 'on'"
-            @click="openConfirm(r, true)"
-          >{{ canToggleGeneral ? '飞平台' : '飞盘' }}</button>
-          <button
-            type="button"
-            class="fly-btn off"
-            :class="{ active: toggleMode(r) === 'off' }"
-            :disabled="busyId === r.id || toggleMode(r) === 'off'"
-            @click="openConfirm(r, false)"
-          >{{ canToggleGeneral ? '总代坐庄' : '关盘' }}</button>
+            <div class="fly-status" :class="`is-${flyMode(r)}`">
+              <span class="fly-mode">{{ agentFlyLabel(r) }}</span>
+              <span class="fly-stat">玩家开 {{ r.fly?.onCount ?? 0 }} · 关 {{ r.fly?.offCount ?? 0 }}</span>
+            </div>
+
+            <div v-if="canToggleAgent" class="fly-ops">
+              <button
+                type="button"
+                class="fly-btn on"
+                :class="{ active: flyMode(r) === 'on' }"
+                :disabled="busyId === r.id || flyMode(r) === 'on'"
+                @click="openConfirm(r, true, 'agent')"
+              >飞盘</button>
+              <button
+                type="button"
+                class="fly-btn off"
+                :class="{ active: flyMode(r) === 'off' }"
+                :disabled="busyId === r.id || flyMode(r) === 'off'"
+                @click="openConfirm(r, false, 'agent')"
+              >关盘</button>
+            </div>
+
+            <template v-if="r.general && (canToggleGeneral || isLandlord)">
+              <div class="fly-ops" :class="{ 'is-readonly': !canToggleGeneral }">
+                <button
+                  type="button"
+                  class="fly-btn on"
+                  :class="{ active: generalFlyOn(r) }"
+                  :disabled="!canToggleGeneral || busyId === r.id || generalFlyOn(r)"
+                  @click="openConfirm(r, true, 'general')"
+                >飞盘</button>
+                <button
+                  type="button"
+                  class="fly-btn off"
+                  :class="{ active: !generalFlyOn(r) }"
+                  :disabled="!canToggleGeneral || busyId === r.id || !generalFlyOn(r)"
+                  @click="openConfirm(r, false, 'general')"
+                >关盘</button>
+              </div>
+            </template>
+          </div>
         </div>
-        <p v-else class="fly-tip-inline">{{ isLandlord ? '只读查看；开/关由本房代理操作' : '仅本房代理或总代可整房开关' }}</p>
-      </div>
+      </section>
 
     </div>
 
@@ -114,6 +172,13 @@ import { useStaffStore } from '@/stores/staff'
 import { useToast } from '@/composables/useToast'
 import { formatMoney } from '@gamebox/shared'
 import { useBodyClass } from '@/composables/useBodyClass'
+import {
+  loadStaffGenerals,
+  moneyOrDash,
+  pctOfRate,
+  treeFly,
+  type StaffGeneralRow,
+} from '@/utils/staffGenerals'
 import '@/assets/staff-console.css'
 
 useBodyClass('deco-bg')
@@ -125,15 +190,18 @@ const { toast } = useToast()
 const loading = ref(false)
 const wallet = ref<StaffWalletMe | null>(null)
 const rooms = ref<StaffRoom[]>([])
+const generalMap = ref<Record<string, StaffGeneralRow>>({})
 const busyId = ref<string | null>(null)
 
 const confirmVisible = ref(false)
 const confirmTarget = ref<StaffRoom | null>(null)
 const confirmFlyOn = ref(false)
+const confirmLayer = ref<'agent' | 'general'>('agent')
 
 const canToggleAgent = computed(() => staff.role === 'AGENT')
 const canToggleGeneral = computed(() => staff.isGeneral)
 const isLandlord = computed(() => staff.isBranch)
+const isAgentView = computed(() => staff.isAgentSide)
 const isCreditBook = computed(() => wallet.value?.bookMode === 'CREDIT')
 const agentBalance = computed(() => {
   const w = wallet.value
@@ -142,36 +210,99 @@ const agentBalance = computed(() => {
   return Number(w.balance || 0)
 })
 
-/*
- * 总代按的是「本房代理飞出来的注归谁」，代理按的是「自己房里玩家的注归谁」。
- * 两件事都叫「飞盘 / 关盘」会让总代以为自己在动玩家开关，所以文案分开。
- */
-const confirmTitle = computed(() => {
-  if (canToggleGeneral.value) return confirmFlyOn.value ? '整房飞平台' : '整房总代坐庄'
-  return confirmFlyOn.value ? '整房飞盘' : '整房关盘'
+type FlyBlock = {
+  key: string
+  kind: 'room' | 'general'
+  name: string
+  sharePct: string
+  flowPct: string
+  bookLabel: string
+  quotaLabel: string
+  quotaText: string
+  secondLabel: string
+  secondText: string
+  flyText: string
+  members: number
+  rooms: StaffRoom[]
+}
+
+/** 总代自己看这一页时，顶上已经是他的额度，不再套一层自己的抽屉 */
+const flyBlocks = computed<FlyBlock[]>(() => {
+  const blocks: FlyBlock[] = []
+  const seen = new Set<string>()
+  for (const room of rooms.value) {
+    const gid = room.general?.userId || ''
+    const nest = !!gid && isLandlord.value
+    if (!nest) {
+      blocks.push({
+        key: room.id,
+        kind: 'room',
+        name: '',
+        sharePct: '',
+        flowPct: '',
+        bookLabel: '',
+        quotaLabel: '',
+        quotaText: '',
+        secondLabel: '',
+        secondText: '',
+        flyText: '',
+        members: 0,
+        rooms: [room],
+      })
+      continue
+    }
+    if (seen.has(gid)) continue
+    seen.add(gid)
+    const groupRooms = rooms.value.filter((item) => item.general?.userId === gid)
+    const walletRow = generalMap.value[gid]
+    const credit = walletRow?.bookMode === 'CREDIT'
+    const seenAgent = new Set<string>()
+    const downFly: number[] = []
+    for (const item of groupRooms) {
+      const id = item.agent?.userId
+      if (!id || seenAgent.has(id)) continue
+      seenAgent.add(id)
+      downFly.push(Number(item.agent?.flyCover || 0))
+    }
+    const fly = treeFly(Number(walletRow?.flyCover || 0), downFly)
+    blocks.push({
+      key: gid,
+      kind: 'general',
+      name: String(room.general?.nickname || room.general?.username || walletRow?.nickname || '总代').trim(),
+      sharePct: pctOfRate(walletRow?.shareRate ?? room.general?.shareRate),
+      flowPct: pctOfRate(walletRow?.flowRate ?? room.general?.flowRate),
+      bookLabel: walletRow ? (credit ? 'B·信用' : 'A·现金') : '—',
+      quotaLabel: credit ? '剩余信用' : '可用额度',
+      quotaText: moneyOrDash(walletRow, walletRow?.pointsQuota),
+      secondLabel: credit ? '合同额度' : '余额',
+      secondText: moneyOrDash(walletRow, credit ? walletRow?.creditLimit : walletRow?.agentBalance ?? walletRow?.balance),
+      flyText: moneyOrDash(walletRow, fly),
+      members: groupRooms.reduce((sum, item) => sum + Number(item.memberCount || 0), 0),
+      rooms: groupRooms,
+    })
+  }
+  return blocks
 })
 
-const confirmOkText = computed(() => {
-  if (canToggleGeneral.value) return confirmFlyOn.value ? '确认飞平台' : '确认坐庄'
-  return confirmFlyOn.value ? '确认飞盘' : '确认关盘'
-})
+const openedGroups = ref<Record<string, boolean>>({})
+function isGroupOpen(key: string) {
+  if (openedGroups.value[key] != null) return openedGroups.value[key]
+  const groups = flyBlocks.value.filter((b) => b.kind === 'general')
+  return groups.length <= 1 || groups[0]?.key === key
+}
+function toggleGroup(key: string) {
+  openedGroups.value = { ...openedGroups.value, [key]: !isGroupOpen(key) }
+}
 
-/** 服务端没带 message 时的兜底提示 */
-const doneText = computed(() => {
-  if (canToggleGeneral.value) return confirmFlyOn.value ? '已设为飞平台' : '已设为总代坐庄'
-  return confirmFlyOn.value ? '已整房开启飞盘' : '已整房关盘'
-})
+const confirmTitle = computed(() => (confirmFlyOn.value ? '飞盘' : '关盘'))
+const confirmOkText = computed(() => '确认')
+const doneText = computed(() => (confirmFlyOn.value ? '已开启飞盘' : '已关闭飞盘'))
 
 const confirmHint = computed(() => {
   const name = confirmTarget.value?.name || '本房'
-  if (canToggleGeneral.value) {
-    return confirmFlyOn.value
-      ? `将「${name}」设为飞平台：代理开盘飞出来的注上交平台，输赢不算你的。代理关盘的玩家仍由代理坐庄，轮不到你。`
-      : `将「${name}」设为总代坐庄：代理开盘飞出来的注由你接，输赢从你的盘分出。代理关盘的玩家仍由代理坐庄，轮不到你。`
-  }
   return confirmFlyOn.value
-    ? `将「${name}」整房设为飞盘：玩家的注飞给平台，输赢不动你的盘分。`
-    : `将「${name}」整房设为关盘：玩家的注由你自己坐庄，输赢从你的盘分出。`
+    ? `是否将「${name}」开启飞盘？`
+    : `是否将「${name}」关闭飞盘？`
 })
 
 function fmt(n?: number | null) {
@@ -188,47 +319,29 @@ function flyMode(r: StaffRoom): 'on' | 'off' | 'mixed' | 'empty' {
   return 'off'
 }
 
-function flyModeLabel(r: StaffRoom) {
-  /* 总代这行只反映他自己那个开关；代理关盘的玩家轮不到他 */
-  if (canToggleGeneral.value) {
-    return r.generalFlyEnabled !== false
-      ? '飞平台（仅代理开盘的注上交）'
-      : '总代坐庄（仅代理开盘的注你接）'
-  }
+function agentFlyLabel(r: StaffRoom) {
   const m = flyMode(r)
   if (m === 'on') {
     const cover = Number(r.fly?.flyCover ?? r.agent?.flyCover ?? 0)
-    if (r.bookMode !== 'CREDIT' && cover <= 0) return '开关开着·上盘耗尽（软关盘）'
-    return '飞盘中（平台盘口）'
+    if (r.bookMode !== 'CREDIT' && cover <= 0) return '开关开着·上盘耗尽'
+    return '玩家飞盘中'
   }
-  if (m === 'off') return '关盘（不进平台）'
-  if (m === 'mixed') return '部分开盘'
+  if (m === 'off') return '玩家关盘'
+  if (m === 'mixed') return '玩家部分开盘'
   return '暂无玩家'
 }
 
-/*
- * 这两个数字是各玩家 flyEnabled 的合计。
- * 代理按的就是这个开关，写「开 / 关」即可；
- * 总代自己的按钮改的是另一层，必须标明「代理开 / 关」，
- * 否则会以为这是自己那两个按钮的状态。
- */
-function flyStatText(r: StaffRoom) {
-  const on = r.fly?.onCount ?? 0
-  const off = r.fly?.offCount ?? 0
-  return canToggleGeneral.value
-    ? `代理开 ${on} · 关 ${off}`
-    : `开 ${on} · 关 ${off}`
+function generalFlyOn(r: StaffRoom) {
+  return r.generalFlyEnabled !== false
 }
 
-function toggleMode(r: StaffRoom): 'on' | 'off' | 'mixed' | 'empty' {
-  if (canToggleGeneral.value) return r.generalFlyEnabled !== false ? 'on' : 'off'
-  return flyMode(r)
-}
-
-function openConfirm(r: StaffRoom, flyEnabled: boolean) {
-  if ((!canToggleAgent.value && !canToggleGeneral.value) || busyId.value) return
+function openConfirm(r: StaffRoom, flyEnabled: boolean, layer: 'agent' | 'general') {
+  if (busyId.value) return
+  if (layer === 'agent' && !canToggleAgent.value) return
+  if (layer === 'general' && !canToggleGeneral.value) return
   confirmTarget.value = r
   confirmFlyOn.value = flyEnabled
+  confirmLayer.value = layer
   confirmVisible.value = true
 }
 
@@ -243,10 +356,12 @@ async function doConfirm() {
   if (!r || busyId.value) return
   busyId.value = r.id
   try {
-    const res = canToggleGeneral.value
-      ? await staffConsoleApi.setGeneralRoomFly(r.id, confirmFlyOn.value)
-      : await staffConsoleApi.setRoomFly(r.id, confirmFlyOn.value)
-    toast(res.message || doneText.value)
+    if (confirmLayer.value === 'general') {
+      await staffConsoleApi.setGeneralRoomFly(r.id, confirmFlyOn.value)
+    } else {
+      await staffConsoleApi.setRoomFly(r.id, confirmFlyOn.value)
+    }
+    toast(doneText.value)
     confirmVisible.value = false
     confirmTarget.value = null
     await load()
@@ -260,12 +375,14 @@ async function doConfirm() {
 async function load() {
   loading.value = true
   try {
-    const [w, list] = await Promise.all([
+    const [w, list, gens] = await Promise.all([
       staffConsoleApi.walletMe().catch(() => null),
       staffConsoleApi.rooms().catch(() => [] as StaffRoom[]),
+      isLandlord.value ? loadStaffGenerals().catch(() => ({})) : Promise.resolve({}),
     ])
     wallet.value = w
     rooms.value = list || []
+    generalMap.value = gens
   } catch (e: unknown) {
     toast(e instanceof Error ? e.message : '加载失败')
   } finally {
@@ -420,9 +537,13 @@ onMounted(() => { void load() })
   background: rgba(127, 29, 29, 0.65);
   border-color: rgba(252, 165, 165, 0.7);
 }
-.fly-tip-inline {
-  margin: 0;
-  font-size: 11px;
-  color: rgba(244, 211, 107, 0.45);
+.fly-ops.is-readonly .fly-btn,
+.fly-ops.is-readonly .fly-btn:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+.fly-ops.is-readonly .fly-btn.active,
+.fly-ops.is-readonly .fly-btn.active:disabled {
+  opacity: 1;
 }
 </style>

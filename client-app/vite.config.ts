@@ -338,6 +338,20 @@ function precompressAssets(): Plugin {
   }
 }
 
+/** 本地页面接到线上时，登录来源要和 App 一样，否则会被来源校验拒绝。 */
+function devProxyAsApp(proxy: {
+  on: (
+    event: 'proxyReq',
+    cb: (proxyReq: { setHeader: (name: string, value: string) => void }) => void,
+  ) => void
+}) {
+  if (!process.env.VITE_DEV_API) return
+  proxy.on('proxyReq', (proxyReq) => {
+    proxyReq.setHeader('origin', 'https://localhost')
+    proxyReq.setHeader('referer', 'https://localhost/')
+  })
+}
+
 export default defineConfig(({ command, mode }) => {
   // APK 必须以 .env.app 为准。shell 里残留的 VITE_GAME_ORIGIN（例如本机
   // 测网页时设的 games.local.test）优先级高于 dotenv，会打进正式包，手机打不开游戏。
@@ -455,17 +469,23 @@ export default defineConfig(({ command, mode }) => {
       fs: { allow: [repoRoot] },
       proxy: {
         '/api': {
-          target: 'http://localhost:3000',
+          target: process.env.VITE_DEV_API || 'http://localhost:3000',
           changeOrigin: true,
+          secure: true,
+          configure: devProxyAsApp,
         },
         '/uploads': {
-          target: 'http://localhost:3000',
+          target: process.env.VITE_DEV_API || 'http://localhost:3000',
           changeOrigin: true,
+          secure: true,
+          configure: devProxyAsApp,
         },
         '/socket.io': {
-          target: 'http://localhost:3000',
+          target: process.env.VITE_DEV_API || 'http://localhost:3000',
           changeOrigin: true,
+          secure: true,
           ws: true,
+          configure: devProxyAsApp,
         },
       },
     },

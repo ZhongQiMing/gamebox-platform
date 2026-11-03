@@ -97,8 +97,14 @@
 
           <section class="dash-sec">
             <h3 class="dash-sec__title">{{ todayTitle }}</h3>
-            <div class="dash-summary" :style="summaryCols(todayCore.length)">
-              <div v-for="k in todayCore" :key="k.label" class="sum-chip" :class="{ hot: k.hot }">
+            <div class="dash-summary" :style="summaryCols(agentOps.length)">
+              <div v-for="k in agentOps" :key="k.label" class="sum-chip">
+                <span class="sum-label">{{ k.label }}</span>
+                <span class="sum-val" :style="{ color: k.color }">{{ k.value }}</span>
+              </div>
+            </div>
+            <div class="dash-summary dash-summary--follow" :style="summaryCols(agentResult.length)">
+              <div v-for="k in agentResult" :key="k.label" class="sum-chip">
                 <span class="sum-label">{{ k.label }}</span>
                 <span class="sum-val" :style="{ color: k.color }">{{ k.value }}</span>
               </div>
@@ -162,12 +168,34 @@
 
           <section class="dash-sec">
             <h3 class="dash-sec__title">{{ todayTitle }}</h3>
-            <div class="dash-summary" :style="summaryCols(todayCore.length)">
-              <div v-for="k in todayCore" :key="k.label" class="sum-chip" :class="{ hot: k.hot }">
-                <span class="sum-label">{{ k.label }}</span>
-                <span class="sum-val" :style="{ color: k.color }">{{ k.value }}</span>
+            <template v-if="isGeneralUser">
+              <div class="dash-summary" :style="summaryCols(generalOps.length)">
+                <div v-for="k in generalOps" :key="k.label" class="sum-chip">
+                  <span class="sum-label">{{ k.label }}</span>
+                  <span class="sum-val" :style="{ color: k.color }">{{ k.value }}</span>
+                </div>
               </div>
-            </div>
+              <div class="dash-summary dash-summary--follow" :style="summaryCols(generalResult.length)">
+                <div v-for="k in generalResult" :key="k.label" class="sum-chip">
+                  <span class="sum-label">{{ k.label }}</span>
+                  <span class="sum-val" :style="{ color: k.color }">{{ k.value }}</span>
+                </div>
+              </div>
+            </template>
+            <template v-else>
+              <div class="dash-summary" :style="summaryCols(platformOps.length)">
+                <div v-for="k in platformOps" :key="k.label" class="sum-chip">
+                  <span class="sum-label">{{ k.label }}</span>
+                  <span class="sum-val" :style="{ color: k.color }">{{ k.value }}</span>
+                </div>
+              </div>
+              <div class="dash-summary dash-summary--follow" :style="summaryCols(platformResult.length)">
+                <div v-for="k in platformResult" :key="k.label" class="sum-chip">
+                  <span class="sum-label">{{ k.label }}</span>
+                  <span class="sum-val" :style="{ color: k.color }">{{ k.value }}</span>
+                </div>
+              </div>
+            </template>
           </section>
 
           <section class="dash-sec">
@@ -430,28 +458,66 @@ function shortTarget(t: string) {
   return t.length > 18 ? `${t.slice(0, 10)}…` : t
 }
 
-/**
- * 三方共用的今日六格：管理、总代、代理打开工作台看到的格子数、名字、顺序完全一致，
- * 只有取数范围按各自账本不同（后端 summary 已按角色算好，前端不再自己拼）。
- */
-const todayCore = computed<Kpi[]>(() => {
+const agentOps = computed<Kpi[]>(() => {
   const v = s.value
   return [
     { label: '今日流水', value: fmt(stakeFlow(v)), color: 'var(--desk-accent, #38bdf8)' },
     { label: '飞盘', value: fmt(displayFlownFlow(v)), color: 'var(--desk-accent, #38bdf8)' },
     { label: '关盘', value: fmt(v?.closedBetFlow), color: CLOSED_FLOW_COLOR },
     { label: '庄家盈亏', value: fmt(v?.satHousePnl), color: pnlColor(v?.satHousePnl) },
-    {
-      label: isLandlord.value ? '平台占成' : '占成盈亏',
-      value: fmt(v?.myShareAmount),
-      color: pnlColor(v?.myShareAmount),
-    },
-    {
-      label: '今日盈亏',
-      value: fmt(v?.myNetEarning),
-      color: pnlColor(v?.myNetEarning),
-      hot: true,
-    },
+    { label: '总盈利', value: fmt(v?.myShareAmount), color: pnlColor(v?.myShareAmount) },
+  ]
+})
+
+const agentResult = computed<Kpi[]>(() => {
+  const v = s.value
+  const withRebate = Number(v?.myShareAmount || 0) + Number(v?.rebateAgent || 0)
+  return [
+    { label: '加返水总盈利', value: fmt(withRebate), color: pnlColor(withRebate) },
+    { label: '我的返水', value: fmt(v?.rebateAgent), color: '#f59e0b' },
+    { label: '玩家回水', value: fmt(v?.rebatePlayer), color: '#f59e0b' },
+  ]
+})
+
+const platformOps = computed<Kpi[]>(() => {
+  const v = s.value
+  return [
+    { label: '今日流水', value: fmt(stakeFlow(v)), color: 'var(--desk-accent, #38bdf8)' },
+    { label: '飞盘', value: fmt(displayFlownFlow(v)), color: 'var(--desk-accent, #38bdf8)' },
+    { label: '关盘', value: fmt(v?.closedBetFlow), color: CLOSED_FLOW_COLOR },
+    { label: '庄家盈亏', value: fmt(v?.satHousePnl), color: pnlColor(v?.satHousePnl) },
+    { label: '平台占成', value: fmt(v?.myShareAmount), color: pnlColor(v?.myShareAmount) },
+  ]
+})
+
+const platformResult = computed<Kpi[]>(() => {
+  const v = s.value
+  return [
+    { label: '扣返水盈亏', value: fmt(v?.realNetEarning), color: pnlColor(v?.realNetEarning) },
+    { label: '总代返水', value: fmt(v?.rebateGeneral), color: '#f59e0b' },
+    { label: '代理返水', value: fmt(v?.rebateAgent), color: '#f59e0b' },
+    { label: '玩家回水', value: fmt(v?.rebatePlayer), color: '#f59e0b' },
+  ]
+})
+
+const generalOps = computed<Kpi[]>(() => {
+  const v = s.value
+  return [
+    { label: '今日流水', value: fmt(stakeFlow(v)), color: 'var(--desk-accent, #38bdf8)' },
+    { label: '飞盘', value: fmt(displayFlownFlow(v)), color: 'var(--desk-accent, #38bdf8)' },
+    { label: '关盘', value: fmt(v?.closedBetFlow), color: CLOSED_FLOW_COLOR },
+    { label: '庄家盈亏', value: fmt(v?.satHousePnl), color: pnlColor(v?.satHousePnl) },
+    { label: '总盈利', value: fmt(v?.myShareAmount), color: pnlColor(v?.myShareAmount) },
+  ]
+})
+
+const generalResult = computed<Kpi[]>(() => {
+  const v = s.value
+  return [
+    { label: '加返水总盈利', value: fmt(v?.realNetEarning), color: pnlColor(v?.realNetEarning) },
+    { label: '我的返水', value: fmt(v?.rebateGeneral), color: '#f59e0b' },
+    { label: '代理返水', value: fmt(v?.rebateAgent), color: '#f59e0b' },
+    { label: '玩家回水', value: fmt(v?.rebatePlayer), color: '#f59e0b' },
   ]
 })
 
@@ -661,6 +727,9 @@ onMounted(load)
   border-radius: 8px;
   overflow: hidden;
   background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+}
+.dash-summary--follow {
+  margin-top: 10px;
 }
 .dash-summary.cols-1 { grid-template-columns: 1fr; }
 .dash-summary.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }

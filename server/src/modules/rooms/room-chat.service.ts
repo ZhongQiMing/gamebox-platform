@@ -195,7 +195,7 @@ export class RoomChatService {
         gameCode: input.gameCode,
         kind: input.kind,
         issueNo: input.issueNo,
-        senderName: input.senderName || '机器人',
+        senderName: input.senderName || '开奖员',
         isRobot: true,
         payload: input.payload,
       });

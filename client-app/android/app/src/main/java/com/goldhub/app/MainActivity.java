@@ -2,6 +2,7 @@ package com.goldhub.app;
 
 import android.os.Bundle;
 import android.webkit.WebSettings;
+import android.webkit.WebView;
 
 import com.getcapacitor.BridgeActivity;
 
@@ -35,6 +36,19 @@ public class MainActivity extends BridgeActivity {
       settings.setTextZoom(100);
       /* 壳是 App，不要跟网页一样拦自动播放，否则进游戏还要点一下才有 BGM */
       settings.setMediaPlaybackRequiresUserGesture(false);
+      WebView webView = this.bridge.getWebView();
+      /*
+       * 长按默认会弹出系统的「复制 / 选择」栏。游戏壳不需要选字，
+       * 吃掉长按；输入框仍留给系统，方便粘贴密码。
+       */
+      webView.setOnLongClickListener(v -> {
+        WebView.HitTestResult hit = webView.getHitTestResult();
+        if (hit != null && hit.getType() == WebView.HitTestResult.EDIT_TEXT_TYPE) {
+          return false;
+        }
+        return true;
+      });
+      webView.setHapticFeedbackEnabled(false);
     }
   }
 }

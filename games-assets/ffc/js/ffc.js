@@ -59,7 +59,7 @@ $(function () {
     const ch = name.charAt(0) || '?';
     return `<div class="ffc-msg__avatar ffc-msg__avatar--gen" style="--av-hue:${hue}"><span>${ch}</span></div>`;
   }
-  const ROBOT = { name: '机器人', avatar: '/images/avatars/001.jpg' };
+  const ROBOT = { name: '开奖员', avatar: '/images/avatars/001.jpg' };
   const params = new URLSearchParams(location.search);
   const roomNo = (params.get('roomNo') || '').trim();
   let user = App.getUser();
@@ -2351,7 +2351,8 @@ $(function () {
       chatLog.length = 0;
     },
     getUserName: function () { return user.name; },
-    robotFallbackName: (typeof ROBOT !== 'undefined' && ROBOT.name) ? ROBOT.name : '机器人',
+    getUserId: function () { return user.id || ''; },
+    robotFallbackName: (typeof ROBOT !== 'undefined' && ROBOT.name) ? ROBOT.name : '开奖员',
     fmtTime: typeof fmtTime === 'function' ? fmtTime : undefined,
     hasResultAnimated: hasResultAnimated,
     markResultAnimated: markResultAnimated,
@@ -2418,7 +2419,7 @@ $(function () {
         issue: issue,
         html: html,
         appendMsg: appendMsg,
-        robotName: (typeof ROBOT !== 'undefined' && ROBOT.name) ? ROBOT.name : '机器人',
+        robotName: (typeof ROBOT !== 'undefined' && ROBOT.name) ? ROBOT.name : '开奖员',
       });
       applyRoomWinVerifyMineLine(issue);
     },

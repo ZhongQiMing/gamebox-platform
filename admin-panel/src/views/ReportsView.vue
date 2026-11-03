@@ -972,8 +972,12 @@ function stakeFlow(s?: { betFlow?: number; pendingBetFlow?: number } | null) {
 }
 
 /** 管理/总监看平台那份；总代、代理看自己的占成 */
-const shareLabel = computed(() => (isAdminOrBranch.value ? '平台占成' : '占成盈亏'))
-const netLabel = '本期盈亏'
+const shareLabel = computed(() =>
+  isAdminOrBranch.value ? '平台占成' : isGeneralUser.value ? '总盈利' : '占成盈亏',
+)
+const netLabel = computed(() =>
+  isAdminOrBranch.value ? '扣返水盈亏' : isGeneralUser.value ? '加返水总盈利' : '本期盈亏',
+)
 
 /**
  * 本期经营：与工作台完全同一套六格，管理／总代／代理看到的格子数、名字、顺序一致。
@@ -987,7 +991,12 @@ const coreKpis = computed<KpiChip[]>(() => {
     { label: '关盘', value: fmt(v?.closedBetFlow), color: CLOSED_FLOW_COLOR },
     { label: '庄家盈亏', value: fmt(v?.satHousePnl), color: pnlColor(v?.satHousePnl) },
     { label: shareLabel.value, value: fmt(v?.myShareAmount), color: pnlColor(v?.myShareAmount) },
-    { label: netLabel, value: fmt(v?.myNetEarning), color: pnlColor(v?.myNetEarning), hot: true },
+    {
+      label: netLabel.value,
+      value: fmt(isAdminOrBranch.value || isGeneralUser.value ? v?.realNetEarning : v?.myNetEarning),
+      color: pnlColor(isAdminOrBranch.value || isGeneralUser.value ? v?.realNetEarning : v?.myNetEarning),
+      hot: true,
+    },
   ]
 })
 

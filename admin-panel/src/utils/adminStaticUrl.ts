@@ -7,7 +7,7 @@ export function adminStaticUrl(path: string): string {
   const configured = String(
     import.meta.env.VITE_GAME_ORIGIN || import.meta.env.VITE_ASSET_ORIGIN || '',
   ).trim()
-  const fallback = import.meta.env.PROD ? 'https://jinyuhui.games.5323485.com' : ''
+  const fallback = import.meta.env.PROD ? 'https://4150qd68.com' : ''
   const origin = (configured || fallback).replace(/\/$/, '')
   if (!origin) return normalized
   try {

@@ -5,11 +5,10 @@
 #   VITE_ASSET_ORIGIN 素材域，提供 /images/games/ 与 /audio/（瘦包后按需下载）
 #   VITE_GAME_ORIGIN  游戏域，提供 /games-assets/
 VITE_SLIM_APP=1
-VITE_API_ORIGIN=https://5323485.com
-VITE_ASSET_ORIGIN=https://jinyuhui.games.5323485.com
-VITE_GAME_ORIGIN=https://jinyuhui.games.5323485.com
+VITE_API_ORIGIN=https://dfv4891.com
+VITE_ASSET_ORIGIN=https://4150qd68.com
+VITE_GAME_ORIGIN=https://4150qd68.com
 # 备用线路，逗号分隔，不要空格也行。每个都必须在宝塔建站、开 HTTPS、反代 /api /uploads /public（素材站还要有 /images /audio /games-assets）
-# 例：VITE_API_FALLBACK_ORIGINS=https://jinyuhui.api.5323485.com,https://别的字母域名.com
-VITE_API_FALLBACK_ORIGINS=https://it3814.com,https://mz66888.com,https://by4169.com,https://in8023.com,https://an19373.com,https://7304921.com,https://6147285.com
-VITE_ASSET_FALLBACK_ORIGINS=
-VITE_GAME_FALLBACK_ORIGINS=
+VITE_API_FALLBACK_ORIGINS=https://630489.com,https://6hfy.com,https://neimu743.com,https://65wete.com,https://16w1xv.com,https://ama006.com,https://xjz1918.com,https://4232323.com,https://nmzx618.com
+VITE_ASSET_FALLBACK_ORIGINS=https://48iri.com,https://95cxzz.com,https://aigs798.com,https://rytn189.com
+VITE_GAME_FALLBACK_ORIGINS=https://48iri.com,https://95cxzz.com,https://aigs798.com,https://rytn189.com

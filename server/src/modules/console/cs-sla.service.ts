@@ -283,7 +283,7 @@ export class CsSlaService {
   }
 
   private fineFor(level: string, policy: CsSlaPolicyView): number {
-    if (level === 'MISSED') return roundMoney(policy.lateFine + policy.missFine);
+    if (level === 'MISSED') return policy.missFine;
     if (level === 'LATE') return policy.lateFine;
     return 0;
   }
@@ -524,15 +524,7 @@ export class CsSlaService {
       const rawFine = rows
         .filter((r) => !r.waived)
         .reduce((sum, r) => sum + asMoney(r.fineAmount), 0);
-
-      /* 单日罚款封顶：不封的话客服干一天倒欠平台钱，没人肯做 */
-      const wageAgg = await this.prisma.csWageBill.aggregate({
-        where: { csUserId, createdAt: this.dayRange(dayKey) },
-        _sum: { wageAmount: true },
-      });
-      const dayWage = asMoney(wageAgg._sum.wageAmount ?? 0);
-      const cap = roundMoney(dayWage * policy.dailyFineCapRate);
-      const fine = Math.min(roundMoney(rawFine), cap);
+      const fine = roundMoney(rawFine);
 
       const rate = total ? onTime / total : 0;
       const hitBonus = total >= policy.bonusMinRounds && rate >= policy.bonusMinRate;
@@ -569,12 +561,6 @@ export class CsSlaService {
       settled += 1;
     }
     return { settled };
-  }
-
-  private dayRange(dayKey: string) {
-    const [y, m, d] = dayKey.split('-').map(Number);
-    const from = new Date(Date.UTC(y!, m! - 1, d!) - SHANGHAI_TZ_OFFSET_MS);
-    return { gte: from, lt: new Date(from.getTime() + 86_400_000) };
   }
 
   /** 连续 N 天达标（含当天）才发额外奖 */

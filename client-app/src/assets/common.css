@@ -2,6 +2,22 @@
    客户端公共样式（黑金至尊 · 高端娱乐场调性）
    ======================================================== */
 
+/* 壳是 App：长按不要出系统的复制/选择栏。输入框仍可长按粘贴。 */
+html, body, #app {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+input, textarea, [contenteditable="true"] {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+img {
+  -webkit-user-drag: none;
+  -webkit-touch-callout: none;
+}
+
 :root {
   /* 底栏实高。页面底部避让按它算，改这里就够，别在各页另写数字 */
   --tabbar-h: 60px;

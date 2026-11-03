@@ -16,6 +16,7 @@ dist-images/
 !.env.example
 # APK/iOS 打包域名，无私密；另一台机器拉下来才能直接打正式包
 !.env.app
+!admin-panel/.env.production
 scripts/health-alert.env
 scripts/.health-alert-state.json
 scripts/security-artifacts/

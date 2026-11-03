@@ -84,7 +84,21 @@
           <!-- 检查项做成带表头的表格：文字长短不一时列宽仍是齐的，不会看着参差 -->
           <div class="check-block">
             <div class="check-head"><span class="check-name">检查项</span></div>
-            <el-table :data="report.checks" stripe border size="small" class="check-table">
+            <div v-if="narrow" class="check-cards">
+              <article v-for="row in report.checks" :key="row.key" class="check-card">
+                <div class="check-card__name">{{ row.label }}</div>
+                <div class="check-card__tags">
+                  <el-tag :type="row.bad ? 'danger' : 'success'" size="small" effect="dark">
+                    {{ row.bad ? `${row.bad} 项差异` : '平账' }}
+                  </el-tag>
+                  <el-tag :type="row.gating ? 'warning' : 'info'" size="small" effect="plain">
+                    {{ row.gating ? '拦截出款' : '仅告警' }}
+                  </el-tag>
+                </div>
+                <div v-if="row.bad" class="check-hint">{{ row.hint }}</div>
+              </article>
+            </div>
+            <el-table v-else :data="report.checks" stripe border size="small" class="check-table">
               <el-table-column prop="label" label="项目" min-width="240" show-overflow-tooltip />
               <el-table-column label="结果" width="120" align="center">
                 <template #default="{ row }">
@@ -143,7 +157,20 @@
           <div class="check-head">
             <span class="check-name">对账历史</span>
           </div>
-          <el-table :data="history" stripe border size="small" class="check-table" empty-text="暂无记录">
+          <div v-if="narrow" class="check-cards">
+            <article v-for="row in history" :key="row.id || row.checkedAt" class="check-card">
+              <div class="check-card__name">{{ fmtTime(row.checkedAt) }}</div>
+              <div class="check-card__tags">
+                <span>{{ triggerText(row.trigger) }}</span>
+                <el-tag :type="row.ok ? 'success' : 'danger'" size="small" effect="dark">
+                  {{ row.ok ? '平账' : `${row.totalBad} 项差异` }}
+                </el-tag>
+                <span>{{ row.durationMs }} ms</span>
+              </div>
+            </article>
+            <div v-if="!history.length" class="muted">暂无记录</div>
+          </div>
+          <el-table v-else :data="history" stripe border size="small" class="check-table" empty-text="暂无记录">
             <el-table-column label="对账时间" min-width="170">
               <template #default="{ row }">{{ fmtTime(row.checkedAt) }}</template>
             </el-table-column>
@@ -213,7 +240,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
 import DeskDialog from '@/components/DeskDialog.vue'
@@ -358,7 +385,20 @@ function fmtTime(s: string) {
   return formatDateTime(s)
 }
 
-onMounted(loadLast)
+const narrow = ref(false)
+let narrowQuery: MediaQueryList | null = null
+function syncNarrow() {
+  narrow.value = narrowQuery?.matches ?? window.innerWidth <= 720
+}
+onMounted(() => {
+  narrowQuery = window.matchMedia('(max-width: 720px)')
+  syncNarrow()
+  narrowQuery.addEventListener('change', syncNarrow)
+  void loadLast()
+})
+onBeforeUnmount(() => {
+  narrowQuery?.removeEventListener('change', syncNarrow)
+})
 </script>
 
 <style scoped>
@@ -388,6 +428,27 @@ onMounted(loadLast)
 .sum-chip:last-child { border-right: none; }
 .sum-chip.hot { background: #fff7f7; }
 .sum-label { font-size: 12px; color: #64748b; white-space: nowrap; }
+.check-cards { display: flex; flex-direction: column; gap: 8px; padding: 12px; }
+.check-card {
+  padding: 12px 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+}
+.check-card__name { font-size: 14px; font-weight: 650; color: #0f172a; }
+.check-card__tags { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+@media (max-width: 720px) {
+  .rooms-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .sum-chip {
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    min-height: 58px;
+    padding: 8px 10px;
+  }
+  .sum-label { white-space: normal; }
+  .sum-val.small { font-size: 13px; }
+}
 .sum-val {
   font-size: 18px;
   font-weight: 700;

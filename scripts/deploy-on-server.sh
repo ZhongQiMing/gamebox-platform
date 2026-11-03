@@ -542,7 +542,7 @@ dc_version "$NEW_VERSION" run --rm --no-deps --user 0:0 --cap-add CHOWN server \
 # 不走 npx，避免只读根文件系统下创建 npm 缓存或临时安装。
 dc_version "$NEW_VERSION" run --rm --no-deps \
   -e "DATABASE_URL=postgresql://gamebox:${DB_PASSWORD}@postgres:5432/gamebox?schema=public" \
-  server node ../node_modules/prisma/build/index.js migrate deploy
+  server node node_modules/prisma/build/index.js migrate deploy
 
 # 迁移只建空表。游戏目录、各游戏赔率、代理等级、平台 1 亿开账、管理员账号全在
 # seed 里，而生产从不自动 seed。全新库不初始化的结果是：后台没有任何账号可登录，

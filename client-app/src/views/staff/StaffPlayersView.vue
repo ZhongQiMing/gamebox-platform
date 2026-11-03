@@ -36,39 +36,64 @@
           {{ keyword.trim() ? '无匹配房间或玩家' : '暂无房间' }}
         </div>
 
-        <section v-for="r in visibleRooms" :key="r.id" class="pl-block">
-          <button type="button" class="pl-room" @click="toggleRoom(r.id)">
+        <section v-for="b in playerBlocks" :key="b.key" class="sg-wrap" :class="{ 'sg-plain': b.kind === 'room' }">
+          <button
+            v-if="b.kind === 'general'"
+            type="button"
+            class="pl-room sg-head"
+            @click="toggleGeneral(b.key)"
+          >
             <div class="pl-room-hd">
-              <div class="pl-room-name">{{ r.name }}</div>
-              <span class="st" :class="(r.status || '').toLowerCase()">{{ statusLabel(r.status) }}</span>
+              <div class="pl-room-name"><em class="sg-tag">总代</em>{{ b.name }}</div>
+              <span class="sg-chev" :class="{ open: isGeneralOpen(b.key) }"></span>
             </div>
-            <div class="pl-room-meta">
-              进房码 {{ r.roomNo }}
-              <template v-if="r.agent"> · {{ r.agent.nickname || r.agent.username }}</template>
+            <div class="sg-pills">
+              <span class="sg-pill">占成 {{ b.sharePct }}%</span>
+              <span class="sg-pill">整包 {{ b.flowPct }}%</span>
+              <span class="sg-pill">{{ b.bookLabel }}</span>
+              <span class="sg-pill">{{ b.rooms.length }} 间房</span>
             </div>
             <div class="pl-room-ft">
-              <span>玩家 {{ roomPlayerCount(r) }}</span>
-              <span class="arrow">{{ isOpen(r.id) ? '收起 ∧' : '展开 ›' }}</span>
+              <span>{{ b.quotaLabel }} {{ b.quotaText }}</span>
+              <span>{{ b.secondLabel }} {{ b.secondText }}</span>
+              <span>玩家 {{ b.members }}</span>
             </div>
           </button>
-
-          <div v-if="isOpen(r.id)" class="pl-players">
-            <div v-if="roomLoading[r.id]" class="sp-empty tight">加载中…</div>
-            <div v-else-if="!playersOf(r.id).length" class="sp-empty tight">本房暂无玩家</div>
-            <div v-for="p in playersOf(r.id)" :key="`${r.id}-${p.id}`" class="sp-row">
-              <div class="top">
-                <div class="name">
-                  {{ p.nickname }}
-                  <span v-if="p.loginLocked" class="sp-lock">冻结</span>
-                  <span v-else-if="p.status !== 'ACTIVE'" class="sp-lock is-off">停用</span>
+          <div v-show="b.kind === 'room' || isGeneralOpen(b.key)" :class="{ 'sg-body': b.kind === 'general' }">
+            <section v-for="r in b.rooms" :key="r.id" class="pl-block">
+              <button type="button" class="pl-room" @click="toggleRoom(r.id)">
+                <div class="pl-room-hd">
+                  <div class="pl-room-name"><em class="sg-tag">本房代理</em>{{ r.agent?.nickname || r.agent?.username || r.name }}</div>
+                  <span class="st" :class="(r.status || '').toLowerCase()">{{ statusLabel(r.status) }}</span>
                 </div>
-                <div class="bal">{{ fmt(p.balance) }}</div>
+                <div class="pl-room-meta">
+                  {{ r.name }} · 进房码 {{ r.roomNo }}
+                </div>
+                <div class="pl-room-ft">
+                  <span>玩家 {{ roomPlayerCount(r) }}</span>
+                  <span class="arrow">{{ isOpen(r.id) ? '收起 ∧' : '展开 ›' }}</span>
+                </div>
+              </button>
+
+              <div v-if="isOpen(r.id)" class="pl-players">
+                <div v-if="roomLoading[r.id]" class="sp-empty tight">加载中…</div>
+                <div v-else-if="!playersOf(r.id).length" class="sp-empty tight">本房暂无玩家</div>
+                <div v-for="p in playersOf(r.id)" :key="`${r.id}-${p.id}`" class="sp-row">
+                  <div class="top">
+                    <div class="name">
+                      {{ p.nickname }}
+                      <span v-if="p.loginLocked" class="sp-lock">冻结</span>
+                      <span v-else-if="p.status !== 'ACTIVE'" class="sp-lock is-off">停用</span>
+                    </div>
+                    <div class="bal">{{ fmt(p.balance) }}</div>
+                  </div>
+                  <div class="meta">{{ p.username }} · {{ p.uid }} · 本房余额</div>
+                  <div v-if="canResetPwd" class="ops">
+                    <button type="button" class="warn" @click="askResetPwd(p)">重置密码</button>
+                  </div>
+                </div>
               </div>
-              <div class="meta">{{ p.username }} · {{ p.uid }} · 本房余额</div>
-              <div v-if="canResetPwd" class="ops">
-                <button type="button" class="warn" @click="askResetPwd(p)">重置密码</button>
-              </div>
-            </div>
+            </section>
           </div>
         </section>
       </template>
@@ -186,10 +211,9 @@
 
     <div v-if="flyConfirmVisible" class="sp-sheet" @click.self="flyConfirmVisible = false">
       <div class="sp-sheet-panel">
-        <h3>{{ flyTargetNext ? '改为飞盘' : '改为关盘' }}</h3>
+        <h3>{{ flyTargetNext ? '飞盘' : '关盘' }}</h3>
         <p class="hint">
-          {{ flyTarget?.nickname }}（{{ flyTarget?.username }}）之后的注
-          {{ flyTargetNext ? '飞给平台，输赢不动你的盘分。' : '由你自己坐庄，输赢从你的盘分出。' }}
+          {{ flyTargetNext ? `是否将「${flyTarget?.nickname || '该玩家'}」开启飞盘？` : `是否将「${flyTarget?.nickname || '该玩家'}」关闭飞盘？` }}
         </p>
         <div class="sp-sheet-actions">
           <button type="button" class="cancel" :disabled="!!flyBusyId" @click="flyConfirmVisible = false">取消</button>
@@ -233,6 +257,12 @@ import { useToast } from '@/composables/useToast'
 import { useBodyClass } from '@/composables/useBodyClass'
 import { formatMoney, PLAYER_DOWN_MIN, PLAYER_FUND_MAX, PLAYER_UP_MIN } from '@gamebox/shared'
 import { newFundOrderNo } from '@/utils/fundOrderNo'
+import {
+  loadStaffGenerals,
+  moneyOrDash,
+  pctOfRate,
+  type StaffGeneralRow,
+} from '@/utils/staffGenerals'
 import '@/assets/staff-console.css'
 
 useBodyClass('deco-bg')
@@ -260,6 +290,7 @@ const activeRoomId = computed(() => {
 })
 
 const rooms = ref<StaffRoom[]>([])
+const generalMap = ref<Record<string, StaffGeneralRow>>({})
 const openIds = ref<string[]>([])
 const playersByRoom = reactive<Record<string, StaffPlayerRow[]>>({})
 const roomLoading = reactive<Record<string, boolean>>({})
@@ -306,10 +337,12 @@ const visibleRooms = computed(() => {
   if (!q) return rooms.value
   return rooms.value.filter((r) => {
     const agent = `${r.agent?.nickname || ''} ${r.agent?.username || ''}`.toLowerCase()
+    const general = `${r.general?.nickname || ''} ${r.general?.username || ''}`.toLowerCase()
     return (
       r.name.toLowerCase().includes(q)
       || r.roomNo.includes(q)
       || agent.includes(q)
+      || general.includes(q)
     )
   })
 })
@@ -320,6 +353,77 @@ const totalPlayersShown = computed(() => {
   }
   return rooms.value.reduce((n, r) => n + (r.memberCount || 0), 0)
 })
+
+type PlayerBlock = {
+  key: string
+  kind: 'room' | 'general'
+  name: string
+  sharePct: string
+  flowPct: string
+  bookLabel: string
+  quotaLabel: string
+  quotaText: string
+  secondLabel: string
+  secondText: string
+  members: number
+  rooms: StaffRoom[]
+}
+
+const playerBlocks = computed<PlayerBlock[]>(() => {
+  const blocks: PlayerBlock[] = []
+  const seen = new Set<string>()
+  for (const room of visibleRooms.value) {
+    const gid = isGeneral.value ? '' : (room.general?.userId || '')
+    if (!gid) {
+      blocks.push({
+        key: room.id,
+        kind: 'room',
+        name: '',
+        sharePct: '',
+        flowPct: '',
+        bookLabel: '',
+        quotaLabel: '',
+        quotaText: '',
+        secondLabel: '',
+        secondText: '',
+        members: 0,
+        rooms: [room],
+      })
+      continue
+    }
+    if (seen.has(gid)) continue
+    seen.add(gid)
+    const groupRooms = visibleRooms.value.filter((item) => item.general?.userId === gid)
+    const wallet = generalMap.value[gid]
+    const credit = wallet?.bookMode === 'CREDIT'
+    blocks.push({
+      key: gid,
+      kind: 'general',
+      name: String(room.general?.nickname || room.general?.username || wallet?.nickname || '总代').trim(),
+      sharePct: pctOfRate(wallet?.shareRate ?? room.general?.shareRate),
+      flowPct: pctOfRate(wallet?.flowRate ?? room.general?.flowRate),
+      bookLabel: wallet ? (credit ? 'B·信用' : 'A·现金') : '—',
+      quotaLabel: credit ? '剩余信用' : '可用额度',
+      quotaText: moneyOrDash(wallet, wallet?.pointsQuota),
+      secondLabel: credit ? '合同额度' : '余额',
+      secondText: moneyOrDash(wallet, credit ? wallet?.creditLimit : wallet?.agentBalance ?? wallet?.balance),
+      members: groupRooms.reduce((sum, item) => sum + roomPlayerCount(item), 0),
+      rooms: groupRooms,
+    })
+  }
+  return blocks
+})
+
+const openedGenerals = ref<Record<string, boolean>>({})
+function isGeneralOpen(key: string) {
+  if (openedGenerals.value[key] != null) return openedGenerals.value[key]
+  if (searchHits.value) return true
+  const groups = playerBlocks.value.filter((b) => b.kind === 'general')
+  return groups.length <= 1 || groups[0]?.key === key
+}
+function toggleGeneral(key: string) {
+  openedGenerals.value = { ...openedGenerals.value, [key]: !isGeneralOpen(key) }
+}
 
 function fmt(n?: number) {
   return formatMoney(n ?? 0)
@@ -378,8 +482,9 @@ async function onSearch() {
   /* 房间名/进房码命中：只筛房间，不展开玩家搜索 */
   const roomOnly = rooms.value.some((r) => {
     const agent = `${r.agent?.nickname || ''} ${r.agent?.username || ''}`.toLowerCase()
+    const general = `${r.general?.nickname || ''} ${r.general?.username || ''}`.toLowerCase()
     const qq = q.toLowerCase()
-    return r.name.toLowerCase().includes(qq) || r.roomNo.includes(q) || agent.includes(qq)
+    return r.name.toLowerCase().includes(qq) || r.roomNo.includes(q) || agent.includes(qq) || general.includes(qq)
   })
   const looksLikePlayer = !roomOnly || q.length >= 2
 
@@ -413,7 +518,12 @@ async function onSearch() {
 async function loadRooms() {
   loading.value = true
   try {
-    rooms.value = (await staffConsoleApi.rooms()) || []
+    const [list, gens] = await Promise.all([
+      staffConsoleApi.rooms(),
+      loadStaffGenerals().catch(() => ({})),
+    ])
+    rooms.value = list || []
+    generalMap.value = gens
     searchHits.value = null
     /* 默认展开第一间，方便一眼看到玩家 */
     openIds.value = []
@@ -542,7 +652,7 @@ async function doSetFly() {
     if (row) row.flyEnabled = next
     flyConfirmVisible.value = false
     flyTarget.value = null
-    toast(next ? '已改为飞盘' : '已改为关盘')
+    toast(next ? '已开启飞盘' : '已关闭飞盘')
   } catch (e: unknown) {
     toast(e instanceof Error ? e.message : '操作失败')
   } finally {
@@ -667,6 +777,11 @@ onMounted(async () => {
   -webkit-tap-highlight-color: transparent;
 }
 .pl-room:active { transform: scale(0.992); }
+.pl-room.sg-head .pl-room-ft {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 6px 12px;
+}
 .pl-room-hd {
   display: flex;
   align-items: center;

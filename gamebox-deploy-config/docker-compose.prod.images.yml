@@ -5,6 +5,10 @@
 # 跑哪个版本由 .env.prod 里的 GAMEBOX_VERSION 决定，两个应用镜像必须同版本。
 # 别把它改回 latest：latest 是同名覆盖，load 新镜像会把旧镜像的标签摘掉，
 # 服务器上就再也找不到上一版，出事只能回本机重新构建（十几分钟起）。
+#
+# 这台生产机（CentOS 7）与仓库默认的差异只允许这几处，不能改回 Docker 命名卷：
+#   1. pg/redis/uploads 绑到 /opt/gamebox-data，数据不进 docker volume
+#   2. postgres、web 需要 seccomp:unconfined（3.10 内核对 PG15 / nginx 会 EPERM）
 
 # 日志轮转：Docker 默认 json-file 无上限，一个刷屏的报错能在几天里吃掉整块盘，
 # 而磁盘满会先把 Postgres 写挂。所有服务共用这一份配置。
@@ -20,6 +24,8 @@ services:
     container_name: gamebox-postgres
     restart: unless-stopped
     logging: *default-logging
+    security_opt:
+      - seccomp:unconfined
     environment:
       POSTGRES_USER: gamebox
       POSTGRES_PASSWORD: ${DB_PASSWORD}
@@ -27,7 +33,7 @@ services:
       # 容器默认 UTC，日志和 psql 里的时间会跟业务（上海时区）对不上，排障时很误导
       TZ: ${TZ:-Asia/Shanghai}
     volumes:
-      - gamebox_pgdata:/var/lib/postgresql/data
+      - /opt/gamebox-data/pg:/var/lib/postgresql/data
     networks: [backend]
     deploy:
       resources:
@@ -38,6 +44,26 @@ services:
       interval: 5s
       timeout: 5s
       retries: 12
+
+  # 宝塔面板只能连本机端口。数据库网络是内网，不能直接映射端口，
+  # 所以用这个小转发只把 5432 开在 127.0.0.1，公网连不上。
+  pg-panel:
+    image: gamebox-server:${GAMEBOX_VERSION:?GAMEBOX_VERSION 必须在 .env.prod 中显式设置}
+    container_name: gamebox-pg-local
+    restart: unless-stopped
+    logging: *default-logging
+    entrypoint: ["node", "/pg-proxy.js"]
+    read_only: true
+    volumes:
+      - /opt/gamebox-data/pg-proxy.js:/pg-proxy.js:ro
+    ports:
+      - "127.0.0.1:5432:5432"
+    networks: [frontend, backend]
+    deploy:
+      resources:
+        limits:
+          memory: 64m
+          pids: 64
 
   redis:
     image: redis:7-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
@@ -54,7 +80,7 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       TZ: ${TZ:-Asia/Shanghai}
     volumes:
-      - gamebox_redisdata:/data
+      - /opt/gamebox-data/redis:/data
     networks: [backend]
     deploy:
       resources:
@@ -89,8 +115,15 @@ services:
         condition: service_healthy
     networks: [frontend, backend]
     volumes:
-      - gamebox_uploads:/repo/server/uploads
-      - gamebox_private_uploads:/repo/server/private-uploads
+      - /opt/gamebox-data/uploads:/repo/server/uploads
+      - /opt/gamebox-data/private-uploads:/repo/server/private-uploads
+      - /opt/gamebox-data/hotfix/room-chat.service.js:/repo/server/dist/modules/rooms/room-chat.service.js:ro
+      - /opt/gamebox-data/hotfix/agent.controller.js:/repo/server/dist/modules/agents/agent.controller.js:ro
+      - /opt/gamebox-data/hotfix/console-reports.service.js:/repo/server/dist/modules/console/console-reports.service.js:ro
+      - /opt/gamebox-data/hotfix/console-rooms.service.js:/repo/server/dist/modules/console/console-rooms.service.js:ro
+      - /opt/gamebox-data/hotfix/cs-sla.service.js:/repo/server/dist/modules/console/cs-sla.service.js:ro
+      - /opt/gamebox-data/hotfix/download.controller.js:/repo/server/dist/modules/download/download.controller.js:ro
+      - /opt/gamebox-data/apk:/repo/server/public/apk:ro
     user: "1000:1000"
     read_only: true
     init: true
@@ -128,14 +161,34 @@ services:
       - "127.0.0.1:8081:8081"
       - "127.0.0.1:8082:8082"
     networks: [frontend]
+    volumes:
+      - /opt/gamebox-data/admin-dist:/usr/share/nginx/html/admin:ro
+      - /opt/gamebox-data/game-hotfix/room-chat.js:/usr/share/nginx/html/games-assets/_lottery-common/room-chat.js:ro
+      - /opt/gamebox-data/game-hotfix/ssc/index.html:/usr/share/nginx/html/games-assets/ssc/index.html:ro
+      - /opt/gamebox-data/game-hotfix/ssc/js/ssc.js:/usr/share/nginx/html/games-assets/ssc/js/ssc.js:ro
+      - /opt/gamebox-data/game-hotfix/ffc/index.html:/usr/share/nginx/html/games-assets/ffc/index.html:ro
+      - /opt/gamebox-data/game-hotfix/ffc/js/ffc.js:/usr/share/nginx/html/games-assets/ffc/js/ffc.js:ro
+      - /opt/gamebox-data/game-hotfix/kuai3/index.html:/usr/share/nginx/html/games-assets/kuai3/index.html:ro
+      - /opt/gamebox-data/game-hotfix/kuai3/js/k3.js:/usr/share/nginx/html/games-assets/kuai3/js/k3.js:ro
+      - /opt/gamebox-data/game-hotfix/bjsc/index.html:/usr/share/nginx/html/games-assets/bjsc/index.html:ro
+      - /opt/gamebox-data/game-hotfix/bjsc/js/bjsc.js:/usr/share/nginx/html/games-assets/bjsc/js/bjsc.js:ro
+      - /opt/gamebox-data/game-hotfix/speed-racing/index.html:/usr/share/nginx/html/games-assets/speed-racing/index.html:ro
+      - /opt/gamebox-data/game-hotfix/speed-racing/js/jsr.js:/usr/share/nginx/html/games-assets/speed-racing/js/jsr.js:ro
+      - /opt/gamebox-data/game-hotfix/speed-boat/index.html:/usr/share/nginx/html/games-assets/speed-boat/index.html:ro
+      - /opt/gamebox-data/game-hotfix/speed-boat/js/jsb.js:/usr/share/nginx/html/games-assets/speed-boat/js/jsb.js:ro
+      - /opt/gamebox-data/game-hotfix/lhc/index.html:/usr/share/nginx/html/games-assets/lhc/index.html:ro
+      - /opt/gamebox-data/game-hotfix/lhc/js/lhc.js:/usr/share/nginx/html/games-assets/lhc/js/lhc.js:ro
     user: "101:101"
     read_only: true
     init: true
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
+      # CentOS 7（内核 3.10）+ Docker 默认 seccomp 会拦新版 nginx 用到的写盘系统调用
+      - seccomp:unconfined
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=32m
+      - /var/cache/nginx:rw,nosuid,nodev,size=32m
     healthcheck:
       # 三个 Origin 入口都必须真正返回 HTTP；任一端口失败都不能算 web 健康。
       test:
@@ -143,7 +196,7 @@ services:
         - >-
           wget -q -O /dev/null http://127.0.0.1:8080/
           && wget -q -O /dev/null http://127.0.0.1:8081/
-          && wget -q -O /dev/null http://127.0.0.1:8082/
+          && wget -q -O /dev/null http://127.0.0.1:8082/games-assets/bjsc/index.html
       interval: 10s
       timeout: 5s
       retries: 12
@@ -160,9 +213,3 @@ networks:
   backend:
     driver: bridge
     internal: true
-
-volumes:
-  gamebox_pgdata:
-  gamebox_redisdata:
-  gamebox_uploads:
-  gamebox_private_uploads:

@@ -30,7 +30,8 @@
     <header class="desk-titlebar">
       <div class="titlebar-left">
         <span class="app-mark">♛</span>
-        <span class="app-name">Gamebox 运营控制台</span>
+        <span class="app-name app-name--full">Gamebox 运营控制台</span>
+        <span class="app-name app-name--short">运营控制台</span>
         <span class="app-ver">Desktop</span>
         <el-tag v-if="envTag" size="small" :type="envTag.type" effect="dark">{{ envTag.label }}</el-tag>
       </div>
@@ -721,6 +722,7 @@ onUnmounted(() => {
   text-shadow: 0 0 12px rgba(56, 189, 248, 0.55);
 }
 .app-name { font-size: 13px; font-weight: 700; letter-spacing: 0.02em; }
+.app-name--short { display: none; }
 .app-ver {
   font-size: 10px;
   color: #7dd3fc;
@@ -880,6 +882,45 @@ onUnmounted(() => {
   font-weight: 500;
   color: #94a3b8;
   letter-spacing: 0.02em;
+}
+
+@media (max-width: 720px) {
+  .desk-titlebar {
+    height: auto;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    padding: 8px 10px;
+    gap: 6px;
+  }
+  .titlebar-left { flex: 1 1 auto; }
+  .titlebar-right {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .app-name--full,
+  .app-ver,
+  .nick { display: none; }
+  .app-name--short { display: inline; }
+  .stat-chip { white-space: nowrap; }
+  .desk-mainnav {
+    flex-direction: column;
+    align-items: stretch;
+    min-height: 0;
+    gap: 6px;
+    padding: 6px 8px 8px;
+  }
+  .mainnav-pages,
+  .mainnav-utils {
+    width: 100%;
+    margin-left: 0;
+  }
+  .main-btn,
+  .main-util {
+    min-width: 76px;
+  }
+  .desk-status { display: none; }
+  .desk-main { padding: 8px; }
 }
 
 .desk-main {

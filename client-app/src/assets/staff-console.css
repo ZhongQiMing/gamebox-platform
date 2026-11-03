@@ -971,3 +971,77 @@
 }
 
 /* 代理端底栏复用玩家 .lobby-tabbar，底部避让也一并走 body.has-tabbar .page，此处不再另加 */
+
+/* 总代抽屉：外层是总代自己，里面才是他名下的房间 / 代理 / 玩家 */
+.sg-wrap { margin-bottom: 14px; }
+.sg-plain { margin-bottom: 0; }
+.sg-head {
+  width: 100%;
+  margin-bottom: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.sg-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 10px;
+}
+.sg-pill,
+.sg-pills .rm-chip {
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  color: #d4af37;
+  border: 1px solid rgba(212, 175, 55, 0.4);
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+.sg-tag {
+  margin-right: 6px;
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 1px;
+  color: rgba(244, 211, 107, 0.72);
+}
+.sg-chev {
+  position: relative;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(212, 175, 55, 0.5);
+  background: rgba(0, 0, 0, 0.32);
+}
+.sg-chev::before {
+  content: '';
+  position: absolute;
+  left: 8px;
+  top: 7px;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid #f5d36b;
+  border-bottom: 1.5px solid #f5d36b;
+  transform: rotate(45deg);
+}
+.sg-chev.open::before {
+  top: 10px;
+  transform: rotate(225deg);
+}
+.sg-body {
+  margin: 8px 0 0 16px;
+  padding-left: 10px;
+  border-left: 1px solid rgba(212, 175, 55, 0.42);
+}
+.sg-body > :last-child { margin-bottom: 0; }
+.sg-seal {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  color: #f5d36b;
+}

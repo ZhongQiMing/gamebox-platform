@@ -37,6 +37,13 @@ import { creditFlownSettlePay, creditRoomPayToPlatform } from './credit-settle.h
 import { buildRoomFeeBill, type RoomFeeBill } from './general-room-fee.helper';
 import { keepClosedRoomInPeriodList, OPEN_ROOM_WHERE } from './open-room.where';
 import {
+  GENERAL_SHARE_SCHEDULE_SELECT,
+  ROOM_AGENT_SHARE_SCHEDULE_SELECT,
+  effectiveGeneralShareRate,
+  scheduleFromAgent,
+  scheduleFromRoom,
+} from './general-share-rate.helper';
+import {
   platformGeneralDebtFilter,
   sumUnsettledCreditDebt,
 } from './credit-issue-debt.helper';
@@ -92,7 +99,11 @@ type RoomAggRow = {
   name: string;
   status: string;
   bookMode: string;
-  agentShareRate: unknown;
+  agentShareRate: number;
+  agentShareRateSince?: Date | null;
+  prevAgentShareRate?: number | null;
+  pendingAgentShareRate?: number | null;
+  pendingAgentShareFrom?: Date | null;
   settleCycle: string | null;
   ownerAgent: { user: { nickname: string; username: string } } | null;
 };
@@ -178,7 +189,7 @@ export class GeneralSettleService {
             creditLimit: true,
             pointsQuota: true,
             settleCycle: true,
-            shareRate: true,
+            ...GENERAL_SHARE_SCHEDULE_SELECT,
             flowRate: true,
             roomMonthlyFee: true,
           },
@@ -189,6 +200,13 @@ export class GeneralSettleService {
       throw new NotFoundException('总代不存在');
     }
     return user;
+  }
+
+  private periodShareRate(
+    target: Awaited<ReturnType<GeneralSettleService['resolveTarget']>>,
+    periodStart: Date,
+  ) {
+    return effectiveGeneralShareRate(scheduleFromAgent(target.agent!), periodStart);
   }
 
   /**
@@ -294,6 +312,7 @@ export class GeneralSettleService {
       this.sumLines(lines, roomFee.total),
       target,
     );
+    const periodShare = this.periodShareRate(target, bounds.periodStart);
 
     return {
       general: {
@@ -304,7 +323,7 @@ export class GeneralSettleService {
         bookMode: target.agent!.bookMode === 'CREDIT' ? 'CREDIT' : 'CASH',
         creditLimit: asMoney(target.agent!.creditLimit),
         pointsQuota: asMoney(target.agent!.pointsQuota),
-        shareRate: Number(target.agent!.shareRate ?? 0),
+        shareRate: periodShare,
         flowRate: Number(target.agent!.flowRate ?? 0),
         settleCycle: cycle,
         settleLabel: settleCycleLabel(cycle),
@@ -322,7 +341,7 @@ export class GeneralSettleService {
           nickname: target.nickname,
           username: target.username,
           bookMode: target.agent!.bookMode,
-          shareRate: Number(target.agent!.shareRate ?? 0),
+          shareRate: periodShare,
         },
         { fromText: shanghaiYmd(bounds.periodStart), toText: shanghaiYmd(bounds.periodEnd) },
         totals,
@@ -526,7 +545,7 @@ export class GeneralSettleService {
         name: true,
         status: true,
         bookMode: true,
-        agentShareRate: true,
+        ...ROOM_AGENT_SHARE_SCHEDULE_SELECT,
         settleCycle: true,
         ownerAgent: {
           select: { user: { select: { nickname: true, username: true } } },
@@ -534,7 +553,7 @@ export class GeneralSettleService {
       },
       orderBy: { roomNo: 'asc' },
     });
-    const gShare = Math.min(1, Math.max(0, Number(target.agent!.shareRate ?? 0)));
+    const gShare = this.periodShareRate(target, from);
     const lines = await this.linesForRoomRows(rooms, from, to, gShare);
     return lines.filter(keepClosedRoomInPeriodList);
   }
@@ -569,7 +588,7 @@ export class GeneralSettleService {
       const house = byHouse.get(r.id);
       const betFlow = asMoney(house?.flown.betFlow ?? 0);
       const payout = asMoney(house?.flown.payout ?? 0);
-      const aShare = Math.min(1, Math.max(0, Number(r.agentShareRate ?? 0)));
+      const aShare = effectiveGeneralShareRate(scheduleFromRoom(r), from);
       const settled = lastAgentSettle.get(r.id);
 
       /* 总表只认飞上台。房间单是总代↔代理，含飞到总代，两张单不必对平。 */
@@ -969,7 +988,7 @@ export class GeneralSettleService {
     const data = {
       periodEnd,
       bookMode: isCredit ? 'CREDIT' : 'CASH',
-      generalShareRate: Number(target.agent!.shareRate ?? 0),
+      generalShareRate: this.periodShareRate(target, bounds.periodStart),
       betFlow: new Prisma.Decimal(totals.betFlow.toFixed(2)),
       payout: new Prisma.Decimal(totals.payout.toFixed(2)),
       housePnl: new Prisma.Decimal(totals.housePnl.toFixed(2)),
@@ -1106,7 +1125,7 @@ export class GeneralSettleService {
         name: true,
         status: true,
         bookMode: true,
-        agentShareRate: true,
+        ...ROOM_AGENT_SHARE_SCHEDULE_SELECT,
         settleCycle: true,
         ownerAgent: {
           select: { user: { select: { nickname: true, username: true } } },

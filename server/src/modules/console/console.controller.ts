@@ -430,6 +430,20 @@ export class ConsoleController {
     return this.rooms.setGeneralRoomFly(this.actor(u), id, !!body.flyEnabled);
   }
 
+  @Patch('rooms/:id/agent-share-rate')
+  @Roles('ADMIN', 'BRANCH', 'GENERAL', 'PROXY')
+  setRoomAgentShareRate(
+    @CurrentUser() u: { id: string; role: string },
+    @Param('id') id: string,
+    @Body() body: { shareRate: number },
+  ) {
+    return this.rooms.setAgentShareRate(
+      this.actor(u),
+      id,
+      Number(body?.shareRate ?? NaN),
+    );
+  }
+
   @Patch('rooms/:id/billing')
   @Roles('ADMIN', 'BRANCH')
   updateRoomBilling(
@@ -982,6 +996,21 @@ export class ConsoleController {
       this.actor(u),
       userId,
       Number(body?.amount ?? 0),
+    );
+  }
+
+  /** 改总代占成：本期不动，下一账期生效 */
+  @Patch('agents/:userId/share-rate')
+  @Roles('ADMIN', 'BRANCH')
+  setGeneralShareRate(
+    @CurrentUser() u: { id: string; role: string },
+    @Param('userId') userId: string,
+    @Body() body: { shareRate: number },
+  ) {
+    return this.players.setGeneralShareRate(
+      this.actor(u),
+      userId,
+      Number(body?.shareRate ?? NaN),
     );
   }
 

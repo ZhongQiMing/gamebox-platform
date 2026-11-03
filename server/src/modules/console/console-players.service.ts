@@ -36,8 +36,18 @@ import {
   resolveDownlineFlowRate,
   resolvePlayerBand,
 } from '../rebate/rebate-chain';
-import { normalizeSettleCycle } from './room-settle.service';
+import { normalizeSettleCycle, shanghaiSettleBounds } from './room-settle.service';
 import { hasOpenRoomSome, OPEN_ROOM_WHERE } from './open-room.where';
+import {
+  GENERAL_SHARE_SCHEDULE_SELECT,
+  materializeShareSchedule,
+  overflowShareRoomsMessage,
+  parseGeneralShareRate,
+  publicGeneralShareView,
+  roomAgentShareCeiling,
+  ROOM_AGENT_SHARE_SCHEDULE_SELECT,
+  scheduleFromAgent,
+} from './general-share-rate.helper';
 
 const csDutyKey = (agentUserId: string) => `gamebox:cs-duty:${agentUserId}`;
 
@@ -962,7 +972,7 @@ export class ConsolePlayersService {
           commissionRate: true,
           rebateRate: true,
           flowRate: true,
-          shareRate: true,
+          ...GENERAL_SHARE_SCHEDULE_SELECT,
           pointsQuota: true,
           pointsUsed: true,
           bookMode: true,
@@ -1189,7 +1199,7 @@ export class ConsolePlayersService {
           commissionRate: quotaAg ? asMoney(quotaAg.commissionRate) : 0.002,
           rebateRate: quotaAg ? asMoney(quotaAg.rebateRate) : 0.018,
           flowRate: quotaAg ? Number(quotaAg.flowRate ?? 0.05) : 0.05,
-          shareRate: quotaAg ? Number(quotaAg.shareRate ?? 0.5) : 0.5,
+          ...publicGeneralShareView(scheduleFromAgent(quotaAg ?? { shareRate: 0.5 })),
           /* 盘口与合同额度只有总代自己这一层有意义，代理侧不返回免得误读 */
           bookMode: r.role === 'GENERAL' ? (ag?.bookMode ?? 'CASH') : undefined,
           creditLimit: r.role === 'GENERAL' ? asMoney(ag?.creditLimit ?? 0) : undefined,
@@ -1260,7 +1270,7 @@ export class ConsolePlayersService {
           select: {
             id: true, commissionRate: true, rebateRate: true,
             pointsQuota: true, pointsUsed: true,
-            flowRate: true, shareRate: true,
+            flowRate: true, ...GENERAL_SHARE_SCHEDULE_SELECT,
             downlineFlowRate: true, playerMinRate: true, playerMaxRate: true,
             bookMode: true, creditLimit: true, settleCycle: true,
             roomMonthlyFee: true,
@@ -1423,7 +1433,7 @@ export class ConsolePlayersService {
       }),
       unsettledWage: undefined,
       flowRate: agent ? Number(agent.flowRate ?? 0.07) : undefined,
-      shareRate: agent ? Number(agent.shareRate ?? 0.5) : undefined,
+      ...(agent ? publicGeneralShareView(scheduleFromAgent(agent)) : { shareRate: undefined }),
       bookMode: user.role === 'GENERAL' ? (agent?.bookMode === 'CREDIT' ? 'CREDIT' : 'CASH') : undefined,
       creditLimit: user.role === 'GENERAL' ? asMoney(agent?.creditLimit ?? 0) : undefined,
       settleCycle: user.role === 'GENERAL' ? (agent?.settleCycle ?? 'WEEKLY_MON') : undefined,
@@ -2399,6 +2409,93 @@ export class ConsolePlayersService {
     };
   }
 
+  /**
+   * 管理/总监改总代占成。本期账单仍按旧档；从该总代下一账期起点才换新档。
+   * 名下未关房的代理占成高于新档就拒，不替房间改数。
+   */
+  async setGeneralShareRate(actor: ConsoleActor, userId: string, shareRateRaw: number) {
+    if (actor.role !== 'ADMIN' && actor.role !== 'BRANCH') {
+      throw new ForbiddenException('仅管理或总监可改总代占成');
+    }
+    if (actor.role !== 'ADMIN') {
+      await this.scope.assertUserInScope(actor, userId);
+    }
+    const nextRate = parseGeneralShareRate(shareRateRaw);
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        role: true,
+        agent: { select: { id: true, settleCycle: true, ...GENERAL_SHARE_SCHEDULE_SELECT } },
+      },
+    });
+    if (!user || user.role !== 'GENERAL' || !user.agent) {
+      throw new BadRequestException('该账号不是总代');
+    }
+
+    const openRooms = await this.prisma.room.findMany({
+      where: {
+        generalAgentId: user.agent.id,
+        ...OPEN_ROOM_WHERE,
+      },
+      select: { roomNo: true, name: true, ...ROOM_AGENT_SHARE_SCHEDULE_SELECT },
+      orderBy: { roomNo: 'asc' },
+    });
+    const overflow = openRooms.filter(
+      (r) => roomAgentShareCeiling(r) > nextRate + 1e-9,
+    );
+    if (overflow.length) {
+      throw new BadRequestException(
+        overflowShareRoomsMessage(
+          overflow.map((r) => ({
+            roomNo: r.roomNo,
+            name: r.name,
+            agentShareRate: roomAgentShareCeiling(r),
+          })),
+        ),
+      );
+    }
+
+    const cycle = normalizeSettleCycle(user.agent.settleCycle);
+    const calendar = shanghaiSettleBounds(cycle, 0);
+    const live = materializeShareSchedule(scheduleFromAgent(user.agent), calendar.periodStart);
+    const sameAsCurrent = Math.abs(live.shareRate - nextRate) < 1e-9;
+    const next = sameAsCurrent
+      ? { ...live, pendingShareRate: null, pendingShareFrom: null }
+      : {
+          ...live,
+          pendingShareRate: nextRate,
+          pendingShareFrom: calendar.periodEnd,
+        };
+
+    await this.prisma.agent.update({
+      where: { userId },
+      data: {
+        shareRate: next.shareRate,
+        shareRateSince: next.shareRateSince,
+        prevShareRate: next.prevShareRate,
+        pendingShareRate: next.pendingShareRate,
+        pendingShareFrom: next.pendingShareFrom,
+      },
+    });
+
+    const view = publicGeneralShareView(next);
+    await this.adminLog.log(actor.id, 'GENERAL_SHARE_RATE_SET', userId, {
+      before: publicGeneralShareView(scheduleFromAgent(user.agent)),
+      after: view,
+      nextRate,
+      effectiveFrom: next.pendingShareFrom,
+    });
+    return {
+      ok: true,
+      ...view,
+      pendingShareFrom: view.pendingShareFrom?.toISOString() ?? null,
+      message: view.pendingShareRate == null
+        ? '已保存。与本期占成相同，未预约下期变更'
+        : '已保存。本期仍按原占成结算，下期起按新占成',
+    };
+  }
+
   /** 某个总代当前对哪些总监可见（总代详情页用） */
   async generalOwners(actor: ConsoleActor, generalUserId: string) {
     await this.scope.assertUserInScope(actor, generalUserId);
@@ -2592,12 +2689,7 @@ export class ConsolePlayersService {
           `总代流水整包须在 ${pctLabel(platform.generalMin)}～${pctLabel(generalMax)}`,
         );
       }
-      shareRate = Number(body.shareRate);
-      if (!Number.isFinite(shareRate)) shareRate = 0.5;
-      if (shareRate > 1) shareRate = shareRate / 100;
-      if (shareRate < 0 || shareRate > 0.7 + 1e-9) {
-        throw new BadRequestException('总代占成须在 0%～70%');
-      }
+      shareRate = parseGeneralShareRate(body.shareRate, 0.5);
       bookMode = body.bookMode === 'CREDIT' ? 'CREDIT' : 'CASH';
       settleCycle = normalizeSettleCycle(body.settleCycle);
       /* 平台按这个单价向总代收每间房的月费；他向代理收多少自己定 */

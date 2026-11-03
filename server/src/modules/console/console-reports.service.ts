@@ -13,6 +13,13 @@ import { ConsoleScopeService, type ConsoleActor } from './console-scope.service'
 import { roleEarning, splitHouseShare } from './share-split.helper';
 import { flowViewFor, flowViewerSide, type FlowViewerSide } from './flow-scope.helper';
 import { keepClosedRoomInPeriodList } from './open-room.where';
+import {
+  GENERAL_SHARE_SCHEDULE_SELECT,
+  ROOM_AGENT_SHARE_SCHEDULE_SELECT,
+  effectiveGeneralShareRate,
+  scheduleFromAgent,
+  scheduleFromRoom,
+} from './general-share-rate.helper';
 import { ADMIN_ACTION_META } from '../admin/admin-log.labels';
 
 function formatShanghaiDt(d: Date): string {
@@ -40,7 +47,67 @@ export class ConsoleReportsService {
    *
    * 全站取数只认这一个映射。曾经并存的 reportBetHouse 只有 flown/all 两档、
    * 分不出总代那一档，会把代理自己关盘的钱算进总代的表，已删除。
+   *
+   * 飞盘整包：平台打给总代、打给代理的流水返水，加上注单上计提的玩家回水。
+   * 总代再转给代理的那一截不重复加。
    */
+  private async rebateBreakdown(from: Date, to: Date, roomIds: string[]) {
+    const empty = { generalKeep: 0, agentWage: 0, playerRebate: 0, packageTotal: 0 };
+    if (!roomIds.length) return empty;
+    const roomFilter = Prisma.sql`AND NULLIF(b.payload->'fly'->>'roomId', '') IN (${Prisma.join(roomIds)})`;
+    type LegRow = { leg: string; amt: unknown };
+    type AccRow = { accrued: unknown };
+    const [legs, accs] = await Promise.all([
+      this.prisma.$queryRaw<LegRow[]>`
+        SELECT
+          CASE
+            WHEN l."idempotencyKey" LIKE 'flow_rebate_general_in_%' THEN 'PLATFORM_TO_GENERAL'
+            WHEN l."idempotencyKey" LIKE 'flow_rebate_agent_in_%' THEN 'PLATFORM_TO_AGENT'
+            WHEN l."idempotencyKey" LIKE 'flow_rebate_down_in_%' THEN 'GENERAL_TO_AGENT'
+            ELSE 'OTHER'
+          END AS leg,
+          COALESCE(SUM(l.amount), 0) AS amt
+        FROM "PointsLedger" l
+        JOIN "Bet" b ON b."id" = l."refId"
+        WHERE l."refType" = 'bet'
+          AND l."bizType" = 'REBATE'
+          AND l.amount > 0
+          AND (
+            l."idempotencyKey" LIKE 'flow_rebate_general_in_%'
+            OR l."idempotencyKey" LIKE 'flow_rebate_agent_in_%'
+            OR l."idempotencyKey" LIKE 'flow_rebate_down_in_%'
+          )
+          AND b."settledAt" >= ${from}
+          AND b."settledAt" < ${to}
+          AND b.payload->'fly'->>'flying' = 'true'
+          ${roomFilter}
+        GROUP BY 1
+      `,
+      this.prisma.$queryRaw<AccRow[]>`
+        SELECT COALESCE(SUM(
+          b."validFlow" * COALESCE(NULLIF(b.payload->'fly'->>'P', '')::numeric, 0)
+        ), 0) AS accrued
+        FROM "Bet" b
+        WHERE b."settledAt" >= ${from}
+          AND b."settledAt" < ${to}
+          AND b.status IN ('WON', 'LOST')
+          AND b."validFlow" > 0
+          AND b.payload->'fly'->>'flying' = 'true'
+          ${roomFilter}
+      `,
+    ]);
+    const leg = (name: string) => asMoney(legs.find((row) => row.leg === name)?.amt ?? 0);
+    const generalKeep = asMoney(leg('PLATFORM_TO_GENERAL') - leg('GENERAL_TO_AGENT'));
+    const agentWage = asMoney(leg('PLATFORM_TO_AGENT') + leg('GENERAL_TO_AGENT'));
+    const playerRebate = asMoney(accs[0]?.accrued ?? 0);
+    return {
+      generalKeep,
+      agentWage,
+      playerRebate,
+      packageTotal: asMoney(generalKeep + agentWage + playerRebate),
+    };
+  }
+
   private ledgerHouse(side: FlowViewerSide): 'all' | 'flown' | 'agentFly' {
     if (side === 'PLATFORM') return 'flown';
     if (side === 'GENERAL') return 'agentFly';
@@ -570,6 +637,8 @@ export class ConsoleReportsService {
           platformShareAmount: 0,
           netChange: 0,
           netPnl: 0,
+          rebatePackage: 0,
+          realNetEarning: 0,
           byGame: [],
         };
       }
@@ -871,8 +940,8 @@ export class ConsoleReportsService {
         where: { id: { in: shareRoomIds } },
         select: {
           id: true,
-          agentShareRate: true,
-          generalAgent: { select: { shareRate: true } },
+          ...ROOM_AGENT_SHARE_SCHEDULE_SELECT,
+          generalAgent: { select: GENERAL_SHARE_SCHEDULE_SELECT },
         },
       });
       const houseOf = (
@@ -888,9 +957,9 @@ export class ConsoleReportsService {
             flownHousePnl: flownPnl,
             generalSatHousePnl: asMoney(agentFlyPnl - flownPnl),
             agentSatHousePnl: asMoney(allPnl - agentFlyPnl),
-            agentShareRate: Number(room.agentShareRate) || 0,
+            agentShareRate: effectiveGeneralShareRate(scheduleFromRoom(room), from),
             generalShareRate: room.generalAgent
-              ? Number(room.generalAgent.shareRate) || 0
+              ? effectiveGeneralShareRate(scheduleFromAgent(room.generalAgent), from)
               : null,
           };
         }),
@@ -909,6 +978,22 @@ export class ConsoleReportsService {
        */
       netPnl = asMoney(platformShareAmount);
     }
+
+    /*
+     * 平台真正盈亏 = 飞盘庄家盈亏 − 整包返水。
+     * 整包 = 总代实发 + 代理实发 + 玩家回水。玩家回水输掉会进庄家盈亏，
+     * 减掉之后那一截对掉；总代和代理的返水留在他们账户上，是平台垫出去的。
+     */
+    const rebate = await this.rebateBreakdown(from, to, shareRoomIds);
+    const rebatePackage = rebate.packageTotal;
+    const rebateGeneral = rebate.generalKeep;
+    const rebateAgent = rebate.agentWage;
+    const rebatePlayer = rebate.playerRebate;
+    const realNetEarning = isPlatformSide
+      ? asMoney(satHousePnl - rebatePackage)
+      : generalSide
+        ? asMoney(myNetEarning + rebateGeneral)
+        : myNetEarning;
 
     return {
       ...this.rangeMeta(from, to, rangeKey),
@@ -956,6 +1041,16 @@ export class ConsoleReportsService {
       myShareAmount,
       /** 我今日净赚：代理还要再扣挂靠佣金 */
       myNetEarning,
+      /** 整包返水：总代实发 + 代理实发 + 玩家回水 */
+      rebatePackage,
+      /** 总代自己留下的返水 */
+      rebateGeneral,
+      /** 代理收到的返水 */
+      rebateAgent,
+      /** 玩家回水，含未领 */
+      rebatePlayer,
+      /** 平台：庄家盈亏 − 整包。总代：占成 + 自己的返水。代理仍是占成净赚 */
+      realNetEarning,
       shareBasis:
         actor.role === 'ADMIN' || actor.role === 'BRANCH'
           ? ('PLATFORM' as const)
@@ -1162,7 +1257,7 @@ export class ConsoleReportsService {
         roomNo: true,
         name: true,
         status: true,
-        agentShareRate: true,
+        ...ROOM_AGENT_SHARE_SCHEDULE_SELECT,
         ownerAgent: {
           select: {
             userId: true,
@@ -1170,7 +1265,7 @@ export class ConsoleReportsService {
           },
         },
         /* 挂了总代就要三段拆，否则本表的平台占成会把成数差算进平台，与 summary 对不上 */
-        generalAgent: { select: { shareRate: true } },
+        generalAgent: { select: GENERAL_SHARE_SCHEDULE_SELECT },
       },
       orderBy: { roomNo: 'asc' },
     });
@@ -1261,11 +1356,13 @@ export class ConsoleReportsService {
         asMoney(flownAgg?.flow ?? 0) - asMoney(flownAgg?.payout ?? 0),
       );
       /* 与 summary()/结算单同一个拆分函数，避免同一间房在两张表上占成对不上 */
-      const agentShareRate = Math.min(1, Math.max(0, Number(room.agentShareRate) || 0));
+      const agentShareRate = effectiveGeneralShareRate(scheduleFromRoom(room), from);
       const { agentShareAmount, generalShareAmount, platformShareAmount } = splitHouseShare(
         flownHousePnl,
         agentShareRate,
-        room.generalAgent ? Number(room.generalAgent.shareRate) || 0 : null,
+        room.generalAgent
+          ? effectiveGeneralShareRate(scheduleFromAgent(room.generalAgent), from)
+          : null,
       );
       const commissionAmount = commissionByRoom.get(room.id)?.amount ?? 0;
       const commissionCount = commissionByRoom.get(room.id)?.count ?? 0;
@@ -1660,9 +1757,9 @@ export class ConsoleReportsService {
           roomNo: true,
           name: true,
           bookMode: true,
-          agentShareRate: true,
+          ...ROOM_AGENT_SHARE_SCHEDULE_SELECT,
           /* 周报占成要三段拆，挂了总代得扣掉成数差 */
-          generalAgent: { select: { shareRate: true } },
+          generalAgent: { select: GENERAL_SHARE_SCHEDULE_SELECT },
           createdAt: true,
         },
         take: 50_000,
@@ -1722,15 +1819,12 @@ export class ConsoleReportsService {
 
     let shareRate: number | null = null;
     if (rooms.length === 1) {
-      shareRate = Math.min(1, Math.max(0, Number(rooms[0].agentShareRate ?? 0.3)));
+      shareRate = effectiveGeneralShareRate(scheduleFromRoom(rooms[0]), lastWeekFrom);
     } else if (rooms.length > 1) {
-      shareRate = Math.min(
-        1,
-        Math.max(
-          0,
-          rooms.reduce((s, r) => s + Number(r.agentShareRate ?? 0.3), 0) / rooms.length,
-        ),
-      );
+      shareRate = rooms.reduce(
+        (s, r) => s + effectiveGeneralShareRate(scheduleFromRoom(r), lastWeekFrom),
+        0,
+      ) / rooms.length;
     }
     /*
      * 占成预估与结算中心同口径：只算飞盘，否则代理会按含关盘的数字预期收付。
@@ -1740,7 +1834,9 @@ export class ConsoleReportsService {
     const weekHousePnl = asMoney(weekSummary?.flownHousePnl ?? 0);
     const weekBetFlow = asMoney(weekSummary?.flownBetFlow ?? 0);
     const weekGeneralRate = rooms.length
-      ? rooms.reduce((s, r) => s + Number(r.generalAgent?.shareRate ?? 0), 0) / rooms.length
+      ? rooms.reduce((s, r) => s + (r.generalAgent
+        ? effectiveGeneralShareRate(scheduleFromAgent(r.generalAgent), lastWeekFrom)
+        : 0), 0) / rooms.length
       : 0;
     const weekSplit = splitHouseShare(
       weekHousePnl,
