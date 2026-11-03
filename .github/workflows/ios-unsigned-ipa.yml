@@ -1,0 +1,67 @@
+name: iOS unsigned IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/ios-unsigned-ipa.yml
+
+jobs:
+  ipa:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@9.0.0 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build web assets and iOS project
+        env:
+          CI: "true"
+        run: |
+          unset CAP_DEV_URL || true
+          pnpm --filter @gamebox/client-app exec cap add ios
+          pnpm --filter @gamebox/client-app app:release:ios
+
+      - name: Compile unsigned iOS app
+        working-directory: client-app/ios/App
+        run: |
+          xcodebuild \
+            -workspace App.xcworkspace \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/ios-dd" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            MARKETING_VERSION=1.0.5 \
+            CURRENT_PROJECT_VERSION=6 \
+            clean build
+
+      - name: Pack IPA
+        run: |
+          APP=$(find "$RUNNER_TEMP/ios-dd" -type d -path '*Release-iphoneos/App.app' | head -n 1)
+          test -n "$APP"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist"
+          rm -rf Payload
+          mkdir Payload
+          cp -R "$APP" Payload/
+          zip -qry jinyuhui-1.0.5-unsigned.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jinyuhui-1.0.5-unsigned
+          path: jinyuhui-1.0.5-unsigned.ipa
+          retention-days: 14
