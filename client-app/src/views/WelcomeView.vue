@@ -99,6 +99,8 @@ import { useToast } from '@/composables/useToast'
 import { useBodyClass } from '@/composables/useBodyClass'
 import { useScreenFit } from '@/composables/useScreenFit'
 import { acceptLoginRole } from '@/utils/loginRoleGuard'
+import { SecureStorage } from '@aparajita/capacitor-secure-storage'
+import { isNativeApp } from '@/api/session'
 import '@/assets/welcome.css'
 
 useBodyClass('deco-bg', 'welcome-login')
@@ -115,23 +117,54 @@ const menuOpen = ref(false)
 const loading = ref(false)
 
 const REMEMBER_KEY = 'gamebox_remember_player'
+const REMEMBER_PWD_KEY = 'player_login_pwd'
+
+async function readSavedPassword(): Promise<string> {
+  try {
+    if (!isNativeApp()) {
+      await SecureStorage.setKeyPrefix('gamebox_')
+    }
+    const value = await SecureStorage.getItem(REMEMBER_PWD_KEY)
+    return typeof value === 'string' ? value : ''
+  } catch {
+    return ''
+  }
+}
+
+async function writeSavedPassword(pwd: string) {
+  try {
+    if (!isNativeApp()) {
+      await SecureStorage.setKeyPrefix('gamebox_')
+    }
+    if (pwd) await SecureStorage.setItem(REMEMBER_PWD_KEY, pwd)
+    else await SecureStorage.removeItem(REMEMBER_PWD_KEY)
+  } catch {
+    /* 安全存储不可用时不打断登录 */
+  }
+}
 
 onMounted(() => {
-  try {
-    const raw = localStorage.getItem(REMEMBER_KEY)
-    if (!raw) return
-    const saved = JSON.parse(raw) as { acc?: string; pwd?: string }
-    if (saved?.acc) {
-      account.value = saved.acc
-      rememberMe.value = true
+  void (async () => {
+    try {
+      const raw = localStorage.getItem(REMEMBER_KEY)
+      const saved = raw ? (JSON.parse(raw) as { acc?: string; pwd?: string }) : null
+      if (saved?.acc) {
+        account.value = saved.acc
+        rememberMe.value = true
+      }
+      const legacyPwd = saved?.pwd || ''
+      if (saved?.pwd) {
+        localStorage.setItem(REMEMBER_KEY, JSON.stringify({ acc: saved.acc }))
+      }
+      const stored = (await readSavedPassword()) || legacyPwd
+      if (stored && rememberMe.value) {
+        password.value = stored
+        if (legacyPwd) await writeSavedPassword(legacyPwd)
+      }
+    } catch {
+      /* ignore */
     }
-    // 历史版本曾明文存密码，发现即清除
-    if (saved?.pwd) {
-      localStorage.setItem(REMEMBER_KEY, JSON.stringify({ acc: saved.acc }))
-    }
-  } catch {
-    /* ignore */
-  }
+  })()
 })
 
 function goStaffLogin(kind: 'agent' | 'branch') {
@@ -161,8 +194,10 @@ async function doLogin() {
     try {
       if (rememberMe.value) {
         localStorage.setItem(REMEMBER_KEY, JSON.stringify({ acc: account.value.trim() }))
+        await writeSavedPassword(password.value)
       } else {
         localStorage.removeItem(REMEMBER_KEY)
+        await writeSavedPassword('')
       }
     } catch {
       /* ignore */
