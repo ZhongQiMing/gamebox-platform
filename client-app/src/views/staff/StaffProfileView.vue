@@ -381,6 +381,9 @@
       </div>
 
       <div class="settings-card logout-card">
+        <button type="button" class="gc-item" @click="appUpdate.check">
+          <span class="gc-text">检查更新</span>
+        </button>
         <button type="button" class="logout-btn" @click="askLogout">退 出 登 录</button>
       </div>
 
@@ -399,6 +402,16 @@
     @cancel="showLogoutModal = false"
   />
 
+  <AppModal
+    :visible="appUpdate.visible.value"
+    title="发现新版本"
+    :message="appUpdate.message.value"
+    ok-text="打开安装页"
+    cancel-text="稍后"
+    @ok="appUpdate.openInstall"
+    @cancel="appUpdate.visible.value = false"
+  />
+
   <StaffTabBar />
 </template>
 
@@ -412,6 +425,7 @@ import { useUserStore } from '@/stores/user'
 import { useRoomStore } from '@/stores/room'
 import { staffConsoleApi, type StaffCsMe, type StaffWalletMe } from '@/api/staffConsole'
 import { useToast } from '@/composables/useToast'
+import { useAppUpdate } from '@/composables/useAppUpdate'
 import { useBodyClass } from '@/composables/useBodyClass'
 import { formatMoney, formatSignedMoney, staffRoleLabel } from '@gamebox/shared'
 import '@/assets/settings.css'
@@ -424,6 +438,7 @@ const staff = useStaffStore()
 const user = useUserStore()
 const roomStore = useRoomStore()
 const { toast } = useToast()
+const appUpdate = useAppUpdate()
 
 const loading = ref(false)
 const hidden = ref(false)
@@ -647,7 +662,7 @@ async function load() {
           .catch(() => { roomCount.value = 0 }),
         staffConsoleApi.reportSummary({ range: 'today' })
           .then((s) => {
-            const house = Number(s?.satHousePnl ?? s?.housePnl ?? 0)
+            const house = Number(s?.housePnl ?? 0)
             const pack = Number(s?.rebatePackage ?? 0)
             todayBook.value = {
               realNet: s?.realNetEarning != null ? Number(s.realNetEarning) : house - pack,

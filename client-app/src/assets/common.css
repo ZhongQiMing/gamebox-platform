@@ -237,8 +237,10 @@ body.deco-bg .page { position: relative; z-index: 1; }
    与「输入房间号」页(无 app-bar，金圈返回键浮屏)视觉一致 */
 .deco-bg .app-bar,
 .deco-bg .brand-bar {
-  min-height: 64px;
+  min-height: calc(64px + var(--safe-top, 0px));
+  padding-top: var(--safe-top, 0px);
   padding-left: 64px;
+  box-sizing: border-box;
   /*
    * 底色、毛玻璃、金描边一起去掉，是为了让背景底图透上来。
    * 但顶栏是 sticky 的，去掉底色后它什么都挡不住，往上滚时卡片会从返回键和标题

@@ -55,6 +55,26 @@ export function formatSignedMoney(n: number): string {
   return formatMoney(v);
 }
 
+/**
+ * 上分确认时的实收说明。额度始终按填写的全额入账。
+ * 现金盘实收等于额度，占成到结算再付。信用盘当时不收钱。
+ * 占成传 0（给玩家）时只写实收全额。shareRate 为 0~1。
+ */
+export function fundFaceNote(
+  amount: number,
+  bookMode: string | null | undefined,
+  shareRate: number,
+): string {
+  const face = roundMoney(amount);
+  if (!(face > 0)) return '';
+  if (bookMode === 'CREDIT') {
+    return `入账额度 ${formatMoney(face)}。信用盘占成于结算时收付。`;
+  }
+  const rate = Math.min(1, Math.max(0, Number(shareRate) || 0));
+  if (rate <= 0) return `入账额度 ${formatMoney(face)}。实收 ${formatMoney(face)}。`;
+  return `入账额度 ${formatMoney(face)}。实收 ${formatMoney(face)}。占成于结算时收付。`;
+}
+
 /** Prisma Decimal / 字符串金额 → number */
 export function asMoney(v: unknown): number {
   if (typeof v === 'number') return roundMoney(v);

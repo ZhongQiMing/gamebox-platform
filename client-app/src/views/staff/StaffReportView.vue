@@ -154,7 +154,7 @@
                 <div class="rp-card-name">
                   <b><em class="rg-tag">总代</em>{{ b.name }}</b>
                   <div class="rg-pills">
-                    <i v-if="b.sharePct">占成 {{ b.sharePct }}%</i>
+                    <i v-if="b.sharePct">下线占成 {{ b.sharePct }}%</i>
                     <i v-if="b.flowPct">整包 {{ b.flowPct }}%</i>
                     <i>{{ b.rooms.length }} 间房</i>
                   </div>
@@ -490,7 +490,7 @@ const summaryCells = computed(() => {
   // 管理/房主：平台视角（盈利 / 流水 / 佣金），不含代理待审
   if (isLandlordOverview.value) {
     const commission = Number(s.commissionAmount || 0)
-    const house = s.satHousePnl ?? s.housePnl
+    const house = s.housePnl
     return [
       { k: '庄家盈亏', v: fmtSigned(house), cls: pnlClass(house) },
       { k: '流水', v: fmt(s.betFlow) },

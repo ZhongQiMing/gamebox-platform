@@ -10,11 +10,11 @@
 
     <div class="app-bar">
       <div class="back" @click="goBack">‹</div>
-      <div class="title">线 上 支 付</div>
+      <div class="title">上 下 分</div>
       <div class="right"></div>
     </div>
 
-    <h1 class="page-title">线 上 支 付</h1>
+    <h1 class="page-title">上 下 分</h1>
 
     <div class="page-body">
 
@@ -184,7 +184,7 @@ const avatarSrc = computed(() => userStore.profile?.avatar || '/images/avatars/0
 /** 上分快捷；下分无 200（低于最低额），含 2000 */
 const QUICK_UP = [200, 500, 1000, 2000, 3000, 5000, 10000]
 const QUICK_DOWN = [500, 1000, 2000, 3000, 5000, 10000]
-const PAY_NAMES: Record<string, string> = { wechat: '微信', alipay: '支付宝', unionpay: '银联' }
+const PAY_NAMES: Record<string, string> = { wechat: '微信', alipay: '支付宝' }
 
 const curType = ref<'up' | 'down'>('up')
 const curPayType = ref('wechat')

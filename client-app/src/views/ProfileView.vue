@@ -161,7 +161,7 @@
           </span>
           <span class="gc-text">自助回水</span>
         </button>
-        <button type="button" class="gc-item" @click="checkUpdate">
+        <button type="button" class="gc-item" @click="appUpdate.check">
           <span class="gc-icon gc-icon--update">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 0 1 13-6.2"/><path d="M17 2.5v3.5h-3.5"/><path d="M20 12a8 8 0 0 1-13 6.2"/><path d="M7 21.5v-3.5h3.5"/></svg>
           </span>
@@ -209,13 +209,21 @@
     @cancel="showLogoutModal = false"
   />
 
+  <AppModal
+    :visible="appUpdate.visible.value"
+    title="发现新版本"
+    :message="appUpdate.message.value"
+    ok-text="打开安装页"
+    cancel-text="稍后"
+    @ok="appUpdate.openInstall"
+    @cancel="appUpdate.visible.value = false"
+  />
+
   <TabBar />
 </template>
 
 <script setup lang="ts">
 import { ref, computed, reactive, onActivated, onMounted } from 'vue'
-import { Capacitor } from '@capacitor/core'
-import { App as CapApp } from '@capacitor/app'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { useWalletStore } from '@/stores/wallet'
@@ -224,8 +232,7 @@ import { useBodyClass } from '@/composables/useBodyClass'
 import { rangeBounds } from '@/composables/timeRange'
 import http from '@/api/http'
 import { userApi } from '@/api/user'
-import { apkDownloadUrl, decideUpdate, type RemoteAppVersion } from '@/utils/appUpdate'
-import { getLiveOrigin } from '@/utils/originPool'
+import { useAppUpdate } from '@/composables/useAppUpdate'
 import { rebateApi } from '@/api/rebate'
 import { formatMoney, formatSignedMoney } from '@gamebox/shared'
 import TabBar from '@/components/TabBar.vue'
@@ -238,6 +245,7 @@ const router = useRouter()
 const userStore = useUserStore()
 const walletStore = useWalletStore()
 const { toast } = useToast()
+const appUpdate = useAppUpdate()
 
 const avatarSrc = computed(() => userStore.profile?.avatar || '/images/avatars/001.jpg')
 const fileInput = ref<HTMLInputElement | null>(null)
@@ -316,43 +324,6 @@ async function loadWalletStats() {
     stats.rebate = Number(rebate?.today?.estimatedRebate) || 0
   } catch {
     /* 保持上次数值，不弹错打断个人页 */
-  }
-}
-
-let checkingUpdate = false
-
-async function localVersionCode(): Promise<number> {
-  if (!Capacitor.isNativePlatform()) return 1
-  try {
-    const info = await CapApp.getInfo()
-    const code = Number(info.build)
-    return Number.isFinite(code) && code > 0 ? code : 1
-  } catch {
-    return 1
-  }
-}
-
-async function checkUpdate() {
-  if (checkingUpdate) return
-  checkingUpdate = true
-  try {
-    const remote = await http.get<RemoteAppVersion, RemoteAppVersion>('/version')
-    const decision = decideUpdate(await localVersionCode(), remote)
-    if (decision.kind === 'current') {
-      toast(`当前已是最新版本 v${decision.version}`)
-      return
-    }
-    if (Capacitor.getPlatform() === 'ios') {
-      toast(`发现新版本 v${decision.version}，请通过新的安装链接安装`)
-      return
-    }
-    const ok = window.confirm(`发现新版本 v${decision.version}，是否下载安装包？`)
-    if (!ok) return
-    window.open(apkDownloadUrl(getLiveOrigin('api')), '_blank', 'noopener')
-  } catch {
-    toast('连不上服务器，无法检查更新')
-  } finally {
-    checkingUpdate = false
   }
 }
 

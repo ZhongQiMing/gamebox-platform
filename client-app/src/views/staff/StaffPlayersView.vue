@@ -48,7 +48,7 @@
               <span class="sg-chev" :class="{ open: isGeneralOpen(b.key) }"></span>
             </div>
             <div class="sg-pills">
-              <span class="sg-pill">占成 {{ b.sharePct }}%</span>
+              <span class="sg-pill">下线占成 {{ b.sharePct }}%</span>
               <span class="sg-pill">整包 {{ b.flowPct }}%</span>
               <span class="sg-pill">{{ b.bookLabel }}</span>
               <span class="sg-pill">{{ b.rooms.length }} 间房</span>

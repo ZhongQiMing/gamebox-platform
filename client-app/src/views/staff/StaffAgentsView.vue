@@ -85,7 +85,7 @@
                   <div class="agent-name"><em class="sg-tag">总代</em>{{ b.name }}</div>
                   <div class="agent-sub">{{ b.sub }}</div>
                   <div class="sg-pills">
-                    <span class="sg-pill">占成 {{ b.sharePct }}%</span>
+                    <span class="sg-pill">下线占成 {{ b.sharePct }}%</span>
                     <span class="sg-pill">整包 {{ b.flowPct }}%</span>
                     <span class="sg-pill">{{ b.bookLabel }}</span>
                     <span class="sg-pill">{{ b.agents.length }} 位代理</span>
@@ -176,7 +176,7 @@
         <input v-model.number="fundAmount" type="number" min="1" :max="FUND_MAX" step="1" placeholder="金额">
         <p v-if="fundConfirming" class="hint confirm">
           确认给 {{ fundTarget?.nickname }} {{ fundMode === 'up' ? '上分' : '下分' }}
-          {{ fmt(fundAmount) }}？订单号 {{ fundOrderNo }}
+          {{ fmt(fundAmount) }}？{{ fundMode === 'up' ? staffUpNote(fundTarget, fundAmount) : '' }}订单号 {{ fundOrderNo }}
         </p>
         <div class="sp-sheet-actions">
           <button type="button" class="cancel" @click="fundVisible = false">取消</button>
@@ -203,7 +203,7 @@ import {
 import { useToast } from '@/composables/useToast'
 import { useBodyClass } from '@/composables/useBodyClass'
 import { TIME_RANGES } from '@/composables/timeRange'
-import { formatMoney, formatSignedMoney } from '@gamebox/shared'
+import { formatMoney, formatSignedMoney, fundFaceNote } from '@gamebox/shared'
 import { newFundOrderNo } from '@/utils/fundOrderNo'
 import {
   loadStaffGenerals,
@@ -376,6 +376,18 @@ function isGroupOpen(key: string) {
 }
 function toggleGroup(key: string) {
   openedGroups.value = { ...openedGroups.value, [key]: !isGroupOpen(key) }
+}
+function staffUpNote(target: StaffAgentRow | null | undefined, amount: number) {
+  if (!target) return ''
+  if (target.role === 'GENERAL') {
+    return fundFaceNote(amount, target.bookMode, Number(target.shareRate || 0))
+  }
+  const rooms = target.rooms || []
+  const credit = rooms.some((r) => r.bookMode === 'CREDIT')
+  const cash = rooms.some((r) => r.bookMode !== 'CREDIT')
+  if (credit && !cash) return fundFaceNote(amount, 'CREDIT', 0)
+  if (!credit && cash) return fundFaceNote(amount, 'CASH', Number(target.shareRate || 0))
+  return `入账额度 ${fmt(amount)}。现金盘按全额实收，信用盘当时不收钱。占成于结算时收付。`
 }
 function openFund(a: StaffAgentRow, mode: 'up' | 'down') {
   fundTarget.value = a

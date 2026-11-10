@@ -688,13 +688,21 @@ const avatarSrc = computed(
 const STAGE_W = MOBILE_STAGE_W
 const STAGE_H = MOBILE_STAGE_H
 const scale = ref(1)
+const safeInset = ref({ top: 0, right: 0, bottom: 0, left: 0 })
 /** Egret 手机常见 FIXED_WIDTH：按宽铺满；高度不够再整体缩小；顶部对齐。
- *  舞台加长后矮屏黑边减少；wrap 底色与底图底部一致，避免露出纯黑。 */
-const stageStyle = computed(() => ({
-  width: `${STAGE_W}px`,
-  height: `${STAGE_H}px`,
-  transform: `translateX(-50%) scale(${scale.value})`,
-}))
+ *  舞台加长后矮屏黑边减少；wrap 底色与底图底部一致，避免露出纯黑。
+ *  缩放前先扣掉刘海和底部横条，返回键才不会贴进安全区。 */
+const stageStyle = computed(() => {
+  const { top, right, left } = safeInset.value
+  const availW = Math.max(1, window.innerWidth - left - right)
+  return {
+    width: `${STAGE_W}px`,
+    height: `${STAGE_H}px`,
+    left: `${left + availW / 2}px`,
+    top: `${top}px`,
+    transform: `translateX(-50%) scale(${scale.value})`,
+  }
+})
 /** 官方 transformPanel 位移差 229；下注 324 ↔ 开转 553 */
 const panelTop = ref(MOBILE_PANEL_TOP)
 const panelStyle = computed(() => ({
@@ -922,11 +930,28 @@ const totalBetDisplay = computed(() => {
 /** 顶栏余额：千分位，贴合官方 balanceLabel */
 const balanceDisplay = computed(() => formatMoney(walletStore.balance || 0))
 
+function readSafeInsets() {
+  const probe = document.createElement('div')
+  probe.style.cssText = 'position:fixed;visibility:hidden;pointer-events:none;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)'
+  document.body.appendChild(probe)
+  const box = getComputedStyle(probe)
+  const next = {
+    top: Number.parseFloat(box.paddingTop) || 0,
+    right: Number.parseFloat(box.paddingRight) || 0,
+    bottom: Number.parseFloat(box.paddingBottom) || 0,
+    left: Number.parseFloat(box.paddingLeft) || 0,
+  }
+  probe.remove()
+  safeInset.value = next
+  return next
+}
+
 function fit() {
-  // 设计稿 480×820；优先铺满宽度，高度不够再压（FIXED_WIDTH）
-  const sx = window.innerWidth / STAGE_W
-  const sy = window.innerHeight / STAGE_H
-  scale.value = Math.min(sx, sy)
+  // 设计稿 480×820；优先铺满安全区内的宽度，高度不够再压（FIXED_WIDTH）
+  const { top, right, bottom, left } = readSafeInsets()
+  const availW = Math.max(1, window.innerWidth - left - right)
+  const availH = Math.max(1, window.innerHeight - top - bottom)
+  scale.value = Math.min(availW / STAGE_W, availH / STAGE_H)
 }
 
 function goBack() {

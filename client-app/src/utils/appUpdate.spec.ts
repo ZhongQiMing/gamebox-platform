@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { apkDownloadUrl, decideUpdate } from './appUpdate'
+import { apkDownloadUrl, decideUpdate, iosInstallUrl } from './appUpdate'
 
 describe('decideUpdate', () => {
   it('服务端版本号更高时判定为有新包', () => {
@@ -19,5 +19,13 @@ describe('apkDownloadUrl', () => {
     expect(apkDownloadUrl('https://a.example')).toBe('https://a.example/api/download/apk')
     expect(apkDownloadUrl('https://a.example/')).toBe('https://a.example/api/download/apk')
     expect(apkDownloadUrl('')).toBe('/api/download/apk')
+  })
+})
+
+describe('iosInstallUrl', () => {
+  it('iPhone 安装页走当前还能用的接口域名', () => {
+    expect(iosInstallUrl('https://a.example')).toBe('https://a.example/api/download/ios')
+    expect(iosInstallUrl('https://a.example/')).toBe('https://a.example/api/download/ios')
+    expect(iosInstallUrl('')).toBe('/api/download/ios')
   })
 })

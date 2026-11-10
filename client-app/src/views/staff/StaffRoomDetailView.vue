@@ -200,7 +200,7 @@
             <div class="rd-cell"><span class="mk">代理余额</span><span class="mv accent">{{ fmt(agentBalance) }}</span></div>
             <div class="rd-cell"><span class="mk">上盘可飞</span><span class="mv">{{ fmt(room.ownerAgent.flyCover) }}</span></div>
             <div class="rd-cell"><span class="mk">玩家持分</span><span class="mv">{{ fmt(room.playerPointsTotal) }}</span></div>
-            <div class="rd-cell wide"><span class="mk">占成</span><span class="mv">{{ Math.round(Number(room.agentShareRate || 0) * 1000) / 10 }}%</span></div>
+            <div class="rd-cell wide"><span class="mk">代理占成</span><span class="mv">{{ Math.round(Number(room.agentShareRate || 0) * 1000) / 10 }}%</span></div>
           </div>
           <div v-else class="rd-grid tight">
             <div class="rd-cell"><span class="mk">代理余额</span><span class="mv accent">{{ fmt(agentBalance) }}</span></div>
@@ -239,7 +239,11 @@
         <p class="hint">{{ room?.ownerAgent?.user.nickname }}</p>
         <input v-model.number="fundAmount" type="number" min="1" :max="FUND_MAX" step="1" placeholder="金额">
         <p v-if="fundConfirming" class="hint">
-          确认{{ fundMode === 'up' ? '上分' : '下分' }} {{ fmt(fundAmount) }}？订单号 {{ fundOrderNo }}
+          确认{{ fundMode === 'up' ? '上分' : '下分' }} {{ fmt(fundAmount) }}？{{
+            fundMode === 'up'
+              ? fundFaceNote(Number(fundAmount || 0), room?.bookMode, Number(room?.agentShareRate || 0))
+              : ''
+          }}订单号 {{ fundOrderNo }}
         </p>
         <div class="sp-sheet-actions">
           <button type="button" class="cancel" @click="fundVisible = false">取消</button>
@@ -299,7 +303,7 @@ import {
 import { useToast } from '@/composables/useToast'
 import { useBodyClass } from '@/composables/useBodyClass'
 import { TIME_RANGES } from '@/composables/timeRange'
-import { formatCount, formatMoney, formatSignedMoney } from '@gamebox/shared'
+import { formatCount, formatMoney, formatSignedMoney, fundFaceNote } from '@gamebox/shared'
 import { newFundOrderNo } from '@/utils/fundOrderNo'
 import '@/assets/staff-console.css'
 

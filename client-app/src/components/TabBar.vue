@@ -34,7 +34,7 @@ watch(fromGame, syncBodyClass)
 
 const TABS = [
   { key: 'home',     name: 'lobby',    icon: '⛨', text: '游 戏' },
-  { key: 'recharge', name: 'recharge', icon: '¥', text: '充 值' },
+  { key: 'recharge', name: 'recharge', icon: '¥', text: '上下分' },
   /* 明细 = 全游戏竞猜报表（与聊天室「+」竞猜报表同一页 /bets） */
   { key: 'flow',     name: 'bets',     icon: '▤', text: '明 细' },
   { key: 'cs',       name: 'cs',       icon: '✆', text: '客 服' },

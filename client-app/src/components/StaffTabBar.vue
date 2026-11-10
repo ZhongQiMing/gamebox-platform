@@ -18,7 +18,7 @@
 
 <script setup lang="ts">
 /**
- * 主代理底栏：游戏 / 充值(审核) / 明细 / 客服 / 我的
+ * 主代理底栏：游戏 / 上下分(审核) / 明细 / 客服 / 我的
  * 代理子账号（查账型）：游戏 / 明细 / 我的
  * 客服：审核 / 明细 / 客服 / 我的
  * 管理 / 总监 / 总代 / 总代子账号：游戏 / 明细 / 我的
@@ -46,7 +46,7 @@ const isMainAgent = computed(() => staff.role === 'AGENT')
 
 const ALL_TABS = [
   { key: 'home', name: 'staff-lobby', icon: '⛨', text: '游 戏', match: ['staff-lobby'] },
-  { key: 'recharge', name: 'staff-fund', icon: '¥', text: '充 值', match: ['staff-fund'] },
+  { key: 'recharge', name: 'staff-fund', icon: '¥', text: '上下分', match: ['staff-fund'] },
   {
     key: 'flow',
     name: 'staff-report',

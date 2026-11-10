@@ -84,7 +84,7 @@
 
     <div class="welcome-footer">
       <div class="footer-mark">
-        <span>GOLDHUB</span><span class="sep">·</span><span>EST·2026</span>
+        <span>金御汇</span><span class="sep">·</span><span>2026</span>
       </div>
     </div>
   </div>

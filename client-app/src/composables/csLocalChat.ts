@@ -30,7 +30,6 @@ function save(uid: string, list: CsMsg[]) {
 const PAY_NAMES: Record<string, string> = {
   wechat: '微信',
   alipay: '支付宝',
-  unionpay: '银联',
 }
 
 /**

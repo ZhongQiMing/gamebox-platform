@@ -7,6 +7,25 @@ export function formatPoints(n: number): string {
   return formatMoney(n);
 }
 
+/**
+ * 比例展示。0.018 → "1.8%"。
+ * 不走金额的两位小数，否则 1.8% 会被收成 2%。
+ */
+export function formatRatePct(rate: number | null | undefined): string {
+  const n = Number(rate);
+  if (!Number.isFinite(n)) return '—';
+  const pct = Math.round((n * 100 + Number.EPSILON) * 100) / 100;
+  const text = pct.toFixed(2).replace(/\.?0+$/, '');
+  return `${text}%`;
+}
+
+/** 0.018 → 1.8，给输入框用，同样不按分四舍五入。 */
+export function rateToPct(rate: number | null | undefined): number {
+  const n = Number(rate);
+  if (!Number.isFinite(n)) return 0;
+  return Math.round((n * 100 + Number.EPSILON) * 100) / 100;
+}
+
 /** 人数、笔数：1,234 */
 export function formatCount(n: number): string {
   if (!Number.isFinite(n)) return '0';

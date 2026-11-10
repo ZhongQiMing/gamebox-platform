@@ -51,7 +51,7 @@
               </div>
               <div class="rm-name">{{ b.name }}</div>
               <div class="sg-pills">
-                <span class="rm-chip">占成 {{ b.sharePct }}%</span>
+                <span class="rm-chip">下线占成 {{ b.sharePct }}%</span>
                 <span class="rm-chip">整包 {{ b.flowPct }}%</span>
                 <span class="rm-chip">{{ b.bookLabel }}</span>
                 <span class="rm-chip">{{ b.rooms.length }} 间房</span>

@@ -20,6 +20,13 @@ export function apkDownloadUrl(apiOrigin: string): string {
   return '/api/download/apk'
 }
 
+/** iPhone 安装必须离开 App，用系统 Safari 打开。页内再决定跳到签名安装地址。 */
+export function iosInstallUrl(apiOrigin: string): string {
+  const origin = String(apiOrigin || '').replace(/\/$/, '')
+  if (origin) return `${origin}/api/download/ios`
+  return '/api/download/ios'
+}
+
 export function decideUpdate(
   localCode: number,
   remote: RemoteAppVersion,

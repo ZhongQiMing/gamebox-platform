@@ -40,7 +40,7 @@
                 <span class="gd-chev" :class="{ open: isOpen(g.key) }"></span>
               </div>
               <div class="gd-pills">
-                <span v-if="g.key !== '__none__'" class="gr-chip">占成 {{ g.sharePct }}%</span>
+                <span v-if="g.key !== '__none__'" class="gr-chip">下线占成 {{ g.sharePct }}%</span>
                 <span v-if="g.key !== '__none__'" class="gr-chip">整包 {{ g.flowPct }}%</span>
                 <span v-if="g.bookMode" class="gr-chip">{{ g.bookMode === 'CREDIT' ? 'B·信用' : 'A·现金' }}</span>
                 <span class="gr-chip">{{ g.rooms.length }} 间房</span>

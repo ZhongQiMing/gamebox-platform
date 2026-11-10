@@ -18,8 +18,10 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 56px;
-  padding: 0 20px;
+  height: auto;
+  min-height: calc(56px + var(--safe-top, env(safe-area-inset-top, 0px)));
+  padding: var(--safe-top, env(safe-area-inset-top, 0px)) 20px 0;
+  box-sizing: border-box;
   z-index: 2;
 }
 .brand-bar .brand {
@@ -269,7 +271,7 @@
 /* ===== 右上角弹出菜单（黑金小卡：四角金角 + 顶部金线 + 金边） ===== */
 .menu-popover {
   position: absolute;
-  top: 60px;
+  top: calc(64px + var(--safe-top, env(safe-area-inset-top, 0px)));
   right: 12px;
   min-width: 210px;
   background:

@@ -209,7 +209,6 @@ export interface CsSlaPolicy {
   kickSec: number
   lateFine: number
   missFine: number
-  dailyFineCapRate: number
   bonusMinRate: number
   bonusMinRounds: number
   dailyBonus: number
@@ -247,6 +246,7 @@ export interface CsSlaEventRow {
   fine: number
   waived: boolean
   waiveReason: string | null
+  responseText?: string
 }
 
 export interface StaffReportSummary {

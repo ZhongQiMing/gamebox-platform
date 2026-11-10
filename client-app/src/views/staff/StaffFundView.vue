@@ -214,6 +214,7 @@ function channelLabel(ch?: string | null) {
   const map: Record<string, string> = {
     wechat: '微信',
     alipay: '支付宝',
+    unionpay: '银联',
     bank: '银行卡',
     cs: '客服',
   }

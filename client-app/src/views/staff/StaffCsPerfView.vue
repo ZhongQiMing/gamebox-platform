@@ -97,7 +97,7 @@
         </div>
 
         <div class="ops">
-          <button type="button" @click="openDetail(r)">超时明细</button>
+          <button type="button" @click="openDetail(r)">罚款明细</button>
         </div>
       </div>
     </div>
@@ -105,7 +105,7 @@
     <!-- 超时明细 -->
     <div v-if="detailVisible" class="sp-sheet" @click.self="detailVisible = false">
       <div class="sp-sheet-panel cp-sheet">
-        <h3>{{ detailTarget?.nickname }} · 超时明细</h3>
+        <h3>{{ detailTarget?.nickname }} · 罚款明细</h3>
         <div v-if="detailLoading" class="sp-empty tight">加载中…</div>
         <div v-else-if="!events.length" class="sp-empty tight">这段时间没有超时</div>
         <div v-for="e in events" :key="e.id" class="cp-ev">
@@ -113,15 +113,15 @@
             <span>{{ e.playerNickname || e.playerUid }}</span>
             <span :class="e.level === 'MISSED' ? 'bad' : 'warn'">
               {{ e.level === 'MISSED' ? '漏接' : '超时' }}
-              {{ e.responseSec === null ? '未回复' : `${Math.round(e.responseSec / 60)} 分钟` }}
+              {{ e.responseText || (e.responseSec === null ? '未回复' : '') }}
             </span>
           </div>
           <div class="cp-ev-sub">
             玩家 {{ fmtTime(e.askedAt) }} 发出
             <template v-if="e.waived"> · <b class="ok">已免除</b>{{ e.waiveReason ? `（${e.waiveReason}）` : '' }}</template>
-            <template v-else> · 罚 {{ fmt(e.fine) }}</template>
+            <template v-else> · 罚 {{ fmt(e.fine) }} · {{ e.responseText || '未回复' }}</template>
           </div>
-          <button v-if="!e.waived" type="button" class="cp-waive" @click="askWaive(e)">免除处罚</button>
+          <button v-if="!e.waived" type="button" class="cp-waive" @click="askWaive(e)">撤销罚款</button>
         </div>
         <div class="sp-sheet-actions">
           <button type="button" class="cancel" @click="detailVisible = false">关闭</button>
@@ -132,12 +132,12 @@
     <!-- 免除 -->
     <div v-if="waiveVisible" class="sp-sheet" @click.self="waiveVisible = false">
       <div class="sp-sheet-panel">
-        <h3>免除这次处罚</h3>
-        <p class="hint">客服报备的原因，记在账上备查</p>
+        <h3>撤销这笔罚款</h3>
+        <p class="hint">报备原因必填，记在这一笔上。还没结清的当日罚款会把这笔减掉。</p>
         <input v-model="waiveReason" type="text" maxlength="40" placeholder="如：手机没电 / 断网">
         <div class="sp-sheet-actions">
           <button type="button" class="cancel" :disabled="waiveBusy" @click="waiveVisible = false">取消</button>
-          <button type="button" class="ok" :disabled="waiveBusy" @click="doWaive">确认免除</button>
+          <button type="button" class="ok" :disabled="waiveBusy || !waiveReason.trim()" @click="doWaive">确认撤销</button>
         </div>
       </div>
     </div>
@@ -230,7 +230,6 @@ const form = ref<CsSlaPolicy>({
   kickSec: 480,
   lateFine: 10,
   missFine: 50,
-  dailyFineCapRate: 0.5,
   bonusMinRate: 0.95,
   bonusMinRounds: 20,
   dailyBonus: 100,
@@ -318,17 +317,18 @@ function askWaive(e: CsSlaEventRow) {
 
 async function doWaive() {
   const target = waiveTarget.value
-  if (!target) return
+  const reason = waiveReason.value.trim()
+  if (!target || !reason) return
   waiveBusy.value = true
   try {
-    await staffConsoleApi.csSlaWaive(target.id, waiveReason.value.trim() || undefined)
+    await staffConsoleApi.csSlaWaive(target.id, reason)
     const row = events.value.find((x) => x.id === target.id)
     if (row) {
       row.waived = true
-      row.waiveReason = waiveReason.value.trim() || null
+      row.waiveReason = reason
     }
     waiveVisible.value = false
-    toast('已免除')
+    toast('已撤销')
     void reload()
   } catch (e: unknown) {
     toast(e instanceof Error ? e.message : '操作失败')

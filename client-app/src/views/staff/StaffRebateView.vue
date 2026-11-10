@@ -103,7 +103,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { formatMoney } from '@gamebox/shared'
+import { formatMoney, formatRatePct, rateToPct } from '@gamebox/shared'
 import { staffConsoleApi, type StaffPlayerRow } from '@/api/staffConsole'
 import AppModal from '@/components/AppModal.vue'
 import StaffTabBar from '@/components/StaffTabBar.vue'
@@ -137,8 +137,7 @@ const busy = ref(false)
 const busyId = ref<string | null>(null)
 
 function pct(rate?: number | null) {
-  if (rate == null || Number.isNaN(Number(rate))) return '—'
-  return `${(Number(rate) * 100).toFixed(2).replace(/\.?0+$/, '')}%`
+  return formatRatePct(rate)
 }
 
 function fmt(n?: number | null) {
@@ -155,7 +154,7 @@ function todayOf(p: StaffPlayerRow) {
 
 function openEdit(p: StaffPlayerRow) {
   editTarget.value = p
-  editPct.value = Math.round(Number(p.rebateRate || 0.018) * 1000) / 10
+  editPct.value = rateToPct(p.rebateRate ?? 0.018)
   editVisible.value = true
 }
 
