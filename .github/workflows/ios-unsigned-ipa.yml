@@ -40,6 +40,12 @@ jobs:
           sed -i '' 's/customClass="CAPBridgeViewController" customModule="Capacitor"/customClass="GoldHubViewController" customModule="App"/' "$STORY"
           grep -q 'class GoldHubViewController' "$DELEGATE"
           grep -q 'customClass="GoldHubViewController"' "$STORY"
+          # cap add 带的是空白默认图标，桌面会没有金御汇的皇冠。用安卓同一张图生成 1024 图标。
+          ICONSET=client-app/ios/App/App/Assets.xcassets/AppIcon.appiconset
+          rm -f "$ICONSET"/*
+          sips -z 1024 1024 client-app/android/app/src/main/res/drawable-xxxhdpi/splash_icon.png --out "$ICONSET/AppIcon-1024.png"
+          cp client-app/ios-extra/AppIcon.Contents.json "$ICONSET/Contents.json"
+          test -s "$ICONSET/AppIcon-1024.png"
 
       - name: Compile unsigned iOS app
         working-directory: client-app/ios/App
