@@ -34,7 +34,7 @@
             <div class="rd-hd">
               <div class="rd-name">{{ room.name }}</div>
               <div class="rd-tags">
-                <span class="rd-chip">{{ room.bookMode === 'CREDIT' ? 'B·信用' : 'A·现金' }}</span>
+                <span class="rd-chip">{{ room.bookMode === 'CREDIT' ? '信用盘' : '现金盘' }}</span>
                 <span class="rd-st" :class="room.status.toLowerCase()">{{ statusLabel(room.status) }}</span>
               </div>
             </div>

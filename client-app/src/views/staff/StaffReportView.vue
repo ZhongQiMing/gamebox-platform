@@ -154,8 +154,8 @@
                 <div class="rp-card-name">
                   <b><em class="rg-tag">总代</em>{{ b.name }}</b>
                   <div class="rg-pills">
-                    <i v-if="b.sharePct">下线占成 {{ b.sharePct }}%</i>
-                    <i v-if="b.flowPct">整包 {{ b.flowPct }}%</i>
+                    <i v-if="b.sharePct">总代占成 {{ b.sharePct }}%</i>
+                    <i v-if="b.flowPct">返水 {{ b.flowPct }}%</i>
                     <i>{{ b.rooms.length }} 间房</i>
                   </div>
                 </div>

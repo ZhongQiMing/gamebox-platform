@@ -120,6 +120,16 @@ body.lobby-bg::before { display: none; }
   position: relative;
   z-index: 1;
 }
+/*
+ * 底栏是浮在页面上的。只靠 .page 那一点 padding，最后一张卡滚到底仍有一半压在底栏下。
+ * 大厅改由列表末尾的占位块把最后一张完整顶到渐隐之上，不再和 .page 的 padding 叠两次。
+ */
+body.has-tabbar .lobby-page {
+  padding-bottom: 0;
+}
+body.has-tabbar .lobby-page .lobby-spacer {
+  height: calc(var(--tabbar-h) + var(--safe-bottom) + 36px);
+}
 .lobby-page .page-body {
   /* 顶部留白交给 .page-title 的 margin-top，这里不再另加，避免两处叠出双倍间距 */
   padding: 0 16px 0;

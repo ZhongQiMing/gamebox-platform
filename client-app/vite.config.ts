@@ -120,11 +120,18 @@ function isBuildIntermediate(relPosix: string): boolean {
   return false
 }
 
-/** 仅游戏目录顶层的大厅图标/封面；pg 内 cover-* 不算 */
+/** 大厅图标/封面，以及水果机、奔驰宝马的全部内页图 */
 function keepBundledGameImage(relPosix: string): boolean {
   const parts = relPosix.replace(/\\/g, '/').split('/')
   const base = parts[parts.length - 1] || ''
   const topLevel = parts.length === 2
+  /*
+   * 水果机、奔驰宝马是 App 里的页面，不是游戏域 iframe。
+   * 图一旦从包里剥掉，就只能等 Service Worker 再去素材站拉。
+   * iOS 页面是 capacitor://localhost，注册不了这个 Worker，图会全部裂开。
+   * 这两个目录整份留在包里，打开就能看见。
+   */
+  if (parts[0] === 'slots' || parts[0] === 'bcbm') return true
   if (topLevel && /cover/i.test(base) && !/raw/i.test(base)) return true
   if (
     /^(ssc|ffc|speed-racing|bjsc|speed-boat|kuai3|hk-mark6|zhajinhua|douniu|baccarat|slots)\.(png|webp)$/i.test(

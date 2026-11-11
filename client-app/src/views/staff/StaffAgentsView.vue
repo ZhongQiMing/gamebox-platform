@@ -85,8 +85,8 @@
                   <div class="agent-name"><em class="sg-tag">总代</em>{{ b.name }}</div>
                   <div class="agent-sub">{{ b.sub }}</div>
                   <div class="sg-pills">
-                    <span class="sg-pill">下线占成 {{ b.sharePct }}%</span>
-                    <span class="sg-pill">整包 {{ b.flowPct }}%</span>
+                    <span class="sg-pill">总代占成 {{ b.sharePct }}%</span>
+                    <span class="sg-pill">返水 {{ b.flowPct }}%</span>
                     <span class="sg-pill">{{ b.bookLabel }}</span>
                     <span class="sg-pill">{{ b.agents.length }} 位代理</span>
                   </div>
@@ -103,11 +103,11 @@
                 <span class="mk">{{ b.secondLabel }}</span>
                 <span class="mv">{{ b.secondText }}</span>
               </div>
-              <div v-if="b.bookLabel === 'B·信用'" class="m">
+              <div v-if="b.bookLabel === '信用盘'" class="m">
                 <span class="mk">上盘可飞</span>
                 <span class="mv">{{ b.flyText }}</span>
               </div>
-              <div v-if="b.bookLabel !== 'B·信用'" class="m">
+              <div v-if="b.bookLabel !== '信用盘'" class="m">
                 <span class="mk">余额</span>
                 <span class="mv gold">{{ b.balanceText }}</span>
               </div>
@@ -125,7 +125,7 @@
                   <div class="agent-sub">{{ a.username }} · {{ a.uid }}</div>
                 </div>
                 <span class="st" :class="isCreditAgent(a) ? 'maintenance' : 'open'">
-                  {{ isCreditAgent(a) ? 'B·信用' : 'A·现金' }}
+                  {{ isCreditAgent(a) ? '信用盘' : '现金盘' }}
                 </span>
               </div>
               <div class="room-metrics">
@@ -355,7 +355,7 @@ const agentBlocks = computed<AgentBlock[]>(() => {
       sub: [wallet?.username || agent.parent?.username, wallet?.uid || ''].filter(Boolean).join(' · '),
       sharePct: pctOfRate(wallet?.shareRate),
       flowPct: pctOfRate(wallet?.flowRate),
-      bookLabel: wallet ? (credit ? 'B·信用' : 'A·现金') : '—',
+      bookLabel: wallet ? (credit ? '信用盘' : '现金盘') : '—',
       quotaLabel: credit ? '剩余信用' : '可用额度',
       quotaText: moneyOrDash(wallet, wallet?.pointsQuota),
       secondLabel: credit ? '合同额度' : '上盘可飞',

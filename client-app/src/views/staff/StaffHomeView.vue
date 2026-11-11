@@ -79,6 +79,11 @@
             <span class="home-nav-m"></span>
             <span class="home-nav-a">›</span>
           </button>
+          <button v-if="!staff.isCs" type="button" class="home-nav-item" @click="go('staff-activities')">
+            <span class="home-nav-t">活动</span>
+            <span class="home-nav-m"></span>
+            <span class="home-nav-a">›</span>
+          </button>
           <button type="button" class="home-nav-item" @click="go('staff-report')">
             <span class="home-nav-t">报表</span>
             <span class="home-nav-m"></span>

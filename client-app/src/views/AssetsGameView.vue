@@ -43,13 +43,13 @@ import { frameActivityMessage } from '@/utils/frameActivity'
 import { leaveGameToLobby } from '@/composables/lobbyAfterGame'
 
 const ASSET_GAMES: Record<string, string> = {
-  bjsc: '/games-assets/bjsc/index.html?v=181',
-  ssc: '/games-assets/ssc/index.html?v=203',
-  ffc: '/games-assets/ffc/index.html?v=189',
-  'speed-racing': '/games-assets/speed-racing/index.html?v=248',
-  'speed-boat': '/games-assets/speed-boat/index.html?v=173',
-  kuai3: '/games-assets/kuai3/index.html?v=173',
-  lhc: '/games-assets/lhc/index.html?v=206',
+  bjsc: '/games-assets/bjsc/index.html?v=182',
+  ssc: '/games-assets/ssc/index.html?v=204',
+  ffc: '/games-assets/ffc/index.html?v=190',
+  'speed-racing': '/games-assets/speed-racing/index.html?v=249',
+  'speed-boat': '/games-assets/speed-boat/index.html?v=174',
+  kuai3: '/games-assets/kuai3/index.html?v=174',
+  lhc: '/games-assets/lhc/index.html?v=207',
   zhajinhua: '/games-assets/zhajinhua/index.html?v=378',
   douniu: '/games-assets/douniu/index.html?v=186',
   baccarat: '/games-assets/baccarat/index.html?v=76',

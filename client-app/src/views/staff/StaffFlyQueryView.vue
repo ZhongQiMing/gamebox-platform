@@ -56,8 +56,8 @@
             <div>
               <b><em class="sg-tag">总代</em>{{ b.name }}</b>
               <div class="sg-pills">
-                <span class="sg-pill">下线占成 {{ b.sharePct }}%</span>
-                <span class="sg-pill">整包 {{ b.flowPct }}%</span>
+                <span class="sg-pill">总代占成 {{ b.sharePct }}%</span>
+                <span class="sg-pill">返水 {{ b.flowPct }}%</span>
                 <span class="sg-pill">{{ b.bookLabel }}</span>
                 <span class="sg-pill">{{ b.rooms.length }} 间房</span>
               </div>
@@ -271,7 +271,7 @@ const flyBlocks = computed<FlyBlock[]>(() => {
       name: String(room.general?.nickname || room.general?.username || walletRow?.nickname || '总代').trim(),
       sharePct: pctOfRate(walletRow?.shareRate ?? room.general?.shareRate),
       flowPct: pctOfRate(walletRow?.flowRate ?? room.general?.flowRate),
-      bookLabel: walletRow ? (credit ? 'B·信用' : 'A·现金') : '—',
+      bookLabel: walletRow ? (credit ? '信用盘' : '现金盘') : '—',
       quotaLabel: credit ? '剩余信用' : '可用额度',
       quotaText: moneyOrDash(walletRow, walletRow?.pointsQuota),
       secondLabel: credit ? '合同额度' : '余额',

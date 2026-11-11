@@ -48,8 +48,8 @@
               <span class="sg-chev" :class="{ open: isGeneralOpen(b.key) }"></span>
             </div>
             <div class="sg-pills">
-              <span class="sg-pill">下线占成 {{ b.sharePct }}%</span>
-              <span class="sg-pill">整包 {{ b.flowPct }}%</span>
+              <span class="sg-pill">总代占成 {{ b.sharePct }}%</span>
+              <span class="sg-pill">返水 {{ b.flowPct }}%</span>
               <span class="sg-pill">{{ b.bookLabel }}</span>
               <span class="sg-pill">{{ b.rooms.length }} 间房</span>
             </div>
@@ -402,7 +402,7 @@ const playerBlocks = computed<PlayerBlock[]>(() => {
       name: String(room.general?.nickname || room.general?.username || wallet?.nickname || '总代').trim(),
       sharePct: pctOfRate(wallet?.shareRate ?? room.general?.shareRate),
       flowPct: pctOfRate(wallet?.flowRate ?? room.general?.flowRate),
-      bookLabel: wallet ? (credit ? 'B·信用' : 'A·现金') : '—',
+      bookLabel: wallet ? (credit ? '信用盘' : '现金盘') : '—',
       quotaLabel: credit ? '剩余信用' : '可用额度',
       quotaText: moneyOrDash(wallet, wallet?.pointsQuota),
       secondLabel: credit ? '合同额度' : '余额',

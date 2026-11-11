@@ -40,9 +40,9 @@
                 <span class="gd-chev" :class="{ open: isOpen(g.key) }"></span>
               </div>
               <div class="gd-pills">
-                <span v-if="g.key !== '__none__'" class="gr-chip">下线占成 {{ g.sharePct }}%</span>
-                <span v-if="g.key !== '__none__'" class="gr-chip">整包 {{ g.flowPct }}%</span>
-                <span v-if="g.bookMode" class="gr-chip">{{ g.bookMode === 'CREDIT' ? 'B·信用' : 'A·现金' }}</span>
+                <span v-if="g.key !== '__none__'" class="gr-chip">总代占成 {{ g.sharePct }}%</span>
+                <span v-if="g.key !== '__none__'" class="gr-chip">返水 {{ g.flowPct }}%</span>
+                <span v-if="g.bookMode" class="gr-chip">{{ g.bookMode === 'CREDIT' ? '信用盘' : '现金盘' }}</span>
                 <span class="gr-chip">{{ g.rooms.length }} 间房</span>
               </div>
             </div>
@@ -110,7 +110,7 @@
                     <span class="gr-name">{{ displayName(r) }}</span>
                   </div>
                   <div class="gr-tags">
-                    <span class="gr-chip">{{ r.bookMode === 'CREDIT' ? 'B·信用' : 'A·现金' }}</span>
+                    <span class="gr-chip">{{ r.bookMode === 'CREDIT' ? '信用盘' : '现金盘' }}</span>
                     <span class="gr-st" :class="r.status.toLowerCase()">{{ statusLabel(r.status) }}</span>
                   </div>
                 </div>

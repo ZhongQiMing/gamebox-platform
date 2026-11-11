@@ -23,7 +23,7 @@
         </button>
       </div>
       <div v-if="activeRoom && isMultiRoom" class="staff-lobby-room">
-        进房码 {{ activeRoom.roomNo }} · {{ activeRoom.bookMode === 'CREDIT' ? 'B·信用' : 'A·现金' }}
+        进房码 {{ activeRoom.roomNo }} · {{ activeRoom.bookMode === 'CREDIT' ? '信用盘' : '现金盘' }}
       </div>
 
       <div v-if="loading && !rooms.length" class="sp-empty staff-lobby-empty">加载中…</div>

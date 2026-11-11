@@ -122,7 +122,7 @@ const router = useRouter()
 const { toast } = useToast()
 
 const AGENT_AVATAR = '/images/avatars/001.jpg'
-const WELCOME = '您好，欢迎来到金御汇，我是您的专属客服。发送「上分金额」或「下分金额」可直接申请，例如：上分500'
+const WELCOME = '您好，欢迎来到金御汇，我是您的专属客服。'
 
 interface ViewMsg {
   key: string

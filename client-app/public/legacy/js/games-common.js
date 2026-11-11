@@ -1622,6 +1622,109 @@
     }
   })
 
+  /*
+   * 顶栏四格数字固定按 999,999.00 留宽，右对齐。
+   * 流水、回水在右列，小数最后一位贴住顶栏右缘，几十万以内小数点始终对齐。
+   * 上了百万、格子装不下时，只把这一格数字从右边缩小，格子和另外三格不动。
+   * 标题再长也先让位，不把数字挤出屏幕。
+   */
+  function fitLotteryStatsBar() {
+    var stats = document.getElementById('statsBar')
+    if (!stats || stats.getAttribute('data-gb-stats-fit') === '1') return
+    if (/\b(bjl|zjh|dn|lhd)-stats\b/.test(stats.className || '')) return
+    var head = stats.parentElement
+    if (!head) return
+    stats.setAttribute('data-gb-stats-fit', '1')
+
+    function cells() {
+      return stats.children || []
+    }
+
+    function slotWidth() {
+      var probe = stats.querySelector('.v')
+      if (!probe) return 0
+      var pcs = getComputedStyle(probe)
+      var sample = document.createElement('span')
+      sample.textContent = '999,999.00'
+      sample.style.position = 'absolute'
+      sample.style.left = '-9999px'
+      sample.style.top = '0'
+      sample.style.visibility = 'hidden'
+      sample.style.whiteSpace = 'nowrap'
+      sample.style.font = pcs.font
+      sample.style.fontWeight = pcs.fontWeight
+      sample.style.fontSize = pcs.fontSize
+      sample.style.fontFamily = pcs.fontFamily
+      sample.style.letterSpacing = pcs.letterSpacing
+      sample.style.fontVariantNumeric = 'tabular-nums'
+      document.body.appendChild(sample)
+      var w = Math.ceil(sample.getBoundingClientRect().width)
+      document.body.removeChild(sample)
+      return w
+    }
+
+    function measure() {
+      if (typeof getComputedStyle !== 'function') return
+      var slot = slotWidth()
+      if (!(slot > 0)) return
+      var list = cells()
+      for (var i = 0; i < list.length; i++) {
+        var cell = list[i]
+        cell.style.gridTemplateColumns = 'max-content ' + slot + 'px'
+        cell.style.width = 'max-content'
+        cell.style.minWidth = '0'
+        var v = cell.querySelector('.v')
+        if (!v) continue
+        v.style.display = 'block'
+        v.style.width = slot + 'px'
+        v.style.maxWidth = slot + 'px'
+        v.style.textAlign = 'right'
+        v.style.whiteSpace = 'nowrap'
+        v.style.overflow = 'visible'
+        v.style.transform = ''
+        v.style.transformOrigin = 'right center'
+        var textW = v.scrollWidth
+        if (textW > slot + 1) {
+          v.style.transform = 'scale(' + (slot / textW) + ')'
+        }
+      }
+      stats.style.width = 'max-content'
+      stats.style.maxWidth = 'none'
+      stats.style.flex = '0 0 auto'
+      stats.style.marginLeft = 'auto'
+      stats.style.transform = ''
+
+      for (var c = 0; c < head.children.length; c++) {
+        if (head.children[c] === stats) continue
+        head.children[c].style.flex = '1 1 auto'
+        head.children[c].style.minWidth = '0'
+      }
+    }
+
+    var pending = 0
+    function schedule() {
+      if (pending) return
+      pending = window.requestAnimationFrame
+        ? window.requestAnimationFrame(function () { pending = 0; measure() })
+        : setTimeout(function () { pending = 0; measure() }, 16)
+    }
+
+    window.addEventListener('resize', schedule)
+    if (document.fonts && document.fonts.ready && document.fonts.ready.then) {
+      document.fonts.ready.then(schedule).catch(function () {})
+    }
+    if (window.MutationObserver) {
+      new MutationObserver(schedule).observe(stats, { subtree: true, characterData: true, childList: true })
+    }
+    schedule()
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', fitLotteryStatsBar)
+  } else {
+    fitLotteryStatsBar()
+  }
+
   // 通知父页：桥已就绪，请推送 init（token 在 init 回传后才有）
   if (window.parent && window.parent !== window) {
     try {

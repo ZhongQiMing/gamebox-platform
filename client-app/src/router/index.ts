@@ -184,6 +184,12 @@ const router = createRouter({
       meta: { public: true, staff: true, staffRoles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'] },
     },
     {
+      path: '/staff/activities',
+      name: 'staff-activities',
+      component: () => import('@/views/staff/StaffActivitiesView.vue'),
+      meta: { public: true, staff: true, staffRoles: ['ADMIN', 'BRANCH', 'GENERAL', 'AGENT', 'PROXY'] },
+    },
+    {
       path: '/staff/risk',
       name: 'staff-risk',
       component: () => import('@/views/staff/StaffRiskView.vue'),
